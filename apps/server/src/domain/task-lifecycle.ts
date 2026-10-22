@@ -6,7 +6,7 @@ import { and, count, eq } from "drizzle-orm";
 import { acceptanceCriteria, tasks } from "../db/schema";
 import type { Executor, UnitOfWork } from "../db/tx";
 import { ApiError, notFound } from "../http/errors";
-import type { DomainEvents } from "./events";
+import type { DomainEvent, DomainEvents } from "./events";
 import { findTransition, type TransitionTrigger } from "./task-state-machine";
 
 export type TaskRow = typeof tasks.$inferSelect;
@@ -83,6 +83,11 @@ export class TaskLifecycleService {
       }),
     );
     return updated;
+  }
+
+  /** 發出 domain event（給同一層的服務在 commit 後使用）。 */
+  emit(event: DomainEvent): Promise<void> {
+    return this.events.emit(event);
   }
 
   /** 派工：Ready → Planning，Planning 直接通過時再轉到 Running。 */

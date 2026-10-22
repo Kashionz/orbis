@@ -80,6 +80,15 @@ describe("Role 授權（純函式）", () => {
       });
       expect(result.ok).toBe(true);
     });
+    it("Gate 建立時指派給自己、之後改派給別人，Member 仍不能核准", () => {
+      const result = authorize("approve_gate", {
+        memberId: ME,
+        role: "member",
+        project: policy,
+        task: { assigneeMemberId: OTHER, gateAssigneeMemberId: ME },
+      });
+      expect(result.ok).toBe(false);
+    });
     it("Member 可以核准沒有指派對象的 Task", () => {
       const result = authorize("approve_gate", {
         memberId: ME,

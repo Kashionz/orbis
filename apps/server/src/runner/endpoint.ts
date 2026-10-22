@@ -1,17 +1,38 @@
 // Runner 的 WebSocket 端點 `/runner`（ARCHITECTURE §6.1、ADR-0001）。
 //
-// 連線流程：第一個 frame 必須是 Hello → 驗證協定版本與 Pairing → 回 HelloAck 或 HelloRejected。
-// 之後處理 Heartbeat；其他 frame 型別先記 debug log 後忽略，不斷線。
+// 連線流程：第一個 frame 必須是 Hello → 驗證協定版本與 Pairing → 回 HelloAck（含 resume）或 HelloRejected。
+// 之後依序處理 Heartbeat、AgentAvailability、Dispatch 的回覆、Event 與 RunControl 的結果。
 
-import type { IncomingMessage, Server } from "node:http";
+import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type { HelloRejectReason, ServerToRunner } from "@orbis/protocol";
 import { PROTOCOL_VERSION, RUNNER_WS_PATH } from "@orbis/protocol";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
+import type { Clock } from "../clock";
 import type { Database } from "../db/client";
 import type { Logger } from "../logger";
-import { type AnyFrame, HeartbeatFrame, HelloFrame, parseFrame } from "./frames";
-import { type AuthenticatedRunner, pairRunner, reconnectRunner, recordHeartbeat } from "./service";
+import type { EventIngest } from "../runs/event-ingest";
+import type { RunControlService } from "../runs/run-control";
+import type { UpgradeRouter } from "../ws-upgrade";
+import type { Dispatcher } from "./dispatcher";
+import {
+  AgentAvailabilityFrame,
+  type AnyFrame,
+  DispatchAcceptFrame,
+  DispatchRejectFrame,
+  HeartbeatFrame,
+  HelloFrame,
+  parseFrame,
+  RunControlResultFrame,
+} from "./frames";
+import type { RunnerHub, RunnerLink } from "./hub";
+import {
+  type AuthenticatedRunner,
+  pairRunner,
+  reconnectRunner,
+  recordAgentAvailability,
+  recordHeartbeat,
+} from "./service";
 
 export { RUNNER_WS_PATH };
 export const DEFAULT_HELLO_TIMEOUT_MS = 10_000;
@@ -24,6 +45,11 @@ const CLOSE_REPLACED = 4000;
 export interface RunnerEndpointOptions {
   db: Database;
   logger: Logger;
+  clock: Clock;
+  hub: RunnerHub;
+  dispatcher: Dispatcher;
+  ingest: EventIngest;
+  runControls: RunControlService;
   devPairingToken: string | null;
   heartbeatIntervalMs: number;
   /** 連線後等待 Hello 的時間。 */
@@ -36,38 +62,29 @@ export interface RunnerEndpoint {
   close(): Promise<void>;
 }
 
-/** 在 HTTP server 上掛載 `/runner` 的 WebSocket upgrade。 */
+/** 在 upgrade router 上登記 `/runner` 的 WebSocket。 */
 export function attachRunnerEndpoint(
-  server: Server,
+  router: UpgradeRouter,
   options: RunnerEndpointOptions,
 ): RunnerEndpoint {
   const wss = new WebSocketServer({ noServer: true });
-  const connections = new Map<string, RunnerConnection>();
-
-  const onUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const path = new URL(request.url ?? "/", "http://localhost").pathname;
-    if (path !== RUNNER_WS_PATH) {
-      socket.destroy();
-      return;
-    }
+  router.register(RUNNER_WS_PATH, (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     wss.handleUpgrade(request, socket, head, (ws) => {
-      new RunnerConnection(ws, options, connections).start();
+      new RunnerConnection(ws, options).start();
     });
-  };
-  server.on("upgrade", onUpgrade);
+  });
 
   return {
-    connectedCount: () => connections.size,
+    connectedCount: () => options.hub.onlineRunnerIds().length,
     close: () =>
       new Promise((resolve) => {
-        server.off("upgrade", onUpgrade);
         for (const ws of wss.clients) ws.terminate();
         wss.close(() => resolve());
       }),
   };
 }
 
-class RunnerConnection {
+class RunnerConnection implements RunnerLink {
   private runner: AuthenticatedRunner | null = null;
   private helloTimer: NodeJS.Timeout | null = null;
   /** 依序處理 frame，避免 Hello 的 DB 查詢還沒完成就處理下一個 frame。 */
@@ -77,7 +94,6 @@ class RunnerConnection {
   constructor(
     private readonly ws: WebSocket,
     private readonly options: RunnerEndpointOptions,
-    private readonly connections: Map<string, RunnerConnection>,
   ) {
     this.log = options.logger.child({ component: "runner-ws" });
   }
@@ -100,6 +116,20 @@ class RunnerConnection {
     });
   }
 
+  // ---- RunnerLink ----
+
+  send(frame: ServerToRunner): boolean {
+    if (this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(frame));
+    return true;
+  }
+
+  close(code: number, reason: string): void {
+    this.ws.close(code, reason);
+  }
+
+  // ---- frame 處理 ----
+
   private async onMessage(data: RawData, isBinary: boolean): Promise<void> {
     if (this.ws.readyState !== WebSocket.OPEN) return;
     const frame = isBinary ? null : parseFrame(rawToString(data));
@@ -108,20 +138,62 @@ class RunnerConnection {
       await this.onHello(frame);
       return;
     }
+    const runner = this.runner;
     if (!frame) {
-      this.log.warn({ runnerId: this.runner.id }, "收到無法解析的訊息，忽略");
+      this.log.warn({ runnerId: runner.id }, "收到無法解析的訊息，忽略");
       return;
     }
+    const { dispatcher } = this.options;
     switch (frame.type) {
       case "heartbeat":
-        await this.onHeartbeat(this.runner, frame);
+        await this.onHeartbeat(runner, frame);
         return;
-      default:
-        this.log.debug(
-          { runnerId: this.runner.id, frameType: frame.type },
-          "忽略尚未支援的 Runner frame",
+      case "agent_availability": {
+        const parsed = AgentAvailabilityFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        await recordAgentAvailability(this.options.db, runner.id, parsed.data);
+        this.log.info(
+          {
+            event: "agent_availability",
+            runnerId: runner.id,
+            agents: parsed.data.agents.map((a) => a.id),
+          },
+          "Runner 回報 AgentAvailability",
         );
+        dispatcher.availabilityChanged(runner.id);
+        return;
+      }
+      case "dispatch_accept": {
+        const parsed = DispatchAcceptFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        await dispatcher.onAccept(runner.id, parsed.data);
+        return;
+      }
+      case "dispatch_reject": {
+        const parsed = DispatchRejectFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        await dispatcher.onReject(runner.id, parsed.data);
+        return;
+      }
+      case "event": {
+        const result = await this.options.ingest.ingest(runner.id, frame);
+        if (result.ok) this.send({ type: "event_ack", ...result.ack });
+        return;
+      }
+      case "run_control_result": {
+        const parsed = RunControlResultFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        const { type: _type, ...result } = parsed.data;
+        await this.options.runControls.onResult(runner.id, result);
+        return;
+      }
+      default:
+        this.log.debug({ runnerId: runner.id, frameType: frame.type }, "忽略不認得的 Runner frame");
     }
+  }
+
+  private malformed(runner: AuthenticatedRunner, frame: AnyFrame): void {
+    this.log.warn({ runnerId: runner.id, frameType: frame.type }, "frame 格式不正確，忽略");
   }
 
   private async onHello(frame: AnyFrame | null): Promise<void> {
@@ -144,26 +216,31 @@ class RunnerConnection {
       return;
     }
     const hello = parsed.data;
-    const { db } = this.options;
+    const { db, clock } = this.options;
 
     if (hello.pairing.kind === "pairing_token") {
       const result = await pairRunner(db, {
         token: hello.pairing.token,
         devPairingToken: this.options.devPairingToken,
         info: hello.runner,
+        now: clock.now(),
       });
       if (!result.ok) {
         this.reject("invalid_pairing_token", result.message);
         return;
       }
-      this.accept(result.runner, result.runnerToken);
+      await this.accept(result.runner, result.runnerToken);
       this.log.info(
         {
           runnerId: result.runner.id,
           runnerName: result.runner.name,
           teamId: result.runner.teamId,
+          kind: result.runner.kind,
+          viaDevToken: result.viaDevToken ?? false,
         },
-        "Runner 完成 Pairing",
+        result.viaDevToken
+          ? "Runner 以開發用 Pairing token 完成 Pairing（僅供開發）"
+          : "Runner 完成 Pairing",
       );
       return;
     }
@@ -172,12 +249,13 @@ class RunnerConnection {
       runnerId: hello.pairing.runner_id,
       token: hello.pairing.token,
       info: hello.runner,
+      now: clock.now(),
     });
     if (!result.ok) {
       this.reject("invalid_runner_token", "Runner token 不正確或已被撤銷，請重新 Pairing");
       return;
     }
-    this.accept(result.runner, null);
+    await this.accept(result.runner, null);
     this.log.info(
       { runnerId: result.runner.id, runnerName: result.runner.name },
       "Runner 以 Runner token 重新連線",
@@ -190,7 +268,12 @@ class RunnerConnection {
       this.log.warn({ runnerId: runner.id }, "Heartbeat 的格式不正確，忽略");
       return;
     }
-    await recordHeartbeat(this.options.db, runner.id, new Date());
+    const { hub, dispatcher } = this.options;
+    await recordHeartbeat(this.options.db, runner.id, this.options.clock.now());
+    const accepting = parsed.data.accepting_dispatches ?? true;
+    const changed = hub.isAcceptingDispatches(runner.id) !== accepting;
+    hub.setAcceptingDispatches(runner.id, accepting);
+    if (changed && accepting) void dispatcher.kick();
     // M0 的驗收項目：在 Server log 中看得到 Runner 的 Heartbeat。
     this.log.info(
       {
@@ -198,27 +281,29 @@ class RunnerConnection {
         runnerId: runner.id,
         runnerName: runner.name,
         activeRunIds: parsed.data.active_run_ids,
+        acceptingDispatches: accepting,
       },
       `Runner Heartbeat：${runner.name}（${runner.id}）`,
     );
   }
 
-  private accept(runner: AuthenticatedRunner, runnerToken: string | null): void {
+  private async accept(runner: AuthenticatedRunner, runnerToken: string | null): Promise<void> {
+    const { hub, dispatcher } = this.options;
     this.runner = runner;
-    const previous = this.connections.get(runner.id);
-    if (previous && previous !== this) {
-      previous.ws.close(CLOSE_REPLACED, "replaced by a new connection");
-    }
-    this.connections.set(runner.id, this);
+    // 連上就算一次 Heartbeat，避免剛連上就被判定逾時。
+    await recordHeartbeat(this.options.db, runner.id, this.options.clock.now());
+    const resume = await dispatcher.resumeFor(runner.id);
+    if (hub.isOnline(runner.id))
+      hub.disconnect(runner.id, CLOSE_REPLACED, "replaced by a new connection");
     this.send({
       type: "hello_ack",
       protocol_version: PROTOCOL_VERSION,
       runner_id: runner.id,
       runner_token: runnerToken,
       heartbeat_interval_ms: this.options.heartbeatIntervalMs,
-      // TODO(B1)：帶入每個進行中 Run 已收到的最後 seq。
-      resume: [],
+      resume,
     });
+    hub.register(runner.id, this);
   }
 
   private reject(reason: HelloRejectReason, message: string): void {
@@ -233,18 +318,17 @@ class RunnerConnection {
     this.ws.close(CLOSE_POLICY_VIOLATION, reason);
   }
 
-  private send(frame: ServerToRunner): void {
-    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(frame));
-  }
-
   private onClose(code: number): void {
     this.clearHelloTimer();
-    if (this.runner && this.connections.get(this.runner.id) === this) {
-      this.connections.delete(this.runner.id);
-      this.log.info(
-        { runnerId: this.runner.id, runnerName: this.runner.name, code },
-        "Runner 已斷線",
-      );
+    if (this.runner) {
+      const wasCurrent = this.options.hub.isOnline(this.runner.id);
+      this.options.hub.unregister(this.runner.id, this);
+      if (wasCurrent && !this.options.hub.isOnline(this.runner.id)) {
+        this.log.info(
+          { runnerId: this.runner.id, runnerName: this.runner.name, code },
+          "Runner 已斷線",
+        );
+      }
     }
   }
 

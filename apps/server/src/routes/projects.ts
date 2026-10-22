@@ -211,6 +211,11 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
       }
       throw error;
     }
+    // GitHub 整合回傳的值（例如讀到的 default branch）也要符合同樣的格式，才能交給 Runner。
+    const { owner, name, defaultBranch } = registration;
+    if (!CreateRepoInput.safeParse({ owner, name, defaultBranch }).success) {
+      throw new ApiError(422, "invalid_input", "GitHub 回傳的 Repo 資訊格式不正確");
+    }
     const [repo] = await db
       .insert(repos)
       .values({

@@ -67,8 +67,11 @@ export interface AuthzInput {
   /** Team 層級能力用 Team 的 Role；Project 層級能力用 effectiveRole() 的結果。 */
   role: Role;
   project?: AuthzProjectPolicy;
-  /** 「自己的 Task」只看指派對象。 */
-  task?: { assigneeMemberId: string | null };
+  /**
+   * 「自己的 Task」只看指派對象：目前的指派對象，或 Gate 建立時的指派對象，任一個是本人就算。
+   * 後者避免在 Gate 等待期間先改派給別人再核准。
+   */
+  task?: { assigneeMemberId: string | null; gateAssigneeMemberId?: string | null };
 }
 
 export type AuthzResult = { ok: true } | { ok: false; reason: string };
@@ -86,7 +89,8 @@ export function authorize(capability: Capability, input: AuthzInput): AuthzResul
   if (
     capability === "approve_gate" &&
     input.project?.forbidSelfApproval === true &&
-    input.task?.assigneeMemberId === input.memberId
+    (input.task?.assigneeMemberId === input.memberId ||
+      input.task?.gateAssigneeMemberId === input.memberId)
   ) {
     return { ok: false, reason: "這個 Project 不允許核准指派給自己的 Task" };
   }

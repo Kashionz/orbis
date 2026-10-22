@@ -128,10 +128,8 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
     expect(heartbeat?.msg).toContain(RUNNER_NAME);
     expect(heartbeat?.runnerId).toEqual(expect.any(String));
 
-    // Runner 在第一次 Heartbeat 之前送出 AgentAvailability（00 階段 Server 記 debug log 後忽略）
-    const availabilityIndex = logs.findIndex((l) =>
-      JSON.stringify(l).includes("agent_availability"),
-    );
+    // Runner 在第一次 Heartbeat 之前送出 AgentAvailability，Server 記錄下來
+    const availabilityIndex = logs.findIndex((l) => l.event === "agent_availability");
     const firstHeartbeatIndex = logs.indexOf(heartbeat as LogLine);
     expect(availabilityIndex).toBeGreaterThanOrEqual(0);
     expect(availabilityIndex).toBeLessThan(firstHeartbeatIndex);

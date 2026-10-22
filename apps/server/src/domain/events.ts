@@ -7,7 +7,14 @@ import type { TransitionTrigger } from "./task-state-machine";
 
 export type DomainEvent =
   | { type: "task.created"; taskId: string; projectId: string }
-  | { type: "task.updated"; taskId: string; projectId: string; fields: string[] }
+  | {
+      type: "task.updated";
+      taskId: string;
+      projectId: string;
+      fields: string[];
+      /** 變更的來源；`github` 表示由 Issue 同步寫入（D 軌據此避免同步回音）。 */
+      source: "api" | "github";
+    }
   | {
       type: "task.status_changed";
       taskId: string;

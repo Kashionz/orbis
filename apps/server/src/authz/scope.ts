@@ -88,6 +88,8 @@ export function requireProjectCapability(
   actor: Actor,
   scope: ProjectScope & { task?: TaskRow },
   capability: Capability,
+  /** 核准 Gate 時，Gate 建立當時的指派對象。 */
+  gateAssigneeMemberId?: string | null,
 ): void {
   const result = authorize(capability, {
     memberId: actor.memberId,
@@ -96,7 +98,9 @@ export function requireProjectCapability(
       allowMemberTeamRunnerDispatch: scope.project.allowMemberTeamRunnerDispatch,
       forbidSelfApproval: scope.project.forbidSelfApproval,
     },
-    task: scope.task ? { assigneeMemberId: scope.task.assigneeMemberId } : undefined,
+    task: scope.task
+      ? { assigneeMemberId: scope.task.assigneeMemberId, gateAssigneeMemberId }
+      : undefined,
   });
   if (!result.ok) throw forbidden(result.reason);
 }

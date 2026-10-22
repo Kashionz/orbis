@@ -153,11 +153,45 @@ export const UpdateProjectInput = z
 /** Project 的 Role 覆寫不能是 Owner。 */
 export const SetProjectRoleInput = z.object({ role: Role.exclude(["owner"]) }).strict();
 
+/** GitHub 的使用者或組織名稱。 */
+export const GitHubOwnerName = z
+  .string()
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, { error: "不是合法的 GitHub 使用者或組織名稱" });
+
+/** GitHub 的 repository 名稱；不可以是 `.` 或 `..`（會被 Runner 用在 Worktree 路徑中）。 */
+export const GitHubRepoName = z
+  .string()
+  .regex(/^[A-Za-z0-9._-]{1,100}$/, { error: "不是合法的 GitHub repository 名稱" })
+  .refine((name) => name !== "." && name !== "..", { error: "不是合法的 GitHub repository 名稱" });
+
+/** git 分支名稱（git check-ref-format 規則的子集合，會被放進 git 指令的參數）。 */
+export const GitBranchName = z
+  .string()
+  .min(1)
+  .max(255)
+  .refine(
+    (name) =>
+      !name.startsWith("-") &&
+      !name.startsWith("/") &&
+      !name.endsWith("/") &&
+      !name.endsWith(".") &&
+      !name.endsWith(".lock") &&
+      !name.includes("..") &&
+      !name.includes("//") &&
+      !name.includes("@{") &&
+      name !== "@" &&
+      !name.split("/").some((part) => part.startsWith(".")) &&
+      // 控制字元、空白與 git 不允許的符號。
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: 要排除的正是控制字元
+      !/[\u0000- \u007f~^:?*[\\]/.test(name),
+    { error: "不是合法的 git 分支名稱" },
+  );
+
 export const CreateRepoInput = z
   .object({
-    owner: z.string().trim().min(1),
-    name: z.string().trim().min(1),
-    defaultBranch: z.string().trim().min(1).default("main"),
+    owner: GitHubOwnerName,
+    name: GitHubRepoName,
+    defaultBranch: GitBranchName.default("main"),
   })
   .strict();
 

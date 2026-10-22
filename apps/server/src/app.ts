@@ -9,6 +9,9 @@ import type { Logger } from "./logger";
 import { createAuthRoutes } from "./routes/auth";
 import { createGitHubRoutes, createGitHubWebhookRoutes } from "./routes/github";
 import { createProjectRoutes } from "./routes/projects";
+import { createReviewRoutes } from "./routes/review";
+import { createRunnerRoutes } from "./routes/runners";
+import { createRunRoutes } from "./routes/runs";
 import { createTaskRoutes } from "./routes/tasks";
 import { createTeamRoutes } from "./routes/team";
 import { createServices, type Services } from "./services";
@@ -46,6 +49,9 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api", createTeamRoutes(services));
   app.route("/api", createProjectRoutes(services));
   app.route("/api", createTaskRoutes(services));
+  app.route("/api", createRunRoutes(services));
+  app.route("/api", createReviewRoutes(services));
+  app.route("/api", createRunnerRoutes(services));
 
   // D 軌（GitHub）的掛載點。
   app.route("/api/github", createGitHubRoutes(services.github));

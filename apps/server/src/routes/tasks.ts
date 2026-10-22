@@ -196,6 +196,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
           taskId: row.id,
           projectId: row.projectId,
           fields: Object.keys(input),
+          source: "api",
         }),
       );
       return row;
