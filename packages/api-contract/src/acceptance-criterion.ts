@@ -7,7 +7,7 @@ import { AcceptanceCriterionKind, AcceptanceCriterionResult } from "./enums";
 const Description = z.string().trim().min(1);
 
 /**
- * `command` 類型要執行的指令；null 表示沿用 `.orbis/config.toml` 的 `verify`。
+ * `command` 類型要執行的指令；null 表示沿用 Repo 設定檔（§6.3）的 `verify`。
  * 其他類型一律為 null。
  */
 const Command = z.string().trim().min(1).nullable();

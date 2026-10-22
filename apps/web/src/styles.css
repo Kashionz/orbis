@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  background: #24292f;
+  color: #fff;
+  text-decoration: none;
+}
+
+.login,
+.notice {
+  max-width: 32rem;
+  margin: 4rem auto;
+  padding: 0 1rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #8884;
+}
+
+.product-name {
+  font-weight: 600;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+}
+
+.board {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.board-column {
+  flex: 0 0 14rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  background: #8881;
+}
+
+.board-column h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.empty {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
