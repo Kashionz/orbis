@@ -826,7 +826,7 @@ async fn cancel_送出_session_cancel_後回合以_cancelled_結束() {
 async fn spawn_child_回報子程序的_pid_而且子程序持續執行() {
     let dir = workdir();
     let cwd = dir.path().to_owned();
-    let updates = with_agent(
+    let pid = with_agent(
         "spawn-child.yaml",
         PermissionReply::Allow,
         async move |conn: Conn| {
@@ -837,22 +837,23 @@ async fn spawn_child_回報子程序的_pid_而且子程序持續執行() {
             while conn.recorded.lock().unwrap().updates.len() < 2 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
+            let first = describe(&conn.recorded.lock().unwrap().updates[0]);
+            let pid: u32 = first
+                .strip_prefix("message child pid: ")
+                .unwrap_or_else(|| panic!("第一個 update 應該回報 PID：{first}"))
+                .parse()
+                .unwrap();
+            // Agent 還在執行時，子程序也在執行（Agent 結束後由誰清掉子程序是 Runner 的責任；
+            // 這個測試的 ACP client 在 Unix 上會連同 process group 一起結束）。
+            assert!(process_alive(pid), "子程序 {pid} 應該在執行");
             conn.cx
                 .send_notification(CancelNotification::new(session.clone()))?;
             let response = pending.block_task().await?;
             assert_eq!(response.stop_reason, StopReason::Cancelled);
-            Ok(conn.take_recorded().updates)
+            Ok(pid)
         },
     )
     .await;
-    let described: Vec<_> = updates.iter().map(describe).collect();
-    let pid: u32 = described[0]
-        .strip_prefix("message child pid: ")
-        .unwrap_or_else(|| panic!("第一個 update 應該回報 PID：{described:?}"))
-        .parse()
-        .unwrap();
-    // Agent 結束後子程序仍在執行（結束整個程序樹是 Runner 的責任），測試自己清掉它。
-    assert!(process_alive(pid), "子程序 {pid} 應該還在執行");
     kill_process(pid);
 }
 

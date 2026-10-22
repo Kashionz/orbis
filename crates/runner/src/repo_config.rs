@@ -208,6 +208,18 @@ pub fn literal_relative_path(raw: &str) -> Result<String, String> {
     if normalized.is_empty() {
         return Err(format!("{raw} 不是檔案路徑"));
     }
+    // Windows 會改寫的形式（結尾的 . 或空白、8.3 短檔名、裝置名稱）會讓實際檔案和字串對不上，
+    // 排除與洩漏檢查就可能漏掉，一律拒絕。
+    for part in normalized.split('/') {
+        let stem = part.split('.').next().unwrap_or(part).to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit());
+        if part.ends_with(['.', ' ']) || part.contains('~') || reserved {
+            return Err(format!("{raw} 含有 Windows 會改寫的路徑形式（{part}）"));
+        }
+    }
     Ok(normalized)
 }
 
@@ -322,6 +334,21 @@ commit_message = \"  \"
         );
         assert_eq!(literal_relative_path("a//./b/").as_deref(), Ok("a/b"));
         assert!(literal_relative_path("./").is_err());
+        for windows_alias in [
+            ".env.",
+            ".env ",
+            "CONFIG~1/x",
+            "nul",
+            "aux.txt",
+            "com1",
+            "a/LPT9.log",
+        ] {
+            assert!(
+                literal_relative_path(windows_alias).is_err(),
+                "{windows_alias:?} 應該被拒絕"
+            );
+        }
+        assert!(literal_relative_path("console.log").is_ok());
         assert_eq!(
             literal_relative_path("config/local.json").as_deref(),
             Ok("config/local.json")
