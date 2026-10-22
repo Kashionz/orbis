@@ -48,7 +48,7 @@ export async function inspectRepo(
   const role = await ctx.client.getCollaboratorRole(
     installation.installationId,
     { owner: repo.owner, name: repo.name },
-    requester.githubLogin,
+    { login: requester.githubLogin, id: requester.githubUserId },
   );
   if (!WRITE_ROLES.has(role)) return notInstalled;
   return {

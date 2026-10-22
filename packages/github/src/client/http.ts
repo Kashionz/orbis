@@ -56,7 +56,11 @@ const PullRequestResponse = z.object({
   base: z.object({ ref: z.string() }),
 });
 
-const PermissionResponse = z.object({ permission: z.string(), role_name: z.string().optional() });
+const PermissionResponse = z.object({
+  permission: z.string(),
+  role_name: z.string().optional(),
+  user: z.object({ id: z.number() }).nullable().optional(),
+});
 const ROLES: ReadonlySet<string> = new Set([
   "admin",
   "maintain",
@@ -238,15 +242,15 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
       tokens.invalidate(installationId);
     },
 
-    async getCollaboratorRole(installationId, repo, username) {
+    async getCollaboratorRole(installationId, repo, user) {
       const result = await request(
         "GET",
-        `${repoPath(repo)}/collaborators/${encodeURIComponent(username)}/permission`,
+        `${repoPath(repo)}/collaborators/${encodeURIComponent(user.login)}/permission`,
         inst(installationId),
         PermissionResponse,
         { allowNotFound: true },
       );
-      if (!result) return "none";
+      if (!result || result.data.user?.id !== user.id) return "none";
       const role = result.data.role_name ?? result.data.permission;
       return ROLES.has(role as RepoRole) ? (role as RepoRole) : "none";
     },

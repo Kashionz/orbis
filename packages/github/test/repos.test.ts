@@ -49,14 +49,21 @@ describe("Repo 登記", () => {
         installUrl: "https://github.com/apps/acme-pm/installations/new",
       });
     }
-    expect(w.github.callsTo("getCollaboratorRole").map((c) => c.args[2])).toEqual([
-      "Codertocat",
-      "Codertocat",
-      "Codertocat",
-    ]);
+    expect(
+      w.github.callsTo("getCollaboratorRole").map((c) => (c.args[2] as { login: string }).login),
+    ).toEqual(["Codertocat", "Codertocat", "Codertocat"]);
     expect(
       await w.integration.inspectRepo(w.repo.owner, w.repo.name, "no-such-member"),
     ).toMatchObject({
+      installed: false,
+    });
+  });
+
+  it("Member 的 login 已經屬於另一個 GitHub 帳號（改名後被別人註冊）時不算有權限", async () => {
+    const w = createWorld();
+    // 現在叫 Codertocat 的是另一個帳號（id 不同），而且對 repo 有寫入權限
+    w.github.addUser({ id: 5555, login: w.alice.githubLogin, type: "User" });
+    expect(await w.integration.inspectRepo(w.repo.owner, w.repo.name, w.alice.id)).toMatchObject({
       installed: false,
     });
   });

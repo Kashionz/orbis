@@ -346,7 +346,9 @@ describe("修改者的權限", () => {
     expect(w.github.issue(w.repo.id, issueNumber).state).toBe("open");
     const [summary] = w.github.commentsOn(w.repo.id, issueNumber);
     expect(summary?.body).toContain("@outsider 沒有這個 repo 的寫入權限");
-    expect(w.github.callsTo("getCollaboratorRole").map((c) => c.args[2])).toEqual(["outsider"]);
+    expect(
+      w.github.callsTo("getCollaboratorRole").map((c) => (c.args[2] as { login: string }).login),
+    ).toEqual(["outsider"]);
   });
 
   it("沒有寫入權限的人改 title：不寫回 Task，Issue 改回 Task 的值", async () => {

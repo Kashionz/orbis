@@ -230,10 +230,12 @@ describe("HTTP GitHubClient", () => {
       tokenRoute,
       (req) =>
         req.url.endsWith("/collaborators/alice/permission")
-          ? json({ permission: "write", role_name: "maintain" })
+          ? json({ permission: "write", role_name: "maintain", user: { id: 11, login: "alice" } })
           : undefined,
     ]);
-    expect(await client.getCollaboratorRole(5, repo, "alice")).toBe("maintain");
-    expect(await client.getCollaboratorRole(5, repo, "nobody")).toBe("none");
+    expect(await client.getCollaboratorRole(5, repo, { login: "alice", id: 11 })).toBe("maintain");
+    expect(await client.getCollaboratorRole(5, repo, { login: "nobody", id: 12 })).toBe("none");
+    // login 已經屬於另一個帳號（改名後被別人註冊）
+    expect(await client.getCollaboratorRole(5, repo, { login: "alice", id: 99 })).toBe("none");
   });
 });

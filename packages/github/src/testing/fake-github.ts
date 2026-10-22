@@ -181,11 +181,13 @@ export class FakeGitHub implements GitHubClient {
   async getCollaboratorRole(
     installationId: number,
     ref: RepoRef,
-    username: string,
+    user: { login: string; id: number },
   ): Promise<RepoRole> {
-    this.#record("getCollaboratorRole", [installationId, ref, username]);
+    this.#record("getCollaboratorRole", [installationId, ref, user]);
     this.#repo(ref, installationId);
-    return this.roles.get(username) ?? "none";
+    // login 目前屬於另一個帳號（改名後被別人註冊）時，GitHub 回的是那個帳號的權限
+    if (this.users.get(user.login)?.id !== user.id) return "none";
+    return this.roles.get(user.login) ?? "none";
   }
 
   async getRepo(installationId: number, ref: RepoRef) {

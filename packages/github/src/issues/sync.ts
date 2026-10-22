@@ -228,7 +228,10 @@ async function senderCanWrite(
   const record = await ctx.domain.getRepo(repoId);
   const repo = record && connectedRepo(record);
   if (!repo) return false;
-  const role = await ctx.client.getCollaboratorRole(repo.installationId, repo.ref, login);
+  const role = await ctx.client.getCollaboratorRole(repo.installationId, repo.ref, {
+    login,
+    id: githubUserId,
+  });
   return WRITE_ROLES.has(role);
 }
 

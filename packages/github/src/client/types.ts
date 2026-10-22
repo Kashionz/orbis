@@ -103,9 +103,14 @@ export interface GitHubClient {
   forgetInstallation(installationId: number): void;
   /**
    * 使用者對 repo 的角色（`GET /repos/{owner}/{repo}/collaborators/{username}/permission` 的 `role_name`）。
-   * 不是 collaborator 時回傳 `none`。
+   * 不是 collaborator 時回傳 `none`。查詢用 login，但回應的 user id 必須等於 `user.id`，否則也回傳 `none`
+   * （login 可以改名，舊名稱可能被別人註冊；Member 的 login 只是登入時的快照）。
    */
-  getCollaboratorRole(installationId: number, repo: RepoRef, username: string): Promise<RepoRole>;
+  getCollaboratorRole(
+    installationId: number,
+    repo: RepoRef,
+    user: { login: string; id: number },
+  ): Promise<RepoRole>;
 
   getRepo(installationId: number, repo: RepoRef): Promise<GitHubRepository | null>;
   getIssue(installationId: number, repo: RepoRef, number: number): Promise<GitHubIssue | null>;
