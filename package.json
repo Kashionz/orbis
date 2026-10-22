@@ -7,7 +7,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "lint": "biome check . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-names.mjs",
+    "dev": "pnpm --parallel --filter @orbis/server --filter @orbis/web dev",
+    "dev:runner": "node scripts/dev-runner.mjs",
+    "lint": "biome check . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-names.mjs && node scripts/check-architecture-paths.mjs",
     "format": "biome check --write . && cargo fmt --all",
     "typecheck": "pnpm -r typecheck",
     "test": "cargo test --workspace && pnpm -r test && node --test scripts/*.test.mjs",
