@@ -31,7 +31,7 @@ describe("needsYouNotification", () => {
     expect(needsYouNotification(permission)).toEqual({
       title: "ORB-12 需要你核准權限",
       body: "執行 pnpm test",
-      href: "/tasks/ORB-12",
+      href: "/runs/r1?focus=permission-p1",
     });
     expect(needsYouNotification(gate).title).toBe("ORB-12 的 Review Gate 等待核准");
     expect(needsYouNotification({ ...gate, gateKind: "plan" }).title).toBe(
@@ -43,10 +43,11 @@ describe("needsYouNotification", () => {
     });
   });
 
-  it("網址中的 Task Key 會編碼", () => {
-    expect(needsYouHref({ ...gate, taskKey: "A/B" as NeedsYouItem["taskKey"] })).toBe(
-      "/tasks/A%2FB",
-    );
+  it("Review Gate 到 diff review，Plan Gate 與停下來的 Run 到 Run 頁，網址中的 ID 會編碼", () => {
+    expect(needsYouHref(gate)).toBe("/runs/r1/review");
+    expect(needsYouHref({ ...gate, gateKind: "plan" })).toBe("/runs/r1");
+    expect(needsYouHref(stopped)).toBe("/runs/r1");
+    expect(needsYouHref({ ...stopped, runId: "a/b?c" })).toBe("/runs/a%2Fb%3Fc");
   });
 });
 

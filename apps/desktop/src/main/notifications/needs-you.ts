@@ -6,12 +6,17 @@ import type { NeedsYouItem } from "@orbis/api-contract";
 export const NEEDS_YOU_POLL_INTERVAL_MS = 5_000;
 
 /**
- * 點擊通知後要前往的 Web UI 路徑。
- * TODO(contract): 等 C1 的 PR 決定 Run 頁的路由後，權限請求改成直接跳到 Run 頁。
- * 目前依 C1 的計畫：Task 頁是 `/tasks/$taskKey`。
+ * 點擊通知後要前往的 Web UI 路徑，和 Web UI 的 Needs You 頁「一鍵跳到」的位置相同：
+ * Review Gate 到 diff review，權限請求到 Run 頁並聚焦在該請求，其他到 Run 頁。
+ * TODO(contract): 路由取自 C1 分支（track/c1-web-core）的 router.tsx 與 NeedsYouPage.tsx，C1 合併後確認。
  */
 export function needsYouHref(item: NeedsYouItem): string {
-  return `/tasks/${encodeURIComponent(item.taskKey)}`;
+  const run = `/runs/${encodeURIComponent(item.runId)}`;
+  if (item.kind === "gate" && item.gateKind === "review") return `${run}/review`;
+  if (item.kind === "permission_request") {
+    return `${run}?focus=${encodeURIComponent(`permission-${item.permissionRequestId}`)}`;
+  }
+  return run;
 }
 
 const GATE_LABELS: Record<string, string> = { plan: "Plan Gate", review: "Review Gate" };

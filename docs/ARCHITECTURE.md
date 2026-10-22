@@ -537,7 +537,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
   - 關閉主視窗只是縮到系統匣，結束 App 要用系統匣或選單。
 - **桌面通知**：
   - 登入後每 5 秒輪詢 Needs You 清單。第一次輪詢只建立基準，之後新出現的項目各發一次原生通知。
-  - 點擊通知後顯示主視窗，並前往對應的 Task 頁。
+  - 點擊通知後顯示主視窗，並前往和 Web UI 的 Needs You 清單相同的位置：Review Gate 到 diff review，權限請求與其他項目到 Run 頁。
 - **開啟本機工具**：
   - Run 頁面可以用設定的編輯器或終端機開啟 Worktree，兩者都提供預設選項與自訂指令（`{path}` 會換成 Worktree 路徑）。
   - Desktop 只接受 Worktree 根目錄（§6.2）底下 `<repo>/<Worktree>` 這一層、而且確實存在的目錄，並解析 symlink 確認沒有跳出根目錄。

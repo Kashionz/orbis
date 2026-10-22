@@ -29,7 +29,7 @@ const gate: NeedsYouItem = {
   gateKind: "review",
 };
 
-test("Needs You 出現新項目時發出通知，點擊後跳到 Task 頁", async () => {
+test("Needs You 出現新項目時發出通知，點擊後跳到 diff review", async () => {
   desktop = await launchDesktop({ config: { serverUrl: server.url } });
   const main = await desktop.mainWindow();
   await main.click("#login");
@@ -52,14 +52,14 @@ test("Needs You 出現新項目時發出通知，點擊後跳到 Task 頁", asyn
   expect(notifications[0]).toEqual({
     title: "ORB-12 的 Review Gate 等待核准",
     body: "點擊查看並核准",
-    href: "/tasks/ORB-12",
+    href: "/runs/run-1/review",
   });
   const tray = await desktop.hooks((h) => h.tray());
   expect(tray.needsYouCount).toBe(1);
   expect(tray.tooltip).toContain("Needs You 1 項");
 
   await desktop.hooks((h) => h.clickNotification(0));
-  await expect(main.locator("#path")).toHaveText("/tasks/ORB-12");
+  await expect(main.locator("#path")).toHaveText("/runs/run-1/review");
 
   // 同一個項目不會重複通知；處理完之後數量歸零
   server.state.needsYou = [];
