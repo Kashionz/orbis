@@ -1,6 +1,6 @@
 // Needs You 項目：等待某位 Member 處理的權限請求、待核准的 Gate、停下來的 Run。
 
-import { PERMISSION_OPTION_KINDS } from "@orbis/protocol";
+import { PERMISSION_OPTION_KINDS, PERMISSION_PURPOSES } from "@orbis/protocol";
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
 import { GateKind } from "./enums";
@@ -27,6 +27,8 @@ export const NeedsYouPermissionRequest = NeedsYouBase.extend({
   toolCallId: Id.nullable(),
   /** 給人看的說明，例如要執行的指令。 */
   title: z.string(),
+  /** 請求的用途：一般 tool call、設定的信任核准（Admin 以上才能回覆）、Agent 設定檔被修改。 */
+  purpose: z.enum(PERMISSION_PURPOSES),
   /** 可以選擇的選項；回覆時送出其中一個 `optionId`。 */
   options: z
     .array(

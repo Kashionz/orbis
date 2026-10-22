@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
-import { TaskStatus } from "./enums";
+import { TaskDoneReason, TaskStatus } from "./enums";
 import type { ProjectKeyPrefix } from "./project";
 
 const TASK_KEY_PATTERN = /^([A-Z][A-Z0-9]{1,9})-([1-9][0-9]*)$/;
@@ -36,11 +36,14 @@ export const Task = z.object({
   id: Id,
   key: TaskKey,
   projectId: Id,
-  repoId: Id,
+  /** 對應的 Repo；Backlog 階段可以還沒決定，進入 Ready 前必須設定（§5）。 */
+  repoId: Id.nullable(),
   title: TaskTitle,
   /** Task 描述（markdown）。小 Task 的 Spec 就是這段描述。 */
   description: z.string(),
   status: TaskStatus,
+  /** 轉為 Done 的原因（GitHub 的 state_reason）；不是 Done 時為 null（§11）。 */
+  doneReason: TaskDoneReason.nullable(),
   /** 指派的 Member；尚未指派時為 null。 */
   assigneeMemberId: Id.nullable(),
   /** 連結的 Repo 內 Spec；沒有時為 null。 */
@@ -49,7 +52,8 @@ export const Task = z.object({
   dependsOn: z.array(Id),
   /** 覆寫 Project 的 Plan Gate 設定；null 表示沿用 Project。 */
   planGateEnabled: z.boolean().nullable(),
-  createdByMemberId: Id,
+  /** 建立的 Member；Member 被移除或由 Agent 提出的 Draft Task 確認而來時可能為 null。 */
+  createdByMemberId: Id.nullable(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
