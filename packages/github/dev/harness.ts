@@ -1,7 +1,7 @@
 // 手動驗證用的 dev harness：真實的 GitHub App ＋ in-memory 的 Task（FakeDomainService）。
 // Server（B 軌）完成前，用它在測試 repo 上走過 Issue 雙向同步、開 PR、merge 後轉 Done。
 //
-//   pnpm --filter @orbis/github dev:harness -- --repo Kashionz/orbis-sandbox --member Kashionz:13392701 [--port 4402]
+//   pnpm --filter @orbis/github dev:harness --repo Kashionz/orbis-sandbox --member Kashionz:13392701 [--port 4402]
 //
 // webhook 用 smee.io 轉到本機：npx smee-client --url <channel> --target http://localhost:4402/api/webhooks/github
 //
@@ -31,6 +31,8 @@ import {
 import { readEnvFile } from "./env-file";
 
 const { values } = parseArgs({
+  // pnpm 會把 `--` 原樣傳進來
+  args: process.argv.slice(2).filter((arg, i) => !(i === 0 && arg === "--")),
   options: {
     repo: { type: "string" },
     member: { type: "string", multiple: true, default: [] },

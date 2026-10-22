@@ -29,7 +29,7 @@ GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙�
 1. **建立 App**（manifest 流程）：
 
    ```sh
-   pnpm --filter @orbis/github app:create -- --webhook-url <webhook 網址> [--public-url <Server 對外網址>] [--org <組織>]
+   pnpm --filter @orbis/github app:create --webhook-url <webhook 網址> [--public-url <Server 對外網址>] [--org <組織>]
    ```
 
    - 用瀏覽器開啟印出的 `http://localhost:4401/`，按下按鈕到 GitHub 確認建立。
@@ -139,7 +139,7 @@ Server 完成前，用 dev harness 在測試 repo 上走過完整流程。它連
 # 1. webhook 轉送到本機
 npx smee-client --url <smee channel> --target http://localhost:4402/api/webhooks/github
 # 2. 啟動 harness（--member 是 <GitHub login>:<數字 user id>）
-pnpm --filter @orbis/github dev:harness -- --repo <owner>/<name> --member <login>:<id>
+pnpm --filter @orbis/github dev:harness --repo <owner>/<name> --member <login>:<id>
 # 3. 操作：POST /dev/tasks、PATCH /dev/tasks/:id、POST /dev/import、POST /dev/tasks/:id/branch-pushed（見 dev/harness.ts）
 # 4. 錄製真實 payload 成 fixture
 pnpm --filter @orbis/github fixtures:record

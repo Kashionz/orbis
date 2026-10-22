@@ -1,6 +1,6 @@
 // 以 manifest 流程建立 GitHub App，憑證寫進 repo 根目錄的 .env。
 //
-//   pnpm --filter @orbis/github app:create -- --webhook-url https://smee.io/xxxx [--name "..."] [--org acme] [--port 4401]
+//   pnpm --filter @orbis/github app:create --webhook-url https://smee.io/xxxx [--name "..."] [--org acme] [--port 4401]
 //
 // 開啟瀏覽器到印出的網址 → 按「Create GitHub App」→ 導回本機後自動換成憑證。
 
@@ -14,6 +14,8 @@ import { appManifest } from "../src/manifest";
 import { ENV_FILE, writeEnvValues } from "./env-file";
 
 const { values } = parseArgs({
+  // pnpm 會把 `--` 原樣傳進來
+  args: process.argv.slice(2).filter((arg, i) => !(i === 0 && arg === "--")),
   options: {
     "webhook-url": { type: "string" },
     "public-url": { type: "string", default: "http://localhost:4402" },
