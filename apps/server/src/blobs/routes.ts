@@ -36,6 +36,10 @@ const MediaType = z
   .max(255)
   .regex(/^[\w.+-]+\/[\w.+-]+(\s*;.*)?$/, { error: "不是合法的 media type" });
 
+interface UploadEnv {
+  Variables: { upload: { blobId: string; runId: string; sha256: string; mediaType: string } };
+}
+
 /** 瀏覽器可以直接顯示的圖片；其他內容一律以附件下載，避免在 Server 的 origin 上執行。 */
 const INLINE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
@@ -43,22 +47,17 @@ export function createBlobRoutes(
   s: Services & { blobStore: BlobStore },
   options: { maxBytes?: number } = {},
 ): {
-  runner: Hono;
+  runner: Hono<UploadEnv>;
   web: Hono<AppEnv>;
 } {
   const { db, auth, blobStore } = s;
   const maxBytes = options.maxBytes ?? MAX_BLOB_BYTES;
 
-  const runner = new Hono();
+  const runner = new Hono<UploadEnv>();
   runner.put(
     `${RUNNER_BLOB_PATH}/:blobId`,
-    // 讀取 body 時就計算大小，超過上限立刻中止，不會先把整個內容讀進記憶體。
-    bodyLimit({
-      maxSize: maxBytes,
-      onError: (c) =>
-        c.json({ error: "payload_too_large", message: `blob 不能超過 ${maxBytes} bytes` }, 413),
-    }),
-    async (c) => {
+    // 先認證、確認 Runner 正在執行這個 Run，之後才開始讀 body，未認證的請求不會消耗記憶體。
+    async (c, next) => {
       const header = c.req.header("authorization") ?? "";
       const token = /^Bearer\s+(.+)$/i.exec(header)?.[1];
       const caller = token ? await findRunnerByToken(db, token) : null;
@@ -84,10 +83,20 @@ export function createBlobRoutes(
         )
         .limit(1);
       if (!dispatch) throw new ApiError(403, "forbidden", "這台 Runner 沒有在執行這個 Run");
-
+      c.set("upload", { blobId, ...query, mediaType: mediaType.data });
+      await next();
+    },
+    // 讀取 body 時就計算大小，超過上限立刻中止。
+    bodyLimit({
+      maxSize: maxBytes,
+      onError: (c) =>
+        c.json({ error: "payload_too_large", message: `blob 不能超過 ${maxBytes} bytes` }, 413),
+    }),
+    async (c) => {
+      const { blobId, runId, mediaType, sha256: declared } = c.get("upload");
       const data = new Uint8Array(await c.req.arrayBuffer());
       const sha256 = createHash("sha256").update(data).digest("hex");
-      if (sha256 !== query.sha256) {
+      if (sha256 !== declared) {
         throw new ApiError(422, "invalid_input", "內容的 sha256 與宣告的不符");
       }
 
@@ -101,9 +110,9 @@ export function createBlobRoutes(
           id: blobId,
           sha256,
           size: data.byteLength,
-          mediaType: mediaType.data,
+          mediaType,
           storageKey: key,
-          runId: query.runId,
+          runId,
           createdAt: now,
           expiresAt: new Date(now.getTime() + BLOB_RETENTION_MS),
         })
@@ -111,7 +120,7 @@ export function createBlobRoutes(
         .returning({ id: blobs.id });
       if (!reserved) {
         const [existing] = await db.select().from(blobs).where(eq(blobs.id, blobId));
-        if (!existing || existing.sha256 !== sha256 || existing.runId !== query.runId) {
+        if (!existing || existing.sha256 !== sha256 || existing.runId !== runId) {
           throw conflict("這個 blob_id 已經用在不同的內容");
         }
         // 重送相同內容：補寫一次內容（前一次可能寫入失敗），可以安全地重試。
