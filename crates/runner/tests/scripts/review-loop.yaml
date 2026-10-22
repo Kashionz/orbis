@@ -1,0 +1,35 @@
+# M1 主線：權限請求 → 回覆 → 產生 diff → 完成 → 收到退回的 prompt → 在同一個 session 再次完成。
+description: 權限請求、完成、退回後再次完成
+turns:
+  - steps:
+      - message: 我先執行建置。
+      - permission:
+          tool_call:
+            id: run-build
+            title: 執行 make build
+            kind: execute
+            raw_input: { command: "make build" }
+            output: build ok
+          allow:
+            - tool_call:
+                id: write-feature
+                title: 新增 feature.txt
+                edit:
+                  path: feature.txt
+                  content: "version 1\n"
+            - message: 第一版完成。
+            - stop: end_turn
+          reject:
+            - message: 好，不執行建置。
+            - stop: end_turn
+  - expect_prompt_contains: 請改成第二版
+    steps:
+      - tool_call:
+          id: edit-v2
+          title: 修改 feature.txt
+          edit:
+            path: feature.txt
+            old_text: version 1
+            new_text: version 2
+      - message: 第二版完成。
+      - stop: end_turn

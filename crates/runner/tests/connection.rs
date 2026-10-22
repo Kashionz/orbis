@@ -1,330 +1,419 @@
-//! 用 in-process 的 WebSocket server 扮演 Server，啟動真正的 `orbis-runner` 執行檔，
-//! 驗證連線流程：Hello → HelloAck → AgentAvailability 與 Heartbeat；HelloRejected 時以非 0 結束。
+//! 啟動真正的 `orbis-runner` 執行檔，用扮演 Server 的 WebSocket 驗證連線流程：
+//! Pairing 與 Runner token、重新連線、Dispatch 的驗證、RunControl 的分派、sidecar 協定、結束碼。
 
-use std::process::{ExitStatus, Stdio};
+mod support;
+
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
-use orbis_protocol::connection::{HelloAck, HelloRejectReason, HelloRejected, Pairing};
-use orbis_protocol::control::{
-    RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason,
-};
-use orbis_protocol::dispatch::{DispatchOffer, DispatchRejectReason, DispatchRepo, DispatchTask};
-use orbis_protocol::enums::PermissionPolicy;
-use orbis_protocol::frame::{RunnerToServer, ServerToRunner};
-use orbis_protocol::{PROTOCOL_VERSION, RUNNER_WS_PATH, names};
+use orbis_protocol::connection::{HelloRejectReason, HelloRejected};
+use orbis_protocol::control::RunControlAction;
+use orbis_protocol::dispatch::DispatchDelegation;
+use orbis_protocol::enums::DelegationMode;
+use orbis_protocol::frame::ServerToRunner;
+use orbis_protocol::{PROTOCOL_VERSION, names};
 use orbis_runner::config::{ENV_PAIRING_TOKEN, ENV_SERVER_URL};
-use tokio::io::AsyncReadExt;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::process::{Child, Command};
-use tokio::time::timeout;
-use tokio_tungstenite::WebSocketStream;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use support::server::{
+    FakeServer, RunnerOptions, fake_agent_toml, offer, send_offer, spawn_runner, write_runner_toml,
+};
+use support::{Remote, runner_script, script, temp_dir};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-const WAIT: Duration = Duration::from_secs(30);
-
-/// 扮演 Server 的 WebSocket 端點。
-struct FakeServer {
-    listener: TcpListener,
-}
-
-impl FakeServer {
-    async fn start() -> Self {
-        Self {
-            listener: TcpListener::bind("127.0.0.1:0").await.unwrap(),
-        }
-    }
-
-    fn base_url(&self) -> String {
-        format!("http://{}", self.listener.local_addr().unwrap())
-    }
-
-    /// 接受 Runner 的連線，並確認它連的是 Runner 的 WebSocket 路徑。
-    // callback 的回傳型別由 tungstenite 決定，無法縮小 Err 的大小。
-    #[allow(clippy::result_large_err)]
-    async fn accept(&self) -> RunnerSide {
-        let (stream, _) = timeout(WAIT, self.listener.accept())
-            .await
-            .expect("Runner 沒有連上來")
-            .unwrap();
-        let ws = tokio_tungstenite::accept_hdr_async(stream, |req: &Request, resp: Response| {
-            assert_eq!(req.uri().path(), RUNNER_WS_PATH, "Runner 連到錯誤的路徑");
-            Ok(resp)
-        })
-        .await
-        .unwrap();
-        RunnerSide { ws }
-    }
-}
-
-/// Server 端看到的 Runner 連線。
-struct RunnerSide {
-    ws: WebSocketStream<TcpStream>,
-}
-
-impl RunnerSide {
-    async fn recv(&mut self) -> RunnerToServer {
-        loop {
-            let message = timeout(WAIT, self.ws.next())
-                .await
-                .expect("等不到 Runner 的 frame")
-                .expect("Runner 關閉了連線")
-                .unwrap();
-            if let Message::Text(text) = message {
-                return serde_json::from_str(&text)
-                    .unwrap_or_else(|e| panic!("Runner 送出不合法的 frame：{e}\n{text}"));
-            }
-        }
-    }
-
-    /// 略過 Heartbeat，取得下一個其他種類的 frame。
-    async fn recv_non_heartbeat(&mut self) -> RunnerToServer {
-        loop {
-            match self.recv().await {
-                RunnerToServer::Heartbeat(_) => continue,
-                frame => return frame,
-            }
-        }
-    }
-
-    async fn send(&mut self, frame: &ServerToRunner) {
-        let text = serde_json::to_string(frame).unwrap();
-        self.ws.send(Message::text(text)).await.unwrap();
-    }
-}
-
-/// 啟動 Runner 執行檔。不繼承測試環境中的連線設定，避免影響結果。
-fn runner(args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_orbis-runner"));
-    cmd.args(args)
-        .env_remove(names::env_var(ENV_SERVER_URL))
-        .env_remove(names::env_var(ENV_PAIRING_TOKEN))
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    cmd
-}
-
-async fn wait_exit(child: &mut Child) -> (ExitStatus, String) {
-    let status = timeout(WAIT, child.wait())
-        .await
-        .expect("Runner 沒有結束")
-        .unwrap();
-    let mut stderr = String::new();
-    child
-        .stderr
-        .take()
-        .unwrap()
-        .read_to_string(&mut stderr)
-        .await
-        .unwrap();
-    (status, stderr)
-}
-
-fn hello_ack(heartbeat_interval_ms: u32) -> ServerToRunner {
-    ServerToRunner::HelloAck(HelloAck {
-        protocol_version: PROTOCOL_VERSION,
-        runner_id: "0192f3a0-0000-7000-8000-000000000001".into(),
-        runner_token: Some("rt_test".into()),
-        heartbeat_interval_ms,
-        resume: Vec::new(),
+fn reject(reason: HelloRejectReason) -> ServerToRunner {
+    ServerToRunner::HelloRejected(HelloRejected {
+        reason,
+        server_protocol_version: PROTOCOL_VERSION,
+        message: "Server 拒絕".into(),
     })
 }
 
-/// 第一個 frame 是合法的 Hello。
+/// 第一個 frame 是合法的 Hello（Pairing token、名稱、平台）。
 #[tokio::test]
 async fn first_frame_is_a_valid_hello() {
-    let server = FakeServer::start().await;
-    let _child = runner(&[
-        "--server",
-        &server.base_url(),
-        "--pairing-token",
-        "pt_test",
-        "--name",
-        "測試 Runner",
-    ])
-    .spawn()
-    .unwrap();
-
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.extra_args = vec!["--name".into(), "測試 Runner".into()];
+    let _runner = spawn_runner(opts);
     let mut conn = server.accept().await;
-    let RunnerToServer::Hello(hello) = conn.recv().await else {
-        panic!("第一個 frame 不是 hello");
-    };
-    assert_eq!(hello.protocol_version, PROTOCOL_VERSION);
-    assert_eq!(
-        hello.pairing,
-        Pairing::PairingToken {
-            token: "pt_test".into()
-        }
-    );
-    assert_eq!(hello.runner.name, "測試 Runner");
-    assert_eq!(hello.runner.os, std::env::consts::OS);
-    assert_eq!(hello.runner.arch, std::env::consts::ARCH);
-    assert_eq!(hello.runner.runner_version, env!("CARGO_PKG_VERSION"));
+    let hello = conn.recv().await;
+    assert_eq!(hello["type"], "hello");
+    assert_eq!(hello["protocol_version"], PROTOCOL_VERSION);
+    assert_eq!(hello["pairing"]["kind"], "pairing_token");
+    assert_eq!(hello["pairing"]["token"], "pt_test");
+    assert_eq!(hello["runner"]["name"], "測試 Runner");
+    assert_eq!(hello["runner"]["os"], std::env::consts::OS);
+    assert_eq!(hello["runner"]["arch"], std::env::consts::ARCH);
+    assert_eq!(hello["runner"]["runner_version"], env!("CARGO_PKG_VERSION"));
 }
 
-/// HelloAck 之後回報 AgentAvailability，並持續送 Heartbeat。
+/// HelloAck 之後回報 AgentAvailability（內建的 Claude Code 與 runner.toml 的 Agent），並持續送 Heartbeat。
 #[tokio::test]
 async fn reports_availability_and_heartbeats_after_hello_ack() {
-    let server = FakeServer::start().await;
-    let _child = runner(&["--server", &server.base_url(), "--pairing-token", "pt_test"])
-        .spawn()
-        .unwrap();
-
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    write_runner_toml(
+        home.path(),
+        &fake_agent_toml(&home.path().join("wt"), &runner_script("simple.yaml")),
+    );
+    let _runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
     let mut conn = server.accept().await;
-    assert!(matches!(conn.recv().await, RunnerToServer::Hello(_)));
-    conn.send(&hello_ack(20)).await;
-
-    let mut availability = None;
-    let mut heartbeats = 0;
-    while availability.is_none() || heartbeats < 2 {
-        match conn.recv().await {
-            RunnerToServer::AgentAvailability(a) => {
-                assert!(availability.is_none(), "AgentAvailability 只應送一次");
-                availability = Some(a);
-            }
-            RunnerToServer::Heartbeat(h) => {
-                assert!(h.ts.0.ends_with('Z'), "ts 必須是 UTC：{}", h.ts.0);
-                assert!(h.active_run_ids.is_empty());
-                heartbeats += 1;
-            }
-            other => panic!(
-                "預期 agent_availability 或 heartbeat，收到 {}",
-                other.type_name()
-            ),
-        }
-    }
-    let availability = availability.unwrap();
-    assert!(availability.agents.is_empty(), "骨架階段還沒有 Agent");
-    assert!(availability.credentials.is_empty());
-}
-
-/// 沒有 Agent 時拒絕 Dispatch 與 RunControl，讓 Server 不必等到逾時。
-#[tokio::test]
-async fn rejects_dispatch_and_run_control_without_agents() {
-    let server = FakeServer::start().await;
-    let _child = runner(&["--server", &server.base_url(), "--pairing-token", "pt_test"])
-        .spawn()
-        .unwrap();
-
-    let mut conn = server.accept().await;
-    assert!(matches!(conn.recv().await, RunnerToServer::Hello(_)));
-    conn.send(&hello_ack(60_000)).await;
-    assert!(matches!(
-        conn.recv_non_heartbeat().await,
-        RunnerToServer::AgentAvailability(_)
-    ));
-
-    conn.send(&ServerToRunner::DispatchOffer(Box::new(DispatchOffer {
-        dispatch_id: "d1".into(),
-        run_id: "r1".into(),
-        expires_at: "2999-01-01T00:00:00.000Z".into(),
-        task: DispatchTask {
-            task_id: "t1".into(),
-            task_key: "ORB-1".into(),
-            title: "測試".into(),
-        },
-        run_seq: 1,
-        repo: DispatchRepo {
-            name: "web".into(),
-            clone_url: "https://github.com/acme/web.git".into(),
-            default_branch: "main".into(),
-            base_ref: "origin/main".into(),
-        },
-        branch: None,
-        agent: "claude-code".into(),
-        model: None,
-        permission_policy: PermissionPolicy::Auto,
-        prompt: Vec::new(),
-        plan_gate: false,
-        delegation: None,
-        last_event_seq: 0,
-    })))
-    .await;
-    let RunnerToServer::DispatchReject(reject) = conn.recv_non_heartbeat().await else {
-        panic!("預期 dispatch_reject");
-    };
-    assert_eq!(reject.dispatch_id.as_str(), "d1");
-    assert_eq!(reject.reason, DispatchRejectReason::AgentUnavailable);
-
-    conn.send(&ServerToRunner::RunControl(RunControl {
-        control_id: "c1".into(),
-        run_id: "r1".into(),
-        dispatch_id: "d1".into(),
-        action: RunControlAction::Cancel,
-    }))
-    .await;
-    let RunnerToServer::RunControlResult(result) = conn.recv_non_heartbeat().await else {
-        panic!("預期 run_control_result");
-    };
-    assert_eq!(result.control_id.as_str(), "c1");
-    assert!(matches!(
-        result.outcome,
-        RunControlOutcome::Rejected {
-            reason: RunControlRejectReason::UnknownRun,
-            ..
-        }
-    ));
-}
-
-/// HelloRejected 時印出原因並以非 0 結束。
-#[tokio::test]
-async fn exits_non_zero_with_reason_when_rejected() {
-    let server = FakeServer::start().await;
-    let mut child = runner(&["--server", &server.base_url(), "--pairing-token", "pt_bad"])
-        .spawn()
-        .unwrap();
-
-    let mut conn = server.accept().await;
-    assert!(matches!(conn.recv().await, RunnerToServer::Hello(_)));
-    conn.send(&ServerToRunner::HelloRejected(HelloRejected {
-        reason: HelloRejectReason::InvalidPairingToken,
-        server_protocol_version: PROTOCOL_VERSION,
-        message: "Pairing token 無效或已過期".into(),
-    }))
-    .await;
-    conn.ws.close(None).await.ok();
-
-    let (status, stderr) = wait_exit(&mut child).await;
-    assert!(!status.success(), "被拒絕時必須以非 0 結束");
-    assert!(stderr.contains("invalid_pairing_token"), "stderr：{stderr}");
+    conn.handshake(Vec::new(), Some("rt_1")).await;
+    let availability = conn.recv().await;
+    assert_eq!(availability["type"], "agent_availability");
+    let agents = availability["agents"].as_array().unwrap();
+    let ids: Vec<&str> = agents.iter().map(|a| a["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&"claude-code"), "{ids:?}");
+    assert!(ids.contains(&"fake"), "{ids:?}");
+    let fake = agents.iter().find(|a| a["id"] == "fake").unwrap();
+    assert_eq!(fake["available"], true, "{fake}");
+    let claude = agents.iter().find(|a| a["id"] == "claude-code").unwrap();
     assert!(
-        stderr.contains("Pairing token 無效或已過期"),
-        "stderr：{stderr}"
+        claude["permission_gaps"]
+            .as_array()
+            .is_some_and(|g| !g.is_empty()),
+        "Claude Code 的權限落差要回報：{claude}"
+    );
+    let credentials = availability["credentials"].as_array().unwrap();
+    assert!(credentials.iter().all(|c| c["max_concurrent_runs"] == 30));
+
+    for _ in 0..2 {
+        let hb = conn.recv().await;
+        assert_eq!(hb["type"], "heartbeat", "{hb}");
+        assert!(hb["ts"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(hb["active_run_ids"], serde_json::json!([]));
+        assert_eq!(hb["accepting_dispatches"], true);
+    }
+}
+
+/// 第一次 Pairing 後保存 Runner token；Runner 重新啟動後改用 Runner token，忽略 Pairing token。
+#[tokio::test]
+async fn saves_runner_token_and_uses_it_after_restart() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_saved")).await;
+    conn.recv().await; // agent_availability
+    runner.child.kill().await.unwrap();
+    drop(conn);
+
+    let _runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["kind"], "runner_token", "{hello}");
+    assert_eq!(hello["pairing"]["token"], "rt_saved");
+    assert_eq!(
+        hello["pairing"]["runner_id"],
+        "0192f3a0-0000-7000-8000-000000000001"
+    );
+}
+
+/// 保存的 Runner token 被拒絕、但有 Pairing token 時，改用 Pairing token 重新 Pairing。
+#[tokio::test]
+async fn falls_back_to_pairing_when_runner_token_is_rejected() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_old")).await;
+    conn.recv().await;
+    runner.child.kill().await.unwrap();
+    drop(conn);
+
+    let _runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["kind"], "runner_token");
+    conn.send(&reject(HelloRejectReason::InvalidRunnerToken))
+        .await;
+    conn.ws.close(None).await.ok();
+    let mut conn = server.accept().await;
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["kind"], "pairing_token", "{hello}");
+    assert_eq!(hello["pairing"]["token"], "pt_test");
+}
+
+/// Server 關閉連線後以指數退避重新連線。
+#[tokio::test]
+async fn reconnects_after_the_server_closes_the_connection() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let _runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_1")).await;
+    conn.ws.close(None).await.ok();
+    drop(conn);
+    let started = tokio::time::Instant::now();
+    let mut conn = server.accept().await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(700),
+        "要等退避時間才重新連線"
+    );
+    let hello = conn.recv().await;
+    assert_eq!(hello["type"], "hello");
+}
+
+/// Pairing token 被拒絕：印出原因並以結束碼 2（需要重新 Pairing）結束。
+#[tokio::test]
+async fn exits_with_code_2_when_pairing_is_rejected() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.recv().await;
+    conn.send(&reject(HelloRejectReason::InvalidPairingToken))
+        .await;
+    conn.ws.close(None).await.ok();
+    let status = runner.wait_exit().await;
+    assert_eq!(status.code(), Some(2), "stderr：{}", runner.stderr());
+    assert!(
+        runner.stderr().contains("invalid_pairing_token"),
+        "{}",
+        runner.stderr()
+    );
+}
+
+/// 協定版本不相容：結束碼 3（需要更新 Runner）。
+#[tokio::test]
+async fn exits_with_code_3_on_version_mismatch() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.recv().await;
+    conn.send(&reject(HelloRejectReason::VersionMismatch)).await;
+    let status = runner.wait_exit().await;
+    assert_eq!(status.code(), Some(3), "stderr：{}", runner.stderr());
+}
+
+/// 沒有保存的 Runner token、也沒有 Pairing token：結束碼 2，訊息說明要設定的環境變數。
+#[tokio::test]
+async fn exits_with_code_2_without_any_identity() {
+    let server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.pairing_token = None;
+    let mut runner = spawn_runner(opts);
+    let status = runner.wait_exit().await;
+    assert_eq!(status.code(), Some(2));
+    assert!(
+        runner.stderr().contains(&names::env_var(ENV_PAIRING_TOKEN)),
+        "{}",
+        runner.stderr()
+    );
+}
+
+/// 缺少 Server 網址時，錯誤訊息說明要設定的環境變數。
+#[tokio::test]
+async fn missing_server_names_the_environment_variable() {
+    let home = temp_dir("orbis home");
+    let mut opts = RunnerOptions::new("", home.path());
+    opts.server = None;
+    let mut runner = spawn_runner(opts);
+    let status = runner.wait_exit().await;
+    assert!(!status.success());
+    assert!(
+        runner.stderr().contains(&names::env_var(ENV_SERVER_URL)),
+        "{}",
+        runner.stderr()
     );
 }
 
 /// 沒有參數時從環境變數讀取連線設定。
 #[tokio::test]
 async fn reads_connection_settings_from_environment() {
-    let server = FakeServer::start().await;
-    let _child = runner(&[])
-        .env(names::env_var(ENV_SERVER_URL), server.base_url())
-        .env(names::env_var(ENV_PAIRING_TOKEN), "pt_env")
-        .spawn()
-        .unwrap();
-
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let mut opts = RunnerOptions::new("", home.path());
+    opts.server = None;
+    opts.pairing_token = None;
+    opts.env = vec![
+        (names::env_var(ENV_SERVER_URL), server.base_url()),
+        (names::env_var(ENV_PAIRING_TOKEN), "pt_env".into()),
+    ];
+    let _runner = spawn_runner(opts);
     let mut conn = server.accept().await;
-    let RunnerToServer::Hello(hello) = conn.recv().await else {
-        panic!("第一個 frame 不是 hello");
-    };
-    assert_eq!(
-        hello.pairing,
-        Pairing::PairingToken {
-            token: "pt_env".into()
-        }
-    );
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["token"], "pt_env");
 }
 
-/// 缺少連線設定時，錯誤訊息說明要設定的環境變數。
+/// Dispatch 的驗證：過期、沒有這個 Agent、尚未支援的 Delegation、重複的 Run。
 #[tokio::test]
-async fn missing_settings_name_the_environment_variable() {
-    let mut child = runner(&[]).spawn().unwrap();
-    let (status, stderr) = wait_exit(&mut child).await;
-    assert!(!status.success());
-    assert!(
-        stderr.contains(&names::env_var(ENV_SERVER_URL)),
-        "stderr：{stderr}"
+async fn validates_dispatch_offers() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let remote = Remote::new(&[("README.md", "a\n")]);
+    write_runner_toml(
+        home.path(),
+        &fake_agent_toml(&home.path().join("wt"), &script("cancel.yaml")),
     );
+    let _runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_1")).await;
+
+    let cases = [
+        ("expired", {
+            let mut o = offer("r1", "d1", remote.dispatch_repo("web"), "fake", "x");
+            o.expires_at = "2000-01-01T00:00:00.000Z".into();
+            o
+        }),
+        (
+            "agent_unavailable",
+            offer(
+                "r2",
+                "d2",
+                remote.dispatch_repo("web"),
+                "no-such-agent",
+                "x",
+            ),
+        ),
+        ("unsupported", {
+            let mut o = offer("r3", "d3", remote.dispatch_repo("web"), "fake", "x");
+            o.delegation = Some(DispatchDelegation {
+                parent_run_id: "p".into(),
+                mode: DelegationMode::Consult,
+            });
+            o
+        }),
+    ];
+    for (reason, o) in cases {
+        let id = o.dispatch_id.to_string();
+        conn.send(&send_offer(o)).await;
+        let reply = conn.recv_significant().await;
+        assert_eq!(reply["type"], "dispatch_reject", "{reply}");
+        assert_eq!(reply["dispatch_id"], id);
+        assert_eq!(reply["reason"], reason, "{reply}");
+    }
+
+    // 正在執行的 Run 再派一次：duplicate。
+    conn.send(&send_offer(offer(
+        "r4",
+        "d4",
+        remote.dispatch_repo("web"),
+        "fake",
+        "x",
+    )))
+    .await;
+    let reply = conn
+        .wait_for("accept", |v| v["type"] == "dispatch_accept")
+        .await;
+    assert_eq!(reply["dispatch_id"], "d4");
+    conn.wait_status("running").await;
+    let hb = conn
+        .wait_for("heartbeat", |v| v["type"] == "heartbeat")
+        .await;
+    assert_eq!(hb["active_run_ids"], serde_json::json!(["r4"]));
+    conn.send(&send_offer(offer(
+        "r4",
+        "d5",
+        remote.dispatch_repo("web"),
+        "fake",
+        "x",
+    )))
+    .await;
+    let reply = conn
+        .wait_for("reject", |v| v["type"] == "dispatch_reject")
+        .await;
+    assert_eq!(reply["reason"], "duplicate");
+
+    // RunControl：Dispatch 不符 → stale_dispatch；沒有這個 Run → unknown_run；執行中送 prompt → invalid_state。
+    let stale = conn
+        .control("r4", "d-old", "c1", RunControlAction::Cancel)
+        .await;
+    assert_eq!(stale["reason"], "stale_dispatch");
+    let unknown = conn
+        .control("nope", "d4", "c2", RunControlAction::Cancel)
+        .await;
+    assert_eq!(unknown["reason"], "unknown_run");
+    let busy = conn
+        .control(
+            "r4",
+            "d4",
+            "c3",
+            RunControlAction::Prompt { prompt: Vec::new() },
+        )
+        .await;
+    assert_eq!(busy["reason"], "invalid_state");
+    let cancel = conn
+        .control("r4", "d4", "c4", RunControlAction::Cancel)
+        .await;
+    assert_eq!(cancel["outcome"], "applied");
+    conn.wait_status("canceled").await;
+}
+
+/// sidecar：stdout 輸出 JSON 狀態、stdin 指令可以暫停領取，stdin 關閉時以 0 結束。
+#[tokio::test]
+async fn sidecar_reports_status_and_follows_commands() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.extra_args = vec!["--sidecar".into()];
+    opts.stdin_piped = true;
+    opts.stdout_piped = true;
+    let mut runner = spawn_runner(opts);
+    let mut stdout = BufReader::new(runner.child.stdout.take().unwrap()).lines();
+    let mut stdin = runner.child.stdin.take().unwrap();
+    let mut next_status = async || -> serde_json::Value {
+        let line = tokio::time::timeout(Duration::from_secs(30), stdout.next_line())
+            .await
+            .expect("等不到 sidecar 狀態")
+            .unwrap()
+            .expect("stdout 已關閉");
+        serde_json::from_str(&line)
+            .unwrap_or_else(|e| panic!("stdout 只能有 JSON 狀態：{e}：{line}"))
+    };
+
+    let first = next_status().await;
+    assert_eq!(first["state"], "connecting", "{first}");
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_1")).await;
+    let connected = loop {
+        let s = next_status().await;
+        if s["state"] == "connected" {
+            break s;
+        }
+    };
+    assert_eq!(
+        connected["runner_id"],
+        "0192f3a0-0000-7000-8000-000000000001"
+    );
+    assert_eq!(connected["claiming_paused"], false);
+
+    stdin
+        .write_all(b"{\"command\":\"pause_claiming\"}\n")
+        .await
+        .unwrap();
+    let paused = loop {
+        let s = next_status().await;
+        if s["claiming_paused"] == true {
+            break s;
+        }
+    };
+    assert_eq!(paused["active_runs"], 0);
+    conn.wait_for("暫停後的 heartbeat", |v| {
+        v["type"] == "heartbeat" && v["accepting_dispatches"] == false
+    })
+    .await;
+    // 暫停時收到的 Dispatch 一律拒絕。
+    let remote = Remote::new(&[("README.md", "a\n")]);
+    conn.send(&send_offer(offer(
+        "r1",
+        "d1",
+        remote.dispatch_repo("web"),
+        "claude-code",
+        "x",
+    )))
+    .await;
+    let reply = conn
+        .wait_for("reject", |v| v["type"] == "dispatch_reject")
+        .await;
+    assert_eq!(reply["reason"], "agent_unavailable");
+
+    // stdin 關閉（Electron 當掉）：Runner 自己結束。
+    drop(stdin);
+    let status = runner.wait_exit().await;
+    assert_eq!(status.code(), Some(0), "stderr：{}", runner.stderr());
 }

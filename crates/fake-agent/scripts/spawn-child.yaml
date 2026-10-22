@@ -1,0 +1,8 @@
+# 啟動一個不會自己結束的子程序後一直等，直到 session/cancel。
+# Runner 用來測試「取消時整個程序樹（含 Agent 開的子程序）都被結束」。
+description: 啟動子程序後等待 session/cancel
+turns:
+  - steps:
+      - spawn_child
+      - message: 子程序已啟動，開始一個很長的工作……
+      - wait_for_cancel

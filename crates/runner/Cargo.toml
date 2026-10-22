@@ -32,6 +32,7 @@ toml = "0.9"
 uuid = { version = "1.28.0", features = ["v7"] }
 
 [dev-dependencies]
+orbis-fake-agent = { path = "../fake-agent" }
 tempfile = "3.27.0"
 
 [lints]

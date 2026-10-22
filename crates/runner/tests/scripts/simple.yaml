@@ -1,0 +1,6 @@
+# 最簡單的一個回合：送出訊息後完成。
+description: 送出訊息後完成
+turns:
+  - steps:
+      - message: 完成了。
+      - stop: end_turn

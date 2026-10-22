@@ -21,7 +21,7 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 8] = [
+const COVERED_SCRIPTS: [&str; 9] = [
     "cancel.yaml",
     "diff.yaml",
     "error.yaml",
@@ -29,6 +29,7 @@ const COVERED_SCRIPTS: [&str; 8] = [
     "permission.yaml",
     "plan.yaml",
     "rate-limit.yaml",
+    "spawn-child.yaml",
     "two-turns.yaml",
 ];
 
@@ -819,6 +820,71 @@ async fn cancel_送出_session_cancel_後回合以_cancelled_結束() {
     assert_eq!(stop_reason, StopReason::Cancelled);
     let described: Vec<_> = updates.iter().map(describe).collect();
     assert_eq!(described, ["message 開始一個很長的工作……"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spawn_child_回報子程序的_pid_而且子程序持續執行() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let updates = with_agent(
+        "spawn-child.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let pending = conn
+                .cx
+                .send_request(Conn::prompt_request(&session, "開一個背景程序"));
+            while conn.recorded.lock().unwrap().updates.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            conn.cx
+                .send_notification(CancelNotification::new(session.clone()))?;
+            let response = pending.block_task().await?;
+            assert_eq!(response.stop_reason, StopReason::Cancelled);
+            Ok(conn.take_recorded().updates)
+        },
+    )
+    .await;
+    let described: Vec<_> = updates.iter().map(describe).collect();
+    let pid: u32 = described[0]
+        .strip_prefix("message child pid: ")
+        .unwrap_or_else(|| panic!("第一個 update 應該回報 PID：{described:?}"))
+        .parse()
+        .unwrap();
+    // Agent 結束後子程序仍在執行（結束整個程序樹是 Runner 的責任），測試自己清掉它。
+    assert!(process_alive(pid), "子程序 {pid} 應該還在執行");
+    kill_process(pid);
+}
+
+fn process_alive(pid: u32) -> bool {
+    let output = if cfg!(windows) {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .unwrap()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .unwrap()
+    };
+    if cfg!(windows) {
+        String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+    } else {
+        output.status.success()
+    }
+}
+
+fn kill_process(pid: u32) {
+    let _ = if cfg!(windows) {
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output()
+    };
 }
 
 /// 把測試專用的劇本寫到暫存目錄，回傳絕對路徑（`Path::join` 遇到絕對路徑會直接取代）。

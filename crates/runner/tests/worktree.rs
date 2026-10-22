@@ -492,3 +492,67 @@ async fn copy_不跟著連結複製到_checkout_以外() {
     assert!(err.message.contains("連結"), "{}", err.message);
     assert!(!wt.path.join(".env").exists());
 }
+
+#[tokio::test]
+async fn review_用的_diff_帶完整新舊內容() {
+    use orbis_protocol::event::TextBody;
+    use orbis_runner::contract::FileChange;
+    let remote = Remote::new(&[
+        ("README.md", "# web\n"),
+        ("old-name.txt", "搬家的內容\n"),
+        ("gone.txt", "要刪掉\n"),
+    ]);
+    let home = TestHome::new("");
+    let manager = WorktreeManager::new(home.home.clone());
+    let wt = manager
+        .create(&request(&remote, "ORB-30", 1, Some("orbis/diff")))
+        .await
+        .unwrap();
+    std::fs::write(wt.path.join("README.md"), "# web\n\n新的一行\n").unwrap();
+    std::fs::write(wt.path.join("new.txt"), "新檔案 TOKEN=abcdef123456\n").unwrap();
+    std::fs::remove_file(wt.path.join("gone.txt")).unwrap();
+    git(&wt.path, &["mv", "old-name.txt", "new-name.txt"]);
+    // 已 commit 的變更也要算進去。
+    git(&wt.path, &["add", "-A"]);
+    git(&wt.path, &["commit", "-m", "部分修改"]);
+    std::fs::write(wt.path.join("later.txt"), "還沒 commit\n").unwrap();
+
+    let mut redactor = orbis_runner::secrets::Redactor::new();
+    redactor.add_known("abcdef123456");
+    let diff = orbis_runner::diff::run_diff(&wt.path, &wt.base_commit, &redactor)
+        .await
+        .unwrap();
+    assert_eq!(diff.base_commit, wt.base_commit);
+    let find = |p: &str| {
+        diff.files
+            .iter()
+            .find(|f| f.path == p)
+            .unwrap_or_else(|| panic!("找不到 {p}：{:?}", diff.files))
+    };
+    let text = |b: &Option<TextBody>| match b {
+        Some(TextBody::Inline { text }) => text.replace("\r\n", "\n"),
+        other => panic!("{other:?}"),
+    };
+
+    let readme = find("README.md");
+    assert_eq!(readme.change, FileChange::Modified);
+    assert_eq!(text(&readme.old), "# web\n");
+    assert_eq!(text(&readme.new), "# web\n\n新的一行\n");
+
+    let added = find("new.txt");
+    assert_eq!(added.change, FileChange::Added);
+    assert!(added.old.is_none());
+    assert!(!text(&added.new).contains("abcdef123456"), "要遮蔽 secret");
+
+    let untracked = find("later.txt");
+    assert_eq!(untracked.change, FileChange::Added);
+
+    let deleted = find("gone.txt");
+    assert_eq!(deleted.change, FileChange::Deleted);
+    assert!(deleted.new.is_none());
+
+    let renamed = find("new-name.txt");
+    assert_eq!(renamed.change, FileChange::Renamed);
+    assert_eq!(renamed.old_path.as_deref(), Some("old-name.txt"));
+    assert_eq!(text(&renamed.old), "搬家的內容\n");
+}

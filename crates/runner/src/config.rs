@@ -1,9 +1,12 @@
-//! 連線設定：從命令列參數與環境變數決定要連到哪個 Server、用什麼身分連線。
+//! 連線設定：從命令列參數、環境變數與 `runner.toml` 決定要連到哪個 Server、用什麼身分連線。
+//! 優先順序：命令列 > 環境變數 > `runner.toml`。
 
 use anyhow::{Context, bail};
 use orbis_protocol::RUNNER_WS_PATH;
-use orbis_protocol::connection::{Pairing, RunnerInfo};
+use orbis_protocol::connection::RunnerInfo;
 use orbis_protocol::names;
+
+use crate::home::Settings;
 
 /// 環境變數名稱的後綴，完整名稱由 [`names::env_var`] 組出。
 pub const ENV_SERVER_URL: &str = "SERVER_URL";
@@ -16,11 +19,14 @@ pub const ENV_LOG: &str = "LOG";
 pub struct ConnectConfig {
     /// Runner 的 WebSocket 端點，例如 `ws://localhost:4000/runner`。
     pub url: String,
-    pub pairing: Pairing,
+    /// Server 的 HTTP base URL（上傳 blob 用），例如 `http://localhost:4000`。
+    pub http_base: String,
+    /// 第一次連線用的 Pairing token。本機已保存這個 Server 的 Runner token 時忽略。
+    pub pairing_token: Option<String>,
     pub runner: RunnerInfo,
 }
 
-/// 命令列上提供的值；沒有提供的項目從環境變數讀取。
+/// 命令列上提供的值；沒有提供的項目從環境變數或設定檔讀取。
 #[derive(Debug, Clone, Default)]
 pub struct ConfigArgs {
     pub server: Option<String>,
@@ -29,9 +35,10 @@ pub struct ConfigArgs {
 }
 
 impl ConnectConfig {
-    /// 命令列優先，其次是環境變數。`lookup_env` 讓測試不必改動真正的環境變數。
+    /// `lookup_env` 讓測試不必改動真正的環境變數。
     pub fn resolve(
         args: ConfigArgs,
+        settings: &Settings,
         lookup_env: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
         let from_env = |suffix: &str| {
@@ -41,29 +48,29 @@ impl ConnectConfig {
         let server = args
             .server
             .or_else(|| from_env(ENV_SERVER_URL))
+            .or_else(|| settings.server.clone())
             .with_context(|| {
                 format!(
-                    "缺少 Server 網址：請指定 --server 或設定環境變數 {}",
-                    names::env_var(ENV_SERVER_URL)
+                    "缺少 Server 網址：請指定 --server、設定環境變數 {}，或寫在 {} 的 server",
+                    names::env_var(ENV_SERVER_URL),
+                    crate::contract::RUNNER_CONFIG_FILE
                 )
             })?;
-        let token = args
+        let pairing_token = args
             .pairing_token
             .or_else(|| from_env(ENV_PAIRING_TOKEN))
-            .with_context(|| {
-                format!(
-                    "缺少 Pairing token：請指定 --pairing-token 或設定環境變數 {}",
-                    names::env_var(ENV_PAIRING_TOKEN)
-                )
-            })?;
+            .filter(|t| !t.trim().is_empty());
         let name = args
             .name
+            .or_else(|| settings.name.clone())
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(default_name);
 
+        let (url, http_base) = server_urls(&server)?;
         Ok(Self {
-            url: runner_ws_url(&server)?,
-            pairing: Pairing::PairingToken { token },
+            url,
+            http_base,
+            pairing_token,
             runner: RunnerInfo {
                 name,
                 runner_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -82,19 +89,27 @@ fn default_name() -> String {
 /// 把 Server 的 base URL 轉成 Runner 的 WebSocket 端點：`http` → `ws`、`https` → `wss`，
 /// 再接上 [`RUNNER_WS_PATH`]。已經是 `ws`／`wss` 的網址只接上路徑。
 pub fn runner_ws_url(server: &str) -> anyhow::Result<String> {
+    server_urls(server).map(|(ws, _)| ws)
+}
+
+/// WebSocket 端點與 HTTP base URL。
+pub fn server_urls(server: &str) -> anyhow::Result<(String, String)> {
     let trimmed = server.trim().trim_end_matches('/');
     let Some((scheme, rest)) = trimmed.split_once("://") else {
         bail!("Server 網址 {server:?} 缺少 http:// 或 https://");
     };
-    let ws_scheme = match scheme.to_ascii_lowercase().as_str() {
-        "http" | "ws" => "ws",
-        "https" | "wss" => "wss",
+    let (ws_scheme, http_scheme) = match scheme.to_ascii_lowercase().as_str() {
+        "http" | "ws" => ("ws", "http"),
+        "https" | "wss" => ("wss", "https"),
         other => bail!("Server 網址 {server:?} 的 scheme {other:?} 不支援，請用 http 或 https"),
     };
     if rest.is_empty() {
         bail!("Server 網址 {server:?} 缺少主機名稱");
     }
-    Ok(format!("{ws_scheme}://{rest}{RUNNER_WS_PATH}"))
+    Ok((
+        format!("{ws_scheme}://{rest}{RUNNER_WS_PATH}"),
+        format!("{http_scheme}://{rest}"),
+    ))
 }
 
 #[cfg(test)]
@@ -121,6 +136,10 @@ mod tests {
             runner_ws_url("ws://127.0.0.1:9").unwrap(),
             format!("ws://127.0.0.1:9{RUNNER_WS_PATH}")
         );
+        assert_eq!(
+            server_urls("wss://example.com/base/").unwrap().1,
+            "https://example.com/base"
+        );
     }
 
     #[test]
@@ -146,6 +165,7 @@ mod tests {
                 pairing_token: Some("pt_cli".into()),
                 name: Some("my-runner".into()),
             },
+            &Settings::default(),
             env(&[
                 (ENV_SERVER_URL, "http://env:2"),
                 (ENV_PAIRING_TOKEN, "pt_env"),
@@ -153,19 +173,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.url, format!("ws://cli:1{RUNNER_WS_PATH}"));
-        assert_eq!(
-            config.pairing,
-            Pairing::PairingToken {
-                token: "pt_cli".into()
-            }
-        );
+        assert_eq!(config.http_base, "http://cli:1");
+        assert_eq!(config.pairing_token.as_deref(), Some("pt_cli"));
         assert_eq!(config.runner.name, "my-runner");
     }
 
     #[test]
-    fn falls_back_to_environment_variables() {
+    fn falls_back_to_environment_then_settings() {
+        let settings =
+            Settings::parse("server = \"http://file:3\"\nname = \"from-file\"\n").unwrap();
         let config = ConnectConfig::resolve(
             ConfigArgs::default(),
+            &settings,
             env(&[
                 (ENV_SERVER_URL, "https://env:2"),
                 (ENV_PAIRING_TOKEN, "pt_env"),
@@ -173,31 +192,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.url, format!("wss://env:2{RUNNER_WS_PATH}"));
-        assert_eq!(
-            config.pairing,
-            Pairing::PairingToken {
-                token: "pt_env".into()
-            }
-        );
-        assert!(!config.runner.name.is_empty(), "預設名稱是主機名稱");
+        assert_eq!(config.pairing_token.as_deref(), Some("pt_env"));
+        assert_eq!(config.runner.name, "from-file");
         assert_eq!(config.runner.os, std::env::consts::OS);
+
+        let config = ConnectConfig::resolve(ConfigArgs::default(), &settings, env(&[])).unwrap();
+        assert_eq!(config.url, format!("ws://file:3{RUNNER_WS_PATH}"));
+        assert_eq!(
+            config.pairing_token, None,
+            "已 Pairing 的 Runner 不需要 Pairing token"
+        );
     }
 
     #[test]
-    fn missing_values_name_the_environment_variable() {
-        let err = ConnectConfig::resolve(ConfigArgs::default(), env(&[])).unwrap_err();
+    fn missing_server_names_the_environment_variable() {
+        let err = ConnectConfig::resolve(ConfigArgs::default(), &Settings::default(), env(&[]))
+            .unwrap_err();
         assert!(
             err.to_string().contains(&names::env_var(ENV_SERVER_URL)),
-            "{err}"
-        );
-
-        let err = ConnectConfig::resolve(
-            ConfigArgs::default(),
-            env(&[(ENV_SERVER_URL, "http://env:2"), (ENV_PAIRING_TOKEN, "  ")]),
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string().contains(&names::env_var(ENV_PAIRING_TOKEN)),
             "{err}"
         );
     }

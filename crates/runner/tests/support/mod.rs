@@ -170,3 +170,13 @@ pub fn script(name: &str) -> PathBuf {
         .join("scripts")
         .join(name)
 }
+
+pub mod server;
+
+/// Runner 整合測試自己的劇本（`tests/scripts/`）。
+pub fn runner_script(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("scripts")
+        .join(name)
+}

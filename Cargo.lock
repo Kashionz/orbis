@@ -1446,6 +1446,7 @@ dependencies = [
  "futures-util",
  "gethostname",
  "humantime",
+ "orbis-fake-agent",
  "orbis-protocol",
  "process-wrap",
  "rand 0.9.5",
