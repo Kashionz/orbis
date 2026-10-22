@@ -5,16 +5,28 @@ import { createRoot } from "react-dom/client";
 import { createAppRouter } from "./router";
 import "./styles.css";
 
-const queryClient = new QueryClient();
-const router = createAppRouter(queryClient);
+async function main() {
+  // `vite --mode mock`：先啟動 MSW 假後端，之後的請求才會被攔截
+  if (import.meta.env.MODE === "mock") {
+    const { startMockBackend } = await import("./mocks/browser");
+    await startMockBackend();
+  }
 
-const rootElement = document.getElementById("root");
-if (!rootElement) throw new Error("找不到 #root");
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 1_000 } },
+  });
+  const router = createAppRouter(queryClient);
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
-  </StrictMode>,
-);
+  const rootElement = document.getElementById("root");
+  if (!rootElement) throw new Error("找不到 #root");
+
+  createRoot(rootElement).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}
+
+void main();

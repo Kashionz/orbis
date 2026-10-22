@@ -7,10 +7,19 @@ import {
   Outlet,
   redirect,
 } from "@tanstack/react-router";
+import { lazy, Suspense } from "react";
 import { AuthedLayout } from "./features/auth/AuthedLayout";
 import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
 import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
+import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
+import { RunPage } from "./features/run/RunPage";
+import { TaskPage } from "./features/task/TaskPage";
+
+// Monaco 很大，只在進入 diff review 時才載入
+const ReviewPage = lazy(() =>
+  import("./features/review/ReviewPage").then((module) => ({ default: module.ReviewPage })),
+);
 
 export interface RouterContext {
   queryClient: QueryClient;
@@ -58,7 +67,57 @@ const authedRoute = createRoute({
 const boardRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/board",
-  component: BoardPage,
+  validateSearch: (search: Record<string, unknown>): { project?: string } =>
+    typeof search.project === "string" ? { project: search.project } : {},
+  component: function BoardRouteComponent() {
+    const { project } = boardRoute.useSearch();
+    return <BoardPage projectId={project} />;
+  },
+  errorComponent: PageError,
+});
+
+const taskRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/tasks/$taskKey",
+  component: function TaskRouteComponent() {
+    const { taskKey } = taskRoute.useParams();
+    return <TaskPage key={taskKey} taskKey={taskKey} />;
+  },
+  errorComponent: PageError,
+});
+
+const runRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/runs/$runId",
+  validateSearch: (search: Record<string, unknown>): { focus?: string } =>
+    typeof search.focus === "string" ? { focus: search.focus } : {},
+  component: function RunRouteComponent() {
+    const { runId } = runRoute.useParams();
+    const { focus } = runRoute.useSearch();
+    return <RunPage key={runId} runId={runId} focus={focus} />;
+  },
+  errorComponent: PageError,
+});
+
+const reviewRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/runs/$runId/review",
+  component: function ReviewRouteComponent() {
+    const { runId } = reviewRoute.useParams();
+    return (
+      <Suspense fallback={<main className="notice">正在載入 diff review…</main>}>
+        <ReviewPage key={runId} runId={runId} />
+      </Suspense>
+    );
+  },
+  errorComponent: PageError,
+});
+
+const needsYouRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/needs-you",
+  component: NeedsYouPage,
+  errorComponent: PageError,
 });
 
 function AuthErrorPage({ error }: ErrorComponentProps) {
@@ -70,10 +129,19 @@ function AuthErrorPage({ error }: ErrorComponentProps) {
   );
 }
 
+function PageError({ error }: ErrorComponentProps) {
+  return (
+    <main className="notice" role="alert">
+      <h1>無法載入這個頁面</h1>
+      <p>{error instanceof Error ? error.message : String(error)}</p>
+    </main>
+  );
+}
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   indexRoute,
-  authedRoute.addChildren([boardRoute]),
+  authedRoute.addChildren([boardRoute, taskRoute, runRoute, reviewRoute, needsYouRoute]),
 ]);
 
 export function createAppRouter(queryClient: QueryClient) {

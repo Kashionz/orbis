@@ -1,0 +1,78 @@
+// 依 Role 決定 UI 要不要顯示某個操作（ARCHITECTURE §12.2）。
+// 權限檢查以 Server 為準，這裡只負責隱藏沒有權限的操作。
+
+import type { PermissionPolicy, ProjectPolicy, Role, RunnerKind, Task } from "@orbis/api-contract";
+
+/** UI 上會依 Role 隱藏的操作。 */
+export type Action =
+  /** 管理成員、Team Runner、Credential 的並行上限。 */
+  | "team.manage"
+  /** 修改 Project 的預設 Permission Policy、核准 config 的信任。 */
+  | "policy.manage"
+  /** 建立與編輯 Task（含 Acceptance Criterion、depends_on、指派、看板拖曳）。 */
+  | "task.edit"
+  /** 派工到自己的 Local Runner。 */
+  | "run.dispatchLocal"
+  /** 派工到 Team Runner。 */
+  | "run.dispatchTeam"
+  /** 操作進行中的 Run：回覆權限請求、中止。 */
+  | "run.control"
+  /** 核准 Gate、開 PR。 */
+  | "gate.approve"
+  /** 退回 Gate（附上行內留言）。 */
+  | "gate.reject"
+  /** 查看與留言。 */
+  | "view";
+
+export interface PermissionContext {
+  /** 目前登入者的 Role。 */
+  role: Role;
+  /** 目前登入者的 Member ID。 */
+  memberId: string;
+  /** 操作所在的 Project 的政策；不在任何 Project 中時省略。 */
+  policy?: ProjectPolicy;
+  /** 操作對象的 Task；與 Task 無關時省略。 */
+  task?: Pick<Task, "assigneeMemberId">;
+}
+
+const EDITORS: readonly Role[] = ["owner", "admin", "member"];
+const ADMINS: readonly Role[] = ["owner", "admin"];
+
+// TODO(contract): Project 對 Member 的 Role 覆寫尚未建模，目前一律用 Team 的 Role。
+export function can(action: Action, ctx: PermissionContext): boolean {
+  const { role } = ctx;
+  switch (action) {
+    case "view":
+      return true;
+    case "team.manage":
+    case "policy.manage":
+      return ADMINS.includes(role);
+    case "task.edit":
+    case "run.dispatchLocal":
+    case "run.control":
+    case "gate.reject":
+      return EDITORS.includes(role);
+    case "run.dispatchTeam":
+      if (ADMINS.includes(role)) return true;
+      return role === "member" && (ctx.policy?.memberCanDispatchToTeamRunner ?? false);
+    case "gate.approve":
+      if (!EDITORS.includes(role)) return false;
+      // 使用者決定：「自己的 Task」以 Task 的指派對象判斷
+      return !(ctx.policy?.forbidSelfApproval && ctx.task?.assigneeMemberId === ctx.memberId);
+  }
+}
+
+/** 可以派工到這種 Runner 嗎？ */
+export function canDispatchTo(runnerKind: RunnerKind, ctx: PermissionContext): boolean {
+  return can(runnerKind === "local" ? "run.dispatchLocal" : "run.dispatchTeam", ctx);
+}
+
+/**
+ * 派工時可以選的 Permission Policy（使用者決定）：能派工的人都可以選 `manual`／`auto`；
+ * `yolo` 只在 Local Runner 提供（Team Runner 的 `yolo` 在 Phase 2，§18）。
+ */
+export function permissionPoliciesFor(runnerKind: RunnerKind): readonly PermissionPolicy[] {
+  return runnerKind === "local" ? ["manual", "auto", "yolo"] : ["manual", "auto"];
+}
+
+export const DEFAULT_PERMISSION_POLICY: PermissionPolicy = "auto";

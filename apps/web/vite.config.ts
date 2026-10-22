@@ -2,6 +2,7 @@
 
 import { envVar, NAMES } from "@orbis/api-contract/names";
 import react from "@vitejs/plugin-react";
+import { msw } from "msw/vite";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 
 /** Vite dev server 的 port（已核准的設計決定 11）。 */
@@ -32,11 +33,19 @@ const apiProxy: Record<string, ProxyOptions> = {
   "/api": { target: `http://localhost:${serverPort()}`, ws: true },
 };
 
-export default defineConfig({
-  plugins: [react(), productNameInHtml()],
-  server: { port: DEV_PORT, strictPort: true, proxy: apiProxy },
+/** `vite --mode mock`：以 MSW 假後端取代 Server（src/mocks），開發與元件層級的 e2e 使用。 */
+export const MOCK_MODE = "mock";
+
+export default defineConfig(({ mode }) => ({
+  // mock 模式只需要 MSW 提供 worker 腳本；handler 由 src/mocks/browser.ts 自己設定
+  plugins: [
+    react(),
+    productNameInHtml(),
+    ...(mode === MOCK_MODE ? [msw({ mode: "worker-only" })] : []),
+  ],
+  server: { port: DEV_PORT, strictPort: true, proxy: mode === MOCK_MODE ? undefined : apiProxy },
   preview: { proxy: apiProxy },
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
   },
-});
+}));
