@@ -52,26 +52,31 @@ pub fn canonical(path: &Path) -> PathBuf {
 
 /// 解開路徑中「已存在的最深一層」的 symlink／junction，其餘部分字面接上。
 /// 用來判斷一個還不存在的檔案（例如要寫入的目標）實際會落在哪裡。
+///
+/// 依序走過每一段：存在的部分立即解開連結，`..` 套用在**已解開的實際路徑**上（不先字面化簡，
+/// 否則 `link/../x` 會被誤判成連結旁邊的 `x`）。第一段不存在之後的部分不可能是連結，字面接上。
 pub fn resolve_existing(path: &Path) -> PathBuf {
-    let path = normalize(path);
-    let mut existing = path.as_path();
-    let mut rest = Vec::new();
-    loop {
-        if let Ok(real) = std::fs::canonicalize(existing) {
-            let mut out = normalize(&real);
-            for part in rest.iter().rev() {
+    let mut out = PathBuf::new();
+    let mut exists = true;
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => out.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(part) => {
                 out.push(part);
+                if exists {
+                    match std::fs::canonicalize(&out) {
+                        Ok(real) => out = normalize(&real),
+                        Err(_) => exists = false,
+                    }
+                }
             }
-            return out;
-        }
-        match (existing.parent(), existing.file_name()) {
-            (Some(parent), Some(name)) => {
-                rest.push(name.to_owned());
-                existing = parent;
-            }
-            _ => return path,
         }
     }
+    normalize(&out)
 }
 
 /// `path` 是否等於 `base` 或在 `base` 之內（兩者都會先正規化）。
@@ -300,6 +305,10 @@ mod tests {
         std::os::unix::fs::symlink(&outside, wt.join("link")).unwrap();
         let target = resolve_existing(&wt.join("link").join("secret.txt"));
         assert!(!is_within(&target, &canonical(&wt)));
+        // `link/../x`：`..` 要套用在連結解開後的位置（outside 的上一層），不是 wt。
+        let sneaky = resolve_existing(&wt.join("link").join("..").join("x"));
+        assert_eq!(sneaky, canonical(dir.path()).join("x"));
+        assert!(!is_within(&sneaky, &canonical(&wt)));
     }
 
     #[cfg(windows)]

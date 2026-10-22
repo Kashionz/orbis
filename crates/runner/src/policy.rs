@@ -317,6 +317,12 @@ fn analyze(command: &str) -> Analysis {
                     word.push(c);
                     has_word = true;
                 }
+                // glob 會展開成實際的檔名（可能是受保護的設定檔或 Worktree 外的路徑）。
+                '*' | '?' | '[' => {
+                    analysis.fail("glob（* ? [）");
+                    word.push(c);
+                    has_word = true;
+                }
                 // 跳脫字元：Windows 路徑在 bash 中也會被解讀成跳脫，無法確定實際的參數。
                 // 仍保留在詞中，讓「一律拒絕」的規則可以字面比對。
                 '\\' => {
@@ -828,6 +834,8 @@ mod tests {
             "pnpm test >(cat)",
             "(pnpm test)",
             "pnpm test {a,b}",
+            "pnpm exec cat .c*/settings.json",
+            "pnpm exec cp x .claud?/s",
             "pnpm test 'unterminated",
         ] {
             assert!(analyze(tricky).unanalyzable.is_some(), "{tricky}");
