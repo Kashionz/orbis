@@ -146,6 +146,46 @@ describe("issues webhook：state", () => {
     expect(w.github.issue(w.repo.id, issueNumber).state).toBe("closed");
   });
 
+  it("closed（not planned）：Task 轉 Done 並記錄關閉原因", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w, { status: "ready" });
+    await humanChange(w, issueNumber, "closed", { state: "closed", stateReason: "not_planned" });
+    expect(w.domain.task(task.id)).toMatchObject({ status: "done", doneReason: "not_planned" });
+    expect(w.domain.transitions).toMatchObject([
+      { to: "done", cause: { kind: "issue_closed", doneReason: "not_planned" } },
+    ]);
+    // 回寫時不會把關閉原因改回 completed
+    expect(w.github.callsTo("updateIssue")).toHaveLength(0);
+  });
+
+  it("closed（duplicate）：視為 not_planned", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w, { status: "backlog" });
+    await humanChange(w, issueNumber, "closed", { state: "closed", stateReason: "duplicate" });
+    expect(w.domain.task(task.id)).toMatchObject({ status: "done", doneReason: "not_planned" });
+  });
+
+  it("closed：Done 的 Task 只改關閉原因，不再轉換", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w, { status: "done", doneReason: "completed" });
+    await humanChange(w, issueNumber, "closed", { state: "closed", stateReason: "not_planned" });
+    expect(w.domain.transitions).toEqual([]);
+    expect(w.domain.fieldUpdates).toEqual([
+      { taskId: task.id, patch: { doneReason: "not_planned" } },
+    ]);
+    expect(w.domain.task(task.id).doneReason).toBe("not_planned");
+  });
+
+  it("reopened：清空關閉原因", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w, {
+      status: "done",
+      doneReason: "not_planned",
+    });
+    await humanChange(w, issueNumber, "reopened", { state: "open" });
+    expect(w.domain.task(task.id)).toMatchObject({ status: "backlog", doneReason: null });
+  });
+
   it("closed：已經是 Done 的 Task 不再轉換", async () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w, { status: "done" });

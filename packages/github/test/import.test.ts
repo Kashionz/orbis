@@ -108,6 +108,19 @@ describe("從 Issue 匯入", () => {
     expect(w.domain.createdFromIssue).toEqual([]);
   });
 
+  it("Project 關閉「自動建立 Issue」時仍然可以匯入，並留下摘要留言", async () => {
+    const w = createWorld();
+    w.domain.autoCreateDisabledProjectIds.add(PROJECT_ID);
+    const issue = w.github.humanOpenIssue(w.repo.id, { title: "從 GitHub 來的" });
+    const [result] = await w.integration.importIssues({
+      repoId: REPO_ID,
+      issueNumbers: [issue.number],
+      importedByMemberId: w.bob.id,
+    });
+    expect(result).toMatchObject({ status: "imported" });
+    expect(w.github.commentsOn(w.repo.id, issue.number)).toHaveLength(1);
+  });
+
   it("匯入之後在 GitHub 上的修改會同步回 Task", async () => {
     const w = createWorld();
     const issue = w.github.humanOpenIssue(w.repo.id, { title: "原標題" });

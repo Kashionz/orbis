@@ -55,7 +55,7 @@ export function renderSummaryComment(input: {
     SUMMARY_MARKER,
     `### ${NAMES.productName} · [${task.key}](${input.taskUrl})`,
     "",
-    `**狀態**：${TASK_STATUS_LABELS[task.status]}`,
+    `**狀態**：${TASK_STATUS_LABELS[task.status]}${task.doneReason === "not_planned" ? "（不處理）" : ""}`,
   ];
   if (input.latestRun) {
     lines.push(`**最近的 Run**：${input.latestRun.agent} · ${input.latestRun.status}`);

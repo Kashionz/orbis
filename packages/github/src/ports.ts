@@ -3,6 +3,8 @@
 //
 // TODO(contract): GitHubStore 需要的資料表（task_issue_links、github_webhook_deliveries、
 // pull_requests、repos.github_installation_id）由協調者的契約 PR `contract/db` 加入。
+// TODO(contract): `tasks.done_reason` 與 `projects.auto_create_issues` 也在同一個契約 PR；
+// 合併後 `TaskDoneReason` 改用 `@orbis/api-contract` 的定義。
 
 import type {
   AcceptanceCriterionKind,
@@ -11,6 +13,9 @@ import type {
 } from "@orbis/api-contract";
 
 // ── Server 提供的領域資料 ─────────────────────────────────────
+
+/** Task 轉為 Done 的原因（ARCHITECTURE §11），取自 GitHub Issue 關閉時的 `state_reason`。 */
+export type TaskDoneReason = "completed" | "not_planned";
 
 /** Task 中與 GitHub 有關的欄位。 */
 export interface TaskRecord {
@@ -21,6 +26,8 @@ export interface TaskRecord {
   title: string;
   description: string;
   status: TaskStatus;
+  /** 轉為 Done 的原因；不是 Done 時為 null。 */
+  doneReason: TaskDoneReason | null;
   assigneeMemberId: string | null;
   createdByMemberId: string | null;
   labels: string[];
@@ -58,11 +65,14 @@ export interface RunSummary {
   status: string;
 }
 
-/** 由 GitHub 觸發的狀態轉換的原因，Server 可以記錄在 Task 的歷程中。 */
+/**
+ * 由 GitHub 觸發的狀態轉換的原因，Server 可以記錄在 Task 的歷程中。
+ * 轉為 Done 時帶有 `doneReason`，Server 寫進 Task；離開 Done 時 Server 清空關閉原因。
+ */
 export type TransitionCause =
-  | { kind: "issue_closed"; issueUrl: string; byGithubLogin: string }
+  | { kind: "issue_closed"; issueUrl: string; byGithubLogin: string; doneReason: TaskDoneReason }
   | { kind: "issue_reopened"; issueUrl: string; byGithubLogin: string }
-  | { kind: "pr_merged"; pullRequestUrl: string }
+  | { kind: "pr_merged"; pullRequestUrl: string; doneReason: "completed" }
   | { kind: "pr_closed"; pullRequestUrl: string; byGithubLogin: string }
   | { kind: "pr_reopened"; pullRequestUrl: string };
 
@@ -80,6 +90,8 @@ export interface TaskFieldsPatch {
   description?: string;
   assigneeMemberId?: string | null;
   labels?: string[];
+  /** 只會在 Task 已經是 Done 時送出：GitHub 上改了已關閉 Issue 的關閉原因。 */
+  doneReason?: TaskDoneReason;
 }
 
 /**
@@ -123,6 +135,11 @@ export interface DomainService {
   findMemberByGithubUserId(projectId: string, githubUserId: number): Promise<MemberRecord | null>;
   /** 這位 Member 在這個 Project 能不能編輯 Task（考慮 Project 的 Role 覆寫；Viewer 不行）。 */
   canEditTasks(projectId: string, memberId: string): Promise<boolean>;
+  /**
+   * Project 是否開啟「自動建立 Issue」（預設開啟）。關閉時不為 Task 建立新的 Issue，
+   * 但已經對應的 Issue（包括匯入的）照常同步。
+   */
+  autoCreateIssues(projectId: string): Promise<boolean>;
 }
 
 /** 通知的種類（ARCHITECTURE §12.3「自己的 Task 被 merge 或被退回」）。 */
@@ -146,10 +163,13 @@ export type SyncedField = "title" | "body" | "state" | "assignee" | "labels";
  * 上次同步時 Issue 的欄位值，以及各欄位最後一次同步時 Issue 的 `updated_at`。
  * 用來判斷一則 webhook 中哪些欄位真的被改了、哪些是自己寫出去的回音、哪些是過期的 payload。
  */
+/** 同步欄位 `state` 的值：Issue 打開，或以哪個原因關閉。 */
+export type IssueSyncState = "open" | TaskDoneReason;
+
 export interface IssueSnapshot {
   title: string;
   body: string;
-  state: "open" | "closed";
+  state: IssueSyncState;
   /** 對應到 Task 負責人的 GitHub user id；沒有時為 null。 */
   assignee: number | null;
   /** 排序過的 label 名稱。 */

@@ -91,6 +91,48 @@ describe("Task 同步到 GitHub Issue", () => {
     });
   });
 
+  it("Task 的關閉原因對應到 Issue 的 state_reason，Done 時改了原因也會更新", async () => {
+    const w = createWorld();
+    const task = w.addTask({ status: "done", doneReason: "not_planned" });
+    const { issueNumber } = (await w.integration.onTaskChanged(task.id)) as { issueNumber: number };
+    expect(w.github.issue(w.repo.id, issueNumber)).toMatchObject({
+      state: "closed",
+      stateReason: "not_planned",
+    });
+    expect(w.github.commentsOn(w.repo.id, issueNumber)[0]?.body).toContain(
+      "**狀態**：Done（不處理）",
+    );
+
+    w.domain.editTask(task.id, { doneReason: "completed" });
+    const outcome = await w.integration.onTaskChanged(task.id);
+    expect(outcome).toMatchObject({ wrote: ["state"] });
+    expect(w.github.callsTo("updateIssue").at(-1)?.args[3]).toEqual({
+      state: "closed",
+      stateReason: "completed",
+    });
+  });
+
+  it("Project 關閉「自動建立 Issue」時不建立 Issue，已對應的 Issue 照常同步", async () => {
+    const w = createWorld();
+    const linked = w.addTask();
+    await w.integration.onTaskChanged(linked.id);
+    w.domain.autoCreateDisabledProjectIds.add(linked.projectId);
+    w.github.calls.length = 0;
+
+    const task = w.addTask();
+    expect(await w.integration.onTaskChanged(task.id)).toEqual({
+      kind: "skipped",
+      reason: "auto_create_disabled",
+    });
+    expect(w.github.callsTo("createIssue")).toHaveLength(0);
+
+    w.domain.editTask(linked.id, { title: "改過的標題" });
+    expect(await w.integration.onTaskChanged(linked.id)).toMatchObject({
+      kind: "synced",
+      wrote: ["title"],
+    });
+  });
+
   it("負責人改成別人、取消指派時更新 assignees", async () => {
     const w = createWorld();
     const task = w.addTask({ assigneeMemberId: w.alice.id });

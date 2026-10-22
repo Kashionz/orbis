@@ -16,7 +16,14 @@ import {
 } from "../client/types";
 import { type ConnectedRepo, connectedRepo, type IntegrationContext, isOwnEcho } from "../context";
 import { renderSummaryComment } from "../markdown";
-import type { IssueLink, MemberRecord, SyncedField, TaskFieldsPatch, TaskRecord } from "../ports";
+import type {
+  IssueLink,
+  IssueSyncState,
+  MemberRecord,
+  SyncedField,
+  TaskFieldsPatch,
+  TaskRecord,
+} from "../ports";
 import type { IssuesPayload } from "../webhook/payloads";
 import {
   differentFields,
@@ -32,7 +39,10 @@ import {
 } from "./fields";
 
 export type PushOutcome =
-  | { kind: "skipped"; reason: "task_not_found" | "no_repo" | "repo_not_connected" }
+  | {
+      kind: "skipped";
+      reason: "task_not_found" | "no_repo" | "repo_not_connected" | "auto_create_disabled";
+    }
   | { kind: "synced"; issueNumber: number; created: boolean; wrote: SyncedField[] };
 
 export interface PushOptions {
@@ -78,16 +88,20 @@ async function pushTaskLocked(
   let wrote: SyncedField[] = [];
 
   if (!link) {
+    // Project 關閉「自動建立 Issue」時不建立新的 Issue；已對應的（包括匯入的）照常同步。
+    if (!(await ctx.domain.autoCreateIssues(task.projectId))) {
+      return { kind: "skipped", reason: "auto_create_disabled" };
+    }
     let issue = await ctx.client.createIssue(repo.installationId, repo.ref, {
       title: desired.title,
       body: desired.body,
       assignees: assignee ? [assignee.githubLogin] : [],
       labels: desired.labels,
     });
-    if (desired.state === "closed") {
+    if (desired.state !== "open") {
       issue = await ctx.client.updateIssue(repo.installationId, repo.ref, issue.number, {
         state: "closed",
-        stateReason: "completed",
+        stateReason: desired.state,
       });
     }
     link = {
@@ -155,8 +169,8 @@ function issuePatch(
         patch.body = desired.body;
         break;
       case "state":
-        patch.state = desired.state;
-        patch.stateReason = desired.state === "closed" ? "completed" : "reopened";
+        patch.state = desired.state === "open" ? "open" : "closed";
+        patch.stateReason = desired.state === "open" ? "reopened" : desired.state;
         break;
       case "assignee":
         patch.assignees = assignee ? [assignee.githubLogin] : [];
@@ -413,21 +427,28 @@ async function applyIssueChange(
 }
 
 /**
- * Issue 被關閉 → Task 轉 Done；Issue 被重新打開 → Done 的 Task 回到 Backlog。
+ * Issue 被關閉 → Task 轉 Done 並記錄關閉原因；已關閉的 Issue 改了關閉原因 → 更新 Task 的關閉原因；
+ * Issue 被重新打開 → Done 的 Task 回到 Backlog。
  * 狀態機拒絕時回傳要顯示在摘要留言上的說明（Issue 的 state 會在之後的 push 改回來）。
  */
 async function applyIssueState(
   ctx: IntegrationContext,
   task: TaskRecord,
-  state: "open" | "closed",
+  state: IssueSyncState,
   issueUrl: string,
   byGithubLogin: string,
 ): Promise<string | null> {
-  if (state === "closed" && task.status !== "done") {
+  if (state !== "open" && task.status === "done") {
+    if (task.doneReason !== state)
+      await ctx.domain.updateTaskFields(task.id, { doneReason: state });
+    return null;
+  }
+  if (state !== "open") {
     const result = await ctx.domain.transitionTask(task.id, "done", {
       kind: "issue_closed",
       issueUrl,
       byGithubLogin,
+      doneReason: state,
     });
     if (result.ok) return null;
     return result.reason === "active_run"

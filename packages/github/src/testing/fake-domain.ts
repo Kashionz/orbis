@@ -48,6 +48,8 @@ export class FakeDomainService implements DomainService {
   readonly activeRunTaskIds = new Set<string>();
   /** 狀態機不允許的轉換（`from->to`）。 */
   readonly forbiddenTransitions = new Set<string>();
+  /** 關閉「自動建立 Issue」的 Project。 */
+  readonly autoCreateDisabledProjectIds = new Set<string>();
   #nextTask = 1;
   #failures = new Set<keyof DomainService>();
 
@@ -86,6 +88,7 @@ export class FakeDomainService implements DomainService {
       specPath: null,
       updatedAt: this.clock.now(),
       ...task,
+      doneReason: task.doneReason ?? null,
     };
     this.tasks.set(full.id, clone(full));
     return clone(full);
@@ -182,6 +185,8 @@ export class FakeDomainService implements DomainService {
       result = { ok: false, reason: "invalid_transition" };
     } else {
       task.status = to;
+      // 轉為 Done 時記錄關閉原因，離開 Done 時清空（ARCHITECTURE §11）
+      task.doneReason = to === "done" && "doneReason" in cause ? cause.doneReason : null;
       task.updatedAt = this.clock.now();
       result = { ok: true, task: clone(task) };
     }
@@ -210,6 +215,10 @@ export class FakeDomainService implements DomainService {
 
   async canEditTasks(_projectId: string, memberId: string) {
     return !this.viewerMemberIds.has(memberId);
+  }
+
+  async autoCreateIssues(projectId: string) {
+    return !this.autoCreateDisabledProjectIds.has(projectId);
   }
 
   async findMemberByGithubUserId(projectId: string, githubUserId: number) {

@@ -159,7 +159,10 @@ describe("pull_request webhook", () => {
 
     expect(response.body).toMatchObject({ result: { kind: "merged", transitioned: true } });
     expect(w.domain.task(task.id).status).toBe("done");
-    expect(w.domain.transitions).toMatchObject([{ to: "done", cause: { kind: "pr_merged" } }]);
+    expect(w.domain.transitions).toMatchObject([
+      { to: "done", cause: { kind: "pr_merged", doneReason: "completed" } },
+    ]);
+    expect(w.domain.task(task.id).doneReason).toBe("completed");
     expect(w.notifier.sent).toMatchObject([{ memberId: w.alice.id, kind: "pr_merged" }]);
     expect((await w.store.findPullRequestLink(w.repo.id, number))?.state).toBe("merged");
     const link = await w.store.getIssueLinkByTask(task.id);

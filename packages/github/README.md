@@ -71,7 +71,7 @@ if (config) {
 
 | 時機 | 呼叫 |
 |---|---|
-| Task 建立或修改之後：title、描述、狀態、負責人、labels、Acceptance Criterion 的結果、Run 狀態 | `github.onTaskChanged(taskId)` |
+| Task 建立或修改之後：title、描述、狀態、關閉原因、負責人、labels、Acceptance Criterion 的結果、Run 狀態。Draft Task 確認、進入 Backlog 之前不要呼叫 | `github.onTaskChanged(taskId)` |
 | Runner 回報 `branch_pushed`（Review Gate 核准之後） | `github.onBranchPushed({ taskId, runId, branch, commitSha })` |
 | Project 新增 Repo | `github.inspectRepo(owner, name, requesterMemberId)` |
 | Team Runner 要 push | `github.getInstallationTokenForRepo(repoId)`：只限該 repo、只有 contents 寫入權限 |
@@ -84,9 +84,10 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
 
 定義在 [`src/ports.ts`](src/ports.ts)：
 
-- **`DomainService`**：讀取 Task、Repo、Member、Acceptance Criterion、最近的 Run；從 Issue 建立 Task；寫回 Task 欄位；要求狀態轉換；判斷 Member 能不能編輯 Task（`canEditTasks`，Viewer 不行）。狀態轉換會檢查進行中的 Run 與狀態機，不合法時回傳原因。需要的轉換如下：
-  - 任何非 Done 狀態轉 `done`：Issue 被關閉、PR merge。
-  - `done` 轉 `backlog`：Issue 重新打開。
+- **`DomainService`**：讀取 Task、Repo、Member、Acceptance Criterion、最近的 Run；從 Issue 建立 Task；寫回 Task 欄位；要求狀態轉換；判斷 Member 能不能編輯 Task（`canEditTasks`，Viewer 不行）；Project 是否開啟「自動建立 Issue」（`autoCreateIssues`）。狀態轉換會檢查進行中的 Run 與狀態機，不合法時回傳原因。需要的轉換如下：
+  - 任何非 Done 狀態轉 `done`：Issue 被關閉、PR merge。`cause.doneReason` 是要記錄的關閉原因（PR merge 一律是 `completed`）。
+  - `done` 轉 `backlog`：Issue 重新打開。Server 清空關閉原因。
+  - Task 已經是 Done 時，GitHub 上改了關閉原因，會以 `updateTaskFields(taskId, { doneReason })` 寫回。
   - `pr_open` 轉 `review_gate`：PR 沒有 merge 就被關閉。
   - `review_gate` 轉 `pr_open`：PR 重新打開。
 - **`GitHubStore`**：Issue 對應與同步快照、webhook delivery 去重、PR 對應。Drizzle 的實作要通過 `@orbis/github/testing/store-contract` 的契約測試。
@@ -96,11 +97,11 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
 ## 同步規則
 
 - **欄位**：title、body（Task 描述）、state、assignee、labels（ARCHITECTURE §11）。
-- **state**：Task 是 Done 時 Issue 關閉，其他狀態都是 open。
-  - 在 GitHub 上關閉 Issue，Task 轉 Done。Task 有進行中的 Run 時拒絕，把 Issue 重新打開並在摘要留言說明。
+- **state**：Task 是 Done 時 Issue 關閉，其他狀態都是 open。關閉原因與 Issue 的 `state_reason` 對應（`completed`、`not_planned`），一起當成 state 欄位同步。
+  - 在 GitHub 上關閉 Issue，Task 轉 Done 並記錄關閉原因。以 `duplicate` 關閉視為 `not_planned`。Task 有進行中的 Run 時拒絕，把 Issue 重新打開並在摘要留言說明。
   - 在 GitHub 上重新打開 Issue，已 Done 的 Task 回到 Backlog。
 - **assignee**：寫到 GitHub 時，assignees 設成 `[負責人]`；從 GitHub 讀回時，取第一個屬於 Team 的 assignee，沒有就是 null。
-- **範圍**：有 Repo 的 Task 一律建立對應的 Issue。GitHub 上新開的 Issue 不會自動變成 Task，要透過「匯入」。
+- **範圍**：有 Repo 的 Task 自動建立對應的 Issue。Project 關閉「自動建立 Issue」時不建立新的 Issue，已經對應的 Issue（包括匯入的）照常同步。GitHub 上新開的 Issue 不會自動變成 Task，要透過「匯入」。
 - **衝突**：依各欄位與上次同步的快照比較，判斷哪一邊改過。兩邊都改了同一欄位時，以最後寫入者為準：比較 Issue 的 `updated_at` 與 Task 的 `updatedAt`。
 - **回音**：
   - App 自己的寫入造成的 webhook，以 sender（`<slug>[bot]`）辨認並略過。
@@ -110,7 +111,7 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
 - **欄位歸屬**：只套用這個 action 改到的欄位。
   - `edited` 依 payload 的 `changes`；`labeled`／`unlabeled` 只看 labels；`assigned`／`unassigned` 只看 assignee；`closed`／`reopened` 只看 state。
   - payload 中其他與快照不同的欄位不能算在這位 sender 頭上，不套用，等它們自己的 webhook。
-- **狀態摘要留言**：每個 Issue 只有一則，以 `<!-- orbis:summary -->` 標記。內容沒變時不呼叫 API，留言被刪除時會重建。
+- **狀態摘要留言**：每個 Issue 只有一則，以 `<!-- orbis:summary -->` 標記。以 `not_planned` 關閉的 Task 顯示為「Done（不處理）」。內容沒變時不呼叫 API，留言被刪除時會重建。
 - **webhook 去重**：
   - 以 `X-GitHub-Delivery` 去重。
   - 處理失敗回 500 並放掉處理權，讓 GitHub 的 redelivery 可以重新處理。

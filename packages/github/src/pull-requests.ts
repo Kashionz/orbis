@@ -148,6 +148,7 @@ export async function handlePullRequestEvent(
     if (merged) {
       const result = await ctx.domain.transitionTask(task.id, "done", {
         kind: "pr_merged",
+        doneReason: "completed",
         pullRequestUrl,
       });
       transitioned = result.ok;

@@ -23,7 +23,8 @@ export interface GitHubRepository {
 }
 
 export type IssueState = "open" | "closed";
-export type IssueStateReason = "completed" | "not_planned" | "reopened";
+/** `duplicate` 是 GitHub 後來加入的關閉原因，同步時視為 `not_planned`。 */
+export type IssueStateReason = "completed" | "not_planned" | "duplicate" | "reopened";
 
 export interface GitHubIssue {
   id: number;

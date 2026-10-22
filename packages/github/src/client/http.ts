@@ -29,7 +29,12 @@ export const IssueResponse = z.object({
   title: z.string(),
   body: z.string().nullable().optional(),
   state: z.enum(["open", "closed"]),
-  state_reason: z.enum(["completed", "not_planned", "reopened"]).nullable().optional(),
+  // GitHub 之後可能再加入新的關閉原因；不認得的值當成沒有原因，不讓整個 payload 解析失敗。
+  state_reason: z
+    .enum(["completed", "not_planned", "duplicate", "reopened"])
+    .nullable()
+    .optional()
+    .catch(null),
   assignees: z.array(UserRef).nullable().optional(),
   labels: z.array(z.union([z.string(), z.object({ name: z.string() })])),
   updated_at: z.string(),

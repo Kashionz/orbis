@@ -1,7 +1,7 @@
 // 同步欄位（ARCHITECTURE §11：title、body、state、assignee、labels）的正規化與比較。
 
 import type { GitHubIssue } from "../client/types";
-import type { IssueSnapshot, SyncedField, TaskRecord } from "../ports";
+import type { IssueSnapshot, IssueSyncState, SyncedField, TaskRecord } from "../ports";
 
 export const SYNCED_FIELDS: readonly SyncedField[] = [
   "title",
@@ -14,7 +14,7 @@ export const SYNCED_FIELDS: readonly SyncedField[] = [
 export interface IssueFields {
   title: string;
   body: string;
-  state: "open" | "closed";
+  state: IssueSyncState;
   /** GitHub user id。 */
   assignee: number | null;
   labels: string[];
@@ -29,9 +29,19 @@ export function normalizeLabels(labels: readonly string[]): string[] {
   return [...new Set(labels)].sort();
 }
 
-/** Task 狀態對應到 Issue state：只有 Done 是 closed。 */
-export function issueStateOf(task: Pick<TaskRecord, "status">): "open" | "closed" {
-  return task.status === "done" ? "closed" : "open";
+/** Task 狀態對應到 Issue state：只有 Done 是關閉，關閉原因取自 Task 的 `doneReason`。 */
+export function issueStateOf(task: Pick<TaskRecord, "status" | "doneReason">): IssueSyncState {
+  return task.status === "done" ? (task.doneReason ?? "completed") : "open";
+}
+
+/** Issue 的 state 與 state_reason 對應到同步用的值。`duplicate` 不算完成，視為 `not_planned`。 */
+export function syncStateOfIssue(
+  issue: Pick<GitHubIssue, "state" | "stateReason">,
+): IssueSyncState {
+  if (issue.state === "open") return "open";
+  return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
+    ? "not_planned"
+    : "completed";
 }
 
 /** Task 目前希望 Issue 呈現的欄位。`assignee` 是負責人的 GitHub user id。 */
@@ -50,7 +60,7 @@ export function fieldsFromIssue(issue: GitHubIssue, assignee: number | null): Is
   return {
     title: issue.title,
     body: normalizeBody(issue.body),
-    state: issue.state,
+    state: syncStateOfIssue(issue),
     assignee,
     labels: normalizeLabels(issue.labels),
   };
