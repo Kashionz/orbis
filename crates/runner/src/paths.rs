@@ -53,11 +53,11 @@ pub fn canonical(path: &Path) -> PathBuf {
 /// 解開路徑中「已存在的最深一層」的 symlink／junction，其餘部分字面接上。
 /// 用來判斷一個還不存在的檔案（例如要寫入的目標）實際會落在哪裡。
 ///
-/// 依序走過每一段：存在的部分立即解開連結，`..` 套用在**已解開的實際路徑**上（不先字面化簡，
-/// 否則 `link/../x` 會被誤判成連結旁邊的 `x`）。第一段不存在之後的部分不可能是連結，字面接上。
+/// 依序走過每一段，每接上一段就嘗試解開連結；`..` 套用在**已解開的實際路徑**上（不先字面化簡，
+/// 否則 `link/../x` 會被誤判成連結旁邊的 `x`）。不存在的部分字面接上，但 `..` 退回存在的位置後，
+/// 之後的部分仍會繼續解開（例如 `missing/../link/x`）。
 pub fn resolve_existing(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
-    let mut exists = true;
     for component in path.components() {
         match component {
             Component::Prefix(_) | Component::RootDir => out.push(component.as_os_str()),
@@ -67,11 +67,8 @@ pub fn resolve_existing(path: &Path) -> PathBuf {
             }
             Component::Normal(part) => {
                 out.push(part);
-                if exists {
-                    match std::fs::canonicalize(&out) {
-                        Ok(real) => out = normalize(&real),
-                        Err(_) => exists = false,
-                    }
+                if let Ok(real) = std::fs::canonicalize(&out) {
+                    out = normalize(&real);
                 }
             }
         }
@@ -309,6 +306,9 @@ mod tests {
         let sneaky = resolve_existing(&wt.join("link").join("..").join("x"));
         assert_eq!(sneaky, canonical(dir.path()).join("x"));
         assert!(!is_within(&sneaky, &canonical(&wt)));
+        // 先經過不存在的目錄再 `..` 回來，之後的連結仍要解開。
+        let detour = resolve_existing(&wt.join("missing").join("..").join("link").join("y"));
+        assert_eq!(detour, canonical(&outside).join("y"));
     }
 
     #[cfg(windows)]
