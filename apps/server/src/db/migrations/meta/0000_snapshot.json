@@ -86,12 +86,8 @@
           "name": "sessions_current_team_id_teams_id_fk",
           "tableFrom": "sessions",
           "tableTo": "teams",
-          "columnsFrom": [
-            "current_team_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["current_team_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -101,9 +97,7 @@
         "sessions_token_hash_unique": {
           "name": "sessions_token_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "policies": {},
@@ -200,12 +194,8 @@
           "name": "gates_task_id_tasks_id_fk",
           "tableFrom": "gates",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -213,12 +203,8 @@
           "name": "gates_run_id_runs_id_fk",
           "tableFrom": "gates",
           "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -226,12 +212,8 @@
           "name": "gates_decided_by_member_id_members_id_fk",
           "tableFrom": "gates",
           "tableTo": "members",
-          "columnsFrom": [
-            "decided_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["decided_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -366,12 +348,8 @@
           "name": "needs_you_items_project_id_projects_id_fk",
           "tableFrom": "needs_you_items",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -379,12 +357,8 @@
           "name": "needs_you_items_member_id_members_id_fk",
           "tableFrom": "needs_you_items",
           "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["member_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -392,12 +366,8 @@
           "name": "needs_you_items_task_id_tasks_id_fk",
           "tableFrom": "needs_you_items",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -405,12 +375,8 @@
           "name": "needs_you_items_run_id_runs_id_fk",
           "tableFrom": "needs_you_items",
           "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -418,12 +384,8 @@
           "name": "needs_you_items_gate_id_gates_id_fk",
           "tableFrom": "needs_you_items",
           "tableTo": "gates",
-          "columnsFrom": [
-            "gate_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["gate_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -431,12 +393,8 @@
           "name": "needs_you_items_resolved_by_member_id_members_id_fk",
           "tableFrom": "needs_you_items",
           "tableTo": "members",
-          "columnsFrom": [
-            "resolved_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["resolved_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -500,12 +458,8 @@
           "name": "project_member_roles_project_id_projects_id_fk",
           "tableFrom": "project_member_roles",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -513,12 +467,8 @@
           "name": "project_member_roles_member_id_members_id_fk",
           "tableFrom": "project_member_roles",
           "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["member_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -526,10 +476,7 @@
       "compositePrimaryKeys": {
         "project_member_roles_project_id_member_id_pk": {
           "name": "project_member_roles_project_id_member_id_pk",
-          "columns": [
-            "project_id",
-            "member_id"
-          ]
+          "columns": ["project_id", "member_id"]
         }
       },
       "uniqueConstraints": {},
@@ -649,12 +596,8 @@
           "name": "projects_team_id_teams_id_fk",
           "tableFrom": "projects",
           "tableTo": "teams",
-          "columnsFrom": [
-            "team_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["team_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -664,10 +607,7 @@
         "projects_team_id_task_key_prefix_unique": {
           "name": "projects_team_id_task_key_prefix_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "team_id",
-            "task_key_prefix"
-          ]
+          "columns": ["team_id", "task_key_prefix"]
         }
       },
       "policies": {},
@@ -728,12 +668,8 @@
           "name": "repo_specs_repo_id_repos_id_fk",
           "tableFrom": "repo_specs",
           "tableTo": "repos",
-          "columnsFrom": [
-            "repo_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["repo_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -743,10 +679,7 @@
         "repo_specs_repo_id_path_unique": {
           "name": "repo_specs_repo_id_path_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "repo_id",
-            "path"
-          ]
+          "columns": ["repo_id", "path"]
         }
       },
       "policies": {},
@@ -814,12 +747,8 @@
           "name": "repos_project_id_projects_id_fk",
           "tableFrom": "repos",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -829,11 +758,7 @@
         "repos_project_id_github_owner_github_name_unique": {
           "name": "repos_project_id_github_owner_github_name_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "project_id",
-            "github_owner",
-            "github_name"
-          ]
+          "columns": ["project_id", "github_owner", "github_name"]
         }
       },
       "policies": {},
@@ -932,12 +857,8 @@
           "name": "blobs_run_id_runs_id_fk",
           "tableFrom": "blobs",
           "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1059,12 +980,8 @@
           "name": "dispatches_run_id_runs_id_fk",
           "tableFrom": "dispatches",
           "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1072,12 +989,8 @@
           "name": "dispatches_runner_id_runners_id_fk",
           "tableFrom": "dispatches",
           "tableTo": "runners",
-          "columnsFrom": [
-            "runner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["runner_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1136,12 +1049,8 @@
           "name": "run_events_run_id_runs_id_fk",
           "tableFrom": "run_events",
           "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1149,10 +1058,7 @@
       "compositePrimaryKeys": {
         "run_events_run_id_seq_pk": {
           "name": "run_events_run_id_seq_pk",
-          "columns": [
-            "run_id",
-            "seq"
-          ]
+          "columns": ["run_id", "seq"]
         }
       },
       "uniqueConstraints": {},
@@ -1344,12 +1250,8 @@
           "name": "runs_task_id_tasks_id_fk",
           "tableFrom": "runs",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1357,12 +1259,8 @@
           "name": "runs_parent_run_id_runs_id_fk",
           "tableFrom": "runs",
           "tableTo": "runs",
-          "columnsFrom": [
-            "parent_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["parent_run_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1370,12 +1268,8 @@
           "name": "runs_requested_by_member_id_members_id_fk",
           "tableFrom": "runs",
           "tableTo": "members",
-          "columnsFrom": [
-            "requested_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["requested_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1383,12 +1277,8 @@
           "name": "runs_runner_id_runners_id_fk",
           "tableFrom": "runs",
           "tableTo": "runners",
-          "columnsFrom": [
-            "runner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["runner_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1469,12 +1359,8 @@
           "name": "agent_availabilities_runner_id_runners_id_fk",
           "tableFrom": "agent_availabilities",
           "tableTo": "runners",
-          "columnsFrom": [
-            "runner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["runner_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1484,11 +1370,7 @@
         "agent_availabilities_runner_id_agent_credential_unique": {
           "name": "agent_availabilities_runner_id_agent_credential_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "runner_id",
-            "agent",
-            "credential"
-          ]
+          "columns": ["runner_id", "agent", "credential"]
         }
       },
       "policies": {},
@@ -1579,12 +1461,8 @@
           "name": "runner_pairing_tokens_team_id_teams_id_fk",
           "tableFrom": "runner_pairing_tokens",
           "tableTo": "teams",
-          "columnsFrom": [
-            "team_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["team_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1592,12 +1470,8 @@
           "name": "runner_pairing_tokens_member_id_members_id_fk",
           "tableFrom": "runner_pairing_tokens",
           "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["member_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1605,12 +1479,8 @@
           "name": "runner_pairing_tokens_created_by_member_id_members_id_fk",
           "tableFrom": "runner_pairing_tokens",
           "tableTo": "members",
-          "columnsFrom": [
-            "created_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["created_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1618,12 +1488,8 @@
           "name": "runner_pairing_tokens_used_by_runner_id_runners_id_fk",
           "tableFrom": "runner_pairing_tokens",
           "tableTo": "runners",
-          "columnsFrom": [
-            "used_by_runner_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["used_by_runner_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1633,9 +1499,7 @@
         "runner_pairing_tokens_token_hash_unique": {
           "name": "runner_pairing_tokens_token_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "policies": {},
@@ -1776,12 +1640,8 @@
           "name": "runners_team_id_teams_id_fk",
           "tableFrom": "runners",
           "tableTo": "teams",
-          "columnsFrom": [
-            "team_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["team_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1789,12 +1649,8 @@
           "name": "runners_member_id_members_id_fk",
           "tableFrom": "runners",
           "tableTo": "members",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["member_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1804,9 +1660,7 @@
         "runners_token_hash_unique": {
           "name": "runners_token_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "policies": {},
@@ -1926,12 +1780,8 @@
           "name": "acceptance_criteria_task_id_tasks_id_fk",
           "tableFrom": "acceptance_criteria",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1939,12 +1789,8 @@
           "name": "acceptance_criteria_checked_by_member_id_members_id_fk",
           "tableFrom": "acceptance_criteria",
           "tableTo": "members",
-          "columnsFrom": [
-            "checked_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["checked_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1952,12 +1798,8 @@
           "name": "acceptance_criteria_checked_by_run_id_runs_id_fk",
           "tableFrom": "acceptance_criteria",
           "tableTo": "runs",
-          "columnsFrom": [
-            "checked_by_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["checked_by_run_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2095,12 +1937,8 @@
           "name": "draft_tasks_project_id_projects_id_fk",
           "tableFrom": "draft_tasks",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2108,12 +1946,8 @@
           "name": "draft_tasks_proposed_by_run_id_runs_id_fk",
           "tableFrom": "draft_tasks",
           "tableTo": "runs",
-          "columnsFrom": [
-            "proposed_by_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["proposed_by_run_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -2121,12 +1955,8 @@
           "name": "draft_tasks_repo_id_repos_id_fk",
           "tableFrom": "draft_tasks",
           "tableTo": "repos",
-          "columnsFrom": [
-            "repo_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["repo_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -2134,12 +1964,8 @@
           "name": "draft_tasks_confirmed_task_id_tasks_id_fk",
           "tableFrom": "draft_tasks",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "confirmed_task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["confirmed_task_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -2147,12 +1973,8 @@
           "name": "draft_tasks_confirmed_by_member_id_members_id_fk",
           "tableFrom": "draft_tasks",
           "tableTo": "members",
-          "columnsFrom": [
-            "confirmed_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["confirmed_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2214,12 +2036,8 @@
           "name": "task_dependencies_task_id_tasks_id_fk",
           "tableFrom": "task_dependencies",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2227,12 +2045,8 @@
           "name": "task_dependencies_depends_on_task_id_tasks_id_fk",
           "tableFrom": "task_dependencies",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "depends_on_task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["depends_on_task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2240,10 +2054,7 @@
       "compositePrimaryKeys": {
         "task_dependencies_task_id_depends_on_task_id_pk": {
           "name": "task_dependencies_task_id_depends_on_task_id_pk",
-          "columns": [
-            "task_id",
-            "depends_on_task_id"
-          ]
+          "columns": ["task_id", "depends_on_task_id"]
         }
       },
       "uniqueConstraints": {},
@@ -2400,12 +2211,8 @@
           "name": "tasks_project_id_projects_id_fk",
           "tableFrom": "tasks",
           "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["project_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2413,12 +2220,8 @@
           "name": "tasks_repo_id_repos_id_fk",
           "tableFrom": "tasks",
           "tableTo": "repos",
-          "columnsFrom": [
-            "repo_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["repo_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -2426,12 +2229,8 @@
           "name": "tasks_repo_spec_id_repo_specs_id_fk",
           "tableFrom": "tasks",
           "tableTo": "repo_specs",
-          "columnsFrom": [
-            "repo_spec_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["repo_spec_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -2439,12 +2238,8 @@
           "name": "tasks_assignee_member_id_members_id_fk",
           "tableFrom": "tasks",
           "tableTo": "members",
-          "columnsFrom": [
-            "assignee_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["assignee_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -2452,12 +2247,8 @@
           "name": "tasks_created_by_member_id_members_id_fk",
           "tableFrom": "tasks",
           "tableTo": "members",
-          "columnsFrom": [
-            "created_by_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["created_by_member_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2467,18 +2258,12 @@
         "tasks_project_id_number_unique": {
           "name": "tasks_project_id_number_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "project_id",
-            "number"
-          ]
+          "columns": ["project_id", "number"]
         },
         "tasks_project_id_key_unique": {
           "name": "tasks_project_id_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "project_id",
-            "key"
-          ]
+          "columns": ["project_id", "key"]
         }
       },
       "policies": {},
@@ -2574,12 +2359,8 @@
           "name": "members_team_id_teams_id_fk",
           "tableFrom": "members",
           "tableTo": "teams",
-          "columnsFrom": [
-            "team_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["team_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2589,10 +2370,7 @@
         "members_team_id_github_user_id_unique": {
           "name": "members_team_id_github_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "team_id",
-            "github_user_id"
-          ]
+          "columns": ["team_id", "github_user_id"]
         }
       },
       "policies": {},
@@ -2643,75 +2421,42 @@
     "public.acceptance_criterion_kind": {
       "name": "acceptance_criterion_kind",
       "schema": "public",
-      "values": [
-        "command",
-        "agent",
-        "browser",
-        "manual"
-      ]
+      "values": ["command", "agent", "browser", "manual"]
     },
     "public.delegation_mode": {
       "name": "delegation_mode",
       "schema": "public",
-      "values": [
-        "consult",
-        "branch"
-      ]
+      "values": ["consult", "branch"]
     },
     "public.dispatch_status": {
       "name": "dispatch_status",
       "schema": "public",
-      "values": [
-        "offered",
-        "accepted",
-        "rejected",
-        "expired",
-        "completed"
-      ]
+      "values": ["offered", "accepted", "rejected", "expired", "completed"]
     },
     "public.gate_decision": {
       "name": "gate_decision",
       "schema": "public",
-      "values": [
-        "approved",
-        "rejected"
-      ]
+      "values": ["approved", "rejected"]
     },
     "public.gate_kind": {
       "name": "gate_kind",
       "schema": "public",
-      "values": [
-        "plan",
-        "review"
-      ]
+      "values": ["plan", "review"]
     },
     "public.needs_you_kind": {
       "name": "needs_you_kind",
       "schema": "public",
-      "values": [
-        "permission_request",
-        "gate",
-        "stopped_run"
-      ]
+      "values": ["permission_request", "gate", "stopped_run"]
     },
     "public.permission_policy": {
       "name": "permission_policy",
       "schema": "public",
-      "values": [
-        "manual",
-        "auto",
-        "yolo"
-      ]
+      "values": ["manual", "auto", "yolo"]
     },
     "public.role": {
       "name": "role",
       "schema": "public",
-      "values": [
-        "owner",
-        "admin",
-        "member",
-        "viewer"
-      ]
+      "values": ["owner", "admin", "member", "viewer"]
     },
     "public.run_status": {
       "name": "run_status",
@@ -2732,10 +2477,7 @@
     "public.runner_kind": {
       "name": "runner_kind",
       "schema": "public",
-      "values": [
-        "local",
-        "team"
-      ]
+      "values": ["local", "team"]
     },
     "public.task_status": {
       "name": "task_status",

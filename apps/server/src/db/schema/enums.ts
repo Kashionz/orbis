@@ -30,6 +30,12 @@ export const needsYouKindEnum = pgEnum("needs_you_kind", NEEDS_YOU_KINDS);
 
 // TODO(contract): Dispatch 狀態還沒有出現在 @orbis/api-contract 或協定中。
 // 協定加入 DispatchOffer／Accept／Reject 後，改用契約匯出的值陣列。
-export const DISPATCH_STATUSES = ["offered", "accepted", "rejected", "expired", "completed"] as const;
+export const DISPATCH_STATUSES = [
+  "offered",
+  "accepted",
+  "rejected",
+  "expired",
+  "completed",
+] as const;
 export type DispatchStatus = (typeof DISPATCH_STATUSES)[number];
 export const dispatchStatusEnum = pgEnum("dispatch_status", DISPATCH_STATUSES);

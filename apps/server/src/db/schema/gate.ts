@@ -36,10 +36,7 @@ export const gates = pgTable(
   },
   (t) => [
     index("gates_task_id_idx").on(t.taskId),
-    check(
-      "gates_decision_complete",
-      sql`(${t.decision} IS NULL) = (${t.decidedAt} IS NULL)`,
-    ),
+    check("gates_decision_complete", sql`(${t.decision} IS NULL) = (${t.decidedAt} IS NULL)`),
   ],
 );
 
@@ -71,16 +68,11 @@ export const needsYouItems = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    index("needs_you_items_member_id_open_idx")
-      .on(t.memberId)
-      .where(sql`${t.resolvedAt} IS NULL`),
+    index("needs_you_items_member_id_open_idx").on(t.memberId).where(sql`${t.resolvedAt} IS NULL`),
     index("needs_you_items_project_id_open_idx")
       .on(t.projectId)
       .where(sql`${t.resolvedAt} IS NULL`),
-    check(
-      "needs_you_items_gate_has_gate_id",
-      sql`${t.kind} <> 'gate' OR ${t.gateId} IS NOT NULL`,
-    ),
+    check("needs_you_items_gate_has_gate_id", sql`${t.kind} <> 'gate' OR ${t.gateId} IS NOT NULL`),
     check(
       "needs_you_items_run_kinds_have_run_id",
       sql`${t.kind} = 'gate' OR ${t.runId} IS NOT NULL`,

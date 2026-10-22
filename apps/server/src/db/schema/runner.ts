@@ -1,7 +1,17 @@
 // Runner、Pairing token、AgentAvailability（ARCHITECTURE §4、§6.1、§15、ADR-0001、ADR-0007）。
 
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, jsonb, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
 import { runnerKindEnum } from "./enums";
 import { members, teams } from "./team";
@@ -36,10 +46,7 @@ export const runners = pgTable(
   (t) => [
     index("runners_team_id_idx").on(t.teamId),
     index("runners_member_id_idx").on(t.memberId),
-    check(
-      "runners_kind_binding",
-      sql`(${t.kind} = 'local') = (${t.memberId} IS NOT NULL)`,
-    ),
+    check("runners_kind_binding", sql`(${t.kind} = 'local') = (${t.memberId} IS NOT NULL)`),
   ],
 );
 

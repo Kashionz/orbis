@@ -1,7 +1,17 @@
 // Run、Child Run、Event、Dispatch、blob 參照（ARCHITECTURE §4、§6.1、§9、§14）。
 
-import { type AnyPgColumn, bigint, check, index, jsonb, pgTable, primaryKey, text, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import {
+  type AnyPgColumn,
+  bigint,
+  check,
+  index,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
 import {
   delegationModeEnum,
@@ -138,9 +148,7 @@ export const blobs = pgTable(
     storageKey: text("storage_key").notNull(),
     runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
     createdAt: createdAt(),
-    expiresAt: timestamptz("expires_at")
-      .notNull()
-      .default(sql`now() + interval '90 days'`),
+    expiresAt: timestamptz("expires_at").notNull().default(sql`now() + interval '90 days'`),
   },
   (t) => [
     index("blobs_run_id_idx").on(t.runId),

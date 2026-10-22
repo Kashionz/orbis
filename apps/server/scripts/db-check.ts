@@ -47,9 +47,13 @@ try {
     if (added.length > 0) {
       console.error("db:check：schema 與 migration 不一致，會產生以下新檔案：");
       for (const file of added) console.error(`  ${file}`);
-      console.error("請執行 `pnpm --filter @orbis/server db:generate` 並 commit 產生的 migration。");
+      console.error(
+        "請執行 `pnpm --filter @orbis/server db:generate` 並 commit 產生的 migration。",
+      );
     } else {
-      console.error(`db:check：drizzle-kit generate 失敗（exit ${result.status ?? result.signal}）`);
+      console.error(
+        `db:check：drizzle-kit generate 失敗（exit ${result.status ?? result.signal}）`,
+      );
     }
     process.exit(1);
   }
