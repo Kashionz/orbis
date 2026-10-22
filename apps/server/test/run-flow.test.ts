@@ -1,6 +1,6 @@
 // Event 儲存與投影、Needs You、Review Gate，以及 M1 的完整路徑（模擬 Runner）。
 
-import { NeedsYouItem, Run, Task } from "@orbis/api-contract";
+import { NAMES, NeedsYouItem, Run, Task } from "@orbis/api-contract";
 import type { EventKind } from "@orbis/protocol";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -21,6 +21,8 @@ import {
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 import { type Harness, type MockRunner, startHarness, waitUntil } from "./helpers/runner-harness";
 
+/** Runner 回報的 Worktree 路徑（Windows）。 */
+const WORKTREE_PATH = `${NAMES.worktreeRootWindows}\\orbis\\ORB-1-1`;
 const RUNNING: EventKind = { kind: "status_changed", status: "running", gate: null, message: null };
 const AWAITING_REVIEW: EventKind = {
   kind: "status_changed",
@@ -196,7 +198,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       const { run, send } = await startedRun();
       await send({
         kind: "worktree_ready",
-        worktree_path: "C:\\ob\\orbis\\ORB-1-1",
+        worktree_path: WORKTREE_PATH,
         branch: run.branch,
         base_commit: "a".repeat(40),
       });
@@ -215,7 +217,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       const updated = expectContract(Run, res.body);
       expect(updated).toMatchObject({
         status: "running",
-        worktreePath: "C:\\ob\\orbis\\ORB-1-1",
+        worktreePath: WORKTREE_PATH,
         baseCommit: "a".repeat(40),
         usage: { inputTokens: 100, outputTokens: 20, cost: { amount: 0.12, currency: "USD" } },
       });
@@ -621,7 +623,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
     await send({ kind: "status_changed", status: "starting", gate: null, message: null });
     await send({
       kind: "worktree_ready",
-      worktree_path: "C:\\ob\\orbis\\ORB-1-1",
+      worktree_path: WORKTREE_PATH,
       branch: offer.branch,
       base_commit: "c".repeat(40),
     });
@@ -698,7 +700,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       "pr_open",
     ]);
     const finalRun = expectContract(Run, (await as("viewer").get(`/api/runs/${run.id}`)).body);
-    expect(finalRun).toMatchObject({ status: "completed", worktreePath: "C:\\ob\\orbis\\ORB-1-1" });
+    expect(finalRun).toMatchObject({ status: "completed", worktreePath: WORKTREE_PATH });
     const events = expectContract(
       z.array(RunEvent),
       (await as("viewer").get(`/api/runs/${run.id}/events`)).body,

@@ -56,7 +56,7 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
   });
 
   async function createProject(prefix = "ORB") {
-    const res = await as("admin").post("/api/projects", { name: "Orbis", keyPrefix: prefix });
+    const res = await as("admin").post("/api/projects", { name: "Dogfood", keyPrefix: prefix });
     expect(res.status).toBe(201);
     return expectContract(ProjectWithPolicy, res.body);
   }

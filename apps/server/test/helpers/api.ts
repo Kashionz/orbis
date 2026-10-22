@@ -152,7 +152,7 @@ export async function seedProject(
 ) {
   const [project] = await db
     .insert(projects)
-    .values({ teamId, name: "Orbis", taskKeyPrefix: "ORB", ...overrides })
+    .values({ teamId, name: "Dogfood", taskKeyPrefix: "ORB", ...overrides })
     .returning();
   if (!project) throw new Error("建立 Project 失敗");
   const [repo] = await db
