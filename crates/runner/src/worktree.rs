@@ -113,7 +113,7 @@ impl Worktree {
     }
 
     /// 只在本機使用、不可以 commit 或送到 Server 的路徑：`copy` 進來的檔案與 `shared_dirs` 的連結。
-    pub fn local_only_paths(&self) -> Vec<&str> {
+    pub fn local_only_paths(&self) -> Vec<String> {
         let w = &self.config.config.worktree;
         w.copy
             .iter()
@@ -351,8 +351,8 @@ impl WorktreeManager {
             let rel = repo_config::literal_relative_path(raw).map_err(|e| {
                 WorktreeError::new(RunErrorCode::SetupFailed, format!("shared_dirs：{e}"))
             })?;
-            let source = wt.root_checkout.join(rel);
-            let target = wt.path.join(rel);
+            let source = wt.root_checkout.join(&rel);
+            let target = wt.path.join(&rel);
             std::fs::create_dir_all(&source).map_err(|e| {
                 WorktreeError::worktree(format!("無法建立共用目錄 {}：{e}", source.display()))
             })?;
@@ -370,12 +370,12 @@ impl WorktreeManager {
         for raw in &wt.config.config.worktree.copy {
             let rel = repo_config::literal_relative_path(raw)
                 .map_err(|e| WorktreeError::new(RunErrorCode::SetupFailed, format!("copy：{e}")))?;
-            let source = wt.root_checkout.join(rel);
+            let source = wt.root_checkout.join(&rel);
             if !source.is_file() {
                 tracing::info!(file = %source.display(), "copy 的來源不存在，略過");
                 continue;
             }
-            let target = wt.path.join(rel);
+            let target = wt.path.join(&rel);
             // 不跟著 symlink／junction 讀寫：來源要真的在 checkout 內，目標要真的在 Worktree 內。
             let source_is_link =
                 std::fs::symlink_metadata(&source).is_ok_and(|m| m.file_type().is_symlink());
@@ -405,7 +405,7 @@ impl WorktreeManager {
             std::fs::copy(&source, &target).map_err(|e| {
                 WorktreeError::worktree(format!("無法複製 {}：{e}", source.display()))
             })?;
-            let is_dotenv = Path::new(rel)
+            let is_dotenv = Path::new(&rel)
                 .file_name()
                 .is_some_and(|n| n.to_string_lossy().starts_with(".env"));
             if is_dotenv && let Ok(text) = std::fs::read_to_string(&target) {

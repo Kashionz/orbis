@@ -182,7 +182,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// `copy` 與 `shared_dirs` 只接受 Repo 內的字面相對路徑：不可以有 glob、`..`、絕對路徑。
-pub fn literal_relative_path(raw: &str) -> Result<&str, String> {
+///
+/// 回傳正規化後的形式（`/` 分隔、去掉 `.` 段落與重複的 `/`），和 git 輸出的路徑格式一致，
+/// 所有使用者（複製、排除、洩漏檢查）都以這個形式比對。
+pub fn literal_relative_path(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("路徑不可為空".into());
@@ -197,7 +200,15 @@ pub fn literal_relative_path(raw: &str) -> Result<&str, String> {
     if trimmed.split(['/', '\\']).any(|part| part == "..") {
         return Err(format!("{raw} 含有 ..；只接受 Repo 內的相對路徑"));
     }
-    Ok(trimmed)
+    let normalized = trimmed
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        return Err(format!("{raw} 不是檔案路徑"));
+    }
+    Ok(normalized)
 }
 
 #[cfg(test)]
@@ -303,9 +314,16 @@ commit_message = \"  \"
 
     #[test]
     fn 只接受字面相對路徑() {
-        assert_eq!(literal_relative_path(".env"), Ok(".env"));
+        assert_eq!(literal_relative_path(".env").as_deref(), Ok(".env"));
+        assert_eq!(literal_relative_path("./.env").as_deref(), Ok(".env"));
         assert_eq!(
-            literal_relative_path("config/local.json"),
+            literal_relative_path("config\\local.json").as_deref(),
+            Ok("config/local.json")
+        );
+        assert_eq!(literal_relative_path("a//./b/").as_deref(), Ok("a/b"));
+        assert!(literal_relative_path("./").is_err());
+        assert_eq!(
+            literal_relative_path("config/local.json").as_deref(),
             Ok("config/local.json")
         );
         for bad in [

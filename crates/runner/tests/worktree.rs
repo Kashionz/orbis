@@ -556,9 +556,14 @@ async fn review_用的_diff_帶完整新舊內容() {
 
     let mut redactor = orbis_runner::secrets::Redactor::new();
     redactor.add_known("abcdef123456");
-    let diff = orbis_runner::diff::run_diff(&wt.path, &wt.base_commit, &redactor, &["local.env"])
-        .await
-        .unwrap();
+    let diff = orbis_runner::diff::run_diff(
+        &wt.path,
+        &wt.base_commit,
+        &redactor,
+        &["local.env".to_owned()],
+    )
+    .await
+    .unwrap();
     assert_eq!(diff.base_commit, wt.base_commit);
     let find = |p: &str| {
         diff.files

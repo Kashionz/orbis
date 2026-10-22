@@ -20,7 +20,7 @@ pub async fn run_diff(
     worktree: &Path,
     base_commit: &str,
     redactor: &Redactor,
-    local_only: &[&str],
+    local_only: &[String],
 ) -> Result<RunDiff, GitError> {
     let git = Git::new(worktree);
     let excludes: Vec<String> = local_only
