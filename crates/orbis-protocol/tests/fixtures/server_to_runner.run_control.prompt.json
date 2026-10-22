@@ -1,0 +1,20 @@
+{
+  "type": "run_control",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "action": "prompt",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "src/login.ts:12 這裡要處理 token 過期。"
+    },
+    {
+      "type": "image",
+      "blob_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "size": 48213,
+      "media_type": "image/png"
+    }
+  ]
+}

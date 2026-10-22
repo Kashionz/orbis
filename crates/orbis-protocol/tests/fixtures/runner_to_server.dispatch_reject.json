@@ -1,0 +1,6 @@
+{
+  "type": "dispatch_reject",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "reason": "concurrency_limit",
+  "message": "claude-subscription 已達並行上限 30"
+}

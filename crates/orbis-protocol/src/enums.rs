@@ -31,6 +31,9 @@ macro_rules! wire_enum {
     };
 }
 
+/// 讓其他協定模組也能用同一個巨集定義列舉。
+pub(crate) use wire_enum;
+
 wire_enum! {
     /// Run 的狀態。Runner 以 `status_changed` Event 回報，Server 與 UI 沿用同一組值。
     RunStatus {

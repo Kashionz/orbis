@@ -14,8 +14,17 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::availability::{AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS};
+use crate::control::{
+    RunControlAction, RunControlActionName, RunControlOutcome, RunControlRejectReason,
+};
+use crate::dispatch::DispatchRejectReason;
 use crate::enums::{
     DelegationMode, GateDecision, GateKind, PermissionPolicy, RunStatus, RunnerKind,
+};
+use crate::event::{
+    EventEnvelope, EventKind, EventKindName, PermissionOptionKind, PlanEntryStatus, RunErrorCode,
+    ToolCallStatus, ToolKind,
 };
 use crate::frame::{RunnerToServer, ServerToRunner};
 use crate::names::Names;
@@ -72,6 +81,13 @@ fn export_roots(cfg: &Config) -> Result<(), ts_rs::ExportError> {
     RunnerKind::export_all(cfg)?;
     GateKind::export_all(cfg)?;
     GateDecision::export_all(cfg)?;
+    // `#[serde(flatten)]` 的型別會被 ts-rs 內嵌到外層，不會自己產生檔案，所以要列在這裡。
+    EventEnvelope::export_all(cfg)?;
+    EventKind::export_all(cfg)?;
+    EventKindName::export_all(cfg)?;
+    RunControlAction::export_all(cfg)?;
+    RunControlActionName::export_all(cfg)?;
+    RunControlOutcome::export_all(cfg)?;
     Ok(())
 }
 
@@ -140,6 +156,66 @@ fn value_lists() -> Vec<ValueList> {
             GateDecision::ALL.iter().copied(),
             GateDecision::as_str,
         ),
+        list(
+            "EVENT_KINDS",
+            "EventKindName",
+            EventKindName::ALL.iter().copied(),
+            EventKindName::as_str,
+        ),
+        list(
+            "RUN_CONTROL_ACTIONS",
+            "RunControlActionName",
+            RunControlActionName::ALL.iter().copied(),
+            RunControlActionName::as_str,
+        ),
+        list(
+            "RUN_CONTROL_REJECT_REASONS",
+            "RunControlRejectReason",
+            RunControlRejectReason::ALL.iter().copied(),
+            RunControlRejectReason::as_str,
+        ),
+        list(
+            "DISPATCH_REJECT_REASONS",
+            "DispatchRejectReason",
+            DispatchRejectReason::ALL.iter().copied(),
+            DispatchRejectReason::as_str,
+        ),
+        list(
+            "AGENT_CAPABILITIES",
+            "AgentCapability",
+            AgentCapability::ALL.iter().copied(),
+            AgentCapability::as_str,
+        ),
+        list(
+            "TOOL_KINDS",
+            "ToolKind",
+            ToolKind::ALL.iter().copied(),
+            ToolKind::as_str,
+        ),
+        list(
+            "TOOL_CALL_STATUSES",
+            "ToolCallStatus",
+            ToolCallStatus::ALL.iter().copied(),
+            ToolCallStatus::as_str,
+        ),
+        list(
+            "PLAN_ENTRY_STATUSES",
+            "PlanEntryStatus",
+            PlanEntryStatus::ALL.iter().copied(),
+            PlanEntryStatus::as_str,
+        ),
+        list(
+            "PERMISSION_OPTION_KINDS",
+            "PermissionOptionKind",
+            PermissionOptionKind::ALL.iter().copied(),
+            PermissionOptionKind::as_str,
+        ),
+        list(
+            "RUN_ERROR_CODES",
+            "RunErrorCode",
+            RunErrorCode::ALL.iter().copied(),
+            RunErrorCode::as_str,
+        ),
     ]
 }
 
@@ -158,6 +234,19 @@ fn constants() -> String {
         out,
         "\nexport const PROTOCOL_VERSION = {};",
         crate::PROTOCOL_VERSION
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const RUNNER_WS_PATH = \"{}\";",
+        crate::RUNNER_WS_PATH
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const DEFAULT_MAX_CONCURRENT_RUNS = {DEFAULT_MAX_CONCURRENT_RUNS};"
     )
     .unwrap();
     for l in &lists {

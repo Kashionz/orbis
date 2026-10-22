@@ -1,0 +1,42 @@
+{
+  "type": "agent_availability",
+  "agents": [
+    {
+      "id": "claude-code",
+      "version": "0.6.2",
+      "available": true,
+      "unavailable_reason": null,
+      "capabilities": [
+        "load_session",
+        "plan_mode",
+        "image_prompt",
+        "usage_report"
+      ],
+      "models": [
+        "sonnet",
+        "opus"
+      ],
+      "permission_gaps": [
+        "WebFetch 不經過權限請求"
+      ],
+      "credential": "claude-subscription"
+    },
+    {
+      "id": "gemini",
+      "version": null,
+      "available": false,
+      "unavailable_reason": "未安裝 gemini CLI",
+      "capabilities": [],
+      "models": [],
+      "permission_gaps": [],
+      "credential": null
+    }
+  ],
+  "credentials": [
+    {
+      "label": "claude-subscription",
+      "max_concurrent_runs": 30,
+      "active_runs": 2
+    }
+  ]
+}
