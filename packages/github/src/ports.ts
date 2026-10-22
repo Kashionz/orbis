@@ -198,7 +198,8 @@ export type PullRequestState = "open" | "closed" | "merged";
 /** 以 App 身分開出的 PR 與 Task 的對應。 */
 export interface PullRequestLink {
   taskId: string;
-  runId: string;
+  /** 開出這個 PR 的 Run；Run 被刪除後為 null。 */
+  runId: string | null;
   repoId: string;
   githubRepoId: number;
   number: number;

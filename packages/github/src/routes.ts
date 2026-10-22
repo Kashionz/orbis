@@ -50,7 +50,11 @@ export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
   const app = new Hono();
   app.use("*", options.authenticate);
 
-  const forbidden = (c: Context) => c.json({ error: "forbidden" }, 403);
+  // 錯誤回應的格式與 Server 的 REST 錯誤一致：`error` 是代碼，`message` 是給人看的說明。
+  const forbidden = (c: Context) =>
+    c.json({ error: "forbidden", message: "沒有權限操作這個 Project 或 Repo" }, 403);
+  const invalidInput = (c: Context, error: z.ZodError) =>
+    c.json({ error: "invalid_input", message: z.prettifyError(error), issues: error.issues }, 400);
   // 以 repoId 為單位檢查權限：不同 Project（甚至不同 Team）的 Repo 不能互相讀取或匯入。
   const canUseRepo = (c: Context) => options.canCreateTasksInRepo(c, c.req.param("repoId") ?? "");
 
@@ -63,7 +67,7 @@ export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
 
   app.get("/repos/inspect", async (c) => {
     const query = InspectRepoQuery.safeParse(c.req.query());
-    if (!query.success) return c.json({ error: "invalid_input", issues: query.error.issues }, 400);
+    if (!query.success) return invalidInput(c, query.error);
     if (!(await options.canManageRepos(c, query.data.projectId))) return forbidden(c);
     return c.json(
       await options.github.inspectRepo(query.data.owner, query.data.name, options.memberIdOf(c)),
@@ -78,7 +82,7 @@ export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
   app.post("/repos/:repoId/import", async (c) => {
     if (!(await canUseRepo(c))) return forbidden(c);
     const input = ImportIssuesInput.safeParse(await c.req.json().catch(() => null));
-    if (!input.success) return c.json({ error: "invalid_input", issues: input.error.issues }, 400);
+    if (!input.success) return invalidInput(c, input.error);
     const results = await options.github.importIssues({
       repoId: c.req.param("repoId"),
       issueNumbers: input.data.issueNumbers,
