@@ -6,15 +6,14 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import type { HelloRejectReason, ServerToRunner } from "@orbis/protocol";
-import { PROTOCOL_VERSION } from "@orbis/protocol";
+import { PROTOCOL_VERSION, RUNNER_WS_PATH } from "@orbis/protocol";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 import type { Database } from "../db/client";
 import type { Logger } from "../logger";
 import { type AnyFrame, HeartbeatFrame, HelloFrame, parseFrame } from "./frames";
 import { type AuthenticatedRunner, pairRunner, reconnectRunner, recordHeartbeat } from "./service";
 
-// TODO(contract): 改用 @orbis/protocol 的 RUNNER_WS_PATH（W1 會在協定新增這個常數）。
-export const RUNNER_WS_PATH = "/runner";
+export { RUNNER_WS_PATH };
 export const DEFAULT_HELLO_TIMEOUT_MS = 10_000;
 
 /** 協定違規時的 WebSocket close code（RFC 6455 Policy Violation）。 */

@@ -3,6 +3,7 @@
 import {
   ACCEPTANCE_CRITERION_KINDS,
   DELEGATION_MODES,
+  DISPATCH_STATUSES,
   GATE_DECISIONS,
   GATE_KINDS,
   NEEDS_YOU_KINDS,
@@ -28,14 +29,4 @@ export const gateKindEnum = pgEnum("gate_kind", GATE_KINDS);
 export const gateDecisionEnum = pgEnum("gate_decision", GATE_DECISIONS);
 export const needsYouKindEnum = pgEnum("needs_you_kind", NEEDS_YOU_KINDS);
 
-// TODO(contract): Dispatch 狀態還沒有出現在 @orbis/api-contract 或協定中。
-// 協定加入 DispatchOffer／Accept／Reject 後，改用契約匯出的值陣列。
-export const DISPATCH_STATUSES = [
-  "offered",
-  "accepted",
-  "rejected",
-  "expired",
-  "completed",
-] as const;
-export type DispatchStatus = (typeof DISPATCH_STATUSES)[number];
 export const dispatchStatusEnum = pgEnum("dispatch_status", DISPATCH_STATUSES);
