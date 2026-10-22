@@ -1,0 +1,11 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 1,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "worktree_ready",
+  "worktree_path": "C:\\ob\\web\\ORB-12-1",
+  "branch": "orbis/ORB-12-add-login",
+  "base_commit": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"
+}

@@ -1,0 +1,15 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 5,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "message_chunk",
+  "content": {
+    "type": "image",
+    "blob_id": "0192f3a0-0000-7000-8000-0000000000b1",
+    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "size": 48213,
+    "media_type": "image/png"
+  }
+}

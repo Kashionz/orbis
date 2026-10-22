@@ -1,0 +1,10 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 13,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "permission_resolved",
+  "request_id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "selected_option_id": null
+}

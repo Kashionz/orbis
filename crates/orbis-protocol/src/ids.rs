@@ -57,3 +57,24 @@ impl From<&str> for Timestamp {
         Self(value.to_owned())
     }
 }
+
+string_id!(
+    /// Task 的 ID（UUID v7）。Task Key（例如 `ORB-12`）另外以字串傳遞。
+    TaskId
+);
+string_id!(
+    /// Blob 的 ID。由上傳的一方產生（UUID v7）。
+    BlobId
+);
+string_id!(
+    /// Tool call 的 ID，由 Agent 產生（不一定是 UUID），只在同一個 Run 內唯一。
+    ToolCallId
+);
+string_id!(
+    /// 權限請求的 ID，由 Runner 產生（UUID v7）。
+    PermissionRequestId
+);
+string_id!(
+    /// 一次 RunControl 的 ID，由 Server 產生（UUID v7），用來對應 Runner 回報的結果。
+    RunControlId
+);

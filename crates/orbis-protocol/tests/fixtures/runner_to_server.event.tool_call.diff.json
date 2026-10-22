@@ -1,0 +1,48 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 9,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "tool_call",
+  "tool_call_id": "toolu_01",
+  "title": null,
+  "tool_kind": null,
+  "status": "completed",
+  "content": [
+    {
+      "type": "diff",
+      "path": "src/login.ts",
+      "old": {
+        "type": "inline",
+        "text": "export {};\n"
+      },
+      "new": {
+        "type": "blob",
+        "blob_id": "0192f3a0-0000-7000-8000-0000000000b1",
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "size": 182044,
+        "media_type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "type": "diff",
+      "path": "src/session.ts",
+      "old": null,
+      "new": {
+        "type": "inline",
+        "text": "export const ttl = 3600;\n"
+      }
+    },
+    {
+      "type": "diff",
+      "path": "src/legacy.ts",
+      "old": {
+        "type": "inline",
+        "text": "// 舊的\n"
+      },
+      "new": null
+    }
+  ],
+  "locations": null
+}

@@ -1,0 +1,16 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 15,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "usage",
+  "input_tokens": null,
+  "output_tokens": null,
+  "thought_tokens": null,
+  "cached_read_tokens": null,
+  "cached_write_tokens": null,
+  "context_used_tokens": null,
+  "context_window_tokens": null,
+  "cost": null
+}
