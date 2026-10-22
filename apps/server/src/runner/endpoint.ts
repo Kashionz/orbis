@@ -13,6 +13,7 @@ import type { Logger } from "../logger";
 import { type AnyFrame, HeartbeatFrame, HelloFrame, parseFrame } from "./frames";
 import { type AuthenticatedRunner, pairRunner, reconnectRunner, recordHeartbeat } from "./service";
 
+// TODO(contract): 改用 @orbis/protocol 的 RUNNER_WS_PATH（W1 會在協定新增這個常數）。
 export const RUNNER_WS_PATH = "/runner";
 export const DEFAULT_HELLO_TIMEOUT_MS = 10_000;
 
