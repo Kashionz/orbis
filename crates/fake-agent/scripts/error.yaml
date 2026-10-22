@@ -1,0 +1,12 @@
+# 錯誤：第一次 prompt 回 JSON-RPC 錯誤；第二次 prompt 以 stop reason refusal 結束。
+description: 錯誤（JSON-RPC 錯誤與特定 stop reason）
+turns:
+  - steps:
+      - message: 開始處理……
+      - error:
+          code: -32603
+          message: Internal error
+          data: { details: 模型服務回傳 500 }
+  - steps:
+      - message: 我不能這樣做。
+      - stop: refusal

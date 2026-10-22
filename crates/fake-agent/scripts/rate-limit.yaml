@@ -1,0 +1,16 @@
+# rate limit 後恢復：第一次 prompt 回 rate limit 錯誤，第二次 prompt（同一個 session）從下一個回合繼續並完成。
+description: rate limit 後恢復
+turns:
+  - steps:
+      - message: 開始處理……
+      - rate_limit:
+          retry_after_ms: 1500
+  - steps:
+      - message: 額度恢復了，繼續工作。
+      - tool_call:
+          id: write-resumed
+          title: 新增 resumed.txt
+          edit:
+            path: resumed.txt
+            content: "resumed\n"
+      - stop: end_turn

@@ -1,0 +1,14 @@
+# plan：先送出整份 plan，執行過程中再送更新後的整份 plan。
+description: plan
+turns:
+  - steps:
+      - plan:
+          - { content: 讀懂需求, priority: high, status: in_progress }
+          - { content: 修改程式碼, priority: high }
+          - { content: 補上測試, priority: medium }
+      - message: 需求讀完了。
+      - plan:
+          - { content: 讀懂需求, priority: high, status: completed }
+          - { content: 修改程式碼, priority: high, status: completed }
+          - { content: 補上測試, priority: medium, status: completed }
+      - stop: end_turn
