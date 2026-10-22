@@ -73,6 +73,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
     const result = await signIn(db, user, { bootstrapOwner: deps.bootstrapOwner });
     logger.info(
       {
+        githubUserId: user.id,
         githubLogin: user.login,
         teamId: result.session.currentTeamId,
         bootstrapped: result.bootstrapped,
