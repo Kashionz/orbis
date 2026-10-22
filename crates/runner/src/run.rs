@@ -1074,21 +1074,21 @@ impl Run {
                 git.run(["commit", "-m", &message]).await.map_err(fail)?;
             }
         }
-        // Agent 自己 commit 的內容也要檢查。比對交給 git 的 pathspec（literal、不分大小寫），
-        // 不自己比字串，避免和 git 的路徑引號與正規化規則不一致。
+        // Agent 自己 commit 的內容也要檢查，而且是要 push 的**每一個** commit（先 commit 再刪掉
+        // 也會留在歷史中）。比對交給 git 的 pathspec（literal、不分大小寫），不自己比字串。
         if !local_only.is_empty() {
             let mut check: Vec<String> = vec![
-                "diff".into(),
-                "--name-only".into(),
-                "-z".into(),
+                "rev-list".into(),
+                "--no-renames".into(),
                 format!("{}..HEAD", wt.base_commit),
                 "--".into(),
             ];
             check.extend(local_only.iter().map(|p| format!(":(literal,icase){p}")));
-            let leaked = git.run(check).await.map_err(fail)?;
-            if let Some(file) = leaked.split('\0').find(|f| !f.is_empty()) {
+            let touching = git.run(check).await.map_err(fail)?;
+            if let Some(commit) = touching.lines().find(|c| !c.trim().is_empty()) {
                 return Err(format!(
-                    "分支上的 commit 含有只在本機使用的檔案 {file}（來自 copy 或 shared_dirs），拒絕 push"
+                    "分支上的 commit {commit} 動到只在本機使用的檔案（{}，來自 copy 或 shared_dirs），拒絕 push",
+                    local_only.join("、")
                 ));
             }
         }

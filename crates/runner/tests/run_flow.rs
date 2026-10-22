@@ -775,8 +775,11 @@ async fn copy_進來的檔案不會送到_server_也不會_push() {
         ".env 不可以被 push：{files}"
     );
     // Agent 自己把 .env commit 進去：拒絕 push。
+    // 先 commit 再刪掉也一樣：.env 仍在要 push 的歷史中。
     git(&worktree, &["add", "--", ".env"]);
     git(&worktree, &["commit", "-m", "不小心 commit 了 .env"]);
+    git(&worktree, &["rm", "--cached", "-q", "--", ".env"]);
+    git(&worktree, &["commit", "-m", "再把 .env 拿掉"]);
     let refused = conn
         .control("r1", "d-r1", "c3", RunControlAction::PushBranch)
         .await;
