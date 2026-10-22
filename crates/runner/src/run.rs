@@ -1079,6 +1079,8 @@ impl Run {
         if !local_only.is_empty() {
             let mut check: Vec<String> = vec![
                 "rev-list".into(),
+                // 不做歷史簡化：merge 進來的側分支 commit 也要檢查。
+                "--full-history".into(),
                 "--no-renames".into(),
                 format!("{}..HEAD", wt.base_commit),
                 "--".into(),
