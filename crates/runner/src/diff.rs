@@ -13,33 +13,46 @@ use crate::secrets::Redactor;
 const BINARY_PLACEHOLDER: &str = "[二進位檔案]";
 
 /// 計算 Worktree 相對於 `base_commit` 的 diff。
+///
+/// `local_only` 是只在本機使用的路徑（`copy` 進來的檔案、`shared_dirs` 的連結），不列入 diff，
+/// 也不會被加進 index。
 pub async fn run_diff(
     worktree: &Path,
     base_commit: &str,
     redactor: &Redactor,
+    local_only: &[&str],
 ) -> Result<RunDiff, GitError> {
     let git = Git::new(worktree);
+    let excludes: Vec<String> = local_only
+        .iter()
+        .map(|p| format!(":(exclude,literal){p}"))
+        .collect();
     // 先把未追蹤的檔案以 intent-to-add 加入 index，讓 rename 偵測也涵蓋它們；
     // 不會改變檔案內容，`git add -A` 時也會正常處理。
-    let untracked = git
-        .run(["ls-files", "--others", "--exclude-standard", "-z"])
-        .await?;
+    let mut ls: Vec<String> = [
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        ".",
+    ]
+    .map(String::from)
+    .to_vec();
+    ls.extend(excludes.iter().cloned());
+    let untracked = git.run(ls).await?;
     let untracked: Vec<&str> = untracked.split('\0').filter(|p| !p.is_empty()).collect();
     if !untracked.is_empty() {
         let mut args = vec!["add", "--intent-to-add", "--"];
         args.extend(untracked.iter().copied());
         git.run(args).await?;
     }
-    let raw = git
-        .run_raw([
-            "diff",
-            "--name-status",
-            "-z",
-            "-M",
-            "--no-ext-diff",
-            base_commit,
-        ])
-        .await?;
+    let mut diff_args: Vec<String> = ["diff", "--name-status", "-z", "-M", "--no-ext-diff"]
+        .map(String::from)
+        .to_vec();
+    diff_args.extend([base_commit.to_owned(), "--".into(), ".".into()]);
+    diff_args.extend(excludes);
+    let raw = git.run_raw(diff_args).await?;
     let mut files = Vec::new();
     let mut parts = raw.split('\0').filter(|p| !p.is_empty());
     while let Some(status) = parts.next() {
@@ -81,17 +94,7 @@ pub async fn run_diff(
         };
         let new = match change {
             FileChange::Deleted => None,
-            _ => Some(match std::fs::read(worktree.join(&path)) {
-                Ok(bytes) => match String::from_utf8(bytes) {
-                    Ok(text) if !text.contains('\0') => body(&text, redactor),
-                    _ => TextBody::Inline {
-                        text: BINARY_PLACEHOLDER.into(),
-                    },
-                },
-                Err(_) => TextBody::Inline {
-                    text: String::new(),
-                },
-            }),
+            _ => Some(read_worktree_file(worktree, &path, redactor)),
         };
         files.push(RunDiffFile {
             path,
@@ -106,6 +109,44 @@ pub async fn run_diff(
         files,
     })
 }
+
+/// 讀 Worktree 中檔案的新內容，不跟著連結讀到 Worktree 以外：
+/// symlink 回報連結目標（和 git 記錄的內容一樣），解開後落在 Worktree 外的路徑不讀。
+fn read_worktree_file(worktree: &Path, path: &str, redactor: &Redactor) -> TextBody {
+    let full = worktree.join(path);
+    if let Ok(meta) = std::fs::symlink_metadata(&full)
+        && meta.file_type().is_symlink()
+    {
+        let target = std::fs::read_link(&full)
+            .map(|t| t.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return TextBody::Inline {
+            text: redactor.redact(&target),
+        };
+    }
+    if !crate::paths::is_within(
+        &crate::paths::resolve_existing(&full),
+        &crate::paths::canonical(worktree),
+    ) {
+        return TextBody::Inline {
+            text: OUTSIDE_PLACEHOLDER.into(),
+        };
+    }
+    match std::fs::read(&full) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) if !text.contains('\0') => body(&text, redactor),
+            _ => TextBody::Inline {
+                text: BINARY_PLACEHOLDER.into(),
+            },
+        },
+        Err(_) => TextBody::Inline {
+            text: String::new(),
+        },
+    }
+}
+
+/// 經由連結指向 Worktree 以外的檔案的替代文字。
+const OUTSIDE_PLACEHOLDER: &str = "[指向 Worktree 以外的連結，不讀取內容]";
 
 fn body(text: &str, redactor: &Redactor) -> TextBody {
     if text.contains('\0') {

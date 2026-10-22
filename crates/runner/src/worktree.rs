@@ -112,6 +112,16 @@ impl Worktree {
         ]
     }
 
+    /// 只在本機使用、不可以 commit 或送到 Server 的路徑：`copy` 進來的檔案與 `shared_dirs` 的連結。
+    pub fn local_only_paths(&self) -> Vec<&str> {
+        let w = &self.config.config.worktree;
+        w.copy
+            .iter()
+            .chain(&w.shared_dirs)
+            .filter_map(|p| repo_config::literal_relative_path(p).ok())
+            .collect()
+    }
+
     /// 信任紀錄用的 Repo 識別。
     pub fn repo_key(&self, repo: &DispatchRepo) -> String {
         repo.clone_url.clone()

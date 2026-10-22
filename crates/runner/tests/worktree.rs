@@ -516,10 +516,12 @@ async fn review_用的_diff_帶完整新舊內容() {
     git(&wt.path, &["add", "-A"]);
     git(&wt.path, &["commit", "-m", "部分修改"]);
     std::fs::write(wt.path.join("later.txt"), "還沒 commit\n").unwrap();
+    // 只在本機使用的檔案（copy 進來的）不列入 diff。
+    std::fs::write(wt.path.join("local.env"), "SECRET=1\n").unwrap();
 
     let mut redactor = orbis_runner::secrets::Redactor::new();
     redactor.add_known("abcdef123456");
-    let diff = orbis_runner::diff::run_diff(&wt.path, &wt.base_commit, &redactor)
+    let diff = orbis_runner::diff::run_diff(&wt.path, &wt.base_commit, &redactor, &["local.env"])
         .await
         .unwrap();
     assert_eq!(diff.base_commit, wt.base_commit);
@@ -551,8 +553,47 @@ async fn review_用的_diff_帶完整新舊內容() {
     assert_eq!(deleted.change, FileChange::Deleted);
     assert!(deleted.new.is_none());
 
+    assert!(
+        diff.files.iter().all(|f| f.path != "local.env"),
+        "copy 進來的檔案不列入 diff：{:?}",
+        diff.files
+    );
+
     let renamed = find("new-name.txt");
     assert_eq!(renamed.change, FileChange::Renamed);
     assert_eq!(renamed.old_path.as_deref(), Some("old-name.txt"));
     assert_eq!(text(&renamed.old), "搬家的內容\n");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn diff_不跟著連結讀取_worktree_以外的檔案() {
+    use orbis_protocol::event::TextBody;
+    let remote = Remote::new(&[("README.md", "a\n")]);
+    let home = TestHome::new("");
+    let manager = WorktreeManager::new(home.home.clone());
+    let wt = manager
+        .create(&request(&remote, "ORB-31", 1, Some("orbis/link")))
+        .await
+        .unwrap();
+    let secret = home.dir.path().join("secret.txt");
+    std::fs::write(&secret, "TOP SECRET").unwrap();
+    std::os::unix::fs::symlink(&secret, wt.path.join("link.txt")).unwrap();
+    let diff = orbis_runner::diff::run_diff(
+        &wt.path,
+        &wt.base_commit,
+        &orbis_runner::secrets::Redactor::new(),
+        &[],
+    )
+    .await
+    .unwrap();
+    let file = diff.files.iter().find(|f| f.path == "link.txt").unwrap();
+    let Some(TextBody::Inline { text }) = &file.new else {
+        panic!("{file:?}")
+    };
+    assert!(
+        !text.contains("TOP SECRET"),
+        "不可以讀取連結指向的內容：{text}"
+    );
+    assert!(text.contains("secret.txt"), "回報連結目標：{text}");
 }

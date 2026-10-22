@@ -704,3 +704,78 @@ fn runner_的劇本都能解析() {
     }
     assert!(count >= 4, "{count}");
 }
+
+/// copy 進來的 `.env` 只在本機使用：不出現在 Review 的 diff，也不會被 commit 或 push。
+#[tokio::test(flavor = "multi_thread")]
+async fn copy_進來的檔案不會送到_server_也不會_push() {
+    let config = "[worktree]\ncopy = [\".env\"]\n[permissions]\nallow_commands = [\"make *\"]\n";
+    let remote = Remote::new(&[(".orbis/config.toml", config)]);
+    let dir = temp_dir("orbis run");
+    let checkout = dir.path().join("member");
+    git(dir.path(), &["clone", &remote.clone_url(), "member"]);
+    std::fs::write(checkout.join(".env"), "API_TOKEN=abcdef123456\n").unwrap();
+    let home = dir.path().join("home");
+    write_runner_toml(
+        &home,
+        &format!(
+            "{}[repos.web]\npath = {}\n",
+            fake_agent_toml(&dir.path().join("wt"), &runner_script("review-loop.yaml")),
+            toml_string(&checkout.to_string_lossy())
+        ),
+    );
+    let mut server = FakeServer::start().await;
+    let _runner = spawn_runner(RunnerOptions::new(&server.base_url(), &home));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_test")).await;
+    conn.send(&send_offer(offer(
+        "r1",
+        "d-r1",
+        remote.dispatch_repo("web"),
+        "fake",
+        "做事",
+    )))
+    .await;
+    let ready = conn.wait_event("worktree_ready").await;
+    let worktree = std::path::PathBuf::from(ready["worktree_path"].as_str().unwrap());
+    let diff = conn.wait_event("run_diff").await;
+    assert!(
+        diff["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["path"] != ".env"),
+        "{diff}"
+    );
+    assert!(
+        worktree.join(".env").is_file(),
+        "Worktree 中要有複製進來的 .env"
+    );
+    conn.wait_status("awaiting_gate").await;
+    conn.control(
+        "r1",
+        "d-r1",
+        "c1",
+        RunControlAction::GateResult {
+            gate: GateKind::Review,
+            decision: GateDecision::Approved,
+        },
+    )
+    .await;
+    let result = conn
+        .control("r1", "d-r1", "c2", RunControlAction::PushBranch)
+        .await;
+    let sha = result["commit_sha"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{result}"));
+    let files = git(&remote.bare, &["ls-tree", "-r", "--name-only", sha]);
+    assert!(files.lines().any(|f| f == "feature.txt"), "{files}");
+    assert!(
+        !files.lines().any(|f| f == ".env"),
+        ".env 不可以被 push：{files}"
+    );
+    let all_events = serde_json::to_string(&conn.events).unwrap();
+    assert!(
+        !all_events.contains("abcdef123456"),
+        "secret 不可以出現在 Event 中"
+    );
+}

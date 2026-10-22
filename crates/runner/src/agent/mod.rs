@@ -187,6 +187,12 @@ pub fn classify_tool_call(call: &ToolCallUpdate, worktree: &Path) -> PermissionS
             "notebook_path",
             "destination",
             "new_path",
+            // 移動的來源：來源也會被刪除，必須一起判斷。
+            "source",
+            "src",
+            "from",
+            "old_path",
+            "oldPath",
         ] {
             if let Some(p) = raw.get(key).and_then(|v| v.as_str()) {
                 paths.push(PathBuf::from(p));
@@ -221,7 +227,9 @@ pub fn classify_tool_call(call: &ToolCallUpdate, worktree: &Path) -> PermissionS
         Some(ToolKind::Read | ToolKind::Search) if !paths.is_empty() => {
             PermissionSubject::Read { paths }
         }
-        Some(ToolKind::Edit | ToolKind::Move) => PermissionSubject::Write { paths },
+        Some(ToolKind::Edit) => PermissionSubject::Write { paths },
+        // 移動等於刪除來源：當成刪除判斷，來源在 Worktree 外時一律拒絕；找不到路徑時問人。
+        Some(ToolKind::Move) => PermissionSubject::Delete { paths },
         Some(ToolKind::Delete) => PermissionSubject::Delete { paths },
         _ => match command {
             Some(command) => PermissionSubject::Command { command },
@@ -380,6 +388,20 @@ mod tests {
             PermissionSubject::Read {
                 paths: vec![outside]
             }
+        );
+        let outside_src = std::env::temp_dir().join("secret.txt");
+        assert_eq!(
+            classify_tool_call(
+                &call(
+                    ToolKind::Move,
+                    json!({ "source": outside_src, "destination": "in-worktree.txt" })
+                ),
+                &wt()
+            ),
+            PermissionSubject::Delete {
+                paths: vec![wt().join("in-worktree.txt"), outside_src]
+            },
+            "移動的來源要一起判斷"
         );
         assert_eq!(
             classify_tool_call(&call(ToolKind::Fetch, json!({ "url": "https://x" })), &wt()),

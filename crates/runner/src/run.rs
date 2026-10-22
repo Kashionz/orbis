@@ -933,7 +933,14 @@ impl Run {
 
     async fn send_run_diff(&mut self) {
         let wt = self.wt().clone();
-        match crate::diff::run_diff(&wt.path, &wt.base_commit, &self.redactor).await {
+        match crate::diff::run_diff(
+            &wt.path,
+            &wt.base_commit,
+            &self.redactor,
+            &wt.local_only_paths(),
+        )
+        .await
+        {
             Ok(diff) => self.emit(OutgoingKind::RunDiff(RunDiffKind { diff })),
             Err(e) => self.emit(EventKind::Error {
                 code: e.code,
@@ -1049,6 +1056,8 @@ impl Run {
         }
         let git = wt.git();
         let fail = |e: crate::git::GitError| e.to_string();
+        // 從 Member 的 checkout 複製進來的檔案（例如 .env）與共用目錄的連結，絕不 commit 或 push。
+        let local_only = wt.local_only_paths();
         let dirty = git.run(["status", "--porcelain"]).await.map_err(fail)?;
         if !dirty.trim().is_empty() {
             let message = wt.config.config.git.commit_message(CommitFields {
@@ -1057,8 +1066,27 @@ impl Run {
                 run_id: self.offer.run_id.as_str(),
                 branch: &branch,
             });
-            git.run(["add", "-A"]).await.map_err(fail)?;
-            git.run(["commit", "-m", &message]).await.map_err(fail)?;
+            let mut add = vec!["add".to_owned(), "-A".into(), "--".into(), ".".into()];
+            add.extend(local_only.iter().map(|p| format!(":(exclude,literal){p}")));
+            git.run(add).await.map_err(fail)?;
+            let staged = git.run(["diff", "--cached", "--quiet"]).await.is_err();
+            if staged {
+                git.run(["commit", "-m", &message]).await.map_err(fail)?;
+            }
+        }
+        // Agent 自己 commit 的內容也要檢查。
+        let committed = git
+            .run(["diff", "--name-only", &format!("{}..HEAD", wt.base_commit)])
+            .await
+            .map_err(fail)?;
+        if let Some(leaked) = committed.lines().find(|f| {
+            local_only
+                .iter()
+                .any(|p| *f == *p || f.starts_with(&format!("{}/", p.trim_end_matches('/'))))
+        }) {
+            return Err(format!(
+                "分支上的 commit 含有只在本機使用的檔案 {leaked}（來自 copy 或 shared_dirs），拒絕 push"
+            ));
         }
         let ahead = git
             .run(["rev-list", "--count", &format!("{}..HEAD", wt.base_commit)])
