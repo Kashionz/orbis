@@ -51,6 +51,8 @@ export const projects = pgTable(
       .default("auto"),
     /** Verification 失敗時自動重試的上限（ARCHITECTURE §5.1，預設 3 次）。 */
     verificationMaxRetries: integer("verification_max_retries").notNull().default(3),
+    /** 有 Repo 的 Task 是否自動建立對應的 GitHub Issue（ARCHITECTURE §11）。 */
+    autoCreateIssues: boolean("auto_create_issues").notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -90,6 +92,8 @@ export const repos = pgTable(
     /** GitHub 的 repository id；登記時由 D 軌讀取，改名後仍可對應。 */
     githubRepoId: bigint("github_repo_id", { mode: "number" }),
     defaultBranch: text("default_branch"),
+    /** 安裝在這個 repo 的 GitHub App installation id；未安裝時為 null。 */
+    githubInstallationId: bigint("github_installation_id", { mode: "number" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

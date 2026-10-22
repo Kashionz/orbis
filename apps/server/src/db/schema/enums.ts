@@ -6,11 +6,16 @@ import {
   DISPATCH_STATUSES,
   GATE_DECISIONS,
   GATE_KINDS,
+  GITHUB_WEBHOOK_DELIVERY_STATUSES,
   NEEDS_YOU_KINDS,
   PERMISSION_POLICIES,
+  PULL_REQUEST_STATES,
+  REVIEW_COMMENT_SIDES,
   ROLES,
+  RUN_CONTROL_ACTIONS,
   RUN_STATUSES,
   RUNNER_KINDS,
+  TASK_DONE_REASONS,
   TASK_STATUSES,
 } from "@orbis/api-contract";
 import { pgEnum } from "drizzle-orm/pg-core";
@@ -30,3 +35,12 @@ export const gateDecisionEnum = pgEnum("gate_decision", GATE_DECISIONS);
 export const needsYouKindEnum = pgEnum("needs_you_kind", NEEDS_YOU_KINDS);
 
 export const dispatchStatusEnum = pgEnum("dispatch_status", DISPATCH_STATUSES);
+
+export const taskDoneReasonEnum = pgEnum("task_done_reason", TASK_DONE_REASONS);
+export const reviewCommentSideEnum = pgEnum("review_comment_side", REVIEW_COMMENT_SIDES);
+export const runControlActionEnum = pgEnum("run_control_action", RUN_CONTROL_ACTIONS);
+export const pullRequestStateEnum = pgEnum("pull_request_state", PULL_REQUEST_STATES);
+export const githubWebhookDeliveryStatusEnum = pgEnum(
+  "github_webhook_delivery_status",
+  GITHUB_WEBHOOK_DELIVERY_STATUSES,
+);

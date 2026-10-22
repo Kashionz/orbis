@@ -9,6 +9,7 @@ import {
   GATE_DECISIONS,
   GATE_KINDS,
   PERMISSION_POLICIES,
+  RUN_CONTROL_ACTIONS,
   RUN_STATUSES,
   RUNNER_KINDS,
 } from "@orbis/protocol";
@@ -19,6 +20,7 @@ export {
   GATE_DECISIONS,
   GATE_KINDS,
   PERMISSION_POLICIES,
+  RUN_CONTROL_ACTIONS,
   RUN_STATUSES,
   RUNNER_KINDS,
 };
@@ -86,6 +88,27 @@ export const DISPATCH_STATUSES = [
 ] as const;
 export const DispatchStatus = z.enum(DISPATCH_STATUSES);
 export type DispatchStatus = z.infer<typeof DispatchStatus>;
+
+/**
+ * Task 轉為 Done 的原因（ARCHITECTURE §11）：取自 GitHub Issue 關閉時的 `state_reason`；
+ * 由 PR merge 而轉 Done 時為 `completed`。Task 離開 Done 時清空。
+ */
+export const TASK_DONE_REASONS = ["completed", "not_planned"] as const;
+export const TaskDoneReason = z.enum(TASK_DONE_REASONS);
+export type TaskDoneReason = z.infer<typeof TaskDoneReason>;
+
+/** 行內留言在 diff 的哪一側：`old`＝修改前，`new`＝修改後。 */
+export const REVIEW_COMMENT_SIDES = ["old", "new"] as const;
+export const ReviewCommentSide = z.enum(REVIEW_COMMENT_SIDES);
+export type ReviewCommentSide = z.infer<typeof ReviewCommentSide>;
+
+/** 以 GitHub App 開出的 PR 的狀態。 */
+export const PULL_REQUEST_STATES = ["open", "closed", "merged"] as const;
+export const PullRequestState = z.enum(PULL_REQUEST_STATES);
+export type PullRequestState = z.infer<typeof PullRequestState>;
+
+/** GitHub webhook delivery 的處理狀態（去重用）。 */
+export const GITHUB_WEBHOOK_DELIVERY_STATUSES = ["processing", "completed"] as const;
 
 /** Acceptance Criterion 最近一次判定的結果。`pending`＝尚未判定或程式碼變更後需要重新判定。 */
 export const ACCEPTANCE_CRITERION_RESULTS = ["pending", "passed", "failed"] as const;

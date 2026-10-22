@@ -14,7 +14,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
-import { acceptanceCriterionKindEnum, taskStatusEnum } from "./enums";
+import { acceptanceCriterionKindEnum, taskDoneReasonEnum, taskStatusEnum } from "./enums";
 import { projects, repoSpecs, repos } from "./project";
 import { runs } from "./run";
 import { members } from "./team";
@@ -45,6 +45,8 @@ export const tasks = pgTable(
     /** Task 描述（markdown），與 GitHub Issue 的 body 同步。 */
     description: text("description").notNull().default(""),
     status: taskStatusEnum("status").notNull().default("backlog"),
+    /** 轉為 Done 的原因（GitHub 的 state_reason）；不是 Done 時為 null。 */
+    doneReason: taskDoneReasonEnum("done_reason"),
     assigneeMemberId: uuid("assignee_member_id").references(() => members.id, {
       onDelete: "set null",
     }),
@@ -64,6 +66,7 @@ export const tasks = pgTable(
     index("tasks_project_id_status_idx").on(t.projectId, t.status),
     index("tasks_assignee_member_id_idx").on(t.assigneeMemberId),
     check("tasks_number_positive", sql`${t.number} >= 1`),
+    check("tasks_done_reason_only_when_done", sql`${t.doneReason} IS NULL OR ${t.status} = 'done'`),
   ],
 );
 

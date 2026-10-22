@@ -8,6 +8,13 @@
       "when": 1792687218797,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792698710383,
+      "tag": "0001_w2_contracts",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@ import {
   delegationModeEnum,
   dispatchStatusEnum,
   permissionPolicyEnum,
+  runControlActionEnum,
   runnerKindEnum,
   runStatusEnum,
 } from "./enums";
@@ -137,6 +138,43 @@ export const dispatches = pgTable(
  * blob 參照：大型內容（完整檔案、截圖）存在 blob 儲存，Event 只放 BlobRef。
  * id 即協定 BlobRef 的 blob_id。預設保存 90 天，到期由清理工作刪除。
  */
+/**
+ * 送給 Runner 的 RunControl（ARCHITECTURE §6.1）：每個指令一筆，以 control_id 對應 Runner 回的
+ * run_control_result。outcome 為 null 表示還沒有結果；Runner 重新連線後補送這些指令。
+ */
+export const runControls = pgTable(
+  "run_controls",
+  {
+    /** 協定的 control_id。 */
+    controlId: uuid("control_id").primaryKey(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    dispatchId: uuid("dispatch_id")
+      .notNull()
+      .references(() => dispatches.id, { onDelete: "cascade" }),
+    action: runControlActionEnum("action").notNull(),
+    /** 指令的完整內容（協定的 RunControlAction）。 */
+    payload: jsonb("payload").notNull(),
+    /** 送出這個指令的 Member；系統觸發時為 null。 */
+    requestedByMemberId: uuid("requested_by_member_id").references(() => members.id, {
+      onDelete: "set null",
+    }),
+    sentAt: timestamptz("sent_at"),
+    /** 協定 RunControlOutcome 的種類：applied、branch_pushed、rejected。 */
+    outcome: text("outcome"),
+    /** RunControlOutcome 的完整內容，例如 push 的 commit SHA 或拒絕原因。 */
+    outcomePayload: jsonb("outcome_payload"),
+    resolvedAt: timestamptz("resolved_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("run_controls_run_id_idx").on(t.runId),
+    index("run_controls_pending_idx").on(t.dispatchId).where(sql`${t.resolvedAt} IS NULL`),
+    check("run_controls_outcome_complete", sql`(${t.outcome} IS NULL) = (${t.resolvedAt} IS NULL)`),
+  ],
+);
+
 export const blobs = pgTable(
   "blobs",
   {

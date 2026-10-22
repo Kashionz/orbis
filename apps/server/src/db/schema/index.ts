@@ -3,6 +3,7 @@
 export * from "./auth";
 export * from "./enums";
 export * from "./gate";
+export * from "./github";
 export * from "./project";
 export * from "./run";
 export * from "./runner";
