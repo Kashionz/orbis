@@ -5,13 +5,21 @@
   "description": "GitHub App、webhook、Issues 同步、PR Feedback Loop（D 軌）",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./testing/store-contract": "./src/testing/store-contract.ts"
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@orbis/api-contract": "workspace:*",
+    "hono": "4.13.13",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
   }
