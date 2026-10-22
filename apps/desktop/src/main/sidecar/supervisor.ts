@@ -98,7 +98,7 @@ export class RunnerSupervisor {
     return () => this.listeners.delete(listener);
   }
 
-  /** 啟動 sidecar。已經在跑或在退避中時不做任何事。 */
+  /** 啟動 sidecar。已經在跑或在退避中時不做任何事。launch() 丟出的例外會直接傳給呼叫端。 */
   start(): void {
     if (this.state.phase === "running" || this.state.phase === "backoff") return;
     if (this.state.phase === "stopping") {
@@ -240,7 +240,13 @@ export class RunnerSupervisor {
       this.restartTimer = null;
       if (this.state.phase !== "backoff") return;
       this.update({ restarts: this.state.restarts + 1 });
-      this.spawnChild();
+      try {
+        this.spawnChild();
+      } catch (error) {
+        // launch() 失敗（例如設定被清掉）時停下來，等呼叫端重新 start()
+        this.options.log.note(`無法重啟 Runner：${(error as Error).message}`);
+        this.update({ phase: "stopped" });
+      }
     }, delay);
   }
 

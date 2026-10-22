@@ -168,6 +168,24 @@ describe("RunnerSupervisor", () => {
     expect(received().map((c) => c.type)).toEqual(["pause_claiming", "resume_claiming"]);
   });
 
+  it("重啟時 launch() 失敗就停下來，不會變成未捕捉的例外", async () => {
+    const log = new MemoryLog();
+    let calls = 0;
+    const supervisor = new RunnerSupervisor({
+      launch: () => {
+        calls += 1;
+        if (calls > 1) throw new Error("沒有 Pairing token");
+        return { command: process.execPath, args: ["-e", "process.exit(1)"], env: process.env };
+      },
+      log,
+      backoff: FAST_BACKOFF,
+    });
+    supervisors.push(supervisor);
+    supervisor.start();
+    await waitFor(() => supervisor.snapshot().phase === "stopped" && calls === 2, "停下來");
+    expect(log.text).toContain("無法重啟 Runner：沒有 Pairing token");
+  });
+
   it("找不到執行檔時進入退避，不會丟出例外", async () => {
     const log = new MemoryLog();
     const supervisor = new RunnerSupervisor({
