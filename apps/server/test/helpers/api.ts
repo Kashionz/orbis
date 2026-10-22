@@ -7,6 +7,7 @@ import { expect } from "vitest";
 import type { z } from "zod";
 import { createApp } from "../../src/app";
 import type { GitHubOAuth, GitHubUser } from "../../src/auth/github-oauth";
+import { MemoryBlobStore } from "../../src/blobs/store";
 import { ManualClock } from "../../src/clock";
 import { randomToken, sha256Hex } from "../../src/crypto";
 import type { Database } from "../../src/db/client";
@@ -81,6 +82,7 @@ export function createTestContext(
     db,
     logger,
     clock,
+    blobStore: new MemoryBlobStore(),
     ...options,
     github: {
       userLookup: githubUsers.lookup,

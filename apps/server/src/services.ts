@@ -1,8 +1,10 @@
 // Server 的服務組裝：HTTP 路由、Runner WebSocket 與背景工作共用同一組服務。
 
 import type { MiddlewareHandler } from "hono";
+import { BlobCleanup } from "./blobs/cleanup";
+import { type BlobStore, FileSystemBlobStore } from "./blobs/store";
 import { type Clock, systemClock } from "./clock";
-import { DEFAULT_HEARTBEAT_INTERVAL_MS } from "./config";
+import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS } from "./config";
 import type { Database } from "./db/client";
 import { DomainEvents } from "./domain/events";
 import { GitHubDomainService } from "./domain/github-domain";
@@ -37,6 +39,8 @@ export interface Services {
   dispatcher: Dispatcher;
   ingest: EventIngest;
   runControls: RunControlService;
+  blobStore: BlobStore;
+  blobCleanup: BlobCleanup;
   heartbeatIntervalMs: number;
 }
 
@@ -50,6 +54,9 @@ export interface ServicesOptions {
   heartbeatIntervalMs?: number;
   offerTimeoutMs?: number;
   rejectCooldownMs?: number;
+  /** 未提供時存在 blobDir（預設 DEFAULT_BLOB_DIR）。 */
+  blobStore?: BlobStore;
+  blobDir?: string;
 }
 
 export function createServices(options: ServicesOptions): Services {
@@ -77,6 +84,8 @@ export function createServices(options: ServicesOptions): Services {
     offerTimeoutMs: options.offerTimeoutMs,
     rejectCooldownMs: options.rejectCooldownMs,
   });
+  const blobStore =
+    options.blobStore ?? new FileSystemBlobStore(options.blobDir ?? DEFAULT_BLOB_DIR);
   return {
     db,
     logger,
@@ -91,6 +100,8 @@ export function createServices(options: ServicesOptions): Services {
     dispatcher,
     ingest: new EventIngest(db, eventStore, lifecycle, clock, logger),
     runControls: new RunControlService(db, hub, clock, logger, github.pullRequestOpener),
+    blobStore,
+    blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     heartbeatIntervalMs,
   };
 }

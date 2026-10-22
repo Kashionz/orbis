@@ -21,7 +21,8 @@ export interface ServerDeps {
     | "bootstrapOwnerGithubUserId"
     | "devPairingToken"
     | "runnerHeartbeatIntervalMs"
-  >;
+  > &
+    Partial<Pick<Config, "blobDir">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
@@ -51,6 +52,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       db: deps.db,
       logger: deps.logger,
       heartbeatIntervalMs: deps.config.runnerHeartbeatIntervalMs,
+      blobDir: deps.config.blobDir,
     });
   const app = createApp({ ...deps, services });
   const server = createAdaptorServer({ fetch: app.fetch }) as Server;
@@ -81,7 +83,10 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   });
   const { port } = server.address() as AddressInfo;
   const intervalMs = deps.dispatcherIntervalMs ?? 1000;
-  if (intervalMs > 0) services.dispatcher.start(intervalMs);
+  if (intervalMs > 0) {
+    services.dispatcher.start(intervalMs);
+    services.blobCleanup.start();
+  }
 
   return {
     port,
@@ -90,6 +95,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     webEndpoint,
     close: async () => {
       services.dispatcher.stop();
+      services.blobCleanup.stop();
       await services.dispatcher.idle();
       router.close();
       await runnerEndpoint.close();

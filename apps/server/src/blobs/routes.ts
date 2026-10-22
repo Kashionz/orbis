@@ -1,0 +1,140 @@
+// blob 的上傳（Runner，Runner token 認證）與下載（Web，session 認證）。
+//
+// 上傳：`PUT <RUNNER_BLOB_PATH>/:blobId?runId=<Run>&sha256=<hex>`，body 是內容本身，
+// `Content-Type` 是 media type。Server 計算 sha256 與大小並和 BlobRef 比對。blob_id 由 Runner 產生；
+// 同一個 blob_id 重送相同內容視為成功（可以安全地重試），內容不同回 409。
+// Runner 只能把 blob 掛在自己正在執行的 Run 上。
+//
+// TODO(contract)：上傳路徑、查詢參數與認證方式隨 contract/protocol 定案。
+
+import { createHash } from "node:crypto";
+import { and, eq, inArray } from "drizzle-orm";
+import { Hono } from "hono";
+import { z } from "zod";
+import { loadRunScope, requireProjectCapability } from "../authz/scope";
+import { RUNNER_BLOB_PATH } from "../contract-pending";
+import { blobs, dispatches } from "../db/schema";
+import { ApiError, conflict, notFound, readId, readQuery } from "../http/errors";
+import type { AppEnv } from "../http/session";
+import { findRunnerByToken } from "../runner/service";
+import type { Services } from "../services";
+import { BLOB_RETENTION_MS, type BlobStore, blobStorageKey } from "./store";
+
+/** 單一 blob 的大小上限。 */
+export const MAX_BLOB_BYTES = 64 * 1024 * 1024;
+
+const UploadQuery = z.object({
+  runId: z.uuid(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/, { error: "sha256 必須是 64 個小寫十六進位字元" }),
+});
+
+const MediaType = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .regex(/^[\w.+-]+\/[\w.+-]+(\s*;.*)?$/, { error: "不是合法的 media type" });
+
+/** 瀏覽器可以直接顯示的圖片；其他內容一律以附件下載，避免在 Server 的 origin 上執行。 */
+const INLINE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+export function createBlobRoutes(s: Services & { blobStore: BlobStore }): {
+  runner: Hono;
+  web: Hono<AppEnv>;
+} {
+  const { db, auth, blobStore } = s;
+
+  const runner = new Hono();
+  runner.put(`${RUNNER_BLOB_PATH}/:blobId`, async (c) => {
+    const header = c.req.header("authorization") ?? "";
+    const token = /^Bearer\s+(.+)$/i.exec(header)?.[1];
+    const caller = token ? await findRunnerByToken(db, token) : null;
+    if (!caller) throw new ApiError(401, "unauthorized", "Runner token 不正確或已被撤銷");
+
+    const blobId = readId(c, "blobId", "blob");
+    const query = readQuery(c, UploadQuery);
+    const mediaType = MediaType.safeParse(c.req.header("content-type") ?? "");
+    if (!mediaType.success) throw new ApiError(400, "invalid_input", "缺少或不合法的 Content-Type");
+    const declared = Number(c.req.header("content-length") ?? Number.NaN);
+    if (Number.isFinite(declared) && declared > MAX_BLOB_BYTES) {
+      throw new ApiError(413, "payload_too_large", `blob 不能超過 ${MAX_BLOB_BYTES} bytes`);
+    }
+
+    // Runner 只能把 blob 掛在自己正在（或剛）執行的 Run 上。
+    const [dispatch] = await db
+      .select({ id: dispatches.id })
+      .from(dispatches)
+      .where(
+        and(
+          eq(dispatches.runId, query.runId),
+          eq(dispatches.runnerId, caller.id),
+          inArray(dispatches.status, ["accepted", "completed"]),
+        ),
+      )
+      .limit(1);
+    if (!dispatch) throw new ApiError(403, "forbidden", "這台 Runner 沒有在執行這個 Run");
+
+    const data = new Uint8Array(await c.req.arrayBuffer());
+    if (data.byteLength > MAX_BLOB_BYTES) {
+      throw new ApiError(413, "payload_too_large", `blob 不能超過 ${MAX_BLOB_BYTES} bytes`);
+    }
+    const sha256 = createHash("sha256").update(data).digest("hex");
+    if (sha256 !== query.sha256) {
+      throw new ApiError(422, "invalid_input", "內容的 sha256 與宣告的不符");
+    }
+
+    const [existing] = await db.select().from(blobs).where(eq(blobs.id, blobId));
+    if (existing) {
+      if (existing.sha256 !== sha256 || existing.runId !== query.runId) {
+        throw conflict("這個 blob_id 已經用在不同的內容");
+      }
+      return c.json({ blobId, sha256, size: existing.size }, 200);
+    }
+
+    const key = blobStorageKey(blobId);
+    await blobStore.put(key, data);
+    const now = s.clock.now();
+    await db
+      .insert(blobs)
+      .values({
+        id: blobId,
+        sha256,
+        size: data.byteLength,
+        mediaType: mediaType.data,
+        storageKey: key,
+        runId: query.runId,
+        createdAt: now,
+        expiresAt: new Date(now.getTime() + BLOB_RETENTION_MS),
+      })
+      .onConflictDoNothing();
+    return c.json({ blobId, sha256, size: data.byteLength }, 201);
+  });
+
+  const web = new Hono<AppEnv>();
+  web.get("/blobs/:blobId", auth, async (c) => {
+    const actor = c.get("actor");
+    const blobId = readId(c, "blobId", "blob");
+    const [blob] = await db.select().from(blobs).where(eq(blobs.id, blobId));
+    if (!blob?.runId) throw notFound("blob");
+    const scope = await loadRunScope(db, actor, blob.runId);
+    requireProjectCapability(actor, scope, "view");
+    if (blob.expiresAt.getTime() <= s.clock.now().getTime()) {
+      throw new ApiError(410, "gone", "blob 已超過保存期限");
+    }
+    const data = await blobStore.get(blob.storageKey);
+    if (!data) throw new ApiError(410, "gone", "blob 已超過保存期限");
+    const essence = blob.mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
+    const inline = INLINE_MEDIA_TYPES.has(essence);
+    return c.body(data as Uint8Array<ArrayBuffer>, 200, {
+      "content-type": inline ? essence : "application/octet-stream",
+      "content-disposition": inline ? "inline" : `attachment; filename="${blob.id}"`,
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "cache-control": "private, max-age=86400, immutable",
+      // 原本的 media type（例如 text/plain; charset=utf-8），Web 依此決定如何顯示。
+      "x-blob-media-type": blob.mediaType,
+    });
+  });
+
+  return { runner, web };
+}

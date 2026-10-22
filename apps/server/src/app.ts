@@ -2,6 +2,7 @@
 
 import { Hono } from "hono";
 import type { GitHubOAuth } from "./auth/github-oauth";
+import { createBlobRoutes } from "./blobs/routes";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import { handleError } from "./http/errors";
@@ -52,6 +53,11 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/api", createRunRoutes(services));
   app.route("/api", createReviewRoutes(services));
   app.route("/api", createRunnerRoutes(services));
+
+  // blob：Runner 以 Runner token 上傳，Web 以 session 下載。
+  const blobRoutes = createBlobRoutes(services);
+  app.route("/", blobRoutes.runner);
+  app.route("/api", blobRoutes.web);
 
   // D 軌（GitHub）的掛載點。
   app.route("/api/github", createGitHubRoutes(services.github));

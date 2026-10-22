@@ -2,6 +2,7 @@ import { envVar, NAMES } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  DEFAULT_BLOB_DIR,
   DEFAULT_HEARTBEAT_INTERVAL_MS,
   DEFAULT_PUBLIC_URL,
   DEFAULT_SERVER_PORT,
@@ -35,6 +36,7 @@ describe("Server 設定", () => {
       bootstrapOwnerGithubUserId: null,
       devPairingToken: null,
       runnerHeartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
+      blobDir: DEFAULT_BLOB_DIR,
       logLevel: "info",
       prettyLogs: false,
     });
