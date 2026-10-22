@@ -15,6 +15,7 @@ pub mod event;
 pub mod frame;
 pub mod ids;
 pub mod names;
+pub mod sidecar;
 pub mod typescript;
 
 /// Runner↔Server 協定版本。不相容的變更要遞增，Server 會以
@@ -23,3 +24,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Server 上給 Runner 連線的 WebSocket 路徑，例如 `ws://localhost:4000/runner`。
 pub const RUNNER_WS_PATH: &str = "/runner";
+
+/// Runner 上傳 blob 的 HTTP 路徑前綴（ARCHITECTURE §14）：
+/// `PUT <server><RUNNER_BLOB_PATH>/<blob_id>?run_id=<run_id>&sha256=<sha256>`，
+/// 以 `Authorization: Bearer <Runner token>` 認證，body 是 blob 的原始內容。
+/// Server 驗證 SHA-256 與大小；上傳成功後 Runner 才送出參照它的 Event。
+pub const RUNNER_BLOB_PATH: &str = "/api/runner/blobs";

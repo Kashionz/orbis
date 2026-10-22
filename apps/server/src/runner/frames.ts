@@ -26,6 +26,8 @@ export const HeartbeatFrame = z.object({
   type: z.literal("heartbeat"),
   ts: z.string(),
   active_run_ids: z.array(z.string()),
+  // 是否接受新的 Dispatch；派工時要排除 false 的 Runner（B1 實作派工時使用）。
+  accepting_dispatches: z.boolean(),
 }) satisfies z.ZodType<HeartbeatFrame>;
 
 /** 只確認是 `{ "type": "..." }` 形式的 JSON 物件；內容由各 frame 的 schema 驗證。 */

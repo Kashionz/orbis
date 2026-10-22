@@ -29,5 +29,6 @@
       "name": "一律拒絕",
       "kind": "reject_always"
     }
-  ]
+  ],
+  "purpose": "tool"
 }

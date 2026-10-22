@@ -12,12 +12,18 @@ export const NAMES = {
   branchPrefix: "orbis/",
   worktreeRootWindows: "C:\\ob",
   worktreeRootUnix: "~/.orbis/wt",
+  runnerConfigFile: "runner.toml",
+  runnerStateDir: "runner",
   env: {
     rootPath: "ORBIS_ROOT_PATH",
     worktreePath: "ORBIS_WORKTREE_PATH",
     port: "ORBIS_PORT",
     runId: "ORBIS_RUN_ID",
     taskKey: "ORBIS_TASK_KEY",
+  },
+  runnerEnv: {
+    home: "ORBIS_HOME",
+    stateDir: "ORBIS_RUNNER_STATE_DIR",
   },
 } as const satisfies Names;
 

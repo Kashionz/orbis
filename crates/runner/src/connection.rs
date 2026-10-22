@@ -155,6 +155,8 @@ impl Session {
                     self.conn.send(&RunnerToServer::Heartbeat(Heartbeat {
                         ts: now(),
                         active_run_ids: Vec::new(),
+                        // 暫停領取（sidecar 模式）由 A1 實作；骨架一律接受 Dispatch。
+                        accepting_dispatches: true,
                     })).await?;
                 }
                 frame = self.conn.recv() => match frame? {

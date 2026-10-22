@@ -3,4 +3,4 @@
 /**
  * [`EventKind`] 的 `kind` 值。TS 端的 `EVENT_KINDS` 由此產生。
  */
-export type EventKindName = "message_chunk" | "thought_chunk" | "tool_call" | "permission_request" | "permission_resolved" | "plan" | "usage" | "status_changed" | "error" | "rate_limited" | "preview_ready" | "worktree_ready";
+export type EventKindName = "message_chunk" | "thought_chunk" | "tool_call" | "permission_request" | "permission_resolved" | "plan" | "usage" | "status_changed" | "error" | "rate_limited" | "preview_ready" | "worktree_ready" | "run_diff";

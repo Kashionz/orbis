@@ -1,0 +1,78 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 30,
+  "ts": "2026-10-23T08:05:00.000Z",
+  "kind": "run_diff",
+  "base_commit": "aedf9b42dc06a05bddf783bf43573ddaf47a2cad",
+  "files": [
+    {
+      "path": "README.md",
+      "old_path": null,
+      "change": "modified",
+      "binary": false,
+      "old": {
+        "type": "inline",
+        "text": "# Demo\n"
+      },
+      "new": {
+        "type": "inline",
+        "text": "# Demo\n\n新增說明。\n"
+      }
+    },
+    {
+      "path": "docs/guide.md",
+      "old_path": "docs/old-guide.md",
+      "change": "renamed",
+      "binary": false,
+      "old": {
+        "type": "inline",
+        "text": "舊的內容\n"
+      },
+      "new": {
+        "type": "inline",
+        "text": "舊的內容\n"
+      }
+    },
+    {
+      "path": "logo.png",
+      "old_path": null,
+      "change": "added",
+      "binary": true,
+      "old": null,
+      "new": null
+    },
+    {
+      "path": "src/big.ts",
+      "old_path": null,
+      "change": "modified",
+      "binary": false,
+      "old": {
+        "type": "blob",
+        "blob_id": "0192f3a0-0000-7000-8000-0000000000f1",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 204800,
+        "media_type": "text/plain; charset=utf-8"
+      },
+      "new": {
+        "type": "blob",
+        "blob_id": "0192f3a0-0000-7000-8000-0000000000f2",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 205100,
+        "media_type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "path": "tmp.txt",
+      "old_path": null,
+      "change": "deleted",
+      "binary": false,
+      "old": {
+        "type": "inline",
+        "text": "暫存\n"
+      },
+      "new": null
+    }
+  ]
+}

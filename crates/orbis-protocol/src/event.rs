@@ -72,6 +72,8 @@ pub enum EventKind {
         /// 給人看的說明，例如要執行的指令。
         title: String,
         options: Vec<PermissionOption>,
+        /// 這筆請求的用途。Server 依此決定誰可以回覆（ARCHITECTURE §8）。
+        purpose: PermissionPurpose,
     },
     /// 權限請求已結束（人回覆、Run 被中止或 Agent 撤回請求），Server 據此移除 Needs You 項目。
     PermissionResolved {
@@ -122,6 +124,8 @@ pub enum EventKind {
         /// 開出 Worktree 時的 commit SHA（40 個十六進位字元）。
         base_commit: String,
     },
+    /// Run 目前相對於 base commit 的完整 diff，見 [`RunDiff`]。
+    RunDiff(RunDiff),
 }
 
 wire_enum! {
@@ -139,6 +143,7 @@ wire_enum! {
         RateLimited => "rate_limited",
         PreviewReady => "preview_ready",
         WorktreeReady => "worktree_ready",
+        RunDiff => "run_diff",
     }
 }
 
@@ -158,7 +163,60 @@ impl EventKind {
             Self::RateLimited { .. } => EventKindName::RateLimited,
             Self::PreviewReady { .. } => EventKindName::PreviewReady,
             Self::WorktreeReady { .. } => EventKindName::WorktreeReady,
+            Self::RunDiff(_) => EventKindName::RunDiff,
         }
+    }
+}
+
+wire_enum! {
+    /// 權限請求的用途。
+    PermissionPurpose {
+        /// Agent 的 tool call（一般的權限請求）。
+        Tool => "tool",
+        /// 第一次執行、或內容改變後執行 Repo 設定檔（[`crate::names::CONFIG_DIR`]／[`crate::names::CONFIG_FILE`]）中的腳本（ARCHITECTURE §6.2）。
+        /// 只有 Admin 以上能回覆。
+        ConfigTrust => "config_trust",
+        /// Worktree 中 Agent 自己的設定檔（例如 `.claude/settings.json`）和 base commit 不同，
+        /// Runner 在啟動 session 前停下來等人確認（ARCHITECTURE §8）。
+        AgentSettingsChanged => "agent_settings_changed",
+    }
+}
+
+/// Run 目前相對於 base commit 的完整 diff（ARCHITECTURE §10）。
+///
+/// Agent 結束回合、進入 Review Gate 之前，Runner 送出這個 Event：從 `base_commit` 到
+/// Worktree 目前的狀態，包含未 commit 的變更與未追蹤的檔案。Server 保存最新的一份供 review 使用。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct RunDiff {
+    /// 比較的基準，即 `worktree_ready` 的 `base_commit`。
+    pub base_commit: String,
+    /// 有變更的檔案，依路徑排序。
+    pub files: Vec<RunDiffFile>,
+}
+
+/// 一個檔案的變更，帶完整的新舊內容（diff 檢視需要完整內容才能顯示與在任一行留言）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct RunDiffFile {
+    /// 相對於 Worktree 根目錄、以 `/` 分隔的路徑。
+    pub path: String,
+    /// `change` 為 `renamed` 時的舊路徑，其他為 `null`。
+    pub old_path: Option<String>,
+    pub change: FileChange,
+    /// 二進位檔案。為 `true` 時 `old` 與 `new` 一律為 `null`，UI 只顯示檔案有變更。
+    pub binary: bool,
+    /// 修改前的內容；新增的檔案為 `null`。大檔放 blob。
+    pub old: Option<TextBody>,
+    /// 修改後的內容；刪除的檔案為 `null`。大檔放 blob。
+    pub new: Option<TextBody>,
+}
+
+wire_enum! {
+    /// 檔案的變更種類。
+    FileChange {
+        Added => "added",
+        Modified => "modified",
+        Deleted => "deleted",
+        Renamed => "renamed",
     }
 }
 

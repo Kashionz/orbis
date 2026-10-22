@@ -23,11 +23,14 @@ use crate::enums::{
     DelegationMode, GateDecision, GateKind, PermissionPolicy, RunStatus, RunnerKind,
 };
 use crate::event::{
-    EventEnvelope, EventKind, EventKindName, PermissionOptionKind, PlanEntryStatus, RunErrorCode,
-    ToolCallStatus, ToolKind,
+    EventEnvelope, EventKind, EventKindName, FileChange, PermissionOptionKind, PermissionPurpose,
+    PlanEntryStatus, RunErrorCode, ToolCallStatus, ToolKind,
 };
 use crate::frame::{RunnerToServer, ServerToRunner};
 use crate::names::Names;
+use crate::sidecar::{
+    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_FLAG, SidecarCommand, SidecarConnectionState, SidecarOutput,
+};
 
 const HEADER: &str = "// 由 crates/orbis-protocol 產生（cargo gen-protocol），不可手改。\n";
 
@@ -88,6 +91,9 @@ fn export_roots(cfg: &Config) -> Result<(), ts_rs::ExportError> {
     RunControlAction::export_all(cfg)?;
     RunControlActionName::export_all(cfg)?;
     RunControlOutcome::export_all(cfg)?;
+    // Desktop ↔ Runner 的 sidecar 協定不在 Runner↔Server 的 frame 中，要另外列出。
+    SidecarOutput::export_all(cfg)?;
+    SidecarCommand::export_all(cfg)?;
     Ok(())
 }
 
@@ -211,6 +217,24 @@ fn value_lists() -> Vec<ValueList> {
             PermissionOptionKind::as_str,
         ),
         list(
+            "PERMISSION_PURPOSES",
+            "PermissionPurpose",
+            PermissionPurpose::ALL.iter().copied(),
+            PermissionPurpose::as_str,
+        ),
+        list(
+            "FILE_CHANGES",
+            "FileChange",
+            FileChange::ALL.iter().copied(),
+            FileChange::as_str,
+        ),
+        list(
+            "SIDECAR_CONNECTION_STATES",
+            "SidecarConnectionState",
+            SidecarConnectionState::ALL.iter().copied(),
+            SidecarConnectionState::as_str,
+        ),
+        list(
             "RUN_ERROR_CODES",
             "RunErrorCode",
             RunErrorCode::ALL.iter().copied(),
@@ -247,6 +271,18 @@ export const RUNNER_WS_PATH = \"{}\";",
         out,
         "
 export const DEFAULT_MAX_CONCURRENT_RUNS = {DEFAULT_MAX_CONCURRENT_RUNS};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "\nexport const RUNNER_BLOB_PATH = \"{}\";",
+        crate::RUNNER_BLOB_PATH
+    )
+    .unwrap();
+    writeln!(out, "\nexport const SIDECAR_FLAG = \"{SIDECAR_FLAG}\";").unwrap();
+    writeln!(
+        out,
+        "\nexport const SIDECAR_EXIT_NEEDS_PAIRING = {SIDECAR_EXIT_NEEDS_PAIRING};"
     )
     .unwrap();
     for l in &lists {
