@@ -27,7 +27,7 @@ describe("worktreeRoot", () => {
 });
 
 describe("checkWorktreePath（Windows）", () => {
-  const inside = `${WIN_ROOT}\\my repo\\ORB-12`;
+  const inside = `${WIN_ROOT}\\my repo\\ORB-12-1`;
 
   it("接受根目錄底下存在的目錄，並正規化磁碟代號與斜線", () => {
     const e = env("win32", [inside]);
@@ -44,6 +44,20 @@ describe("checkWorktreePath（Windows）", () => {
         reason: "outside_worktree_root",
       });
     }
+  });
+
+  it("只接受剛好 <repo>/<Worktree> 兩層的目錄，不接受 repo 目錄或 Worktree 裡的子目錄", () => {
+    const repo = `${WIN_ROOT}\\my repo`;
+    const nested = `${inside}\\src`;
+    const e = env("win32", [repo, inside, nested]);
+    expect(checkWorktreePath(repo, e)).toMatchObject({
+      ok: false,
+      reason: "outside_worktree_root",
+    });
+    expect(checkWorktreePath(nested, e)).toMatchObject({
+      ok: false,
+      reason: "outside_worktree_root",
+    });
   });
 
   it("拒絕相對路徑、空字串與非字串", () => {

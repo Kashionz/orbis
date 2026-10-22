@@ -1,4 +1,6 @@
 // 只允許開啟 Worktree 根目錄底下的路徑（使用者核准的決定 D11），避免網頁要求 Desktop 開啟任意位置。
+// 依 §6.2 的配置 `<根目錄>/<repo>/<task-key>-<run-seq>`，只接受剛好兩層的目錄，不接受 Worktree 裡的子目錄
+// （子目錄的名稱由 Agent 決定，可能含有特殊字元）。
 
 import { posix, win32 } from "node:path";
 import { NAMES } from "@orbis/api-contract/names";
@@ -28,11 +30,15 @@ function normalizeFor(platform: NodeJS.Platform, path: string): string {
   return normalized.replace(/^[a-z]:/, (drive) => drive.toUpperCase());
 }
 
-function isStrictlyInside(platform: NodeJS.Platform, root: string, path: string): boolean {
+/** Worktree 在根目錄底下的層數：`<repo>/<task-key>-<run-seq>`。 */
+const WORKTREE_DEPTH = 2;
+
+function isWorktreeUnder(platform: NodeJS.Platform, root: string, path: string): boolean {
   const lib = platform === "win32" ? win32 : posix;
   const fold = (p: string) => (platform === "win32" ? p.toLowerCase() : p);
   const relative = lib.relative(fold(root), fold(path));
-  return relative !== "" && !relative.startsWith("..") && !lib.isAbsolute(relative);
+  if (relative === "" || relative.startsWith("..") || lib.isAbsolute(relative)) return false;
+  return relative.split(lib.sep).length === WORKTREE_DEPTH;
 }
 
 export function checkWorktreePath(input: unknown, env: WorktreePathEnv): WorktreePathResult {
@@ -50,7 +56,7 @@ export function checkWorktreePath(input: unknown, env: WorktreePathEnv): Worktre
     reason: "outside_worktree_root",
     message: `只能開啟 ${root} 底下的 Worktree`,
   };
-  if (!isStrictlyInside(env.platform, root, path)) return outside;
+  if (!isWorktreeUnder(env.platform, root, path)) return outside;
   if (!env.isDirectory(path)) {
     return { ok: false, reason: "not_found", message: `找不到 Worktree：${path}` };
   }
@@ -61,6 +67,6 @@ export function checkWorktreePath(input: unknown, env: WorktreePathEnv): Worktre
     // 根目錄本身解析失敗時用原本的路徑比較
   }
   const realPath = normalizeFor(env.platform, env.realpath(path));
-  if (!isStrictlyInside(env.platform, realRoot, realPath)) return outside;
+  if (!isWorktreeUnder(env.platform, realRoot, realPath)) return outside;
   return { ok: true, path };
 }

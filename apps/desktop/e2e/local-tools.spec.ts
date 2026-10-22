@@ -56,9 +56,24 @@ test("依設定的自訂指令開啟 Worktree，{path} 換成 Worktree 路徑", 
   expect(await invoke("openWorktreeInEditor", worktree.path)).toEqual({ ok: true });
   expect(await invoke("openWorktreeInTerminal", worktree.path)).toEqual({ ok: true });
   const launches = await desktop.hooks((h) => h.launches);
+  // Windows 上一律加上 NoDefaultCurrentDirectoryInExePath，不在目前目錄中找執行檔
+  const env =
+    process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : undefined;
   expect(launches).toEqual([
-    { command: program, args: ["--editor", worktree.path], cwd: worktree.path, windowsHide: false },
-    { command: program, args: [`--cwd=${worktree.path}`], cwd: worktree.path, windowsHide: false },
+    {
+      command: program,
+      args: ["--editor", worktree.path],
+      cwd: worktree.path,
+      windowsHide: false,
+      ...(env && { env }),
+    },
+    {
+      command: program,
+      args: [`--cwd=${worktree.path}`],
+      cwd: worktree.path,
+      windowsHide: false,
+      ...(env && { env }),
+    },
   ]);
 });
 

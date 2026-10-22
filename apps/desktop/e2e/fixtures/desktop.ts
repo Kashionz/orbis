@@ -110,9 +110,11 @@ export function runnerSidecarSkipReason(): string | null {
   return null;
 }
 
-/** 在 Worktree 根目錄底下建立一個暫時的目錄（測試結束後刪除）。 */
+/** 依 §6.2 的配置在 Worktree 根目錄底下建立 `<repo>/<worktree>`（測試結束後刪除）。 */
 export function makeTempWorktree(root: string): { path: string; remove(): void } {
   mkdirSync(root, { recursive: true });
-  const path = mkdtempSync(join(root, "desktop-e2e-"));
-  return { path, remove: () => rmSync(path, { recursive: true, force: true }) };
+  const repo = mkdtempSync(join(root, "desktop-e2e-"));
+  const path = join(repo, "ORB-1-1");
+  mkdirSync(path);
+  return { path, remove: () => rmSync(repo, { recursive: true, force: true }) };
 }

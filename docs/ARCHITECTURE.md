@@ -540,7 +540,8 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
   - 點擊通知後顯示主視窗，並前往對應的 Task 頁。
 - **開啟本機工具**：
   - Run 頁面可以用設定的編輯器或終端機開啟 Worktree，兩者都提供預設選項與自訂指令（`{path}` 會換成 Worktree 路徑）。
-  - Desktop 只接受 Worktree 根目錄（§6.2）底下存在的目錄，並解析 symlink 確認沒有跳出根目錄。
+  - Desktop 只接受 Worktree 根目錄（§6.2）底下 `<repo>/<Worktree>` 這一層、而且確實存在的目錄，並解析 symlink 確認沒有跳出根目錄。
+  - 執行檔一律以絕對路徑啟動，不在目前目錄（Worktree）中搜尋。Worktree 的內容可能是 Agent 寫的。
   - Windows 上的 `.cmd` shim 經由 `cmd.exe` 執行，參數由 Desktop 自己加引號。
 
 ---

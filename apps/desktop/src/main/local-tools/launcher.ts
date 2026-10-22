@@ -13,6 +13,7 @@ export const spawnLauncher: Launcher = (spec) =>
     try {
       child = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
+        env: spec.env ? { ...process.env, ...spec.env } : process.env,
         detached: true,
         stdio: "ignore",
         windowsHide: spec.windowsHide,

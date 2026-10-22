@@ -1,7 +1,7 @@
 // Desktop 的 main 程序：載入 Web UI、登入後自動 Pairing、代管 Runner sidecar、系統匣、Needs You 通知
 // （ARCHITECTURE §16、ADR-0008）。各部分的邏輯在各自的模組中，這裡只負責和 Electron 接起來。
 
-import { existsSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -421,18 +421,28 @@ function fromSettingsWindow(event: IpcMainInvokeEvent): boolean {
   return actual.protocol === "file:" && actual.pathname === expected.pathname;
 }
 
+/** 用 lstat 判斷：Windows 的 App execution alias（例如 wt.exe）用 stat 讀不到。 */
+const pathExists = (p: string) => {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const commandEnv = (): CommandEnv => {
   const isFile = (p: string) => {
     try {
       return statSync(p).isFile();
-    } catch {
-      return false;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EACCES" && pathExists(p);
     }
   };
   return {
     platform: process.platform,
     which: createWhich(process.platform, process.env, isFile),
-    exists: existsSync,
+    exists: pathExists,
     env: process.env,
   };
 };
