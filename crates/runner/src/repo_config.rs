@@ -336,7 +336,7 @@ commit_message = \"  \"
         assert!(literal_relative_path("./").is_err());
         for windows_alias in [
             ".env.",
-            ".env ",
+            "dir /x",
             "CONFIG~1/x",
             "nul",
             "aux.txt",
