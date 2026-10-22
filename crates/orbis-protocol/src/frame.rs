@@ -28,7 +28,8 @@ pub enum RunnerToServer {
 pub enum ServerToRunner {
     HelloAck(HelloAck),
     HelloRejected(HelloRejected),
-    DispatchOffer(DispatchOffer),
+    // 比其他 frame 大很多，放進 Box 避免整個列舉都變大。
+    DispatchOffer(Box<DispatchOffer>),
     RunControl(RunControl),
     EventAck(EventAck),
 }
