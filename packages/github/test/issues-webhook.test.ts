@@ -391,3 +391,55 @@ describe("Issue 對應的 repo 與 Task 的 Repo 不同", () => {
     expect((await w.store.getIssueLinkByTask(task.id))?.githubRepoId).toBe(w.repo.id);
   });
 });
+
+describe("只套用這個 action 改到的欄位", () => {
+  it("edited 的 changes 只有 body 時，與快照不同的 title 不套用", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w);
+    // 沒寫入權限的人改了 title（這則 webhook 遺失），之後 Member 改了 body
+    w.github.humanEdit(w.repo.id, issueNumber, { title: "外人改的標題" });
+    const issue = w.github.humanEdit(w.repo.id, issueNumber, { body: "Member 改的內容" });
+    const payload = w.issuePayload("edited", issue, w.userRef(w.bob), { changes: ["body"] });
+
+    await w.deliver("issues", payload);
+
+    expect(w.domain.fieldUpdates).toEqual([
+      { taskId: task.id, patch: { description: "Member 改的內容" } },
+    ]);
+    expect(w.domain.task(task.id).title).toBe(task.title);
+  });
+
+  it("labeled 不會順便套用 payload 中被改過的 title", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w);
+    w.github.humanEdit(w.repo.id, issueNumber, { title: "沒有對應 webhook 的修改" });
+    const issue = w.github.humanEdit(w.repo.id, issueNumber, { labels: ["p1"] });
+    await w.deliver("issues", w.issuePayload("labeled", issue, w.userRef(w.bob)));
+    expect(w.domain.task(task.id)).toMatchObject({ title: task.title, labels: ["p1"] });
+  });
+
+  it("晚到的 edited webhook 仍然會套用（先到的 labeled 沒有動 title 的快照）", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w);
+    const edited = w.github.humanEdit(w.repo.id, issueNumber, { title: "先改的標題" });
+    const editedPayload = w.issuePayload("edited", edited, w.userRef(w.bob), {
+      changes: ["title"],
+    });
+    const labeled = w.github.humanEdit(w.repo.id, issueNumber, { labels: ["p1"] });
+    await w.deliver("issues", w.issuePayload("labeled", labeled, w.userRef(w.bob)));
+    await w.deliver("issues", editedPayload);
+    expect(w.domain.task(task.id)).toMatchObject({ title: "先改的標題", labels: ["p1"] });
+  });
+});
+
+describe("Viewer 的修改", () => {
+  it("不能編輯 Task 的 Member（例如 Viewer），而且沒有 repo 寫入權限：修改還原", async () => {
+    const w = createWorld();
+    w.domain.viewerMemberIds.add(w.bob.id);
+    w.github.roles.delete(w.bob.githubLogin);
+    const { task, issueNumber } = await syncedTask(w);
+    await humanChange(w, issueNumber, "edited", { title: "Viewer 改的" }, w.userRef(w.bob));
+    expect(w.domain.fieldUpdates).toEqual([]);
+    expect(w.github.issue(w.repo.id, issueNumber).title).toBe(task.title);
+  });
+});

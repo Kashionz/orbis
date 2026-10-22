@@ -65,7 +65,9 @@ export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
     const query = InspectRepoQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: "invalid_input", issues: query.error.issues }, 400);
     if (!(await options.canManageRepos(c, query.data.projectId))) return forbidden(c);
-    return c.json(await options.github.inspectRepo(query.data.owner, query.data.name));
+    return c.json(
+      await options.github.inspectRepo(query.data.owner, query.data.name, options.memberIdOf(c)),
+    );
   });
 
   app.get("/repos/:repoId/importable-issues", async (c) => {

@@ -80,7 +80,17 @@ const github = createGitHubIntegration({
   taskUrl: (task) => `http://localhost:${port}/dev/tasks/${task.id}`,
 });
 
-const inspection = await github.inspectRepo(owner, name);
+// harness 的第一個 --member 視為登記 Repo 的人
+const requester = values.member[0]?.split(":") ?? [];
+domain.addMember(
+  {
+    id: `member-${requester[0]}`,
+    githubUserId: Number(requester[1]),
+    githubLogin: requester[0] ?? "",
+  },
+  [PROJECT_ID],
+);
+const inspection = await github.inspectRepo(owner, name, `member-${requester[0]}`);
 if (!inspection.installed) {
   throw new Error(`App 沒有安裝在 ${values.repo}，請先安裝：${inspection.installUrl}`);
 }

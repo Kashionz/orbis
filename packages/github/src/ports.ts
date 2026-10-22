@@ -121,6 +121,8 @@ export interface DomainService {
   getMember(memberId: string): Promise<MemberRecord | null>;
   /** 在 Project 所屬的 Team 中，找出這個 GitHub 帳號對應的 Member。 */
   findMemberByGithubUserId(projectId: string, githubUserId: number): Promise<MemberRecord | null>;
+  /** 這位 Member 在這個 Project 能不能編輯 Task（考慮 Project 的 Role 覆寫；Viewer 不行）。 */
+  canEditTasks(projectId: string, memberId: string): Promise<boolean>;
 }
 
 /** 通知的種類（ARCHITECTURE §12.3「自己的 Task 被 merge 或被退回」）。 */

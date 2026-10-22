@@ -205,6 +205,13 @@ export class FakeDomainService implements DomainService {
     return record;
   }
 
+  /** 不能編輯 Task 的 Member（例如 Viewer）。 */
+  readonly viewerMemberIds = new Set<string>();
+
+  async canEditTasks(_projectId: string, memberId: string) {
+    return !this.viewerMemberIds.has(memberId);
+  }
+
   async findMemberByGithubUserId(projectId: string, githubUserId: number) {
     for (const member of this.members.values()) {
       if (member.githubUserId === githubUserId && member.projectIds.includes(projectId)) {

@@ -213,7 +213,8 @@ async function upsertSummaryComment(
 }
 
 /**
- * 送出 webhook 的人能不能改動 Task：Project 的 Member，或對 repo 有寫入權限（admin、maintain、write）的人。
+ * 送出 webhook 的人能不能改動 Task：在 Project 中能編輯 Task 的 Member，
+ * 或對 repo 有寫入權限（admin、maintain、write）的人。
  */
 async function senderCanWrite(
   ctx: IntegrationContext,
@@ -222,12 +223,34 @@ async function senderCanWrite(
   login: string,
   githubUserId: number,
 ): Promise<boolean> {
-  if (await ctx.domain.findMemberByGithubUserId(projectId, githubUserId)) return true;
+  const member = await ctx.domain.findMemberByGithubUserId(projectId, githubUserId);
+  if (member && (await ctx.domain.canEditTasks(projectId, member.id))) return true;
   const record = await ctx.domain.getRepo(repoId);
   const repo = record && connectedRepo(record);
   if (!repo) return false;
   const role = await ctx.client.getCollaboratorRole(repo.installationId, repo.ref, login);
   return WRITE_ROLES.has(role);
+}
+
+/** 這個 action 改到的同步欄位。`edited` 依 payload 的 `changes`。 */
+function fieldsTouchedBy(payload: IssuesPayload): SyncedField[] {
+  switch (payload.action) {
+    case "edited":
+      return (["title", "body"] as const).filter(
+        (field) => payload.changes && field in payload.changes,
+      );
+    case "assigned":
+    case "unassigned":
+      return ["assignee"];
+    case "labeled":
+    case "unlabeled":
+      return ["labels"];
+    case "closed":
+    case "reopened":
+      return ["state"];
+    default:
+      return [];
+  }
 }
 
 /** Issue 的 assignees 中第一個屬於 Team 的 Member。 */
@@ -323,8 +346,11 @@ async function applyIssueChange(
 
   // GitHub 這邊真的改過的欄位：與快照不同，而且比該欄位上次同步的時間新。
   // 不比快照新的是過期的 payload（例如 App 自己的寫入之前發生的修改），不套用。
-  const changed = differentFields(incoming, snapshotFields(snapshot)).filter((field) =>
-    isAfter(issue.updatedAt, snapshot.syncedAt[field]),
+  // 只看這個 action 改到的欄位：其他與快照不同的欄位不能算在這位 sender 頭上（例如之前沒寫入權限的人的修改、
+  // 或 webhook 晚到），不套用也不更新快照，等它們自己的 webhook。
+  const touched = fieldsTouchedBy(payload);
+  const changed = differentFields(incoming, snapshotFields(snapshot)).filter(
+    (field) => touched.includes(field) && isAfter(issue.updatedAt, snapshot.syncedAt[field]),
   );
   if (changed.length === 0) return { kind: "no_change", taskId };
 

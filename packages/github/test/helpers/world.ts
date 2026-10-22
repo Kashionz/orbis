@@ -62,7 +62,16 @@ export interface World {
     payload: unknown,
     options?: { deliveryId?: string },
   ): ReturnType<GitHubIntegration["handleWebhook"]>;
-  issuePayload(action: string, issue: GitHubIssue, sender: GitHubUserRef): unknown;
+  /**
+   * 以錄製的 `issues.<action>` 為底組出 payload。`edited` 的 `changes` 預設是 title 與 body，
+   * 可以用 `changes` 指定（GitHub 只列出真的被改的欄位）。
+   */
+  issuePayload(
+    action: string,
+    issue: GitHubIssue,
+    sender: GitHubUserRef,
+    options?: { changes?: ("title" | "body")[] },
+  ): unknown;
   pullRequestPayload(
     action: "closed" | "reopened" | "opened",
     number: number,
@@ -111,6 +120,9 @@ export function createWorld(): World {
   for (const m of [alice, bob])
     github.addUser({ id: m.githubUserId, login: m.githubLogin, type: "User" });
   github.addUser(outsider);
+  // Team 成員對 repo 有寫入權限；outsider 沒有
+  github.roles.set(alice.githubLogin, "write");
+  github.roles.set(bob.githubLogin, "admin");
 
   const store = new InMemoryGitHubStore();
   const notifier = new RecordingNotifier();
@@ -169,8 +181,13 @@ export function createWorld(): World {
       return integration.handleWebhook({ headers, body });
     },
 
-    issuePayload(action, issue, sender) {
+    issuePayload(action, issue, sender, options = {}) {
       const payload = fixture(`issues.${action}`);
+      if (action === "edited") {
+        payload.changes = Object.fromEntries(
+          (options.changes ?? ["title", "body"]).map((field) => [field, { from: "（修改前）" }]),
+        );
+      }
       const userBase = payload.sender as Record<string, unknown>;
       const labelBase = (payload.issue.labels?.[0] ?? { id: 1, color: "ededed" }) as Record<
         string,

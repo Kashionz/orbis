@@ -1,6 +1,7 @@
 // Repo 登記（Project 新增 Repo 時）與 App 安裝狀態的追蹤。
 
 import type { InstallationToken } from "./auth/installation-tokens";
+import { WRITE_ROLES } from "./client/types";
 import { connectedRepo, type IntegrationContext } from "./context";
 import type { InstallationPayload, InstallationRepositoriesPayload } from "./webhook/payloads";
 
@@ -25,17 +26,31 @@ export function installUrl(appSlug: string): string {
   return `https://github.com/apps/${encodeURIComponent(appSlug)}/installations/new`;
 }
 
-/** 檢查 App 有沒有安裝在這個 repo，並讀取 default branch 與 repo id。 */
+/**
+ * 檢查 App 有沒有安裝在這個 repo，並讀取 default branch 與 repo id。
+ *
+ * 同一個 App 可能安裝在不同 Team 的 repo 上，所以要求提出請求的 Member 本人（以 GitHub 帳號）
+ * 對這個 repo 有寫入權限；沒有時的回應與「沒有安裝」相同，不透露 repo 是否存在或安裝狀態。
+ */
 export async function inspectRepo(
   ctx: IntegrationContext,
   owner: string,
   name: string,
+  requesterMemberId: string,
 ): Promise<RepoInspection> {
   const notInstalled = { installed: false, installUrl: installUrl(ctx.appSlug) } as const;
+  const requester = await ctx.domain.getMember(requesterMemberId);
+  if (!requester) return notInstalled;
   const installation = await ctx.client.findRepoInstallation({ owner, name });
   if (!installation) return notInstalled;
   const repo = await ctx.client.getRepo(installation.installationId, { owner, name });
   if (!repo) return notInstalled;
+  const role = await ctx.client.getCollaboratorRole(
+    installation.installationId,
+    { owner: repo.owner, name: repo.name },
+    requester.githubLogin,
+  );
+  if (!WRITE_ROLES.has(role)) return notInstalled;
   return {
     installed: true,
     installationId: installation.installationId,

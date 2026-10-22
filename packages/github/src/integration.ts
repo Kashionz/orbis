@@ -45,8 +45,11 @@ export interface GitHubIntegration {
   onTaskChanged(taskId: string): Promise<PushOutcome>;
   /** Runner 回報 `branch_pushed` 之後由 Server 呼叫：以 App 身分開 PR。 */
   onBranchPushed(pushed: BranchPushed): Promise<OpenPullRequestResult>;
-  /** Project 新增 Repo 時檢查 App 安裝狀態並讀取 default branch。 */
-  inspectRepo(owner: string, name: string): Promise<RepoInspection>;
+  /**
+   * Project 新增 Repo 時檢查 App 安裝狀態並讀取 default branch。提出請求的 Member 本人必須對 repo
+   * 有寫入權限，否則回應與「沒有安裝」相同。Server 登記 Repo 時只能使用這裡回傳的 installation 與 repo id。
+   */
+  inspectRepo(owner: string, name: string, requesterMemberId: string): Promise<RepoInspection>;
   /** 給 Team Runner push 用、只限這個 repo 的 installation token。 */
   getInstallationTokenForRepo(repoId: string): Promise<InstallationToken>;
   listImportableIssues(repoId: string): Promise<ImportableIssue[]>;
@@ -81,7 +84,8 @@ export function createGitHubIntegration(options: GitHubIntegrationOptions): GitH
     handleWebhook: (request) => handleWebhook(ctx, options.config.webhookSecret, request),
     onTaskChanged: (taskId) => pushTask(ctx, taskId),
     onBranchPushed: (pushed) => openPullRequest(ctx, pushed),
-    inspectRepo: (owner, name) => inspectRepo(ctx, owner, name),
+    inspectRepo: (owner, name, requesterMemberId) =>
+      inspectRepo(ctx, owner, name, requesterMemberId),
     getInstallationTokenForRepo: (repoId) => getInstallationTokenForRepo(ctx, repoId),
     listImportableIssues: (repoId) => listImportableIssues(ctx, repoId),
     importIssues: (input) => importIssues(ctx, input),

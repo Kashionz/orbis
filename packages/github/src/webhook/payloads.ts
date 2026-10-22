@@ -15,6 +15,8 @@ const RepoId = z.object({ id: z.number() });
 export const IssuesPayload = z.object({
   action: z.string(),
   issue: IssueResponse,
+  /** `edited` 時被修改的欄位（`title`、`body`）與修改前的值。 */
+  changes: z.record(z.string(), z.unknown()).optional(),
   repository: Repository,
   sender: Sender,
   installation: Installation.optional(),

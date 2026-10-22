@@ -10,6 +10,7 @@ describe("Repo 登記", () => {
     const result = await w.integration.inspectRepo(
       w.repo.owner.toLowerCase(),
       w.repo.name.toUpperCase(),
+      w.bob.id,
     );
     expect(result).toEqual({
       installed: true,
@@ -35,8 +36,29 @@ describe("Repo 登記", () => {
       installed: false,
       installUrl: "https://github.com/apps/acme-pm/installations/new",
     };
-    expect(await w.integration.inspectRepo("acme", "private")).toEqual(expected);
-    expect(await w.integration.inspectRepo("acme", "missing")).toEqual(expected);
+    expect(await w.integration.inspectRepo("acme", "private", w.bob.id)).toEqual(expected);
+    expect(await w.integration.inspectRepo("acme", "missing", w.bob.id)).toEqual(expected);
+  });
+
+  it("提出請求的 Member 本人對 repo 沒有寫入權限：回應與沒有安裝相同（不透露別的 Team 的 repo）", async () => {
+    const w = createWorld();
+    for (const role of ["none", "read", "triage"] as const) {
+      w.github.roles.set(w.alice.githubLogin, role);
+      expect(await w.integration.inspectRepo(w.repo.owner, w.repo.name, w.alice.id), role).toEqual({
+        installed: false,
+        installUrl: "https://github.com/apps/acme-pm/installations/new",
+      });
+    }
+    expect(w.github.callsTo("getCollaboratorRole").map((c) => c.args[2])).toEqual([
+      "Codertocat",
+      "Codertocat",
+      "Codertocat",
+    ]);
+    expect(
+      await w.integration.inspectRepo(w.repo.owner, w.repo.name, "no-such-member"),
+    ).toMatchObject({
+      installed: false,
+    });
   });
 
   it("Team Runner push 用的 installation token 只限這個 repo", async () => {
