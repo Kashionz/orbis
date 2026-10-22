@@ -246,13 +246,14 @@ mod tests {
         );
         assert_eq!(windows_to_wsl_mount("relative"), None);
         assert!(is_wsl_windows_mount(Path::new("/mnt/c/ob")));
-        assert!(!is_wsl_windows_mount(Path::new("/home/me/.orbis/wt")));
+        assert!(!is_wsl_windows_mount(Path::new("/home/me/wt")));
     }
 
     #[test]
     fn 展開家目錄() {
         let home = Path::new("/home/me");
-        assert_eq!(expand_home("~/.orbis/wt", home), home.join(".orbis/wt"));
+        assert_eq!(expand_home("~/wt", home), home.join("wt"));
+        assert_eq!(expand_home("~", home), home);
         assert_eq!(expand_home("/abs", home), PathBuf::from("/abs"));
     }
 

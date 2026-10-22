@@ -3,7 +3,7 @@
 //! 建立流程：
 //! 1. 準備 Repo 來源：runner.toml 有對應的本機 checkout 就用它，否則 Runner 自己 clone 到
 //!    `<Worktree 根目錄>/<repo>/_main`。
-//! 2. `git fetch`，解析 base ref，從 base commit 讀出 `.orbis/config.toml`。
+//! 2. `git fetch`，解析 base ref，從 base commit 讀出 `<CONFIG_DIR>/<CONFIG_FILE>`。
 //! 3. `git worktree add`（分支由 Server 指定）。
 //! 4. `shared_dirs` 建立連結（Windows 優先 junction）、`copy` 複製檔案。
 //! 5. 分配 port、組出注入的環境變數。
@@ -72,7 +72,7 @@ pub struct WorktreeRequest {
 pub struct Worktree {
     /// 正規化後的絕對路徑。
     pub path: PathBuf,
-    /// Repo 來源（Member 的 checkout 或 Runner 自己的 clone），注入為 `ORBIS_ROOT_PATH`。
+    /// Repo 來源（Member 的 checkout 或 Runner 自己的 clone），注入為 `<前綴>ROOT_PATH`。
     pub root_checkout: PathBuf,
     /// 是否為 Member 自己的 checkout（決定 `copy` 是否生效）。
     pub member_checkout: bool,

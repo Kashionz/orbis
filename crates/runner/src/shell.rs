@@ -1,4 +1,4 @@
-//! 執行 `.orbis/config.toml` 中的腳本（setup、archive）用的 shell（ARCHITECTURE §6.3）。
+//! 執行 `<CONFIG_DIR>/<CONFIG_FILE>` 中的腳本（setup、archive）用的 shell（ARCHITECTURE §6.3）。
 //!
 //! - Windows：預設 `cmd`；腳本以 `#!` 開頭而且找得到 Git Bash 時改用 Git Bash。
 //! - macOS／Linux：`sh`。

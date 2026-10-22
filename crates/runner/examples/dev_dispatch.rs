@@ -99,7 +99,11 @@ async fn main() -> anyhow::Result<()> {
             default_branch: default_branch.clone(),
             base_ref: format!("origin/{default_branch}"),
         },
-        branch: Some(format!("orbis/{}-hello", args.task_key)),
+        branch: Some(format!(
+            "{}{}-hello",
+            orbis_protocol::names::BRANCH_PREFIX,
+            args.task_key
+        )),
         agent: args.agent.clone(),
         model: None,
         permission_policy: PermissionPolicy::Auto,

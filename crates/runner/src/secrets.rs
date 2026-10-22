@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn 一般文字不受影響() {
-        let text = "pnpm test 通過 12 個測試，token 數量 1200，路徑 C:\\ob\\web\\ORB-1-1";
+        let text = "pnpm test 通過 12 個測試，token 數量 1200，路徑 D:\\work\\web";
         assert_eq!(redact(text), text);
     }
 

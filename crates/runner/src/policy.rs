@@ -46,7 +46,7 @@ pub enum PermissionSubject {
 pub struct PolicyContext<'a> {
     pub policy: PermissionPolicy,
     pub worktree: &'a Path,
-    /// `.orbis/config.toml` 的 `[permissions].allow_commands`（從 base commit 讀出）。
+    /// `<CONFIG_DIR>/<CONFIG_FILE>` 的 `[permissions].allow_commands`（從 base commit 讀出）。
     pub allow_commands: &'a [String],
     /// Repo 的主分支名稱，例如 `main`。
     pub default_branch: &'a str,
@@ -602,9 +602,11 @@ mod tests {
 
     fn worktree() -> PathBuf {
         if cfg!(windows) {
-            PathBuf::from(r"C:\ob\web\ORB-1-1")
+            PathBuf::from(orbis_protocol::names::WORKTREE_ROOT_WINDOWS)
+                .join("web")
+                .join("ORB-1-1")
         } else {
-            PathBuf::from("/home/me/.orbis/wt/web/ORB-1-1")
+            PathBuf::from("/home/me/wt/web/ORB-1-1")
         }
     }
 
@@ -712,12 +714,12 @@ mod tests {
             (cmd("pnpm test $(cat secret)"), ["ask", "ask", "allow"]),
             (cmd("pnpm test `whoami`"), ["ask", "ask", "allow"]),
             (
-                cmd("git push --force origin orbis/ORB-1-x"),
+                cmd("git push --force origin feature/ORB-1-x"),
                 ["ask", "ask", "allow"],
             ),
             (cmd("git push -f"), ["ask", "ask", "allow"]),
             (
-                cmd("git push origin +orbis/ORB-1-x"),
+                cmd("git push origin +feature/ORB-1-x"),
                 ["ask", "ask", "allow"],
             ),
             (cmd("pnpm add -g typescript"), ["ask", "ask", "allow"]),
@@ -733,7 +735,7 @@ mod tests {
             (cmd("git checkout main"), ["deny", "deny", "deny"]),
             (cmd("git branch -f main HEAD"), ["deny", "deny", "deny"]),
             (
-                cmd("git push origin orbis/ORB-1-x"),
+                cmd("git push origin feature/ORB-1-x"),
                 ["ask", "ask", "allow"],
             ),
             (

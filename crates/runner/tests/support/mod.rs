@@ -12,10 +12,10 @@ use tempfile::TempDir;
 
 /// 測試用的 git 身分（不依賴 CI 機器上的 git 設定）。
 pub const GIT_IDENTITY: [(&str, &str); 4] = [
-    ("GIT_AUTHOR_NAME", "Orbis Test"),
-    ("GIT_AUTHOR_EMAIL", "test@orbis.invalid"),
-    ("GIT_COMMITTER_NAME", "Orbis Test"),
-    ("GIT_COMMITTER_EMAIL", "test@orbis.invalid"),
+    ("GIT_AUTHOR_NAME", "Runner Test"),
+    ("GIT_AUTHOR_EMAIL", "runner-test@example.invalid"),
+    ("GIT_COMMITTER_NAME", "Runner Test"),
+    ("GIT_COMMITTER_EMAIL", "runner-test@example.invalid"),
 ];
 
 /// 執行 git，失敗時 panic 並印出輸出。
@@ -179,4 +179,14 @@ pub fn runner_script(name: &str) -> PathBuf {
         .join("tests")
         .join("scripts")
         .join(name)
+}
+
+/// Run 的分支名稱（分支前綴來自名稱常數）。
+pub fn branch(rest: &str) -> String {
+    format!("{}{rest}", orbis_protocol::names::BRANCH_PREFIX)
+}
+
+/// Repo 設定檔的路徑（來自名稱常數）。
+pub fn cfg() -> String {
+    orbis_runner::repo_config::config_path()
 }

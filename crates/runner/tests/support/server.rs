@@ -332,7 +332,7 @@ pub fn offer(
         },
         run_seq: 1,
         repo,
-        branch: Some(format!("orbis/ORB-1-{run_id}")),
+        branch: Some(format!("{}ORB-1-{run_id}", names::BRANCH_PREFIX)),
         agent: agent.into(),
         model: None,
         permission_policy: PermissionPolicy::Auto,

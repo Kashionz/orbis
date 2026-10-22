@@ -6,7 +6,7 @@
 //! └── runner/                    狀態（Runner 自己管理，不要手改）
 //!     ├── credentials.json       Runner token（依 Server 網址分開）
 //!     ├── ports.json             每個 Worktree 分到的 port
-//!     ├── trust.json             `.orbis/config.toml` 腳本的信任核准紀錄
+//!     ├── trust.json             `<CONFIG_DIR>/<CONFIG_FILE>` 腳本的信任核准紀錄
 //!     ├── spool/                 尚未被 Server 確認的 Event 與 blob
 //!     └── agents/                Runner 代管安裝的 ACP adapter
 //! ```

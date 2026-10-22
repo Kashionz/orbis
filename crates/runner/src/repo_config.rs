@@ -7,7 +7,7 @@ use orbis_protocol::names;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-/// 設定檔在 Repo 中的路徑（`/` 分隔），例如 `.orbis/config.toml`。
+/// 設定檔在 Repo 中的路徑（`/` 分隔），例如 `<CONFIG_DIR>/<CONFIG_FILE>`。
 pub fn config_path() -> String {
     format!("{}/{}", names::CONFIG_DIR, names::CONFIG_FILE)
 }
@@ -206,7 +206,7 @@ shared_dirs = []
 copy = [".env", ".env.local"]
 
 [preview]
-command = "pnpm dev --port $ORBIS_PORT"
+command = "pnpm dev --port $PORT"
 ready_path = "/"
 
 [verify]
@@ -246,7 +246,7 @@ allowed_agents = ["claude-code", "codex", "gemini", "grok"]
             task_key: "ORB-12",
             title: "修好登入",
             run_id: "r1",
-            branch: "orbis/ORB-12-login",
+            branch: "feature/ORB-12-login",
         };
         assert_eq!(
             GitConfig::default().commit_message(fields),
@@ -260,7 +260,7 @@ commit_message = \"feat: {title}（{task_key}，{branch}）\"
         .unwrap();
         assert_eq!(
             custom.config.git.commit_message(fields),
-            "feat: 修好登入（ORB-12，orbis/ORB-12-login）"
+            "feat: 修好登入（ORB-12，feature/ORB-12-login）"
         );
         let blank = LoadedConfig::parse(
             "[git]

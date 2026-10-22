@@ -16,7 +16,7 @@ use support::server::{
     FakeServer, RunnerOptions, RunnerSide, fake_agent_toml, offer, parse_result, process_alive,
     result_outcome, send_offer, spawn_runner, write_runner_toml,
 };
-use support::{Remote, git, runner_script, script, temp_dir, toml_string};
+use support::{Remote, branch, cfg, git, runner_script, script, temp_dir, toml_string};
 
 /// 一次測試的環境：remote、Runner 本機目錄、Server。
 struct Env {
@@ -112,7 +112,7 @@ async fn 領取到完成_退回後再次完成並_push() {
 
     conn.wait_status("starting").await;
     let ready = conn.wait_event("worktree_ready").await;
-    assert_eq!(ready["branch"], "orbis/ORB-1-r1");
+    assert_eq!(ready["branch"], branch("ORB-1-r1"));
     assert_eq!(
         ready["base_commit"],
         git(&env.remote.work, &["rev-parse", "HEAD"])
@@ -221,7 +221,7 @@ async fn 領取到完成_退回後再次完成並_push() {
             runner.stderr()
         );
     };
-    assert_eq!(branch, "orbis/ORB-1-r1");
+    assert_eq!(branch, support::branch("ORB-1-r1"));
     assert_eq!(
         env.remote.branch_head(&branch).as_deref(),
         Some(commit_sha.as_str())
@@ -334,7 +334,7 @@ async fn 斷線後重新連線並依_seq_補送() {
 #[tokio::test(flavor = "multi_thread")]
 async fn 設定檔腳本的信任核准() {
     let config = "[worktree]\nsetup = \"echo setup > setup-ran.txt\"\n";
-    let mut env = Env::new(&[(".orbis/config.toml", config)], |wt| {
+    let mut env = Env::new(&[(cfg().as_str(), config)], |wt| {
         fake_agent_toml(wt, &runner_script("simple.yaml"))
     })
     .await;
@@ -394,7 +394,7 @@ async fn 設定檔腳本的信任核准() {
 #[tokio::test(flavor = "multi_thread")]
 async fn 拒絕信任核准時_run_失敗() {
     let config = "[worktree]\nsetup = \"echo setup > setup-ran.txt\"\n";
-    let mut env = Env::new(&[(".orbis/config.toml", config)], |wt| {
+    let mut env = Env::new(&[(cfg().as_str(), config)], |wt| {
         fake_agent_toml(wt, &runner_script("simple.yaml"))
     })
     .await;
@@ -417,11 +417,11 @@ async fn 拒絕信任核准時_run_失敗() {
     conn.wait_status("failed").await;
 }
 
-/// `.orbis/config.toml` 的 allow_commands 中的指令自動允許，不產生權限請求；commit 訊息格式可以設定。
+/// `<CONFIG_DIR>/<CONFIG_FILE>` 的 allow_commands 中的指令自動允許，不產生權限請求；commit 訊息格式可以設定。
 #[tokio::test(flavor = "multi_thread")]
 async fn allow_commands_中的指令自動允許() {
     let config = "[permissions]\nallow_commands = [\"make *\"]\n[git]\ncommit_message = \"feat: {title}（{task_key}）\"\n";
-    let mut env = Env::new(&[(".orbis/config.toml", config)], |wt| {
+    let mut env = Env::new(&[(cfg().as_str(), config)], |wt| {
         fake_agent_toml(wt, &runner_script("review-loop.yaml"))
     })
     .await;
@@ -709,7 +709,7 @@ fn runner_的劇本都能解析() {
 #[tokio::test(flavor = "multi_thread")]
 async fn copy_進來的檔案不會送到_server_也不會_push() {
     let config = "[worktree]\ncopy = [\".env\"]\n[permissions]\nallow_commands = [\"make *\"]\n";
-    let remote = Remote::new(&[(".orbis/config.toml", config)]);
+    let remote = Remote::new(&[(cfg().as_str(), config)]);
     let dir = temp_dir("orbis run");
     let checkout = dir.path().join("member");
     git(dir.path(), &["clone", &remote.clone_url(), "member"]);
@@ -766,12 +766,29 @@ async fn copy_進來的檔案不會送到_server_也不會_push() {
         .await;
     let sha = result["commit_sha"]
         .as_str()
-        .unwrap_or_else(|| panic!("{result}"));
-    let files = git(&remote.bare, &["ls-tree", "-r", "--name-only", sha]);
+        .unwrap_or_else(|| panic!("{result}"))
+        .to_owned();
+    let files = git(&remote.bare, &["ls-tree", "-r", "--name-only", &sha]);
     assert!(files.lines().any(|f| f == "feature.txt"), "{files}");
     assert!(
         !files.lines().any(|f| f == ".env"),
         ".env 不可以被 push：{files}"
+    );
+    // Agent 自己把 .env commit 進去：拒絕 push。
+    git(&worktree, &["add", "--", ".env"]);
+    git(&worktree, &["commit", "-m", "不小心 commit 了 .env"]);
+    let refused = conn
+        .control("r1", "d-r1", "c3", RunControlAction::PushBranch)
+        .await;
+    assert_eq!(refused["reason"], "failed", "{refused}");
+    assert!(
+        refused["message"].as_str().unwrap().contains(".env"),
+        "{refused}"
+    );
+    assert_eq!(
+        remote.branch_head(&branch("ORB-1-r1")).as_deref(),
+        Some(sha.as_str()),
+        "被拒絕的 push 不可以送出"
     );
     let all_events = serde_json::to_string(&conn.events).unwrap();
     assert!(

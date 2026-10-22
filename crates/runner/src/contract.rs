@@ -8,10 +8,10 @@ use orbis_protocol::ids::{DispatchId, RunId, Timestamp};
 use serde::{Deserialize, Serialize};
 
 // TODO(contract): 移到 `orbis_protocol::names`（Rust 與 TS 各一份）。
-/// `~/.orbis/` 下 Runner 的設定檔（給人編輯）。
+/// `~/<CONFIG_DIR>/` 下 Runner 的設定檔（給人編輯）。
 pub const RUNNER_CONFIG_FILE: &str = "runner.toml";
 // TODO(contract): 移到 `orbis_protocol::names`。
-/// `~/.orbis/` 下 Runner 的狀態目錄（Runner token、port 分配、信任紀錄、Event 暫存）。
+/// `~/<CONFIG_DIR>/` 下 Runner 的狀態目錄（Runner token、port 分配、信任紀錄、Event 暫存）。
 pub const RUNNER_STATE_DIR: &str = "runner";
 
 // TODO(contract): 移到 `orbis_protocol`，與 `RUNNER_WS_PATH` 並列。
@@ -67,7 +67,7 @@ pub enum FileChange {
 pub enum PermissionPurpose {
     /// Agent 的 tool call。
     Tool,
-    /// 第一次執行（或內容改變後）`.orbis/config.toml` 中的腳本。
+    /// 第一次執行（或內容改變後）`<CONFIG_DIR>/<CONFIG_FILE>` 中的腳本。
     ConfigTrust,
     /// Worktree 中 Agent 自己的設定檔（例如 `.claude/settings.json`）和 base commit 不同。
     AgentSettingsChanged,
