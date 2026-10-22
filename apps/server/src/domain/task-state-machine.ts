@@ -22,8 +22,10 @@ export const TRANSITION_TRIGGERS = [
   "gate",
   /** Run 失敗或被中止。 */
   "run_stopped",
-  /** GitHub 的 webhook（PR merge／關閉、Issue 關閉／重開），由 D 軌呼叫。 */
-  "github",
+  /** GitHub 的 PR webhook（merge、未 merge 就關閉），由 D 軌呼叫。 */
+  "pull_request",
+  /** GitHub 的 Issue webhook（關閉、重開），由 D 軌呼叫。 */
+  "issue",
 ] as const;
 export type TransitionTrigger = (typeof TRANSITION_TRIGGERS)[number];
 
@@ -85,9 +87,14 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
   },
   { from: "review_gate", to: "running", trigger: "gate", description: "Review Gate 退回" },
   { from: "review_gate", to: "pr_open", trigger: "gate", description: "Review Gate 核准" },
-  { from: "pr_open", to: "done", trigger: "github", description: "PR merge" },
-  { from: "pr_open", to: "review_gate", trigger: "github", description: "PR 未 merge 就關閉" },
-  { from: "done", to: "backlog", trigger: "github", description: "Issue 重開" },
+  { from: "pr_open", to: "done", trigger: "pull_request", description: "PR merge" },
+  {
+    from: "pr_open",
+    to: "review_gate",
+    trigger: "pull_request",
+    description: "PR 未 merge 就關閉",
+  },
+  { from: "done", to: "backlog", trigger: "issue", description: "Issue 重開" },
   ...IN_FLIGHT.map(
     (from): TaskTransition => ({
       from,
@@ -96,11 +103,11 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
       description: "Run 失敗或被中止",
     }),
   ),
-  ...NOT_DONE.filter((from) => from !== "pr_open").map(
+  ...NOT_DONE.map(
     (from): TaskTransition => ({
       from,
       to: "done",
-      trigger: "github",
+      trigger: "issue",
       description: "Issue 關閉",
     }),
   ),

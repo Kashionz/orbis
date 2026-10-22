@@ -24,9 +24,9 @@ const EXPECTED = new Set([
   "verifying→running(verification)",
   "review_gate→running(gate)",
   "review_gate→pr_open(gate)",
-  "pr_open→done(github)",
-  "pr_open→review_gate(github)",
-  "done→backlog(github)",
+  "pr_open→done(pull_request)",
+  "pr_open→review_gate(pull_request)",
+  "done→backlog(issue)",
   // Run 失敗或中止：Run 進行中的狀態回到 Ready。
   "planning→ready(run_stopped)",
   "plan_gate→ready(run_stopped)",
@@ -34,13 +34,14 @@ const EXPECTED = new Set([
   "verifying→ready(run_stopped)",
   "review_gate→ready(run_stopped)",
   // Issue 關閉：Done 以外的狀態都可以轉 Done。
-  "backlog→done(github)",
-  "ready→done(github)",
-  "planning→done(github)",
-  "plan_gate→done(github)",
-  "running→done(github)",
-  "verifying→done(github)",
-  "review_gate→done(github)",
+  "backlog→done(issue)",
+  "ready→done(issue)",
+  "planning→done(issue)",
+  "plan_gate→done(issue)",
+  "running→done(issue)",
+  "verifying→done(issue)",
+  "review_gate→done(issue)",
+  "pr_open→done(issue)",
 ]);
 
 const label = (from: TaskStatus, to: TaskStatus, trigger: TransitionTrigger) =>

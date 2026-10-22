@@ -13,7 +13,7 @@ import {
   PermissionPolicy,
   ProjectKeyPrefix,
   Role,
-  type RunEvent,
+  RunEvent,
   RunnerKind,
   Timestamp,
 } from "@orbis/api-contract";
@@ -258,3 +258,18 @@ export const RUNNER_BLOB_PATH = "/api/runner/blobs";
 
 /** review diff Event 的 kind。 */
 export const REVIEW_DIFF_EVENT_KIND = "review_diff";
+
+/**
+ * RunEvent 的暫時版本：契約的 RunEvent 只接受協定已知的 kind，review diff 的 kind 尚未進入協定。
+ * contract/protocol 合併後改回契約的 RunEvent。
+ */
+export const PendingRunEvent = RunEvent.extend({
+  event: z.custom<RunEvent["event"]>(
+    (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      (RunEvent.shape.event.safeParse(value).success ||
+        (value as { kind?: unknown }).kind === REVIEW_DIFF_EVENT_KIND),
+    { error: "Event 內容必須是帶有已知 kind 的物件" },
+  ),
+});

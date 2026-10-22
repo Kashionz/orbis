@@ -12,6 +12,7 @@ import {
   client,
   createTestContext,
   expectContract,
+  resetDatabase,
   type SeededTeam,
   seedMember,
   seedTeam,
@@ -39,7 +40,7 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
   });
 
   beforeEach(async () => {
-    await database.db.execute(sql`truncate table teams, sessions cascade`);
+    await resetDatabase(database.db);
     rejectRepo = null;
     ctx = createTestContext(database.db, {
       repoRegistrar: {

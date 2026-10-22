@@ -53,12 +53,12 @@ export class GitHubDomainService {
 
   /** PR 已 merge：PR Open → Done。 */
   onPullRequestMerged(taskId: string): Promise<GitHubTransitionResult> {
-    return this.transition(taskId, "done");
+    return this.transition(taskId, "done", "pull_request");
   }
 
   /** PR 沒有 merge 就關閉：PR Open → Review Gate。 */
   onPullRequestClosedUnmerged(taskId: string): Promise<GitHubTransitionResult> {
-    return this.transition(taskId, "review_gate");
+    return this.transition(taskId, "review_gate", "pull_request");
   }
 
   /** Issue 關閉：Task 轉成 Done；Task 有進行中的 Run 時拒絕（D 軌重開 Issue 並說明）。 */
@@ -76,12 +76,12 @@ export class GitHubDomainService {
         status: task?.status ?? null,
       };
     }
-    return this.transition(taskId, "done");
+    return this.transition(taskId, "done", "issue");
   }
 
   /** Issue 重開：已 Done 的 Task 回到 Backlog。 */
   onIssueReopened(taskId: string): Promise<GitHubTransitionResult> {
-    return this.transition(taskId, "backlog");
+    return this.transition(taskId, "backlog", "issue");
   }
 
   /** 把 Issue 上的變更寫回 Task。 */
@@ -112,10 +112,14 @@ export class GitHubDomainService {
     });
   }
 
-  private async transition(taskId: string, to: TaskStatus): Promise<GitHubTransitionResult> {
+  private async transition(
+    taskId: string,
+    to: TaskStatus,
+    trigger: "pull_request" | "issue",
+  ): Promise<GitHubTransitionResult> {
     try {
       const task = await inTransaction(this.db, (uow) =>
-        this.lifecycle.transition(uow, taskId, to, "github"),
+        this.lifecycle.transition(uow, taskId, to, trigger),
       );
       return { ok: true, task };
     } catch (error) {

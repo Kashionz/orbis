@@ -29,6 +29,8 @@ export interface ServerDeps {
   services?: Services;
   /** 測試用：縮短等待 Hello 的時間。 */
   helloTimeoutMs?: number;
+  /** 測試用：Web 即時推送重新檢查權限的間隔。 */
+  webAuthzRecheckMs?: number;
   /** 派工檢查的間隔；設為 0 時不啟動定期檢查（測試自行呼叫 dispatcher.kick()）。 */
   dispatcherIntervalMs?: number;
 }
@@ -65,7 +67,10 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
   });
-  const webEndpoint = attachWebEndpoint(router, services);
+  const webEndpoint = attachWebEndpoint(router, services, {
+    publicUrl: deps.config.publicUrl,
+    authzRecheckMs: deps.webAuthzRecheckMs,
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
