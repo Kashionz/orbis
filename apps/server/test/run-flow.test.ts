@@ -711,5 +711,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       .where(and(eq(needsYouItems.runId, run.id), isNull(needsYouItems.resolvedAt)));
     expect(open).toHaveLength(0);
     expect(await database.db.select().from(gates).where(eq(gates.taskId, task.id))).toHaveLength(2);
+    const history = await as("viewer").get(`/api/tasks/${task.id}/runs`);
+    expect(expectContract(z.array(Run), history.body).map((r) => r.id)).toEqual([run.id]);
   });
 });
