@@ -85,6 +85,9 @@ pub struct Worktree {
     pub port: u16,
     pub run_id: RunId,
     pub task_key: String,
+    /// 設定檔中的腳本是否已核准（§6.2「設定的信任核准」）。沒有腳本，或這份內容已被
+    /// 「永遠允許」時為 `true`；否則由 Run 取得人工核准後設為 `true`。未核准時不執行任何腳本。
+    pub scripts_approved: bool,
 }
 
 impl Worktree {
@@ -184,7 +187,13 @@ impl WorktreeManager {
             let _guard = lock.lock().await;
             if !clone.join(".git").exists() {
                 Git::new(&repo_dir)
-                    .run(["clone", "--no-checkout", &repo.clone_url, MANAGED_CLONE_DIR])
+                    .run([
+                        "clone",
+                        "--no-checkout",
+                        "--",
+                        &repo.clone_url,
+                        MANAGED_CLONE_DIR,
+                    ])
                     .await?;
             }
         }
@@ -194,6 +203,7 @@ impl WorktreeManager {
     /// 執行 §6.2 建立流程的 1–5 步（不含信任核准與 setup）。
     pub async fn create(&self, req: &WorktreeRequest) -> Result<Worktree, WorktreeError> {
         let path = self.path_for(&req.repo.name, &req.task_key, req.run_seq)?;
+        validate_request(req).await?;
         if paths::running_in_wsl() && paths::is_wsl_windows_mount(&path) {
             return Err(WorktreeError::worktree(format!(
                 "git 跑在 WSL 中時 Worktree 不可以放在 Windows 磁碟上：{}",
@@ -240,14 +250,23 @@ impl WorktreeManager {
                         ])
                         .await;
                     if exists {
-                        git.run(["worktree", "add", &path_arg, branch]).await?;
-                    } else {
-                        git.run(["worktree", "add", "-b", branch, &path_arg, &base_commit])
+                        git.run(["worktree", "add", "--", &path_arg, branch])
                             .await?;
+                    } else {
+                        git.run([
+                            "worktree",
+                            "add",
+                            "-b",
+                            branch,
+                            "--",
+                            &path_arg,
+                            &base_commit,
+                        ])
+                        .await?;
                     }
                 }
                 None => {
-                    git.run(["worktree", "add", "--detach", &path_arg, &base_commit])
+                    git.run(["worktree", "add", "--detach", "--", &path_arg, &base_commit])
                         .await?;
                 }
             }
@@ -257,7 +276,13 @@ impl WorktreeManager {
             .home
             .allocate_port(&path)
             .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
+        let scripts_approved = config.scripts().is_empty()
+            || self
+                .home
+                .is_trusted(&req.repo.clone_url, &config.hash)
+                .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
         Ok(Worktree {
+            scripts_approved,
             path,
             root_checkout: source,
             member_checkout,
@@ -304,6 +329,27 @@ impl WorktreeManager {
                 continue;
             }
             let target = wt.path.join(rel);
+            // 不跟著 symlink／junction 讀寫：來源要真的在 checkout 內，目標要真的在 Worktree 內。
+            let source_is_link =
+                std::fs::symlink_metadata(&source).is_ok_and(|m| m.file_type().is_symlink());
+            let target_is_link =
+                std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink());
+            if source_is_link
+                || target_is_link
+                || !paths::is_within(
+                    &paths::resolve_existing(&source),
+                    &paths::canonical(&wt.root_checkout),
+                )
+                || !paths::is_within(
+                    &paths::resolve_existing(&target),
+                    &paths::canonical(&wt.path),
+                )
+            {
+                return Err(WorktreeError::new(
+                    RunErrorCode::SetupFailed,
+                    format!("copy：{raw} 經由連結指向 checkout 或 Worktree 以外，拒絕複製"),
+                ));
+            }
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
                     WorktreeError::worktree(format!("無法建立 {}：{e}", parent.display()))
@@ -334,6 +380,12 @@ impl WorktreeManager {
         else {
             return Ok(None);
         };
+        if !wt.scripts_approved {
+            return Err(WorktreeError::new(
+                RunErrorCode::SetupFailed,
+                "setup 腳本尚未核准，不執行",
+            ));
+        }
         let spec = Shell::for_script(script)
             .spec(script)
             .cwd(&wt.path)
@@ -383,6 +435,11 @@ impl WorktreeManager {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
         {
+            if !wt.scripts_approved {
+                return Err(WorktreeError::worktree(
+                    "archive 腳本尚未核准，無法執行，已擋下刪除",
+                ));
+            }
             let spec = Shell::for_script(script)
                 .spec(script)
                 .cwd(&path)
@@ -429,6 +486,31 @@ impl WorktreeManager {
 pub struct Removal {
     /// 分支上有未合併的 commit，保留下來（UI 顯示為「保留的分支」）。
     pub branch_kept: bool,
+}
+
+/// 檢查 DispatchOffer 中會成為 git 參數的值，避免被當成選項（參數注入）。
+async fn validate_request(req: &WorktreeRequest) -> Result<(), WorktreeError> {
+    for (what, value) in [
+        ("clone URL", req.repo.clone_url.as_str()),
+        ("base ref", req.repo.base_ref.as_str()),
+        ("default branch", req.repo.default_branch.as_str()),
+    ] {
+        if value.is_empty() || value.starts_with('-') || value.chars().any(char::is_control) {
+            return Err(WorktreeError::worktree(format!("{what} {value:?} 不合法")));
+        }
+    }
+    if let Some(branch) = &req.branch {
+        let valid = !branch.starts_with('-')
+            && Git::new(".")
+                .succeeds(["check-ref-format", "--branch", branch])
+                .await;
+        if !valid {
+            return Err(WorktreeError::worktree(format!(
+                "分支名稱 {branch:?} 不合法"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 路徑中的一段：不可以含分隔字元、`..` 或 Windows 不允許的字元。

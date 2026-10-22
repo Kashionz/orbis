@@ -148,14 +148,22 @@ impl LoadedConfig {
         })
     }
 
-    /// 需要人工核准才能執行的腳本（§6.2「設定的信任核准」）。沒有腳本時不需要核准。
+    /// 需要人工核准才能執行的腳本（§6.2「設定的信任核准」）：setup、archive、Preview 指令與
+    /// Verification 指令。沒有腳本時不需要核准。
     pub fn scripts(&self) -> Vec<(&'static str, &str)> {
-        let w = &self.config.worktree;
+        let c = &self.config;
         [
-            ("setup", w.setup.as_deref()),
-            ("archive", w.archive.as_deref()),
+            ("setup", c.worktree.setup.as_deref()),
+            ("archive", c.worktree.archive.as_deref()),
+            ("preview", c.preview.command.as_deref()),
         ]
         .into_iter()
+        .chain(
+            c.verify
+                .commands
+                .iter()
+                .map(|cmd| ("verify", Some(cmd.as_str()))),
+        )
         .filter_map(|(name, script)| script.filter(|s| !s.trim().is_empty()).map(|s| (name, s)))
         .collect()
     }
@@ -224,7 +232,11 @@ allowed_agents = ["claude-code", "codex", "gemini", "grok"]
         assert_eq!(c.permissions.allow_commands.len(), 3);
         assert_eq!(c.verify.commands, ["pnpm lint", "pnpm test"]);
         assert!(c.delegation.enabled);
-        assert_eq!(loaded.scripts().len(), 2);
+        assert_eq!(
+            loaded.scripts().len(),
+            5,
+            "setup、archive、preview 與兩個 verify"
+        );
         assert_eq!(loaded.hash.len(), 64);
     }
 

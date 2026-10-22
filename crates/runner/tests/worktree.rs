@@ -36,10 +36,11 @@ async fn 從_runner_自己的_clone_開出_worktree() {
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
 
-    let wt = manager
+    let mut wt = manager
         .create(&request(&remote, "ORB-1", 1, Some("orbis/ORB-1-readme")))
         .await
         .unwrap();
+    assert!(!wt.scripts_approved, "有 setup 腳本而且還沒核准");
 
     // 路徑：<root>/<repo>/<task-key>-<run-seq>，而且路徑含空白也沒問題。
     let expected = paths::canonical(&home.dir.path().join("wt").join("web").join("ORB-1-1"));
@@ -86,6 +87,11 @@ async fn 從_runner_自己的_clone_開出_worktree() {
     assert!(wt.path.join(".cache").join("shared").is_dir());
 
     // setup 在 Worktree 中執行。
+    // 未核准時不執行；核准後在 Worktree 中執行。
+    let refused = manager.run_setup(&wt).await.unwrap_err();
+    assert_eq!(refused.code, RunErrorCode::SetupFailed);
+    assert!(!wt.path.join("setup.txt").exists());
+    wt.scripts_approved = true;
     let output = manager.run_setup(&wt).await.unwrap().unwrap();
     assert!(output.success(), "{}", output.combined());
     assert!(
@@ -183,10 +189,11 @@ async fn setup_失敗會回報輸出() {
     )]);
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
-    let wt = manager
+    let mut wt = manager
         .create(&request(&remote, "ORB-6", 1, Some("orbis/x")))
         .await
         .unwrap();
+    wt.scripts_approved = true;
     let output = manager.run_setup(&wt).await.unwrap().unwrap();
     assert!(!output.success());
     assert_eq!(output.status.code(), Some(3));
@@ -284,10 +291,15 @@ async fn archive_失敗時擋下刪除() {
     let remote = Remote::new(&[(".orbis/config.toml", "[worktree]\narchive = \"exit 1\"\n")]);
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
-    let wt = manager
+    let mut wt = manager
         .create(&request(&remote, "ORB-12", 1, Some("orbis/x")))
         .await
         .unwrap();
+    // 未核准的 archive 腳本不執行，也不刪除。
+    let err = manager.remove(&wt).await.unwrap_err();
+    assert!(err.message.contains("尚未核准"), "{}", err.message);
+    assert!(wt.path.exists());
+    wt.scripts_approved = true;
     let err = manager.remove(&wt).await.unwrap_err();
     assert!(err.message.contains("archive"), "{}", err.message);
     assert!(wt.path.exists(), "archive 失敗時不可以刪除");
@@ -389,4 +401,94 @@ fn 測試用的暫存路徑含空白() {
             .contains(' ')
     );
     let _ = Path::new("");
+}
+
+#[tokio::test]
+async fn 永遠允許過的設定內容不必再核准_內容改變後要重新核准() {
+    let remote = Remote::new(&[(".orbis/config.toml", "[worktree]\nsetup = \"echo a\"\n")]);
+    let home = TestHome::new("");
+    let manager = WorktreeManager::new(home.home.clone());
+    let first = manager
+        .create(&request(&remote, "ORB-20", 1, Some("orbis/a")))
+        .await
+        .unwrap();
+    assert!(!first.scripts_approved);
+    home.home
+        .trust(&remote.clone_url(), &first.config.hash)
+        .unwrap();
+    let second = manager
+        .create(&request(&remote, "ORB-20", 2, Some("orbis/b")))
+        .await
+        .unwrap();
+    assert!(second.scripts_approved, "同一份內容已被永遠允許");
+
+    remote.commit(
+        &[(".orbis/config.toml", "[worktree]\nsetup = \"echo b\"\n")],
+        "改 setup",
+    );
+    let third = manager
+        .create(&request(&remote, "ORB-20", 3, Some("orbis/c")))
+        .await
+        .unwrap();
+    assert!(!third.scripts_approved, "內容改變後要重新核准");
+}
+
+#[tokio::test]
+async fn 沒有腳本時不需要核准() {
+    let remote = Remote::new(&[(
+        ".orbis/config.toml",
+        "[permissions]\nallow_commands = [\"pnpm *\"]\n",
+    )]);
+    let home = TestHome::new("");
+    let manager = WorktreeManager::new(home.home.clone());
+    let wt = manager
+        .create(&request(&remote, "ORB-21", 1, Some("orbis/a")))
+        .await
+        .unwrap();
+    assert!(wt.scripts_approved);
+}
+
+#[tokio::test]
+async fn 拒絕會被當成_git_選項的值() {
+    let remote = Remote::new(&[("README.md", "a\n")]);
+    let home = TestHome::new("");
+    let manager = WorktreeManager::new(home.home.clone());
+    for branch in ["--upload-pack=evil", "-b", "has space", "a..b"] {
+        let err = manager
+            .create(&request(&remote, "ORB-22", 1, Some(branch)))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, RunErrorCode::WorktreeFailed, "{branch}");
+    }
+    let mut req = request(&remote, "ORB-22", 1, Some("orbis/ok"));
+    req.repo.clone_url = "--upload-pack=touch /tmp/pwned".into();
+    req.repo.name = "other".into();
+    assert_eq!(
+        manager.create(&req).await.unwrap_err().code,
+        RunErrorCode::WorktreeFailed
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn copy_不跟著連結複製到_checkout_以外() {
+    let remote = Remote::new(&[(".orbis/config.toml", "[worktree]\ncopy = [\".env\"]\n")]);
+    let checkout = support::temp_dir("orbis member checkout");
+    let member = checkout.path().join("web");
+    git(checkout.path(), &["clone", &remote.clone_url(), "web"]);
+    let secret = checkout.path().join("secret.txt");
+    std::fs::write(&secret, "TOKEN=abcdef123456").unwrap();
+    std::os::unix::fs::symlink(&secret, member.join(".env")).unwrap();
+    let home = TestHome::new(&format!(
+        "[repos.web]\npath = {}\n",
+        toml_string(&member.to_string_lossy())
+    ));
+    let manager = WorktreeManager::new(home.home.clone());
+    let wt = manager
+        .create(&request(&remote, "ORB-23", 1, Some("orbis/x")))
+        .await
+        .unwrap();
+    let err = manager.link_and_copy(&wt).unwrap_err();
+    assert!(err.message.contains("連結"), "{}", err.message);
+    assert!(!wt.path.join(".env").exists());
 }

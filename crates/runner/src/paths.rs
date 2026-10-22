@@ -50,6 +50,30 @@ pub fn canonical(path: &Path) -> PathBuf {
     }
 }
 
+/// 解開路徑中「已存在的最深一層」的 symlink／junction，其餘部分字面接上。
+/// 用來判斷一個還不存在的檔案（例如要寫入的目標）實際會落在哪裡。
+pub fn resolve_existing(path: &Path) -> PathBuf {
+    let path = normalize(path);
+    let mut existing = path.as_path();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(existing) {
+            let mut out = normalize(&real);
+            for part in rest.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                existing = parent;
+            }
+            _ => return path,
+        }
+    }
+}
+
 /// `path` 是否等於 `base` 或在 `base` 之內（兩者都會先正規化）。
 pub fn is_within(path: &Path, base: &Path) -> bool {
     let path = normalize(path);
@@ -250,6 +274,32 @@ mod tests {
             relative_slash(Path::new(r"c:\work\src\a.rs"), Path::new(r"C:\WORK")).as_deref(),
             Some("src/a.rs")
         );
+    }
+
+    #[test]
+    fn 解開已存在部分的連結() {
+        let dir = tempfile::Builder::new()
+            .prefix("orbis paths ")
+            .tempdir()
+            .unwrap();
+        let resolved = resolve_existing(&dir.path().join("not").join("yet.txt"));
+        assert_eq!(resolved, canonical(dir.path()).join("not").join("yet.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_內指向外面的連結視為在外面() {
+        let dir = tempfile::Builder::new()
+            .prefix("orbis paths ")
+            .tempdir()
+            .unwrap();
+        let wt = dir.path().join("wt");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, wt.join("link")).unwrap();
+        let target = resolve_existing(&wt.join("link").join("secret.txt"));
+        assert!(!is_within(&target, &canonical(&wt)));
     }
 
     #[cfg(windows)]
