@@ -32,7 +32,7 @@ describe("Server 設定", () => {
       port: DEFAULT_SERVER_PORT,
       publicUrl: DEFAULT_PUBLIC_URL,
       github: { clientId: "client-id", clientSecret: "client-secret" },
-      bootstrapOwner: null,
+      bootstrapOwnerGithubUserId: null,
       devPairingToken: null,
       runnerHeartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
       logLevel: "info",
@@ -57,6 +57,13 @@ describe("Server 設定", () => {
     expect(error.problems).toEqual([`${envVar("GITHUB_CLIENT_ID")}：必填`]);
     const config = loadConfig({ ...REQUIRED, [envVar("DEV_PAIRING_TOKEN")]: "" });
     expect(config.devPairingToken).toBeNull();
+  });
+
+  it("bootstrap owner 必須是數字 user id，填 login 時提示查詢方式", () => {
+    const error = configError({ ...REQUIRED, [envVar("BOOTSTRAP_OWNER")]: "octocat" });
+    expect(error.problems).toHaveLength(1);
+    expect(error.problems[0]).toContain(envVar("BOOTSTRAP_OWNER"));
+    expect(error.problems[0]).toContain("user id");
   });
 
   it("格式錯誤時拒絕", () => {
@@ -87,12 +94,12 @@ describe("Server 設定", () => {
     const config = loadConfig({
       ...REQUIRED,
       [envVar("PUBLIC_URL")]: "https://example.test/",
-      [envVar("BOOTSTRAP_OWNER")]: "octocat",
+      [envVar("BOOTSTRAP_OWNER")]: "583231",
       [envVar("DEV_PAIRING_TOKEN")]: "pt_dev",
       [envVar("RUNNER_HEARTBEAT_INTERVAL_MS")]: "5000",
     });
     expect(config.publicUrl).toBe("https://example.test");
-    expect(config.bootstrapOwner).toBe("octocat");
+    expect(config.bootstrapOwnerGithubUserId).toBe(583231);
     expect(config.devPairingToken).toBe("pt_dev");
     expect(config.runnerHeartbeatIntervalMs).toBe(5000);
   });

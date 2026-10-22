@@ -67,7 +67,7 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
       config: {
         port: 0,
         publicUrl: "http://localhost:5173",
-        bootstrapOwner: null,
+        bootstrapOwnerGithubUserId: null,
         devPairingToken: PAIRING_TOKEN,
         runnerHeartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
       },

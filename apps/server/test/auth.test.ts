@@ -10,7 +10,8 @@ import { OAUTH_STATE_COOKIE, SESSION_COOKIE } from "../src/routes/auth";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 
 const PUBLIC_URL = "http://localhost:5173";
-const BOOTSTRAP_OWNER = "Octocat";
+/** `code-owner` 的 GitHub user id。 */
+const BOOTSTRAP_OWNER_ID = 1;
 
 const USERS: Record<string, GitHubUser> = {
   "code-owner": {
@@ -20,6 +21,8 @@ const USERS: Record<string, GitHubUser> = {
     avatarUrl: "https://avatars.githubusercontent.com/u/1",
   },
   "code-stranger": { id: 2, login: "stranger", name: null, avatarUrl: null },
+  // 與 bootstrap owner 同 login、不同 user id：例如 owner 改名後，舊名稱被別人註冊。
+  "code-impostor": { id: 99, login: "octocat", name: null, avatarUrl: null },
   "code-member": {
     id: 3,
     login: "teammate",
@@ -79,7 +82,7 @@ describe.skipIf(dbSkipReason !== null)("GitHub OAuth 登入", () => {
     await database.db.execute(sql`truncate table teams, sessions cascade`);
     github = new FakeGitHubOAuth();
     app = createApp({
-      config: { publicUrl: PUBLIC_URL, bootstrapOwner: BOOTSTRAP_OWNER },
+      config: { publicUrl: PUBLIC_URL, bootstrapOwnerGithubUserId: BOOTSTRAP_OWNER_ID },
       db: database.db,
       logger: createLogger({ level: "silent", pretty: false }),
       githubOAuth: github,
@@ -186,6 +189,14 @@ describe.skipIf(dbSkipReason !== null)("GitHub OAuth 登入", () => {
     const [member] = await database.db.select().from(members).where(eq(members.githubUserId, 3));
     expect(member?.githubLogin).toBe("teammate");
     expect(member?.name).toBe("Team Mate");
+  });
+
+  it("login 與 bootstrap owner 相同但 user id 不同的人不會成為 Owner", async () => {
+    const callback = await login("code-impostor");
+    const body = MeResponse.parse(await (await me(cookieFrom(callback, SESSION_COOKIE))).json());
+    expect(body.githubLogin).toBe("octocat");
+    expect(body.member).toBeNull();
+    expect(await database.db.select().from(teams)).toHaveLength(0);
   });
 
   it("已有 Team 時，bootstrap owner 不會再建立新的 Team", async () => {

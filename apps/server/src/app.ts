@@ -9,7 +9,7 @@ import { createAuthRoutes } from "./routes/auth";
 import { createGitHubRoutes, createGitHubWebhookRoutes } from "./routes/github";
 
 export interface AppDeps {
-  config: Pick<Config, "publicUrl" | "bootstrapOwner">;
+  config: Pick<Config, "publicUrl" | "bootstrapOwnerGithubUserId">;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
@@ -32,7 +32,7 @@ export function createApp(deps: AppDeps): Hono {
       logger: deps.logger,
       githubOAuth: deps.githubOAuth,
       publicUrl: deps.config.publicUrl,
-      bootstrapOwner: deps.config.bootstrapOwner,
+      bootstrapOwnerGithubUserId: deps.config.bootstrapOwnerGithubUserId,
     }),
   );
 

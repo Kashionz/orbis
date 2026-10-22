@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   }
 
   const logger = createLogger({ level: config.logLevel, pretty: config.prettyLogs });
-  if (!config.bootstrapOwner) {
+  if (!config.bootstrapOwnerGithubUserId) {
     logger.warn("未設定 bootstrap owner，第一次登入時不會自動建立 Team");
   }
   if (!config.devPairingToken) {

@@ -26,7 +26,7 @@
 ### 第一次設定
 
 1. `pnpm install`
-2. 複製 `.env.example` 為 `.env`，填入 GitHub OAuth App 的 client id／secret，以及自己的 GitHub login（`ORBIS_BOOTSTRAP_OWNER`）。
+2. 複製 `.env.example` 為 `.env`，填入 GitHub OAuth App 的 client id／secret，以及自己的 GitHub 數字 user id（`ORBIS_BOOTSTRAP_OWNER`，用 `gh api user --jq .id` 查詢）。
    - OAuth App 的 callback URL 設為 `http://localhost:5173/api/auth/github/callback`。
    - `.env` 只放在本機，不會被 commit。
 

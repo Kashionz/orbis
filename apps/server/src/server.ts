@@ -13,7 +13,11 @@ import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
 export interface ServerDeps {
   config: Pick<
     Config,
-    "port" | "publicUrl" | "bootstrapOwner" | "devPairingToken" | "runnerHeartbeatIntervalMs"
+    | "port"
+    | "publicUrl"
+    | "bootstrapOwnerGithubUserId"
+    | "devPairingToken"
+    | "runnerHeartbeatIntervalMs"
   >;
   db: Database;
   logger: Logger;

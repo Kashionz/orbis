@@ -26,7 +26,7 @@ export interface AuthRouteDeps {
   githubOAuth: GitHubOAuth;
   /** Web 的 origin；redirect_uri 經由 Vite proxy 回到 Server。 */
   publicUrl: string;
-  bootstrapOwner: string | null;
+  bootstrapOwnerGithubUserId: number | null;
 }
 
 export function createAuthRoutes(deps: AuthRouteDeps): Hono {
@@ -70,7 +70,9 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
       return c.json({ error: "github_error", message: "無法向 GitHub 完成登入" }, 502);
     }
 
-    const result = await signIn(db, user, { bootstrapOwner: deps.bootstrapOwner });
+    const result = await signIn(db, user, {
+      bootstrapOwnerGithubUserId: deps.bootstrapOwnerGithubUserId,
+    });
     logger.info(
       {
         githubUserId: user.id,

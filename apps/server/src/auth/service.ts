@@ -24,14 +24,14 @@ export interface SignInResult {
  * GitHub 登入成功後呼叫：
  * - 更新這個 GitHub 帳號所有 Member 紀錄上的 login、名稱、頭像快照。
  * - 已是 Member：session 的目前 Team 設為最早加入的 Team。
- * - 不是任何 Team 的 Member，而且是 bootstrap owner、系統中還沒有任何 Team：
+ * - 不是任何 Team 的 Member，而且 GitHub user id 等於 bootstrap owner、系統中還沒有任何 Team：
  *   建立 Team（名稱為 GitHub login）並成為 Owner。
  * - 其他情況：session 沒有目前 Team，`/api/auth/me` 的 member 為 null。
  */
 export async function signIn(
   db: Database,
   user: GitHubUser,
-  options: { bootstrapOwner: string | null; now?: Date },
+  options: { bootstrapOwnerGithubUserId: number | null; now?: Date },
 ): Promise<SignInResult> {
   const now = options.now ?? new Date();
   return db.transaction(async (tx) => {
@@ -52,7 +52,7 @@ export async function signIn(
 
     let currentTeamId = existing?.teamId ?? null;
     let bootstrapped = false;
-    if (!currentTeamId && isBootstrapOwner(user.login, options.bootstrapOwner)) {
+    if (!currentTeamId && options.bootstrapOwnerGithubUserId === user.id) {
       const [anyTeam] = await tx.select({ id: teams.id }).from(teams).limit(1);
       if (!anyTeam) {
         const [team] = await tx.insert(teams).values({ name: user.login }).returning();
@@ -86,11 +86,6 @@ export async function signIn(
     if (!session) throw new Error("建立 session 失敗");
     return { sessionToken, session, bootstrapped };
   });
-}
-
-/** GitHub login 不分大小寫。 */
-function isBootstrapOwner(login: string, bootstrapOwner: string | null): boolean {
-  return bootstrapOwner !== null && login.toLowerCase() === bootstrapOwner.toLowerCase();
 }
 
 /** 以 cookie 中的 token 找出未過期的 session。 */

@@ -96,7 +96,7 @@ describe.skipIf(dbSkipReason !== null)("Runner WebSocket 端點", () => {
       config: {
         port: 0,
         publicUrl: "http://localhost:5173",
-        bootstrapOwner: null,
+        bootstrapOwnerGithubUserId: null,
         devPairingToken:
           options.devPairingToken === undefined ? DEV_PAIRING_TOKEN : options.devPairingToken,
         runnerHeartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,

@@ -15,7 +15,11 @@ export interface Config {
   publicUrl: string;
   github: { clientId: string; clientSecret: string };
   /** 第一次登入時建立 Team 並成為 Owner 的 GitHub login；未設定時不會自動建立 Team。 */
-  bootstrapOwner: string | null;
+  /**
+   * 第一次登入時建立 Team 並成為 Owner 的 GitHub 數字 user id。
+   * 用 id 而不用 login：login 可以改名，舊名稱可能被別人註冊。
+   */
+  bootstrapOwnerGithubUserId: number | null;
   /** 開發用的 Pairing token stub；未設定時拒絕所有 Pairing。 */
   devPairingToken: string | null;
   runnerHeartbeatIntervalMs: number;
@@ -58,7 +62,7 @@ export const CONFIG_ENV = {
   publicUrl: envVar("PUBLIC_URL"),
   githubClientId: envVar("GITHUB_CLIENT_ID"),
   githubClientSecret: envVar("GITHUB_CLIENT_SECRET"),
-  bootstrapOwner: envVar("BOOTSTRAP_OWNER"),
+  bootstrapOwnerGithubUserId: envVar("BOOTSTRAP_OWNER"),
   devPairingToken: envVar("DEV_PAIRING_TOKEN"),
   runnerHeartbeatIntervalMs: envVar("RUNNER_HEARTBEAT_INTERVAL_MS"),
   logLevel: envVar("LOG_LEVEL"),
@@ -77,7 +81,15 @@ const EnvSchema = z.object({
   ),
   githubClientId: required,
   githubClientSecret: required,
-  bootstrapOwner: optionalString,
+  bootstrapOwnerGithubUserId: optionalString.pipe(
+    z.coerce
+      .number<string | undefined>({
+        error: "必須是 GitHub 的數字 user id（可用 `gh api user --jq .id` 查詢），不是 login",
+      })
+      .int("必須是 GitHub 的數字 user id")
+      .positive("必須是 GitHub 的數字 user id")
+      .optional(),
+  ),
   devPairingToken: optionalString,
   runnerHeartbeatIntervalMs: optionalString.pipe(
     z.coerce
@@ -110,7 +122,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     port: e.port,
     publicUrl: e.publicUrl.replace(/\/+$/, ""),
     github: { clientId: e.githubClientId, clientSecret: e.githubClientSecret },
-    bootstrapOwner: e.bootstrapOwner ?? null,
+    bootstrapOwnerGithubUserId: e.bootstrapOwnerGithubUserId ?? null,
     devPairingToken: e.devPairingToken ?? null,
     runnerHeartbeatIntervalMs: e.runnerHeartbeatIntervalMs,
     logLevel: e.logLevel,
