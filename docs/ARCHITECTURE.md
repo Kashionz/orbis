@@ -102,6 +102,13 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 | PR Open | Review Gate 通過 | 自動 push 並開 PR |
 | Done | PR merge（webhook） | 自動轉換 |
 
+- **手動轉換**：看板上只能把 Task 在 Backlog 與 Ready 之間移動。拖到 Running 欄會打開派工對話框，派工成功才轉換。其他轉換都由系統觸發：派工、Runner 的 Event、Gate 的決定、GitHub webhook。合法的轉換表定義在 `packages/api-contract`，Server 的狀態機與 Web 共用同一份。
+- **進入 Ready 的條件**：已指定 Repo、描述不為空或有連結的 Spec、至少一條 Acceptance Criterion。`depends_on` 中還有 Task 沒有 Done 時，不能派工。
+- **Run 失敗，或在 Review Gate 被中止**：Task 回到 Ready，可以重新派工。
+- **回合結束**：Agent 結束回合後，Runner 先送出 Run 的完整 diff（§10），再回報等待 Review Gate。Review Gate 期間 Run 不會結束，退回時在同一個 session 繼續。
+- **核准之後**：Task 立刻進入 PR Open。Runner 結束 Agent 程序、push 分支，**push 成功後 Run 才算 `completed`**。push 失敗時 Run 不會是 `completed`，並加入 Needs You。
+- **GitHub 觸發的轉換**：見 §11。
+
 ### 5.1 Acceptance Criterion 類型
 
 | 類型 | 判定方式 |
@@ -135,6 +142,10 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Run 選擇「在我的電腦跑」→ 只有負責人的 Local Runner 會領取。
   - Run 選擇「Team Runner」→ 進入 Team 佇列。
   - Local Runner 離線時，Run 停在佇列中，**不會自動轉給 Team Runner**。
+  - **改派**也遵守上面的規則：Dispatch 逾時或 Runner 離線過久時，Run 回到佇列重新派工；「在我的電腦跑」的 Run 只會再派給負責人的 Local Runner。
+  - Runner 在心跳中回報是否接受新的 Dispatch（Desktop 的「暫停領取」）。不接受時，Server 不派工給它。
+- **Pairing token**：Local Runner 的 Pairing token 由已登入的 Member 取得，綁定本人；Team Runner 的由 Admin 以上產生。token 只能用一次，Server 只存 hash。
+- **撤銷**：Member 可以撤銷自己的 Local Runner，Admin 以上可以撤銷任何 Runner。撤銷時立刻斷線。
 - **Dispatch 協定**：每次 Dispatch 有唯一的 Dispatch ID；Runner 定時送心跳。過期 Dispatch 回報的結果會被拒絕。
 - **版本相容**：協定帶版本號，不相容時 UI 提示更新，不會靜默失敗。
 - **協定的 frame**：定義在 `crates/orbis-protocol`。Runner 連到 Server 的 WebSocket 端點 `/runner`，每個 frame 是一個以 `type` 區分種類的 JSON 物件。
@@ -156,7 +167,12 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Windows：`C:\ob\<repo>\<task-key>-<run-seq>`
   - macOS／Linux：`~/.orbis/wt/<repo>/<task-key>-<run-seq>`
   - git 跑在 WSL 時，Worktree 放在 WSL 的檔案系統內，不放在 `/mnt/c`。
-- **分支名稱**：`orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。
+- **來源 repo**：
+  - Runner 預設把 Repo clone 到 `<Worktree 根目錄>/<repo>/_main`，Worktree 從這份 clone 開出。
+  - Member 可以在 Runner 的本機設定中，把 Repo 對應到自己的 checkout（例如 `D:\code\web`）。有對應時，Worktree 從那份 checkout 開出，`copy` 也從那裡複製。
+  - 沒有對應時 `copy` 不生效，因為 Runner 自己的 clone 中沒有 `.env` 這類檔案。
+  - `ORBIS_ROOT_PATH` 是這份來源 repo 的路徑。
+- **分支名稱**：由 Server 產生，格式是 `orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。
   - **注意**：分支名稱不可以用 `/c<n>` 當後綴，因為 git 不允許 `a` 與 `a/b` 兩個分支同時存在。
 - **Base**：
   - Task 的 Run 從 Repo 的 base ref 開出，預設是 `origin/<default-branch>`。
@@ -174,7 +190,10 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 拒絕刪除家目錄或 Worktree 根目錄以外的路徑。
   - `archive` hook 失敗時擋下刪除。
   - 父 Run 被中止或封存時，連同 Child Run 一起處理。
-- **設定的信任核准**：`.orbis/config.toml` 中的腳本第一次執行前要人工核准；檔案內容（hash）改變後要重新核准。
+- **設定的信任核准**：
+  - `.orbis/config.toml` 中的腳本第一次執行前要人工核准；檔案內容（hash）改變後要重新核准。
+  - 核准以權限請求的形式加入 Needs You，只有 Admin 以上能回覆（§12.2）。
+  - Runner 一律從 base commit 讀取 config，Agent 在 Worktree 中修改 config 不會生效。
 
 ### 6.3 `.orbis/config.toml`
 
@@ -199,7 +218,12 @@ allow_commands = ["pnpm *", "git status", "git diff *"]
 [delegation]
 enabled = true
 allowed_agents = ["claude-code", "codex", "gemini", "grok"]
+
+[git]
+commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的變更時使用的訊息
 ```
+
+- **push 前的自動 commit**：Worktree 中還有未 commit 的變更時，Runner 在 push 前自動 commit。訊息格式可以用 `[git].commit_message` 設定，預設是 `<TASK-KEY>: <title>`。
 
 - **注入的環境變數**：`ORBIS_ROOT_PATH`、`ORBIS_WORKTREE_PATH`、`ORBIS_PORT`（每個 Worktree 分到不同 port）、`ORBIS_RUN_ID`、`ORBIS_TASK_KEY`。
 - **setup 腳本的執行方式**：
@@ -262,6 +286,19 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
 - **`yolo` 的使用時機**：Team Runner 的容器中可以直接使用；Local Runner 要手動選擇，而且 UI 會顯示警告。
 - **Child Run**：權限繼承父 Run，只能更嚴格，不能更寬鬆。
 - **Phase 1 不做 OS 層級沙盒**。
+- **誰可以回覆**：
+  - Local Runner 上的權限請求，只有該 Runner 的擁有者能回覆。
+  - Team Runner 上的權限請求，Project 中 Role 至少是 Member 的人都能回覆。
+  - 設定的信任核准（§6.2）只有 Admin 以上能回覆。
+- **派工時的選擇**：
+  - 能派工的人都可以選 `manual` 或 `auto`，預設為 Project 的預設政策。
+  - `yolo` 只能在「在我的電腦跑」時選，UI 會顯示警告。Team Runner 的 `yolo` 留到 Phase 2。
+  - 修改 Project 的預設政策需要 Admin 以上（§12.2）。
+- **已知落差**：Agent 自己的設定中允許的工具不會詢問 Runner，例如 Claude Code 的 `.claude/settings.json`。
+  - Phase 1 接受這個落差。各 Agent Profile 在 AgentAvailability 中回報落差，派工對話框顯示警告。
+  - `auto` 下，寫入 `.claude/settings.json`、`.claude/settings.local.json` 一律問人。
+  - 每次啟動 session 前，Runner 比對 Worktree 中這兩個檔案與 base commit。有差異就停下來加入 Needs You，人允許後才啟動。
+  - 完全攔截（由 Runner 代為執行檔案與指令操作）留到之後再做。
 
 ---
 
@@ -298,7 +335,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 - **Diff review**：用 Monaco 顯示 diff，比較對象是 base_commit 與 Worktree 目前的狀態。行內留言可以打包送回 Agent，作為下一個 prompt。
 - **Review Gate 的動作**：核准（接著自動 push 並開 PR）、退回（附上留言）、中止 Run。
-- **Project 可以要求**「Member 不能核准自己的 Task」。
+- **Project 可以要求**「Member 不能核准自己的 Task」。「自己的 Task」指 Task 的指派對象，所有種類的 Gate 都適用。
+- **diff 的來源**：
+  - Agent 結束回合、進入 Review Gate 之前，Runner 送出 Run 的完整 diff：從 base_commit 到 Worktree 目前的狀態，包含未 commit 的變更。
+  - 內容是每個檔案的完整新舊內容，大檔放 blob（§14）。
+  - Server 保存這份 diff，所以 Runner 離線時仍然可以 review，重播時也看得到。
+- **行內留言**存在獨立的資料表中，每則一筆（之後的 @mention 與通知會用到）。退回時打包成 prompt 送回 Agent。
 
 ---
 
@@ -311,6 +353,16 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **Issues 雙向同步**：
   - 同步欄位：title、body（對應 Task 描述）、state、assignee、labels。衝突時以最後寫入者為準。
   - Agent 專用的欄位只存在 Orbis，Issue 上只放一則狀態摘要留言，並且持續更新。
+  - **同步範圍**：
+    - 有 Repo 的 Task 自動建立對應的 Issue。Project 可以關閉「自動建立 Issue」，預設開啟。
+    - Draft Task 確認、進入 Backlog 之後才建立 Issue。
+    - GitHub 上新開的 Issue 不會自動變成 Task，要在 Orbis 中匯入，因為同一個 repo 可能登記在多個 Project。
+  - **狀態對應**：
+    - Task 轉 Done → 關閉 Issue；Task 離開 Done → 重新打開 Issue。
+    - 在 GitHub 上關閉 Issue → Task 轉 Done，並記錄關閉原因：取自 GitHub 的 `state_reason`，值為 `completed` 或 `not_planned`。UI 以不同標記區分這兩種 Done。
+    - Task 有進行中的 Run 時，拒絕上一條的轉換：把 Issue 重新打開，並在狀態摘要留言中說明。
+    - 重新打開 Issue → Done 的 Task 回到 Backlog，清空關閉原因。
+- **PR 與 Task**：PR merge → Task 轉 Done，關閉原因為 `completed`；PR 沒有 merge 就關閉 → Task 退回 Review Gate。
 - **不串 GitHub Projects。**
 
 ---
@@ -335,7 +387,10 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 | 核准 Gate、開 PR | ✅ | ✅ | ✅（Project 可以禁止核准自己的 Task） | |
 | 查看與留言 | ✅ | ✅ | ✅ | ✅ |
 
-- Project 可以覆寫個別 Member 的 Role。
+- Project 可以覆寫個別 Member 的 Role，但不能覆寫成 Owner。
+- 建立與修改 Project、登記 Repo、設定 Project 的 Role 覆寫與政策：Admin 以上。
+- 只有 Owner 能指派或移除 Owner；不能移除或降級最後一位 Owner。
+- 新增 Member 時，先以 GitHub login 查出數字 user id 再保存，之後一律以 user id 比對，因為 login 可以改名。
 - 權限檢查只在 Server 端做；UI 只負責隱藏沒有權限的操作。
 
 ### 12.3 通知與 @mention
@@ -352,6 +407,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **@mention 可以用在**：Task 留言、Spec 共同編輯、diff 行內留言。
 - **@agent**：觸發一個 `consult` Run。
 - **個人設定**：可以依事件類型關閉通知，也可以設定勿擾時段。
+- **Phase 1 的即時更新**：Needs You 的數量、桌面通知與看板都以輪詢取得（每 5 秒），之後再換成推送。即時推送只用於 Run 的 Event。
 
 ---
 
@@ -369,6 +425,9 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 - Runner 把正規化後的 Event **即時串流**到 Server，存進 Postgres 的 `run_events` 表（JSONB，依 run_id 與 seq 排序）。
 - **大型內容**（完整的檔案內容、截圖）另外存成 blob，Event 中只放參照；預設保存 **90 天**。
+  - Runner 以 HTTP `PUT` 上傳 blob，以 Runner token 認證，Server 驗證 SHA-256 與大小。
+  - 上傳成功後，Runner 才送出參照它的 Event。
+  - 到期的 blob 會被清除，但 **`run_events` 不刪**：Run 永遠可以完整重播，到期的內容顯示為已過期。
 - **斷線處理**：Runner 斷線時，Event 先暫存在本機，重新連上後以 seq 補送。UI 可以從 Event 重播整個 Run。
   - Server 以 `event_ack` 回報每個 Run 已連續保存的最大 seq，Runner 據此清除本機暫存。
 - **過期 Dispatch**：Runner 送出的 `event` frame 帶有 Dispatch ID。不屬於該 Run 目前 Dispatch 的 Event，Server 一律拒絕。存進 `run_events` 的只有 run_id、seq、ts 與 Event 內容，不含 Dispatch ID。
@@ -391,6 +450,16 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 用 electron-builder 打包，electron-updater 從 private GitHub Releases 自動更新。
   - Phase 1 不做 Windows 程式碼簽章。
   - Runner 執行檔隨 Electron 一起打包。
+  - **Runner sidecar**：Electron 以子程序啟動 Runner，兩者以 stdio 溝通。協定定義在 `crates/orbis-protocol`。
+    - Runner 的 stdout 每行一個 JSON 狀態，包括連線狀態、執行中的 Run、是否暫停領取。
+    - stdin 每行一個 JSON 指令：暫停領取、恢復、關閉。
+    - log 一律走 stderr。
+    - stdin 關閉也視為關閉指令，所以 Electron 當掉時 Runner 會自己結束。
+  - Electron 把 Server 的 API origin 交給 Runner，Runner 直接連 `<server>/runner`。
+  - **登入與登出**：
+    - 偵測到 Web UI 登入後，Electron 取得 Local Runner 的 Pairing token 並啟動 Runner。
+    - 登出時，如果還有 Run 執行中，先詢問使用者。
+    - 確認後，先撤銷這台 Local Runner，再停止 Runner、清除本機狀態。
 - **Team Runner**：以 Docker image 發布。
 
 ---
