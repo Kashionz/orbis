@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# 只允許這些套件執行安裝腳本（pnpm 10 預設全部禁止）
+onlyBuiltDependencies:
+  - "@biomejs/biome"
+  - esbuild

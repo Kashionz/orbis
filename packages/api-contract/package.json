@@ -1,0 +1,24 @@
+{
+  "name": "@orbis/api-contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Server↔Web 的 zod schema，以及 TS 版的名稱常數",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./names": "./src/names.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@orbis/protocol": "workspace:*",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

@@ -1,0 +1,23 @@
+# 兩個回合：第一回合完成；第二個 prompt（例如 Review Gate 退回）再修改同一個檔案並完成。
+description: 兩個回合（完成 → 退回後再次完成）
+turns:
+  - steps:
+      - message: 第一版完成。
+      - tool_call:
+          id: write-v1
+          title: 新增 feature.txt
+          edit:
+            path: feature.txt
+            content: "version 1\n"
+      - stop: end_turn
+  - steps:
+      - message: 收到意見，修改中。
+      - tool_call:
+          id: edit-v2
+          title: 修改 feature.txt
+          edit:
+            path: feature.txt
+            old_text: version 1
+            new_text: version 2
+      - message: 第二版完成。
+      - stop: end_turn

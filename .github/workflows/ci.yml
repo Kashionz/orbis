@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Rust 測試失敗時印出完整的 backtrace
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # 依 rust-toolchain.toml 安裝固定版本的 Rust
+      - name: Install Rust toolchain
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 依 package.json 的 packageManager 安裝 pnpm
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint（Biome、rustfmt、clippy、名稱常數、ARCHITECTURE §3 路徑）
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Cargo test
+        run: cargo test --workspace
+
+      # ADR-0003：packages/protocol 必須與 Rust 型別的產生結果一致
+      - name: ts-rs 一致性檢查
+        run: |
+          cargo gen-protocol
+          if [ -n "$(git status --porcelain -- packages/protocol)" ]; then
+            git status --porcelain -- packages/protocol
+            git diff -- packages/protocol
+            echo "::error::packages/protocol 與 crates/orbis-protocol 的產生結果不一致，請執行 pnpm gen:protocol 後 commit"
+            exit 1
+          fi
+
+      - name: Drizzle schema 與 migration 一致性檢查
+        run: pnpm --filter @orbis/server db:check
+
+      # DB 測試（Testcontainers）只在 Linux 跑：GitHub 的 macOS runner 沒有 Docker，
+      # Windows runner 只能跑 Windows container。測試會在其他平台明確 skip 並印出原因。
+      - name: pnpm test
+        run: pnpm -r test
+
+      - name: Script tests
+        run: node --test scripts/*.test.mjs
+
+      - name: Install Playwright browser
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            pnpm --filter @orbis/web exec playwright install --with-deps chromium
+          else
+            pnpm --filter @orbis/web exec playwright install chromium
+          fi
+
+      - name: Playwright（Web）
+        run: pnpm --filter @orbis/web test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: apps/web/playwright-report
+          if-no-files-found: ignore

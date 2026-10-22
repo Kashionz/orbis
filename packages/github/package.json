@@ -1,0 +1,18 @@
+{
+  "name": "@orbis/github",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub App、webhook、Issues 同步、PR Feedback Loop（D 軌）",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

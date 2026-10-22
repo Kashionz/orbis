@@ -86,6 +86,18 @@ _Avoid_: Central runner、Cloud runner、Remote runner
 把一個 Runner 綁定到 Member 或 Team 的過程。
 _Avoid_: Registration
 
+**Pairing token**：
+Runner 第一次連上 Server 時用來完成 Pairing 的一次性憑證。Local Runner 的 Pairing token 由 Electron 登入時取得，Team Runner 的由 Admin 在 UI 產生。
+_Avoid_: Registration token、Invite code
+
+**Runner token**：
+Pairing 完成後由 Server 發給 Runner 的長期憑證，Runner 存在本機，之後重新連線都用它證明身分。Server 只保存它的 hash。
+_Avoid_: Session token、API key
+
+**Heartbeat**：
+Runner 定時送給 Server 的訊號，Server 據此判斷 Runner 是否在線、Dispatch 是否過期。
+_Avoid_: Ping、Keepalive
+
 **Worktree**：
 Run 專屬的 git worktree，是 Run 的檔案隔離邊界。
 _Avoid_: Workspace、Sandbox、Checkout
@@ -125,3 +137,13 @@ _Avoid_: Inbox、Pending queue
 **Event**：
 Run 過程中由 Runner 正規化後送到 Server 的一筆紀錄，例如訊息、tool call、diff、權限請求。
 _Avoid_: Log、Message、Transcript entry
+
+### 測試
+
+**Fake Agent**：
+依劇本行動的 ACP agent（`crates/fake-agent`），只用於測試，不呼叫真實模型。
+_Avoid_: Mock agent、Stub agent
+
+**劇本**：
+描述 Fake Agent 行為的 YAML 檔，由一串回合組成，每次 prompt 消耗一個回合。新的 Agent 行為先寫成劇本，再寫程式碼。
+_Avoid_: Scenario、Fixture

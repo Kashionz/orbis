@@ -1,0 +1,19 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 14,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "usage",
+  "input_tokens": 120345,
+  "output_tokens": 8812,
+  "thought_tokens": null,
+  "cached_read_tokens": 98000,
+  "cached_write_tokens": 4096,
+  "context_used_tokens": 64000,
+  "context_window_tokens": 200000,
+  "cost": {
+    "amount": 0.42,
+    "currency": "USD"
+  }
+}

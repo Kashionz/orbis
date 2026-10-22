@@ -1,0 +1,18 @@
+# 權限請求：寫檔前先問；允許時寫入並繼續，拒絕時改走另一條分支。
+description: 權限請求（允許／拒絕走不同分支）
+turns:
+  - steps:
+      - message: 我需要寫入 config.json。
+      - permission:
+          tool_call:
+            id: write-config
+            title: 寫入 config.json
+            edit:
+              path: config.json
+              content: "{ \"enabled\": true }\n"
+          allow:
+            - message: 已寫入 config.json。
+            - stop: end_turn
+          reject:
+            - message: 好，我不會修改 config.json。
+            - stop: end_turn

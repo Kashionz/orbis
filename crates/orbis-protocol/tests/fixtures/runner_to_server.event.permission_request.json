@@ -1,0 +1,33 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 11,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "permission_request",
+  "request_id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "tool_call_id": "toolu_03",
+  "title": "執行 git push --force",
+  "options": [
+    {
+      "option_id": "allow",
+      "name": "允許一次",
+      "kind": "allow_once"
+    },
+    {
+      "option_id": "allow-always",
+      "name": "一律允許",
+      "kind": "allow_always"
+    },
+    {
+      "option_id": "reject",
+      "name": "拒絕",
+      "kind": "reject_once"
+    },
+    {
+      "option_id": "reject-always",
+      "name": "一律拒絕",
+      "kind": "reject_always"
+    }
+  ]
+}

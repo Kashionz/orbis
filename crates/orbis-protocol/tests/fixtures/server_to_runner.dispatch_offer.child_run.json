@@ -1,0 +1,34 @@
+{
+  "type": "dispatch_offer",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d2",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000ab",
+  "expires_at": "2026-10-23T08:00:30.000Z",
+  "task": {
+    "task_id": "0192f3a0-0000-7000-8000-0000000000f1",
+    "task_key": "ORB-12",
+    "title": "新增登入頁"
+  },
+  "run_seq": 2,
+  "repo": {
+    "name": "web",
+    "clone_url": "https://github.com/acme/web.git",
+    "default_branch": "main",
+    "base_ref": "origin/main"
+  },
+  "branch": null,
+  "agent": "codex",
+  "model": "gpt-5-codex",
+  "permission_policy": "manual",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "幫我 review 這段 session 處理。"
+    }
+  ],
+  "plan_gate": false,
+  "delegation": {
+    "parent_run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+    "mode": "consult"
+  },
+  "last_event_seq": 7
+}
