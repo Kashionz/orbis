@@ -70,6 +70,9 @@ impl FakeServer {
                         let _ = tx.send(RunnerSide {
                             ws,
                             events: Vec::new(),
+                            frames: Vec::new(),
+                            event_cursor: 0,
+                            other_cursor: 0,
                         });
                     }
                 });
@@ -149,6 +152,12 @@ pub struct RunnerSide {
     pub ws: WebSocketStream<TcpStream>,
     /// 這條連線上收到的 `event` frame（JSON）。
     pub events: Vec<Value>,
+    /// 收到的所有 frame，[`Self::wait_for`] 從這裡找。
+    frames: Vec<Value>,
+    /// Event 與其他 frame 各自的位置：Event（經由 outbox）與 run_control_result（另一條通道）
+    /// 的先後順序不固定，等其中一種時不可以跳過另一種。
+    event_cursor: usize,
+    other_cursor: usize,
 }
 
 impl RunnerSide {
@@ -187,17 +196,40 @@ impl RunnerSide {
     }
 
     /// 等到符合條件的 frame，途中的 frame 都略過（event 仍會記在 `events`）。
+    ///
+    /// Event 與其他 frame 各有一個位置：找到的若是 Event，只移動 Event 的位置，反之亦然。
+    /// 例如等 `run_control_result` 時先到的 Event，之後仍然等得到。
     pub async fn wait_for(&mut self, what: &str, pred: impl Fn(&Value) -> bool) -> Value {
         let deadline = tokio::time::Instant::now() + WAIT;
+        let mut scanned = 0;
         loop {
+            while scanned < self.frames.len() {
+                let i = scanned;
+                scanned += 1;
+                let frame = &self.frames[i];
+                let is_event = frame["type"] == "event";
+                let cursor = if is_event {
+                    self.event_cursor
+                } else {
+                    self.other_cursor
+                };
+                if i < cursor || !pred(frame) {
+                    continue;
+                }
+                let frame = frame.clone();
+                if is_event {
+                    self.event_cursor = i + 1;
+                } else {
+                    self.other_cursor = i + 1;
+                }
+                return frame;
+            }
             let v = tokio::time::timeout_at(deadline, self.recv())
                 .await
                 .unwrap_or_else(|_| {
                     panic!("等不到 {what}；已收到的 event：{:#?}", self.event_summary())
                 });
-            if pred(&v) {
-                return v;
-            }
+            self.frames.push(v);
         }
     }
 

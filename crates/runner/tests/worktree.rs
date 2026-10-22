@@ -465,7 +465,9 @@ async fn 永遠允許過的設定內容不必再核准_內容改變後要重新�
 async fn 沒有腳本時不需要核准() {
     let remote = Remote::new(&[(
         cfg().as_str(),
-        "[permissions]\nallow_commands = [\"pnpm *\"]\n",
+        "[delegation]
+enabled = true
+",
     )]);
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
@@ -634,4 +636,45 @@ async fn diff_不跟著連結讀取_worktree_以外的檔案() {
         "不可以讀取連結指向的內容：{text}"
     );
     assert!(text.contains("secret.txt"), "回報連結目標：{text}");
+}
+
+/// 本機檔案（copy 進來的 .env）出現在要 push 的任何一個 commit 中都算洩漏，
+/// 包括「從側分支 merge 進來、之後又刪掉」的情況（git 的歷史簡化會略過這種 commit）。
+#[tokio::test]
+async fn 本機檔案出現在任何要_push_的_commit_都算洩漏() {
+    let config = "[worktree]\ncopy = [\".env\"]\n";
+    let remote = Remote::new(&[(cfg().as_str(), config)]);
+    let home = TestHome::new("");
+    let manager = WorktreeManager::new(home.home.clone());
+    let wt = manager
+        .create(&request(
+            &remote,
+            "ORB-32",
+            1,
+            Some(branch("leak").as_str()),
+        ))
+        .await
+        .unwrap();
+    std::fs::write(wt.path.join("ok.txt"), "x").unwrap();
+    git(&wt.path, &["add", "ok.txt"]);
+    git(&wt.path, &["commit", "-m", "正常的變更"]);
+    assert_eq!(wt.local_only_leak().await.unwrap(), None);
+
+    // 側分支：加入 .env 再刪掉，然後 merge 回來（no-ff）。
+    git(&wt.path, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(wt.path.join(".env"), "API_TOKEN=abcdef123456\n").unwrap();
+    git(&wt.path, &["add", ".env"]);
+    git(&wt.path, &["commit", "-m", "側分支加入 .env"]);
+    git(&wt.path, &["rm", "-q", ".env"]);
+    git(&wt.path, &["commit", "-m", "側分支刪掉 .env"]);
+    git(&wt.path, &["checkout", "-q", &branch("leak")]);
+    git(
+        &wt.path,
+        &["merge", "-q", "--no-ff", "-m", "merge side", "side"],
+    );
+    assert!(!wt.path.join(".env").exists());
+    assert!(
+        wt.local_only_leak().await.unwrap().is_some(),
+        "側分支 commit 中的 .env 也要被找到"
+    );
 }

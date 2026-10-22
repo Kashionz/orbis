@@ -148,8 +148,8 @@ impl LoadedConfig {
         })
     }
 
-    /// 需要人工核准才能執行的腳本（§6.2「設定的信任核准」）：setup、archive、Preview 指令與
-    /// Verification 指令。沒有腳本時不需要核准。
+    /// 需要人工核准的項目（§6.2「設定的信任核准」）：setup、archive、Preview 指令、
+    /// Verification 指令，以及會放寬 Permission Policy 的 `allow_commands`。沒有腳本時不需要核准。
     pub fn scripts(&self) -> Vec<(&'static str, &str)> {
         let c = &self.config;
         [
@@ -163,6 +163,13 @@ impl LoadedConfig {
                 .commands
                 .iter()
                 .map(|cmd| ("verify", Some(cmd.as_str()))),
+        )
+        // allow_commands 會放寬 auto 政策自動允許的範圍，和腳本一樣需要核准。
+        .chain(
+            c.permissions
+                .allow_commands
+                .iter()
+                .map(|cmd| ("allow_commands", Some(cmd.as_str()))),
         )
         .filter_map(|(name, script)| script.filter(|s| !s.trim().is_empty()).map(|s| (name, s)))
         .collect()
@@ -234,8 +241,8 @@ allowed_agents = ["claude-code", "codex", "gemini", "grok"]
         assert!(c.delegation.enabled);
         assert_eq!(
             loaded.scripts().len(),
-            5,
-            "setup、archive、preview 與兩個 verify"
+            8,
+            "setup、archive、preview、兩個 verify 與三個 allow_commands"
         );
         assert_eq!(loaded.hash.len(), 64);
     }

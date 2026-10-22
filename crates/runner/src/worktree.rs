@@ -122,6 +122,43 @@ impl Worktree {
             .collect()
     }
 
+    /// 找出 `base..HEAD` 中，tree 內含本機檔案、而且內容和 base commit 不同的第一個 commit。
+    pub async fn local_only_leak(&self) -> Result<Option<String>, GitError> {
+        let git = self.git();
+        let base = self.base_commit.as_str();
+        let local_only = self.local_only_paths();
+        if local_only.is_empty() {
+            return Ok(None);
+        }
+        // 列出整個 tree（`-z` 的路徑不加引號），在這裡以不分大小寫比對：
+        // ls-tree 不支援 icase pathspec，大小寫不同的 `.ENV` 也要算。
+        let matches = |path: &str| {
+            let path = path.to_ascii_lowercase();
+            local_only.iter().any(|p| {
+                let p = p.trim_end_matches('/').to_ascii_lowercase();
+                path == p || path.starts_with(&format!("{p}/"))
+            })
+        };
+        let entries = |listing: String| -> std::collections::HashSet<String> {
+            listing
+                .split('\0')
+                // 每一筆是「mode type sha<TAB>path」
+                .filter(|e| e.split_once('\t').is_some_and(|(_, path)| matches(path)))
+                .map(str::to_owned)
+                .collect()
+        };
+        let base_entries = entries(git.run(["ls-tree", "-r", "-z", base]).await?);
+        let commits = git.run(["rev-list", &format!("{base}..HEAD")]).await?;
+        for commit in commits.lines().filter(|c| !c.trim().is_empty()) {
+            let listed = entries(git.run(["ls-tree", "-r", "-z", commit]).await?);
+            // 和 base 完全相同（同路徑同內容）的不算洩漏。
+            if listed.iter().any(|e| !base_entries.contains(e)) {
+                return Ok(Some(commit.to_owned()));
+            }
+        }
+        Ok(None)
+    }
+
     /// 信任紀錄用的 Repo 識別。
     pub fn repo_key(&self, repo: &DispatchRepo) -> String {
         repo.clone_url.clone()

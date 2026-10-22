@@ -1074,25 +1074,14 @@ impl Run {
                 git.run(["commit", "-m", &message]).await.map_err(fail)?;
             }
         }
-        // Agent 自己 commit 的內容也要檢查，而且是要 push 的**每一個** commit（先 commit 再刪掉
-        // 也會留在歷史中）。比對交給 git 的 pathspec（literal、不分大小寫），不自己比字串。
-        if !local_only.is_empty() {
-            let mut check: Vec<String> = vec![
-                "rev-list".into(),
-                // 不做歷史簡化：merge 進來的側分支 commit 也要檢查。
-                "--full-history".into(),
-                "--no-renames".into(),
-                format!("{}..HEAD", wt.base_commit),
-                "--".into(),
-            ];
-            check.extend(local_only.iter().map(|p| format!(":(literal,icase){p}")));
-            let touching = git.run(check).await.map_err(fail)?;
-            if let Some(commit) = touching.lines().find(|c| !c.trim().is_empty()) {
-                return Err(format!(
-                    "分支上的 commit {commit} 動到只在本機使用的檔案（{}，來自 copy 或 shared_dirs），拒絕 push",
-                    local_only.join("、")
-                ));
-            }
+        // Agent 自己 commit 的內容也要檢查，而且是要 push 的**每一個** commit（先 commit 再刪掉、
+        // 或從側分支 merge 進來，都會留在歷史中）。不依賴 git 的歷史簡化：逐一檢查每個 commit 的
+        // tree，只要某個本機檔案的內容和 base commit 不同就拒絕。
+        if let Some(leak) = wt.local_only_leak().await.map_err(fail)? {
+            return Err(format!(
+                "分支上的 commit {leak} 含有只在本機使用的檔案（{}，來自 copy 或 shared_dirs），拒絕 push",
+                local_only.join("、")
+            ));
         }
         let ahead = git
             .run(["rev-list", "--count", &format!("{}..HEAD", wt.base_commit)])

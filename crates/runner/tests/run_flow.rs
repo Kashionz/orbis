@@ -82,6 +82,24 @@ impl Env {
     }
 }
 
+/// 回覆設定檔的信任核准（allow_once）。
+async fn approve_config(conn: &mut RunnerSide, run_id: &str) {
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "config_trust", "{request}");
+    let result = conn
+        .control(
+            run_id,
+            &format!("d-{run_id}"),
+            "trust",
+            RunControlAction::PermissionResponse {
+                request_id: request["request_id"].as_str().unwrap().into(),
+                option_id: "allow_once".into(),
+            },
+        )
+        .await;
+    assert_eq!(result_outcome(&result), "applied");
+}
+
 fn text(body: &Value) -> String {
     body["text"]
         .as_str()
@@ -427,12 +445,14 @@ async fn allow_commands_中的指令自動允許() {
     .await;
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", "fake", "做事").await;
+    // allow_commands 會放寬政策，第一次要核准設定檔。
+    approve_config(&mut conn, "r1").await;
     conn.wait_status("awaiting_gate").await;
     assert!(
         !conn
             .events
             .iter()
-            .any(|e| e["kind"] == "permission_request"),
+            .any(|e| e["kind"] == "permission_request" && e["purpose"] == "tool"),
         "allow_commands 中的指令不問人：{:#?}",
         conn.event_summary()
     );
@@ -737,6 +757,7 @@ async fn copy_進來的檔案不會送到_server_也不會_push() {
     .await;
     let ready = conn.wait_event("worktree_ready").await;
     let worktree = std::path::PathBuf::from(ready["worktree_path"].as_str().unwrap());
+    approve_config(&mut conn, "r1").await;
     let diff = conn.wait_event("run_diff").await;
     assert!(
         diff["files"]
