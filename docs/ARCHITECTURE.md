@@ -137,6 +137,18 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Local Runner 離線時，Run 停在佇列中，**不會自動轉給 Team Runner**。
 - **Dispatch 協定**：每次 Dispatch 有唯一的 Dispatch ID；Runner 定時送心跳。過期 Dispatch 回報的結果會被拒絕。
 - **版本相容**：協定帶版本號，不相容時 UI 提示更新，不會靜默失敗。
+- **協定的 frame**：定義在 `crates/orbis-protocol`。Runner 連到 Server 的 WebSocket 端點 `/runner`，每個 frame 是一個以 `type` 區分種類的 JSON 物件。
+
+  | 方向 | frame |
+  |---|---|
+  | Runner → Server | `hello`、`heartbeat`、`agent_availability`、`dispatch_accept`、`dispatch_reject`、`event`、`run_control_result` |
+  | Server → Runner | `hello_ack`、`hello_rejected`、`dispatch_offer`、`run_control`、`event_ack` |
+
+  - 連線後 Runner 先送 `hello`（協定版本與 Pairing token，或已配對的 Runner token）。Server 回 `hello_ack`（Runner ID、第一次 Pairing 時發的 Runner token、心跳間隔、各 Run 已收到的最後 seq），或回 `hello_rejected` 並附上原因。
+  - Runner 收到 `hello_ack` 後，先送 `agent_availability`，接著依間隔送 `heartbeat`。
+  - 分支名稱由 Server 產生，放在 `dispatch_offer` 中。Worktree 路徑由 Runner 依 §6.2 計算，建好後以 `worktree_ready` Event 回報。
+  - 改派時，`dispatch_offer` 帶上該 Run 已收到的最後 seq，新的 Dispatch 從下一個 seq 接續。
+  - 每個 `run_control`（取消、後續 prompt、回覆權限請求、Gate 結果、push 分支）都會收到一個 `run_control_result`，以 `control_id` 對應。Run 因此產生的後續變化仍以 Event 回報。
 
 ### 6.2 Worktree 管理
 
@@ -358,6 +370,8 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - Runner 把正規化後的 Event **即時串流**到 Server，存進 Postgres 的 `run_events` 表（JSONB，依 run_id 與 seq 排序）。
 - **大型內容**（完整的檔案內容、截圖）另外存成 blob，Event 中只放參照；預設保存 **90 天**。
 - **斷線處理**：Runner 斷線時，Event 先暫存在本機，重新連上後以 seq 補送。UI 可以從 Event 重播整個 Run。
+  - Server 以 `event_ack` 回報每個 Run 已連續保存的最大 seq，Runner 據此清除本機暫存。
+- **過期 Dispatch**：Runner 送出的 `event` frame 帶有 Dispatch ID。不屬於該 Run 目前 Dispatch 的 Event，Server 一律拒絕。存進 `run_events` 的只有 run_id、seq、ts 與 Event 內容，不含 Dispatch ID。
 - **遮蔽**：Event 送出前，Runner 先遮蔽看起來像 secret 的字串。
 
 ---
