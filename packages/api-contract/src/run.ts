@@ -4,15 +4,29 @@ import { z } from "zod";
 import { Id, Timestamp } from "./common";
 import { DelegationMode, PermissionPolicy, RunnerKind, RunStatus } from "./enums";
 
+const TokenCount = z.number().int().nonnegative().nullable();
+
 /**
- * Run 的累計用量。
- * TODO(contract): 合併 W1 後對齊 @orbis/protocol 的用量 Event 欄位。
+ * Run 的累計用量：最近一筆 `usage` Event（@orbis/protocol 的 `Usage`）的 camelCase 版本。
+ * Agent 沒有回報的項目為 null；還沒有任何 `usage` Event 時全部為 null。
+ * 協定新增欄位時，`resource-types.test.ts` 的型別測試會失敗，提醒同步更新。
  */
 export const RunUsage = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  /** 換算的費用（美元）；Agent 沒有回報時為 null。 */
-  costUsd: z.number().nonnegative().nullable(),
+  inputTokens: TokenCount,
+  outputTokens: TokenCount,
+  thoughtTokens: TokenCount,
+  cachedReadTokens: TokenCount,
+  cachedWriteTokens: TokenCount,
+  /** 目前 context 已使用的 token 數（不是累計值）。 */
+  contextUsedTokens: TokenCount,
+  contextWindowTokens: TokenCount,
+  cost: z
+    .object({
+      amount: z.number().nonnegative(),
+      /** ISO 4217 幣別代碼，例如 `USD`。 */
+      currency: z.string().length(3),
+    })
+    .nullable(),
 });
 export type RunUsage = z.infer<typeof RunUsage>;
 

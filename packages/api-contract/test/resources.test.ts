@@ -142,7 +142,16 @@ describe("Run", () => {
       branch: null,
       baseCommit: null,
       startedAt: null,
-      usage: { inputTokens: 0, outputTokens: 0, costUsd: null },
+      usage: {
+        inputTokens: null,
+        outputTokens: null,
+        thoughtTokens: null,
+        cachedReadTokens: null,
+        cachedWriteTokens: null,
+        contextUsedTokens: null,
+        contextWindowTokens: null,
+        cost: null,
+      },
     });
   });
 
@@ -156,7 +165,8 @@ describe("Run", () => {
     ["不存在的 Permission Policy", "permissionPolicy", "bypass"],
     ["不存在的 Runner 種類", "runnerKind", "cloud"],
     ["缺少用量", "usage", undefined],
-    ["負數的用量", "usage", { inputTokens: -1, outputTokens: 0, costUsd: null }],
+    ["負數的用量", "usage", { ...fixtures.run.usage, inputTokens: -1 }],
+    ["不是三碼的幣別", "usage", { ...fixtures.run.usage, cost: { amount: 1, currency: "dollar" } }],
     ["空白的 Agent", "agent", ""],
   ])("拒絕%s", (_, key, value) => {
     expectInvalid(Run, withField(fixtures.run, key, value));
@@ -168,15 +178,25 @@ describe("Run", () => {
 });
 
 describe("RunEvent", () => {
-  it("接受合法的 Event，payload 可以是任何 JSON", () => {
+  it("接受合法的 Event，內容沿用協定的形狀", () => {
     expectValid(RunEvent, fixtures.runEvent);
-    expectValid(RunEvent, withField(fixtures.runEvent, "payload", null));
+    expectValid(
+      RunEvent,
+      withField(fixtures.runEvent, "event", {
+        kind: "status_changed",
+        status: "awaiting_gate",
+        gate: "review",
+        message: null,
+      }),
+    );
   });
 
   it.each([
     ["seq 為 0（從 1 開始）", "seq", 0],
     ["小數的 seq", "seq", 1.5],
-    ["空白的 kind", "kind", ""],
+    ["未知的 Event kind", "event", { kind: "mystery" }],
+    ["沒有 kind 的內容", "event", { text: "hi" }],
+    ["不是物件的內容", "event", "message_chunk"],
     ["非 ISO 8601 的 ts", "ts", "now"],
     ["缺少 runId", "runId", undefined],
   ])("拒絕%s", (_, key, value) => {
@@ -196,6 +216,13 @@ describe("NeedsYouItem", () => {
     expectInvalid(
       NeedsYouItem,
       withField(fixtures.needsYouPermissionRequest, "permissionRequestId", undefined),
+    );
+    expectInvalid(NeedsYouItem, withField(fixtures.needsYouPermissionRequest, "options", []));
+    expectInvalid(
+      NeedsYouItem,
+      withField(fixtures.needsYouPermissionRequest, "options", [
+        { optionId: "x", name: "x", kind: "maybe" },
+      ]),
     );
     expectInvalid(NeedsYouItem, withField(fixtures.needsYouGate, "gateKind", "merge"));
     expectInvalid(NeedsYouItem, withField(fixtures.needsYouStoppedRun, "reason", undefined));

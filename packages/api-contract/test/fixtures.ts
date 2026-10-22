@@ -83,7 +83,16 @@ export const run = {
   branch: "feature/ORB-12",
   baseCommit: "f5b05a1c0ffee",
   status: "running",
-  usage: { inputTokens: 1200, outputTokens: 340, costUsd: 0.02 },
+  usage: {
+    inputTokens: 1200,
+    outputTokens: 340,
+    thoughtTokens: null,
+    cachedReadTokens: 800,
+    cachedWriteTokens: null,
+    contextUsedTokens: 15_000,
+    contextWindowTokens: 200_000,
+    cost: { amount: 0.02, currency: "USD" },
+  },
   startedByMemberId: task.createdByMemberId,
   createdAt: NOW,
   startedAt: NOW,
@@ -104,8 +113,7 @@ export const runEvent = {
   runId: run.id,
   seq: 1,
   ts: NOW,
-  kind: "message_chunk",
-  payload: { text: "開始處理" },
+  event: { kind: "message_chunk", content: { type: "text", text: "開始處理" } },
 } satisfies RunEvent;
 
 const needsYouBase = {
@@ -121,7 +129,12 @@ export const needsYouPermissionRequest = {
   id: "0195f0a0-0000-7000-8000-00000000000a",
   kind: "permission_request",
   permissionRequestId: "perm-1",
-  summary: "執行 `npm install -g pnpm`",
+  toolCallId: "call-1",
+  title: "執行 `npm install -g pnpm`",
+  options: [
+    { optionId: "allow", name: "允許一次", kind: "allow_once" },
+    { optionId: "reject", name: "拒絕", kind: "reject_once" },
+  ],
 } satisfies NeedsYouItem;
 
 export const needsYouGate = {
