@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { loadRunScope, requireProjectCapability } from "../authz/scope";
 import { RUNNER_BLOB_PATH } from "../contract-pending";
@@ -38,77 +39,94 @@ const MediaType = z
 /** 瀏覽器可以直接顯示的圖片；其他內容一律以附件下載，避免在 Server 的 origin 上執行。 */
 const INLINE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
-export function createBlobRoutes(s: Services & { blobStore: BlobStore }): {
+export function createBlobRoutes(
+  s: Services & { blobStore: BlobStore },
+  options: { maxBytes?: number } = {},
+): {
   runner: Hono;
   web: Hono<AppEnv>;
 } {
   const { db, auth, blobStore } = s;
+  const maxBytes = options.maxBytes ?? MAX_BLOB_BYTES;
 
   const runner = new Hono();
-  runner.put(`${RUNNER_BLOB_PATH}/:blobId`, async (c) => {
-    const header = c.req.header("authorization") ?? "";
-    const token = /^Bearer\s+(.+)$/i.exec(header)?.[1];
-    const caller = token ? await findRunnerByToken(db, token) : null;
-    if (!caller) throw new ApiError(401, "unauthorized", "Runner token 不正確或已被撤銷");
+  runner.put(
+    `${RUNNER_BLOB_PATH}/:blobId`,
+    // 讀取 body 時就計算大小，超過上限立刻中止，不會先把整個內容讀進記憶體。
+    bodyLimit({
+      maxSize: maxBytes,
+      onError: (c) =>
+        c.json({ error: "payload_too_large", message: `blob 不能超過 ${maxBytes} bytes` }, 413),
+    }),
+    async (c) => {
+      const header = c.req.header("authorization") ?? "";
+      const token = /^Bearer\s+(.+)$/i.exec(header)?.[1];
+      const caller = token ? await findRunnerByToken(db, token) : null;
+      if (!caller) throw new ApiError(401, "unauthorized", "Runner token 不正確或已被撤銷");
 
-    const blobId = readId(c, "blobId", "blob");
-    const query = readQuery(c, UploadQuery);
-    const mediaType = MediaType.safeParse(c.req.header("content-type") ?? "");
-    if (!mediaType.success) throw new ApiError(400, "invalid_input", "缺少或不合法的 Content-Type");
-    const declared = Number(c.req.header("content-length") ?? Number.NaN);
-    if (Number.isFinite(declared) && declared > MAX_BLOB_BYTES) {
-      throw new ApiError(413, "payload_too_large", `blob 不能超過 ${MAX_BLOB_BYTES} bytes`);
-    }
-
-    // Runner 只能把 blob 掛在自己正在（或剛）執行的 Run 上。
-    const [dispatch] = await db
-      .select({ id: dispatches.id })
-      .from(dispatches)
-      .where(
-        and(
-          eq(dispatches.runId, query.runId),
-          eq(dispatches.runnerId, caller.id),
-          inArray(dispatches.status, ["accepted", "completed"]),
-        ),
-      )
-      .limit(1);
-    if (!dispatch) throw new ApiError(403, "forbidden", "這台 Runner 沒有在執行這個 Run");
-
-    const data = new Uint8Array(await c.req.arrayBuffer());
-    if (data.byteLength > MAX_BLOB_BYTES) {
-      throw new ApiError(413, "payload_too_large", `blob 不能超過 ${MAX_BLOB_BYTES} bytes`);
-    }
-    const sha256 = createHash("sha256").update(data).digest("hex");
-    if (sha256 !== query.sha256) {
-      throw new ApiError(422, "invalid_input", "內容的 sha256 與宣告的不符");
-    }
-
-    const [existing] = await db.select().from(blobs).where(eq(blobs.id, blobId));
-    if (existing) {
-      if (existing.sha256 !== sha256 || existing.runId !== query.runId) {
-        throw conflict("這個 blob_id 已經用在不同的內容");
+      const blobId = readId(c, "blobId", "blob");
+      const query = readQuery(c, UploadQuery);
+      const mediaType = MediaType.safeParse(c.req.header("content-type") ?? "");
+      if (!mediaType.success) {
+        throw new ApiError(400, "invalid_input", "缺少或不合法的 Content-Type");
       }
-      return c.json({ blobId, sha256, size: existing.size }, 200);
-    }
 
-    const key = blobStorageKey(blobId);
-    await blobStore.put(key, data);
-    const now = s.clock.now();
-    await db
-      .insert(blobs)
-      .values({
-        id: blobId,
-        sha256,
-        size: data.byteLength,
-        mediaType: mediaType.data,
-        storageKey: key,
-        runId: query.runId,
-        createdAt: now,
-        expiresAt: new Date(now.getTime() + BLOB_RETENTION_MS),
-      })
-      .onConflictDoNothing();
-    return c.json({ blobId, sha256, size: data.byteLength }, 201);
-  });
+      // Runner 只能把 blob 掛在自己正在（或剛）執行的 Run 上。
+      const [dispatch] = await db
+        .select({ id: dispatches.id })
+        .from(dispatches)
+        .where(
+          and(
+            eq(dispatches.runId, query.runId),
+            eq(dispatches.runnerId, caller.id),
+            inArray(dispatches.status, ["accepted", "completed"]),
+          ),
+        )
+        .limit(1);
+      if (!dispatch) throw new ApiError(403, "forbidden", "這台 Runner 沒有在執行這個 Run");
+
+      const data = new Uint8Array(await c.req.arrayBuffer());
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      if (sha256 !== query.sha256) {
+        throw new ApiError(422, "invalid_input", "內容的 sha256 與宣告的不符");
+      }
+
+      // 先保留 blob_id 再寫入內容：同一個 blob_id 並行上傳不同內容時，只有一個會成功。
+      // 儲存位置也帶上 sha256，不同內容不會寫到同一個檔案。
+      const key = blobStorageKey(blobId, sha256);
+      const now = s.clock.now();
+      const [reserved] = await db
+        .insert(blobs)
+        .values({
+          id: blobId,
+          sha256,
+          size: data.byteLength,
+          mediaType: mediaType.data,
+          storageKey: key,
+          runId: query.runId,
+          createdAt: now,
+          expiresAt: new Date(now.getTime() + BLOB_RETENTION_MS),
+        })
+        .onConflictDoNothing()
+        .returning({ id: blobs.id });
+      if (!reserved) {
+        const [existing] = await db.select().from(blobs).where(eq(blobs.id, blobId));
+        if (!existing || existing.sha256 !== sha256 || existing.runId !== query.runId) {
+          throw conflict("這個 blob_id 已經用在不同的內容");
+        }
+        // 重送相同內容：補寫一次內容（前一次可能寫入失敗），可以安全地重試。
+        await blobStore.put(existing.storageKey, data);
+        return c.json({ blobId, sha256, size: existing.size }, 200);
+      }
+      try {
+        await blobStore.put(key, data);
+      } catch (error) {
+        await db.delete(blobs).where(eq(blobs.id, blobId));
+        throw error;
+      }
+      return c.json({ blobId, sha256, size: data.byteLength }, 201);
+    },
+  );
 
   const web = new Hono<AppEnv>();
   web.get("/blobs/:blobId", auth, async (c) => {

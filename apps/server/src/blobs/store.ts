@@ -17,9 +17,12 @@ export interface BlobStore {
 export const BLOB_RETENTION_DAYS = 90;
 export const BLOB_RETENTION_MS = BLOB_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-/** blob ID 對應的儲存位置：`<前兩個字元>/<id>`，避免單一目錄檔案過多。 */
-export function blobStorageKey(blobId: string): string {
-  return `${blobId.slice(0, 2)}/${blobId}`;
+/**
+ * blob 的儲存位置：`<ID 前兩個字元>/<ID>.<sha256>`。分目錄避免單一目錄檔案過多；
+ * 帶上 sha256，同一個 ID 的不同內容不會寫到同一個檔案。
+ */
+export function blobStorageKey(blobId: string, sha256: string): string {
+  return `${blobId.slice(0, 2)}/${blobId}.${sha256}`;
 }
 
 /** 存在本機目錄。key 一律由 blobStorageKey() 產生（只含 UUID 的字元），不接受外部輸入的路徑。 */
@@ -27,7 +30,7 @@ export class FileSystemBlobStore implements BlobStore {
   constructor(private readonly root: string) {}
 
   private resolve(key: string): string {
-    if (!/^[0-9a-f]{2}\/[0-9a-f-]{36}$/.test(key)) {
+    if (!/^[0-9a-f]{2}\/[0-9a-f-]{36}\.[0-9a-f]{64}$/.test(key)) {
       throw new Error(`不合法的 blob key：${key}`);
     }
     return path.join(this.root, ...key.split("/"));

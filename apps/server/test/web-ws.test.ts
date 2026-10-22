@@ -10,7 +10,13 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { BlobCleanup } from "../src/blobs/cleanup";
-import { BLOB_RETENTION_MS, FileSystemBlobStore, type MemoryBlobStore } from "../src/blobs/store";
+import { createBlobRoutes } from "../src/blobs/routes";
+import {
+  BLOB_RETENTION_MS,
+  blobStorageKey,
+  FileSystemBlobStore,
+  type MemoryBlobStore,
+} from "../src/blobs/store";
 import {
   PendingRunEvent,
   RUNNER_BLOB_PATH,
@@ -291,6 +297,31 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
       expect((await upload({ runnerToken: "nope" }, BLOB_ID, runId, data)).status).toBe(401);
     });
 
+    it("超過大小上限回 413，不會寫入", async () => {
+      const { mine, runId } = await startedRun();
+      const limited = createBlobRoutes(h.ctx.services, { maxBytes: 8 }).runner;
+      const data = Buffer.from("0123456789");
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      // 用 stream 送出，沒有 Content-Length，只能邊讀邊算。
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(data));
+          controller.close();
+        },
+      });
+      const res = await limited.request(
+        `${RUNNER_BLOB_PATH}/${BLOB_ID}?runId=${runId}&sha256=${sha256}`,
+        {
+          method: "PUT",
+          headers: { authorization: `Bearer ${mine.runnerToken}`, "content-type": "text/plain" },
+          body,
+          duplex: "half",
+        } as RequestInit,
+      );
+      expect(res.status).toBe(413);
+      expect(await database.db.select().from(blobs)).toHaveLength(0);
+    });
+
     it("Runner 不能把 blob 掛在不是自己執行的 Run 上", async () => {
       const { runId } = await startedRun();
       const other = await h.pairRunner(team.members.admin, "local");
@@ -328,7 +359,7 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
       const dir = await mkdtemp(path.join(tmpdir(), `${NAMES.productSlug}-blobs-`));
       try {
         const store = new FileSystemBlobStore(dir);
-        const key = `${BLOB_ID.slice(0, 2)}/${BLOB_ID}`;
+        const key = blobStorageKey(BLOB_ID, "a".repeat(64));
         await store.put(key, Buffer.from("內容"));
         expect(Buffer.from((await store.get(key)) ?? []).toString("utf8")).toBe("內容");
         await store.delete(key);
