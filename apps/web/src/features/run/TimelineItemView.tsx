@@ -21,6 +21,16 @@ export interface ItemControls {
   respond: (requestId: string, optionId: string) => void;
 }
 
+/** 只接受 http／https 的網址；其他 scheme 回傳 null。 */
+export function safeHref(uri: string): string | null {
+  try {
+    const url = new URL(uri);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function Blocks({ blocks }: { blocks: ContentBlock[] }) {
   return (
     <>
@@ -33,14 +43,21 @@ function Blocks({ blocks }: { blocks: ContentBlock[] }) {
                 <Markdown>{block.text}</Markdown>
               </div>
             );
-          case "resource_link":
+          case "resource_link": {
+            // URI 來自 Agent，只有 http／https 才做成連結，避免 javascript: 之類的 scheme
+            const href = safeHref(block.uri);
             return (
               <p key={key}>
-                <a href={block.uri} target="_blank" rel="noreferrer">
-                  {block.name}
-                </a>
+                {href ? (
+                  <a href={href} target="_blank" rel="noreferrer">
+                    {block.name}
+                  </a>
+                ) : (
+                  <span title={block.uri}>{block.name}</span>
+                )}
               </p>
             );
+          }
           case "image":
             return (
               <p key={key} className="hint">

@@ -2,6 +2,9 @@
 
 import type { ProjectPolicy, Role } from "@orbis/api-contract";
 
+/** 假後端狀態在 sessionStorage 中的 key（e2e 也用它讀出狀態）。 */
+export const MOCK_STATE_STORAGE_KEY = "mock-backend-state";
+
 export interface MockConfig {
   /** 登入者的 Role，預設 `owner`。 */
   role?: Role;
@@ -13,6 +16,8 @@ export interface MockConfig {
   largeRunEvents?: number;
   /** 覆寫 Project 的政策。 */
   policy?: Partial<ProjectPolicy>;
+  /** Server 拒絕所有寫入（403），模擬 UI 判斷與 Server 不一致的情況。 */
+  forbidWrites?: boolean;
   /** 派工對話框的情境：`none`＝沒有任何 Runner 完成 Pairing。 */
   runners?: "default" | "none";
 }

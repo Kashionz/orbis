@@ -31,7 +31,7 @@ import {
   type ReviewDiff,
   type ReviewDiffFile,
 } from "../api/schemas";
-import { type MockConfig, mockConfig } from "./config";
+import { MOCK_STATE_STORAGE_KEY, type MockConfig, mockConfig } from "./config";
 import {
   BASE_COMMIT,
   BASE_FILES,
@@ -41,7 +41,6 @@ import {
   type ScriptStep,
 } from "./scripts";
 
-const STORAGE_KEY = "mock-backend-state";
 export const ME_ID = "member-me";
 export const LARGE_RUN_ID = "run-large";
 
@@ -167,7 +166,7 @@ export class MockBackend {
 
   private load(): MockState | null {
     try {
-      const raw = this.storage?.getItem(STORAGE_KEY);
+      const raw = this.storage?.getItem(MOCK_STATE_STORAGE_KEY);
       return raw ? (JSON.parse(raw) as MockState) : null;
     } catch {
       return null;
@@ -176,7 +175,7 @@ export class MockBackend {
 
   private save(): void {
     try {
-      this.storage?.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      this.storage?.setItem(MOCK_STATE_STORAGE_KEY, JSON.stringify(this.state));
     } catch {
       // 無法寫入時只在記憶體中保存
     }
@@ -502,7 +501,7 @@ export class MockBackend {
   // ---------- 寫入 ----------
 
   private requireEditor(): void {
-    if ((this.config.role ?? "owner") === "viewer") {
+    if (this.config.forbidWrites || (this.config.role ?? "owner") === "viewer") {
       throw new MockError(403, "forbidden", "Viewer 不能修改");
     }
   }
