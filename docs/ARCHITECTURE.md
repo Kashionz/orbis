@@ -362,6 +362,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - 在 GitHub 上關閉 Issue → Task 轉 Done，並記錄關閉原因：取自 GitHub 的 `state_reason`，值為 `completed` 或 `not_planned`。UI 以不同標記區分這兩種 Done。
     - Task 有進行中的 Run 時，拒絕上一條的轉換：把 Issue 重新打開，並在狀態摘要留言中說明。
     - 重新打開 Issue → Done 的 Task 回到 Backlog，清空關閉原因。
+  - **誰的修改算數**：只有 Project Member，或對 repo 有 write 以上權限（admin、maintain、write）的人，在 GitHub 上對 Issue 的修改才會同步回 Orbis。其他人的修改會被改回 Task 的值，並在狀態摘要留言中說明。Feedback Loop 判斷「有寫入權限的人類」也使用同一套檢查。
 - **PR 與 Task**：PR merge → Task 轉 Done，關閉原因為 `completed`；PR 沒有 merge 就關閉 → Task 退回 Review Gate。
 - **不串 GitHub Projects。**
 
