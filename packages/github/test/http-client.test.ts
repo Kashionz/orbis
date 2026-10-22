@@ -90,8 +90,8 @@ describe("HTTP GitHubClient", () => {
       number: 1,
       title: issue.title,
       body: issue.body,
-      labels: ["bug"],
-      assignees: [{ id: 21031067, login: "Codertocat", type: "User" }],
+      labels: ["bug", "enhancement", "frontend"],
+      assignees: [{ id: 13392701, login: "Kashionz", type: "User" }],
       isPullRequest: false,
     });
     expect(requests.filter((r) => r.url.endsWith("/access_tokens"))).toHaveLength(1);

@@ -19,7 +19,17 @@ const config = loadGitHubAppConfig({ ...readEnvFile(), ...process.env });
 if (!config) throw new Error("找不到 GitHub App 設定");
 const signer = createAppJwtSigner({ appId: config.appId, privateKey: config.privateKey });
 
+/** delivery id 超過 JS 的安全整數範圍，先轉成字串再解析。 */
+async function getDeliveries(path: string): Promise<unknown> {
+  const text = await getText(path);
+  return JSON.parse(text.replace(/"id":(\d+)/g, '"id":"$1"'));
+}
+
 async function get(path: string): Promise<unknown> {
+  return JSON.parse(await getText(path));
+}
+
+async function getText(path: string): Promise<string> {
   const response = await fetch(`${GITHUB_API_URL}${path}`, {
     headers: {
       accept: "application/vnd.github+json",
@@ -28,12 +38,12 @@ async function get(path: string): Promise<unknown> {
     },
   });
   if (!response.ok) throw new Error(`GET ${path} 失敗：HTTP ${response.status}`);
-  return response.json();
+  return response.text();
 }
 
 const Deliveries = z.array(
   z.object({
-    id: z.number(),
+    id: z.string(),
     event: z.string(),
     action: z.string().nullable(),
     status_code: z.number(),
@@ -41,7 +51,7 @@ const Deliveries = z.array(
 );
 const Delivery = z.object({ request: z.object({ payload: z.record(z.string(), z.unknown()) }) });
 
-const deliveries = Deliveries.parse(await get("/app/hook/deliveries?per_page=100"));
+const deliveries = Deliveries.parse(await getDeliveries("/app/hook/deliveries?per_page=100"));
 const seen = new Set<string>();
 for (const delivery of deliveries) {
   if (delivery.event !== "ping" && !WEBHOOK_HANDLERS[delivery.event]) continue;

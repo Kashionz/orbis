@@ -76,6 +76,8 @@ if (config) {
 | Project 新增 Repo | `github.inspectRepo(owner, name, requesterMemberId)` |
 | Team Runner 要 push | `github.getInstallationTokenForRepo(repoId)`：只限該 repo、只有 contents 寫入權限 |
 
+Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5），這個套件只負責之後開 PR；開 PR 失敗時回傳 `{ ok: false }` 並通知 Task 負責人，Task 維持 `pr_open`。
+
 由這個套件透過 `DomainService` 發起的寫入，Server 不需要再呼叫 `onTaskChanged`。就算呼叫了，也只會多打 API，不會造成重複寫入。
 
 ### 這個套件需要 Server 提供
