@@ -172,7 +172,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Member 可以在 Runner 的本機設定中，把 Repo 對應到自己的 checkout（例如 `D:\code\web`）。有對應時，Worktree 從那份 checkout 開出，`copy` 也從那裡複製。
   - 沒有對應時 `copy` 不生效，因為 Runner 自己的 clone 中沒有 `.env` 這類檔案。
   - `ORBIS_ROOT_PATH` 是這份來源 repo 的路徑。
-- **分支名稱**：由 Server 產生，格式是 `orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。
+- **分支名稱**：由 Server 產生，格式是 `orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。同一個 Task 的第 2 個以後的 Run（例如失敗後重新派工），分支加上 `-r<序號>`，例如 `orbis/ORB-12-login-fix-r2`，避免和前一個 Run 保留下來的分支衝突。
   - **注意**：分支名稱不可以用 `/c<n>` 當後綴，因為 git 不允許 `a` 與 `a/b` 兩個分支同時存在。
 - **Base**：
   - Task 的 Run 從 Repo 的 base ref 開出，預設是 `origin/<default-branch>`。
