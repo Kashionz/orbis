@@ -26,6 +26,8 @@ export default defineConfig({
   testIgnore: "system/**",
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
+  // 多個 worker 同時跑 Monaco 與 5,000 筆 Event 時，畫面更新可能超過預設的 5 秒
+  expect: { timeout: 10_000 },
   reporter: isCI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL,

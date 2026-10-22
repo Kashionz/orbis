@@ -89,3 +89,18 @@ test.describe("看板", () => {
     await expect(column(page, "backlog").getByText("修正登入頁的錯字")).toBeVisible();
   });
 });
+
+test("不符合進入 Ready 的條件時顯示 Server 的錯誤並還原", async ({ page }) => {
+  await page.goto("/board");
+  await page.getByRole("button", { name: "新增 Task" }).click();
+  const dialog = page.getByRole("dialog", { name: "新增 Task" });
+  await dialog.getByLabel("標題").fill("還沒寫好的 Task");
+  await dialog.getByRole("button", { name: "建立" }).click();
+  await expect(page).toHaveURL(/\/tasks\/ORB-7$/);
+  await page.getByRole("link", { name: "核心產品" }).click();
+
+  await dragTo(page, card(page, "ORB-7"), column(page, "ready"));
+  await drop(page);
+  await expect(page.getByRole("alert")).toContainText("至少一條 Acceptance Criterion");
+  await expect(column(page, "backlog").locator('[data-task-key="ORB-7"]')).toBeVisible();
+});

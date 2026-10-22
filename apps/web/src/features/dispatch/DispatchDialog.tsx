@@ -15,7 +15,7 @@ import { ErrorText } from "../../components/ErrorText";
 import { PERMISSION_POLICY_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
 import {
   canDispatchTo,
-  DEFAULT_PERMISSION_POLICY,
+  defaultPermissionPolicy,
   permissionPoliciesFor,
 } from "../../lib/permissions";
 import { usePermissions } from "../auth/use-permissions";
@@ -75,6 +75,7 @@ function DispatchForm({ task, project, onClose, onDispatched }: Omit<DispatchDia
   return (
     <DispatchFields
       task={task}
+      project={project}
       options={options}
       kinds={kinds}
       onClose={onClose}
@@ -85,13 +86,21 @@ function DispatchForm({ task, project, onClose, onDispatched }: Omit<DispatchDia
 
 interface DispatchFieldsProps {
   task: Task;
+  project: Project;
   options: DispatchOptions;
   kinds: RunnerKind[];
   onClose: () => void;
   onDispatched: (run: Run) => void;
 }
 
-function DispatchFields({ task, options, kinds, onClose, onDispatched }: DispatchFieldsProps) {
+function DispatchFields({
+  task,
+  project,
+  options,
+  kinds,
+  onClose,
+  onDispatched,
+}: DispatchFieldsProps) {
   const queryClient = useQueryClient();
   const initialKind = kinds[0] ?? "local";
   const [runnerKind, setRunnerKind] = useState<RunnerKind>(initialKind);
@@ -99,7 +108,9 @@ function DispatchFields({ task, options, kinds, onClose, onDispatched }: Dispatc
   const agents = target?.agents ?? [];
   const [agentId, setAgentId] = useState(() => firstAvailable(options[initialKind]?.agents ?? []));
   const [model, setModel] = useState("");
-  const [policy, setPolicy] = useState<PermissionPolicy>(DEFAULT_PERMISSION_POLICY);
+  const [policy, setPolicy] = useState<PermissionPolicy>(() =>
+    defaultPermissionPolicy(project, initialKind),
+  );
   const agent = agents.find((a) => a.id === agentId && a.available);
 
   const mutation = useMutation({
@@ -123,7 +134,9 @@ function DispatchFields({ task, options, kinds, onClose, onDispatched }: Dispatc
     setRunnerKind(kind);
     setAgentId(firstAvailable(options[kind]?.agents ?? []));
     setModel("");
-    if (!permissionPoliciesFor(kind).includes(policy)) setPolicy(DEFAULT_PERMISSION_POLICY);
+    if (!permissionPoliciesFor(kind).includes(policy)) {
+      setPolicy(defaultPermissionPolicy(project, kind));
+    }
   }
 
   return (

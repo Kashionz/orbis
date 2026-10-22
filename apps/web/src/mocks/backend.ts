@@ -275,7 +275,15 @@ export class MockBackend {
       Object.assign(task, { status, ...extra });
       return task;
     };
-    seedTask("設定 CI 快取", "backlog", { assigneeMemberId: null });
+    const backlog = seedTask("設定 CI 快取", "backlog", {
+      assigneeMemberId: null,
+      description: "CI 的 pnpm store 加上快取。",
+    });
+    this.createAcceptanceCriterion(backlog.id, {
+      kind: "command",
+      description: "CI 通過",
+      command: null,
+    });
     const ready = seedTask("新增 hello.txt 並更新 README", "ready", {
       description: "在 repo 根目錄新增 `hello.txt`，並在 README 說明。",
     });
@@ -550,6 +558,17 @@ export class MockBackend {
     if (!MANUAL_TASK_TRANSITIONS[task.status].includes(status)) {
       throw new MockError(409, "invalid_transition", `不能從 ${task.status} 轉換到 ${status}`);
     }
+    // 進入 Ready 的條件（§5）：描述不為空或有連結的 Spec、至少一條 Acceptance Criterion
+    if (status === "ready") {
+      const hasSpec = task.description.trim() !== "" || task.specPath !== null;
+      if (!hasSpec || this.acceptanceCriteria(task.id).length === 0) {
+        throw new MockError(
+          409,
+          "not_ready",
+          "進入 Ready 需要描述（或 Spec）與至少一條 Acceptance Criterion",
+        );
+      }
+    }
     task.status = status;
     task.updatedAt = now();
     this.save();
@@ -641,6 +660,8 @@ export class MockBackend {
     if (task.status !== "ready") {
       throw new MockError(409, "invalid_transition", "只有 Ready 的 Task 可以派工");
     }
+    const blocked = task.dependsOn.some((id) => this.task(id).status !== "done");
+    if (blocked) throw new MockError(409, "dependencies_not_done", "依賴的 Task 還沒有 Done");
     const run = this.newRun(taskId, this.newId("run"), input);
     run.runnerId = input.runnerKind === "local" ? "runner-local" : "runner-team";
     this.state.runs.push(run);
@@ -713,6 +734,10 @@ export class MockBackend {
     this.append(runId, [
       { kind: "status_changed", status: "canceled", gate: null, message: "已中止" },
     ]);
+    // Run 被中止後 Task 回到 Ready，可以重新派工（§5）
+    const task = this.task(run.taskId);
+    task.status = "ready";
+    task.updatedAt = now();
     this.save();
   }
 

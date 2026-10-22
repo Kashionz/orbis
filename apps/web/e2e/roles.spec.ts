@@ -27,6 +27,7 @@ for (const role of ROLES) {
     test("Task 頁：編輯、Acceptance Criterion、指派、派工", async ({ page }) => {
       await page.goto("/tasks/ORB-2");
       await expect(page.getByRole("heading", { name: /新增 hello.txt/ })).toBeVisible();
+      await expect(page.locator(".ac-list > li")).toHaveCount(2);
       const count = canEdit(role) ? 1 : 0;
       await expect(page.getByRole("button", { name: "編輯標題" })).toHaveCount(count);
       await expect(page.getByRole("button", { name: "編輯描述" })).toHaveCount(count);
@@ -44,6 +45,8 @@ for (const role of ROLES) {
     test("Run 頁與 Needs You：回覆權限請求、中止 Run", async ({ page }) => {
       await page.goto("/needs-you");
       const item = page.locator(".needs-you-item", { hasText: "ORB-3" });
+      // 先等清單載入，否則「沒有按鈕」會在載入前就成立
+      await expect(item).toBeVisible();
       await expect(item.getByRole("button", { name: "允許" })).toHaveCount(canEdit(role) ? 1 : 0);
       await item.getByRole("link", { name: "前往 Run" }).click();
 

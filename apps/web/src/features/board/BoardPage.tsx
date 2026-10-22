@@ -22,26 +22,36 @@ import {
 } from "../../api/resources";
 import { MANUAL_TASK_TRANSITIONS, type Member } from "../../api/schemas";
 import { ErrorText } from "../../components/ErrorText";
+import { unfinishedDependencies } from "../../lib/dependencies";
 import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { matchesTaskKey, parseTaskKeyQuery } from "../../lib/task-key-search";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
 import { CreateTaskDialog } from "./CreateTaskDialog";
 
-/** 可以把 `from` 狀態的 Task 放到 `to` 欄嗎？拖到 Running 代表派工。 */
-function canDrop(from: TaskStatus, to: TaskStatus, permissions: Permissions): boolean {
+/**
+ * 可以把 Task 放到 `to` 欄嗎？拖到 Running 代表派工：Task 要是 Ready，
+ * 而且 depends_on 中的 Task 都已經 Done。
+ */
+function canDrop(
+  task: Task,
+  to: TaskStatus,
+  tasks: readonly Task[],
+  permissions: Permissions,
+): boolean {
   if (!permissions.can("task.edit")) return false;
   if (to === "running") {
     return (
-      from === "ready" &&
+      task.status === "ready" &&
+      unfinishedDependencies(task, tasks).length === 0 &&
       (permissions.can("run.dispatchLocal") || permissions.can("run.dispatchTeam"))
     );
   }
-  return MANUAL_TASK_TRANSITIONS[from].includes(to);
+  return MANUAL_TASK_TRANSITIONS[task.status].includes(to);
 }
 
-function isDraggable(task: Task, permissions: Permissions): boolean {
-  return TASK_STATUSES.some((to) => to !== task.status && canDrop(task.status, to, permissions));
+function isDraggable(task: Task, tasks: readonly Task[], permissions: Permissions): boolean {
+  return TASK_STATUSES.some((to) => to !== task.status && canDrop(task, to, tasks, permissions));
 }
 
 export function BoardPage({ projectId }: { projectId: string | undefined }) {
@@ -104,7 +114,7 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
     setDragging(null);
     const task = tasks.find((t) => t.id === event.active.id);
     const to = event.over?.id as TaskStatus | undefined;
-    if (!task || !to || to === task.status || !canDrop(task.status, to, permissions)) return;
+    if (!task || !to || to === task.status || !canDrop(task, to, tasks, permissions)) return;
     if (to === "running") {
       setDispatching(task);
       return;
@@ -170,9 +180,10 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
               key={status}
               status={status}
               tasks={visible.filter((t) => t.status === status)}
+              allTasks={tasks}
               members={members}
               permissions={permissions}
-              dropAllowed={dragging ? canDrop(dragging.status, status, permissions) : null}
+              dropAllowed={dragging ? canDrop(dragging, status, tasks, permissions) : null}
             />
           ))}
         </div>
@@ -195,13 +206,15 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
 interface ColumnProps {
   status: TaskStatus;
   tasks: Task[];
+  /** Project 中所有的 Task（判斷 depends_on 用）。 */
+  allTasks: Task[];
   members: Member[];
   permissions: Permissions;
   /** 拖曳中時這一欄能不能放；沒有在拖曳時為 null。 */
   dropAllowed: boolean | null;
 }
 
-function Column({ status, tasks, members, permissions, dropAllowed }: ColumnProps) {
+function Column({ status, tasks, allTasks, members, permissions, dropAllowed }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status, disabled: dropAllowed === false });
   return (
     <section
@@ -221,7 +234,7 @@ function Column({ status, tasks, members, permissions, dropAllowed }: ColumnProp
           key={task.id}
           task={task}
           assignee={members.find((m) => m.id === task.assigneeMemberId)}
-          draggable={isDraggable(task, permissions)}
+          draggable={isDraggable(task, allTasks, permissions)}
         />
       ))}
     </section>

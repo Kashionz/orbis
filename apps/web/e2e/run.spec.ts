@@ -125,3 +125,30 @@ test.describe("Run 即時檢視", () => {
     expect(longestFrame, `最長的一格畫面 ${longestFrame.toFixed(0)}ms`).toBeLessThan(200);
   });
 });
+
+test("中止 Run 後 Task 回到 Ready", async ({ page }) => {
+  await dispatch(page, "ORB-2");
+  await expect(page.getByTestId("run-status")).toHaveText("等待權限回覆");
+  await page.getByRole("button", { name: "中止 Run" }).click();
+  await expect(page.getByTestId("run-status")).toHaveText("已中止");
+  await expect(page.getByRole("button", { name: "中止 Run" })).toHaveCount(0);
+  await page.getByRole("link", { name: /ORB-2/ }).click();
+  await expect(page.locator(".page-header .status-badge")).toHaveText("Ready");
+});
+
+test.describe("別人在自己電腦上派工的 Run", () => {
+  test("只有擁有者能回覆 Local Runner 的權限請求", async ({ page }) => {
+    await dispatch(page, "ORB-2");
+    await expect(permission(page).getByRole("button", { name: "允許" })).toBeVisible();
+    // 把 Run 改成別人派工的，模擬其他 Member 看到的畫面
+    await page.evaluate(() => {
+      const key = "mock-backend-state";
+      const state = JSON.parse(sessionStorage.getItem(key) ?? "{}");
+      for (const run of state.runs) run.startedByMemberId = "member-alice";
+      sessionStorage.setItem(key, JSON.stringify(state));
+    });
+    await page.reload();
+    await expect(permission(page)).toContainText("等待有權限的 Member 回覆");
+    await expect(permission(page).getByRole("button")).toHaveCount(0);
+  });
+});

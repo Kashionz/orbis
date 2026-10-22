@@ -1,7 +1,15 @@
 // 依 Role 決定 UI 要不要顯示某個操作（ARCHITECTURE §12.2）。
 // 權限檢查以 Server 為準，這裡只負責隱藏沒有權限的操作。
 
-import type { PermissionPolicy, ProjectPolicy, Role, RunnerKind, Task } from "@orbis/api-contract";
+import type {
+  PermissionPolicy,
+  Project,
+  ProjectPolicy,
+  Role,
+  Run,
+  RunnerKind,
+  Task,
+} from "@orbis/api-contract";
 
 /** UI 上會依 Role 隱藏的操作。 */
 export type Action =
@@ -76,3 +84,31 @@ export function permissionPoliciesFor(runnerKind: RunnerKind): readonly Permissi
 }
 
 export const DEFAULT_PERMISSION_POLICY: PermissionPolicy = "auto";
+
+/**
+ * 派工對話框的預設 Permission Policy：Project 的預設政策（§8「派工時的選擇」）。
+ * 這種 Runner 不提供該政策時（Team Runner 沒有 `yolo`）改用 `auto`。
+ */
+export function defaultPermissionPolicy(
+  _project: Pick<Project, "policy">,
+  runnerKind: RunnerKind,
+): PermissionPolicy {
+  // TODO(contract): ProjectPolicy 還沒有預設 Permission Policy 的欄位，先一律用 auto
+  const projectDefault: PermissionPolicy = DEFAULT_PERMISSION_POLICY;
+  return permissionPoliciesFor(runnerKind).includes(projectDefault)
+    ? projectDefault
+    : DEFAULT_PERMISSION_POLICY;
+}
+
+/**
+ * 可以回覆這個 Run 的權限請求嗎（§8「誰可以回覆」）：Local Runner 上的請求只有該 Runner 的
+ * 擁有者（在自己電腦上派工的人）能回覆；Team Runner 上的，Role 至少是 Member 的人都能回覆。
+ */
+// TODO(contract): 設定的信任核准只有 Admin 以上能回覆，但權限請求還沒有欄位區分這種請求。
+export function canRespondToPermission(
+  run: Pick<Run, "runnerKind" | "startedByMemberId">,
+  ctx: PermissionContext,
+): boolean {
+  if (!can("run.control", ctx)) return false;
+  return run.runnerKind === "team" || run.startedByMemberId === ctx.memberId;
+}

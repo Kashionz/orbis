@@ -8,9 +8,11 @@ import {
   queryKeys,
   reposQuery,
   taskByKeyQuery,
+  tasksQuery,
   updateTask,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { unfinishedDependencies } from "../../lib/dependencies";
 import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
@@ -48,6 +50,8 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
   const repo = repos.find((r) => r.id === task.repoId);
   const canEdit = permissions.can("task.edit");
   const canDispatch = permissions.can("run.dispatchLocal") || permissions.can("run.dispatchTeam");
+  const { data: projectTasks = [] } = useQuery(tasksQuery(project.id));
+  const blockers = unfinishedDependencies(task, projectTasks);
 
   return (
     <main className="task-page">
@@ -65,9 +69,21 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
         </span>
         <span className="spacer" />
         {task.status === "ready" && canDispatch && (
-          <button type="button" className="primary" onClick={() => setDispatching(true)}>
-            派工
-          </button>
+          <>
+            {blockers.length > 0 && (
+              <span className="hint" role="note">
+                依賴的 {blockers.map((t) => t.key).join("、")} 還沒有 Done，不能派工
+              </span>
+            )}
+            <button
+              type="button"
+              className="primary"
+              disabled={blockers.length > 0}
+              onClick={() => setDispatching(true)}
+            >
+              派工
+            </button>
+          </>
         )}
       </header>
       <ErrorText error={update.error} />

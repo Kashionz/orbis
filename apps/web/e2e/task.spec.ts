@@ -93,4 +93,18 @@ test.describe("Task 頁", () => {
       timeout: 15_000,
     });
   });
+
+  test("depends_on 中有 Task 還沒 Done 時不能派工", async ({ page }) => {
+    await page.goto("/tasks/ORB-2");
+    await page.getByLabel("以 Task Key 加入依賴").fill("ORB-1");
+    await page.getByRole("button", { name: /ORB-1 設定 CI 快取/ }).click();
+    await expect(page.getByRole("note")).toContainText("依賴的 ORB-1 還沒有 Done，不能派工");
+    await expect(page.getByRole("button", { name: "派工" })).toBeDisabled();
+
+    // 換成已經 Done 的 ORB-5 就可以派工
+    await page.getByRole("button", { name: "移除依賴 ORB-1" }).click();
+    await page.getByLabel("以 Task Key 加入依賴").fill("ORB-5");
+    await page.getByRole("button", { name: /ORB-5 升級相依套件/ }).click();
+    await expect(page.getByRole("button", { name: "派工" })).toBeEnabled();
+  });
 });

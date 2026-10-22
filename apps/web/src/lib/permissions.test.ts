@@ -1,6 +1,13 @@
 import { type ProjectPolicy, ROLES, type Role } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
-import { type Action, can, canDispatchTo, permissionPoliciesFor } from "./permissions";
+import {
+  type Action,
+  can,
+  canDispatchTo,
+  canRespondToPermission,
+  defaultPermissionPolicy,
+  permissionPoliciesFor,
+} from "./permissions";
 
 const policy: ProjectPolicy = {
   planGateEnabled: true,
@@ -85,5 +92,38 @@ describe("permissionPoliciesFor", () => {
   it("yolo 只在 Local Runner 提供", () => {
     expect(permissionPoliciesFor("local")).toEqual(["manual", "auto", "yolo"]);
     expect(permissionPoliciesFor("team")).toEqual(["manual", "auto"]);
+  });
+});
+
+describe("canRespondToPermission", () => {
+  const owner = { role: "member" as const, memberId: "me", policy };
+
+  it("Local Runner 上的權限請求只有派工的人能回覆", () => {
+    expect(canRespondToPermission({ runnerKind: "local", startedByMemberId: "me" }, owner)).toBe(
+      true,
+    );
+    expect(
+      canRespondToPermission({ runnerKind: "local", startedByMemberId: "someone" }, owner),
+    ).toBe(false);
+    expect(
+      canRespondToPermission(
+        { runnerKind: "local", startedByMemberId: "someone" },
+        { ...owner, role: "owner" },
+      ),
+    ).toBe(false);
+  });
+
+  it("Team Runner 上的權限請求，Member 以上都能回覆，Viewer 不行", () => {
+    const run = { runnerKind: "team" as const, startedByMemberId: "someone" };
+    for (const role of ROLES) {
+      expect(canRespondToPermission(run, { ...owner, role })).toBe(role !== "viewer");
+    }
+  });
+});
+
+describe("defaultPermissionPolicy", () => {
+  it("預設 auto，Team Runner 也是", () => {
+    expect(defaultPermissionPolicy({ policy }, "local")).toBe("auto");
+    expect(defaultPermissionPolicy({ policy }, "team")).toBe("auto");
   });
 });

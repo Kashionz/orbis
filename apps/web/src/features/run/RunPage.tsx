@@ -13,6 +13,7 @@ import {
 import { ErrorText } from "../../components/ErrorText";
 import { formatUsage, toRunUsage } from "../../lib/format";
 import { PERMISSION_POLICY_LABELS, RUN_STATUS_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
+import { canRespondToPermission } from "../../lib/permissions";
 import { usePermissions } from "../auth/use-permissions";
 import type { ItemControls } from "./TimelineItemView";
 import { useRunTimeline } from "./use-run-timeline";
@@ -61,7 +62,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const controls: ItemControls = {
     isExpanded: (key) => expanded.has(key),
     toggle,
-    canRespond: permissions.can("run.control"),
+    canRespond: canRespondToPermission(run, permissions.ctx),
     respondingRequestId: respond.isPending ? (respond.variables?.requestId ?? null) : null,
     respond: (requestId, optionId) => respond.mutate({ requestId, optionId }),
   };

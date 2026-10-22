@@ -11,8 +11,15 @@ test("M1 路徑：建立 Task → 派工 → 即時 Event → 回覆權限請求
   await page.getByRole("button", { name: "新增 Task" }).click();
   const create = page.getByRole("dialog", { name: "新增 Task" });
   await create.getByLabel("標題").fill("M1：新增 hello.txt");
+  await create.getByLabel("描述（markdown）").fill("新增 `hello.txt`，並更新 README。");
   await create.getByRole("button", { name: "建立" }).click();
   await expect(page).toHaveURL(/\/tasks\/ORB-7$/);
+
+  // 進入 Ready 需要至少一條 Acceptance Criterion
+  await page.getByRole("button", { name: "新增 Acceptance Criterion" }).click();
+  await page.locator(".ac-form").getByLabel("條件").fill("測試通過");
+  await page.locator(".ac-form").getByRole("button", { name: "加入" }).click();
+  await expect(page.locator(".ac-list > li")).toHaveCount(1);
 
   // Backlog → Ready → 拖到 Running 派工
   await page.getByRole("link", { name: "核心產品" }).click();
