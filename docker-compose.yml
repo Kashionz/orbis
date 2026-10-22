@@ -3,12 +3,13 @@
 services:
   postgres:
     image: postgres:17
+    # 帳密只供本機開發使用；port 只綁 127.0.0.1，不對外開放。
     environment:
       POSTGRES_USER: orbis
       POSTGRES_PASSWORD: orbis
       POSTGRES_DB: orbis
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
