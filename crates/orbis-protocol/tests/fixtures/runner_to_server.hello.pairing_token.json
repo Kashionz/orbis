@@ -1,0 +1,14 @@
+{
+  "type": "hello",
+  "protocol_version": 1,
+  "runner": {
+    "name": "dev-desktop",
+    "runner_version": "0.1.0",
+    "os": "windows",
+    "arch": "x86_64"
+  },
+  "pairing": {
+    "kind": "pairing_token",
+    "token": "pt_dev"
+  }
+}

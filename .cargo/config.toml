@@ -1,0 +1,3 @@
+[alias]
+# 重新產生 packages/protocol 的 TS 型別（見 crates/orbis-protocol/src/bin/gen-ts.rs）
+gen-protocol = "run -q -p orbis-protocol --bin gen-ts"

@@ -1,0 +1,13 @@
+[package]
+name = "orbis-fake-agent"
+description = "依 YAML 劇本行動的 ACP v1 agent，只用於測試"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,23 @@
+{
+  "name": "orbis-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.7",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "biome check . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-names.mjs",
+    "format": "biome check --write . && cargo fmt --all",
+    "typecheck": "pnpm -r typecheck",
+    "test": "cargo test --workspace && pnpm -r test && node --test scripts/*.test.mjs",
+    "gen:protocol": "cargo gen-protocol",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "^24.0.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

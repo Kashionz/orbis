@@ -1,0 +1,6 @@
+{
+  "type": "hello_rejected",
+  "reason": "version_mismatch",
+  "server_protocol_version": 2,
+  "message": "Runner 協定版本 1 與 Server 的 2 不相容，請更新 Runner"
+}

@@ -1,0 +1,15 @@
+{
+  "type": "hello",
+  "protocol_version": 1,
+  "runner": {
+    "name": "team-runner-1",
+    "runner_version": "0.1.0",
+    "os": "linux",
+    "arch": "aarch64"
+  },
+  "pairing": {
+    "kind": "runner_token",
+    "runner_id": "0192f3a0-0000-7000-8000-000000000001",
+    "token": "rt_secret"
+  }
+}

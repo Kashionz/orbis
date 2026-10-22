@@ -1,0 +1,16 @@
+[package]
+name = "orbis-protocol"
+description = "Runner↔Server 協定與正規化 Event 模型（唯一定義來源，TS 型別由 ts-rs 產生）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+
+[lints]
+workspace = true
