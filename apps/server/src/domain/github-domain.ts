@@ -21,6 +21,9 @@ export type GitHubTransitionResult =
       status: TaskStatus | null;
     };
 
+/** Task 轉 Done 的原因，取自 GitHub Issue 的 `state_reason`。 */
+export type IssueCloseReason = "completed" | "not_planned";
+
 /** Issue 同步可以寫入的欄位（ARCHITECTURE §11）。state 另外以狀態轉換處理。 */
 export interface IssueFields {
   title?: string;
@@ -51,8 +54,9 @@ export class GitHubDomainService {
     return row?.id ?? null;
   }
 
-  /** PR 已 merge：PR Open → Done。 */
+  /** PR 已 merge：PR Open → Done，關閉原因為 `completed`。 */
   onPullRequestMerged(taskId: string): Promise<GitHubTransitionResult> {
+    // TODO(contract)：關閉原因存進 Task（contract/db 的欄位）。
     return this.transition(taskId, "done", "pull_request");
   }
 
@@ -62,7 +66,12 @@ export class GitHubDomainService {
   }
 
   /** Issue 關閉：Task 轉成 Done；Task 有進行中的 Run 時拒絕（D 軌重開 Issue 並說明）。 */
-  async onIssueClosed(taskId: string): Promise<GitHubTransitionResult> {
+  async onIssueClosed(
+    taskId: string,
+    /** GitHub 的 `state_reason`（ARCHITECTURE §11）。 */
+    _reason: IssueCloseReason,
+  ): Promise<GitHubTransitionResult> {
+    // TODO(contract)：關閉原因存進 Task（contract/db 的欄位），Issue 重開時清空。
     const [active] = await this.db
       .select({ n: count() })
       .from(runs)

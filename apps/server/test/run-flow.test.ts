@@ -82,12 +82,18 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
   });
 
   /** 建立 Ready 的 Task、派工到 Member 的 Local Runner，Runner 接受並回報 running。 */
-  async function startedRun(overrides: Partial<typeof tasks.$inferInsert> = {}) {
-    const mine = await h.pairRunner(team.members.member, "local");
+  async function startedRun(
+    overrides: Partial<typeof tasks.$inferInsert> = {},
+    runnerKind: "local" | "team" = "local",
+  ) {
+    const mine =
+      runnerKind === "local"
+        ? await h.pairRunner(team.members.member, "local")
+        : await h.pairRunner(team.members.admin, "team");
     const task = await seedReadyTask(database.db, project, repoId, overrides);
     const created = await as("member").post<z.infer<typeof Run>>(`/api/tasks/${task.id}/runs`, {
       agent: "claude-code",
-      runnerKind: "local",
+      runnerKind,
     });
     expect(created.status).toBe(201);
     const run = created.body;
@@ -266,7 +272,12 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       });
       expect(await needsYou("admin")).toHaveLength(0);
 
-      const res = await as("admin").post(`/api/needs-you/${item?.id}/respond`, {
+      // Local Runner 上的權限請求只有 Runner 的擁有者能回覆，Admin 也不行。
+      const byAdmin = await as("admin").post(`/api/needs-you/${item?.id}/respond`, {
+        optionId: "allow",
+      });
+      expect(byAdmin.status).toBe(403);
+      const res = await as("member").post(`/api/needs-you/${item?.id}/respond`, {
         optionId: "allow",
       });
       expect(res.status).toBe(204);
@@ -279,6 +290,16 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
         option_id: "allow",
       });
       expect(await needsYou("member")).toHaveLength(0);
+    });
+
+    it("Team Runner 上的權限請求，Project 中 Member 以上的人都能回覆", async () => {
+      const { mine, send } = await startedRun({}, "team");
+      await send(PERMISSION_REQUEST);
+      const [item] = await needsYou("member");
+      const path = `/api/needs-you/${item?.id}/respond`;
+      expect((await as("viewer").post(path, { optionId: "allow" })).status).toBe(403);
+      expect((await as("admin").post(path, { optionId: "allow" })).status).toBe(204);
+      expect(await control(mine, "permission_response")).toMatchObject({ option_id: "allow" });
     });
 
     it("選項不存在回 422，重複回覆回 409，Viewer 不能回覆", async () => {
@@ -529,13 +550,13 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
     it("Issue 關閉 → Done（有進行中的 Run 時拒絕）；Issue 重開 → Backlog", async () => {
       const domain = h.ctx.services.githubDomain;
       const idle = await seedReadyTask(database.db, project, repoId);
-      expect((await domain.onIssueClosed(idle.id)).ok).toBe(true);
+      expect((await domain.onIssueClosed(idle.id, "completed")).ok).toBe(true);
       expect(await taskStatus(idle.id)).toBe("done");
       expect((await domain.onIssueReopened(idle.id)).ok).toBe(true);
       expect(await taskStatus(idle.id)).toBe("backlog");
 
       const { task } = await startedRun();
-      expect(await domain.onIssueClosed(task.id)).toMatchObject({
+      expect(await domain.onIssueClosed(task.id, "not_planned")).toMatchObject({
         ok: false,
         reason: "active_run",
         status: "running",

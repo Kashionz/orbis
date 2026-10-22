@@ -12,7 +12,7 @@ import { GateDecisionInput, RespondNeedsYouInput, type ReviewComment } from "../
 import { gates, needsYouItems, projects, tasks } from "../db/schema";
 import { inTransaction } from "../db/tx";
 import { toGate, toNeedsYou } from "../http/dto";
-import { ApiError, conflict, notFound, readId, readJson } from "../http/errors";
+import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
 import type { AppEnv } from "../http/session";
 import type { Services } from "../services";
 
@@ -44,7 +44,11 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     );
   });
 
-  /** 回覆權限請求。Project 中有效 Role 為 Member 以上的人都可以回覆。 */
+  /**
+   * 回覆權限請求（ARCHITECTURE §8）：
+   * - Local Runner 上的 Run（「在我的電腦跑」）只有該 Runner 的擁有者，也就是派工者本人能回覆。
+   * - Team Runner 上的 Run，Project 中有效 Role 為 Member 以上的人都能回覆。
+   */
   app.post("/needs-you/:itemId/respond", auth, async (c) => {
     const actor = c.get("actor");
     const itemId = readId(c, "itemId", "Needs You 項目");
@@ -52,6 +56,9 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     if (!item?.runId) throw notFound("Needs You 項目");
     const scope = await loadRunScope(db, actor, item.runId);
     requireProjectCapability(actor, scope, "edit_task");
+    if (scope.run.target === "local" && scope.run.requestedByMemberId !== actor.memberId) {
+      throw forbidden("只有這台 Local Runner 的擁有者能回覆它的權限請求");
+    }
     if (item.kind !== "permission_request") {
       throw conflict("這個項目不是權限請求；Gate 請用 Gate 的 API 處理");
     }
