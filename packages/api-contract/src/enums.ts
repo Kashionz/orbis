@@ -71,3 +71,8 @@ export type Role = z.infer<typeof Role>;
 export const NEEDS_YOU_KINDS = ["permission_request", "gate", "stopped_run"] as const;
 export const NeedsYouKind = z.enum(NEEDS_YOU_KINDS);
 export type NeedsYouKind = z.infer<typeof NeedsYouKind>;
+
+/** Acceptance Criterion 最近一次判定的結果。`pending`＝尚未判定或程式碼變更後需要重新判定。 */
+export const ACCEPTANCE_CRITERION_RESULTS = ["pending", "passed", "failed"] as const;
+export const AcceptanceCriterionResult = z.enum(ACCEPTANCE_CRITERION_RESULTS);
+export type AcceptanceCriterionResult = z.infer<typeof AcceptanceCriterionResult>;
