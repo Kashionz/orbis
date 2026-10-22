@@ -209,4 +209,31 @@ describe("HTTP GitHubClient", () => {
     expect(error.status).toBe(422);
     expect(error.message).toContain("Validation Failed");
   });
+  it("指定 scope 時簽發只限這些 repo 與權限的 token，不經過快取", async () => {
+    const { client, requests } = setup([tokenRoute]);
+    await client.createInstallationToken(5, {
+      repositoryIds: [42],
+      permissions: { contents: "write" },
+    });
+    await client.createInstallationToken(5, {
+      repositoryIds: [42],
+      permissions: { contents: "write" },
+    });
+    expect(requests.map((r) => r.body)).toEqual([
+      { repository_ids: [42], permissions: { contents: "write" } },
+      { repository_ids: [42], permissions: { contents: "write" } },
+    ]);
+  });
+
+  it("getCollaboratorRole 回傳 role_name；不是 collaborator（404）時是 none", async () => {
+    const { client } = setup([
+      tokenRoute,
+      (req) =>
+        req.url.endsWith("/collaborators/alice/permission")
+          ? json({ permission: "write", role_name: "maintain" })
+          : undefined,
+    ]);
+    expect(await client.getCollaboratorRole(5, repo, "alice")).toBe("maintain");
+    expect(await client.getCollaboratorRole(5, repo, "nobody")).toBe("none");
+  });
 });

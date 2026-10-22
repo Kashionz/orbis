@@ -1,6 +1,7 @@
 // Repo 登記（Project 新增 Repo 時）與 App 安裝狀態的追蹤。
 
-import type { IntegrationContext } from "./context";
+import type { InstallationToken } from "./auth/installation-tokens";
+import { connectedRepo, type IntegrationContext } from "./context";
 import type { InstallationPayload, InstallationRepositoriesPayload } from "./webhook/payloads";
 
 export type RepoInspection =
@@ -46,14 +47,24 @@ export async function inspectRepo(
   };
 }
 
-/** installation token，供 Team Runner push 使用（ARCHITECTURE §11）。 */
+/** 交給 Team Runner push 的 token 的權限：只能讀寫這個 repo 的內容。 */
+export const RUNNER_TOKEN_PERMISSIONS = { contents: "write" } as const;
+
+/**
+ * 給 Team Runner push 用的 installation token（ARCHITECTURE §11）。每次另外簽發，只限這個 repo、
+ * 只有 contents 的寫入權限，不與 Server 自己快取的 token 共用（token 會離開 Server）。
+ */
 export async function getInstallationTokenForRepo(
   ctx: IntegrationContext,
   repoId: string,
-): Promise<string> {
-  const repo = await ctx.domain.getRepo(repoId);
-  if (!repo?.installationId) throw new Error(`Repo ${repoId} 不存在或沒有安裝 GitHub App`);
-  return ctx.client.installationToken(repo.installationId);
+): Promise<InstallationToken> {
+  const record = await ctx.domain.getRepo(repoId);
+  const repo = record && connectedRepo(record);
+  if (!repo) throw new Error(`Repo ${repoId} 不存在或沒有安裝 GitHub App`);
+  return ctx.client.createInstallationToken(repo.installationId, {
+    repositoryIds: [repo.githubRepoId],
+    permissions: { ...RUNNER_TOKEN_PERMISSIONS },
+  });
 }
 
 /**

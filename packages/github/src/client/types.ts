@@ -79,15 +79,33 @@ export interface PullRequestInput {
   base: string;
 }
 
+export interface TokenScope {
+  repositoryIds: number[];
+  permissions: Record<string, "read" | "write">;
+}
+
+export type RepoRole = "admin" | "maintain" | "write" | "triage" | "read" | "none";
+
+/** 有寫入權限的角色。 */
+export const WRITE_ROLES: ReadonlySet<RepoRole> = new Set(["admin", "maintain", "write"]);
+
 export interface GitHubClient {
   /** 以 App 身分查詢 App 是否安裝在這個 repo；沒有安裝（或 repo 不存在）時回傳 null。 */
   findRepoInstallation(repo: RepoRef): Promise<{ installationId: number } | null>;
-  /** 換一個新的 installation token（不經過快取）。 */
-  createInstallationToken(installationId: number): Promise<InstallationToken>;
+  /**
+   * 換一個新的 installation token（不經過快取）。指定 scope 時 token 只能存取這些 repo、只有這些權限，
+   * 用來交給 Team Runner push（最小權限）。
+   */
+  createInstallationToken(installationId: number, scope?: TokenScope): Promise<InstallationToken>;
   /** 取得 installation token（經過快取）。 */
   installationToken(installationId: number): Promise<string>;
   /** 丟掉某個 installation 的 token 快取。 */
   forgetInstallation(installationId: number): void;
+  /**
+   * 使用者對 repo 的角色（`GET /repos/{owner}/{repo}/collaborators/{username}/permission` 的 `role_name`）。
+   * 不是 collaborator 時回傳 `none`。
+   */
+  getCollaboratorRole(installationId: number, repo: RepoRef, username: string): Promise<RepoRole>;
 
   getRepo(installationId: number, repo: RepoRef): Promise<GitHubRepository | null>;
   getIssue(installationId: number, repo: RepoRef, number: number): Promise<GitHubIssue | null>;

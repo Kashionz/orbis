@@ -11,7 +11,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "app:create": "tsx dev/create-app.ts",
+    "dev:harness": "tsx dev/harness.ts",
+    "fixtures:record": "tsx dev/record-fixtures.ts"
   },
   "dependencies": {
     "@orbis/api-contract": "workspace:*",
@@ -19,8 +22,10 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@hono/node-server": "2.1.5",
     "@types/node": "^24.19.2",
     "typescript": "6.0.3",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "tsx": "4.23.15"
   }
 }

@@ -10,6 +10,8 @@ import {
   type GitHubIssue,
   type GitHubPullRequest,
   type RepoRef,
+  type RepoRole,
+  type TokenScope,
 } from "./types";
 
 export const GITHUB_API_URL = "https://api.github.com";
@@ -54,6 +56,15 @@ const PullRequestResponse = z.object({
   base: z.object({ ref: z.string() }),
 });
 
+const PermissionResponse = z.object({ permission: z.string(), role_name: z.string().optional() });
+const ROLES: ReadonlySet<string> = new Set([
+  "admin",
+  "maintain",
+  "write",
+  "triage",
+  "read",
+  "none",
+]);
 const TokenResponse = z.object({ token: z.string(), expires_at: z.string() });
 const IdResponse = z.object({ id: z.number() });
 const ErrorResponse = z.object({ message: z.string() }).partial();
@@ -182,20 +193,26 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
 
   const inst = (installationId: number): Auth => ({ kind: "installation", installationId });
 
-  async function createInstallationToken(installationId: number): Promise<InstallationToken> {
+  async function createInstallationToken(
+    installationId: number,
+    scope?: TokenScope,
+  ): Promise<InstallationToken> {
     const data = await must(
       request(
         "POST",
         `/app/installations/${installationId}/access_tokens`,
         { kind: "app" },
         TokenResponse,
+        scope
+          ? { body: { repository_ids: scope.repositoryIds, permissions: scope.permissions } }
+          : {},
       ),
     );
     return { token: data.token, expiresAt: new Date(data.expires_at) };
   }
 
   const tokens = new InstallationTokenCache({
-    fetchToken: createInstallationToken,
+    fetchToken: (installationId) => createInstallationToken(installationId),
     ...(options.now ? { now: options.now } : {}),
   });
 
@@ -219,6 +236,19 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
 
     forgetInstallation(installationId) {
       tokens.invalidate(installationId);
+    },
+
+    async getCollaboratorRole(installationId, repo, username) {
+      const result = await request(
+        "GET",
+        `${repoPath(repo)}/collaborators/${encodeURIComponent(username)}/permission`,
+        inst(installationId),
+        PermissionResponse,
+        { allowNotFound: true },
+      );
+      if (!result) return "none";
+      const role = result.data.role_name ?? result.data.permission;
+      return ROLES.has(role as RepoRole) ? (role as RepoRole) : "none";
     },
 
     async getRepo(installationId, repo) {

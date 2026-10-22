@@ -123,31 +123,66 @@ describe("從 Issue 匯入", () => {
 });
 
 describe("/api/github 路由", () => {
-  function app(authorized = true) {
+  /** bob 只能管理 PROJECT_ID 與它的 Repo；`loggedIn` 為 false 時 authenticate 擋下。 */
+  function app(loggedIn = true) {
     const w = createWorld();
+    const checked: string[] = [];
     const routes = createGitHubApiRoutes({
       github: w.integration,
-      authorize: async (c, next) => {
-        if (!authorized) return c.json({ error: "forbidden" }, 403);
+      authenticate: async (c, next) => {
+        if (!loggedIn) return c.json({ error: "unauthenticated" }, 401);
         await next();
       },
       memberIdOf: () => w.bob.id,
+      canManageRepos: async (_c, projectId) => {
+        checked.push(`project:${projectId}`);
+        return projectId === PROJECT_ID;
+      },
+      canCreateTasksInRepo: async (_c, repoId) => {
+        checked.push(`repo:${repoId}`);
+        return w.domain.repos.get(repoId)?.projectId === PROJECT_ID;
+      },
     });
-    return { w, app: new Hono().route("/api/github", routes) };
+    return { w, checked, app: new Hono().route("/api/github", routes) };
   }
 
-  it("沒有權限時由 authorize 擋下", async () => {
+  it("沒有登入時由 authenticate 擋下", async () => {
     const { app: api } = app(false);
-    expect((await api.request("/api/github/repos/inspect?owner=a&name=b")).status).toBe(403);
+    expect(
+      (await api.request(`/api/github/repos/inspect?projectId=${PROJECT_ID}&owner=a&name=b`))
+        .status,
+    ).toBe(401);
+    expect((await api.request(`/api/github/repos/${REPO_ID}/importable-issues`)).status).toBe(401);
+  });
+
+  it("沒有該 Project／Repo 的權限時回 403，不呼叫 GitHub", async () => {
+    const { w, checked, app: api } = app();
+    w.domain.addRepo({ ...w.domain.repo(REPO_ID), id: "repo-other", projectId: "project-other" });
+    const inspect = await api.request(
+      "/api/github/repos/inspect?projectId=project-other&owner=a&name=b",
+    );
+    expect(inspect.status).toBe(403);
+    expect((await api.request("/api/github/repos/repo-other/importable-issues")).status).toBe(403);
+    const imported = await api.request("/api/github/repos/repo-other/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ issueNumbers: [1] }),
+    });
+    expect(imported.status).toBe(403);
+    expect(checked).toEqual(["project:project-other", "repo:repo-other", "repo:repo-other"]);
+    expect(w.github.calls).toEqual([]);
+    expect(w.domain.createdFromIssue).toEqual([]);
   });
 
   it("GET /repos/inspect", async () => {
     const { w, app: api } = app();
     const response = await api.request(
-      `/api/github/repos/inspect?owner=${w.repo.owner}&name=${w.repo.name}`,
+      `/api/github/repos/inspect?projectId=${PROJECT_ID}&owner=${w.repo.owner}&name=${w.repo.name}`,
     );
     expect(await response.json()).toMatchObject({ installed: true, defaultBranch: "main" });
-    expect((await api.request("/api/github/repos/inspect?owner=a")).status).toBe(400);
+    expect(
+      (await api.request(`/api/github/repos/inspect?projectId=${PROJECT_ID}&owner=a`)).status,
+    ).toBe(400);
   });
 
   it("GET importable-issues 與 POST import", async () => {

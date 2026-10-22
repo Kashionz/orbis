@@ -39,11 +39,15 @@ describe("Repo 登記", () => {
     expect(await w.integration.inspectRepo("acme", "missing")).toEqual(expected);
   });
 
-  it("installation token 供 Team Runner push 使用", async () => {
+  it("Team Runner push 用的 installation token 只限這個 repo", async () => {
     const w = createWorld();
-    expect(await w.integration.getInstallationTokenForRepo(REPO_ID)).toBe(
-      `ghs_fake_${w.repo.installationId}`,
-    );
+    const token = await w.integration.getInstallationTokenForRepo(REPO_ID);
+    expect(token.token).toBe(`ghs_scoped_${w.repo.installationId}_${w.repo.id}`);
+    // 每次另外簽發、只限這個 repo 與 contents 寫入權限，不經過 Server 的快取
+    expect(w.github.callsTo("createInstallationToken").map((c) => c.args)).toEqual([
+      [w.repo.installationId, { repositoryIds: [w.repo.id], permissions: { contents: "write" } }],
+    ]);
+    expect(w.github.callsTo("installationToken")).toEqual([]);
     await w.domain.updateRepoGitHubInfo(REPO_ID, { installationId: null });
     await expect(w.integration.getInstallationTokenForRepo(REPO_ID)).rejects.toThrow("沒有安裝");
   });

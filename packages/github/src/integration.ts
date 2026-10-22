@@ -1,5 +1,6 @@
 // 組裝 GitHub 整合，提供給 Server 使用。
 
+import type { InstallationToken } from "./auth/installation-tokens";
 import { createHttpGitHubClient } from "./client/http";
 import type { GitHubClient } from "./client/types";
 import type { GitHubAppConfig } from "./config";
@@ -46,7 +47,8 @@ export interface GitHubIntegration {
   onBranchPushed(pushed: BranchPushed): Promise<OpenPullRequestResult>;
   /** Project 新增 Repo 時檢查 App 安裝狀態並讀取 default branch。 */
   inspectRepo(owner: string, name: string): Promise<RepoInspection>;
-  getInstallationTokenForRepo(repoId: string): Promise<string>;
+  /** 給 Team Runner push 用、只限這個 repo 的 installation token。 */
+  getInstallationTokenForRepo(repoId: string): Promise<InstallationToken>;
   listImportableIssues(repoId: string): Promise<ImportableIssue[]>;
   importIssues(input: {
     repoId: string;

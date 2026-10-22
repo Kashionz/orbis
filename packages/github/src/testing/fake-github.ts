@@ -11,6 +11,8 @@ import {
   type GitHubUserRef,
   type IssuePatch,
   type RepoRef,
+  type RepoRole,
+  type TokenScope,
 } from "../client/types";
 import type { TestClock } from "./clock";
 
@@ -41,6 +43,8 @@ export class FakeGitHub implements GitHubClient {
   /** GitHub 帳號（assignee 只能指派這些人）。 */
   readonly users = new Map<string, GitHubUserRef>();
   readonly forgotten: number[] = [];
+  /** 各帳號對 repo 的角色；沒有設定的是 `none`。 */
+  readonly roles = new Map<string, RepoRole>();
   #nextId = 1000;
   #failures: { method: keyof GitHubClient; error: Error }[] = [];
 
@@ -152,10 +156,15 @@ export class FakeGitHub implements GitHubClient {
     return found?.installationId ? { installationId: found.installationId } : null;
   }
 
-  async createInstallationToken(installationId: number): Promise<InstallationToken> {
-    this.#record("createInstallationToken", [installationId]);
+  async createInstallationToken(
+    installationId: number,
+    scope?: TokenScope,
+  ): Promise<InstallationToken> {
+    this.#record("createInstallationToken", scope ? [installationId, scope] : [installationId]);
     return {
-      token: `ghs_fake_${installationId}`,
+      token: scope
+        ? `ghs_scoped_${installationId}_${scope.repositoryIds.join("-")}`
+        : `ghs_fake_${installationId}`,
       expiresAt: new Date(this.clock.now().getTime() + 3600_000),
     };
   }
@@ -167,6 +176,16 @@ export class FakeGitHub implements GitHubClient {
 
   forgetInstallation(installationId: number): void {
     this.forgotten.push(installationId);
+  }
+
+  async getCollaboratorRole(
+    installationId: number,
+    ref: RepoRef,
+    username: string,
+  ): Promise<RepoRole> {
+    this.#record("getCollaboratorRole", [installationId, ref, username]);
+    this.#repo(ref, installationId);
+    return this.roles.get(username) ?? "none";
   }
 
   async getRepo(installationId: number, ref: RepoRef) {

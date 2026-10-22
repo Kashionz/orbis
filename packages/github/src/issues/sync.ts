@@ -8,7 +8,12 @@
 
 import { createHash } from "node:crypto";
 import { toIssue } from "../client/http";
-import type { GitHubIssue, GitHubUserRef, IssuePatch } from "../client/types";
+import {
+  type GitHubIssue,
+  type GitHubUserRef,
+  type IssuePatch,
+  WRITE_ROLES,
+} from "../client/types";
 import { type ConnectedRepo, connectedRepo, type IntegrationContext, isOwnEcho } from "../context";
 import { renderSummaryComment } from "../markdown";
 import type { IssueLink, MemberRecord, SyncedField, TaskFieldsPatch, TaskRecord } from "../ports";
@@ -60,6 +65,15 @@ async function pushTaskLocked(
   const desired = fieldsFromTask(task, assignee?.githubUserId ?? null);
 
   let link = await ctx.store.getIssueLinkByTask(task.id);
+  if (link && link.githubRepoId !== repo.githubRepoId) {
+    // Task 的 Repo 不能更換（ADR-0011），照理不會發生；萬一發生，不要寫到另一個 repo 的 Issue。
+    ctx.logger.warn(
+      { taskId: task.id, issue: link.issueUrl },
+      "Issue 對應的 repo 與 Task 的 Repo 不同，重新建立",
+    );
+    await ctx.store.deleteIssueLink(task.id);
+    link = null;
+  }
   let created = false;
   let wrote: SyncedField[] = [];
 
@@ -198,6 +212,24 @@ async function upsertSummaryComment(
   return { ...link, summaryCommentId: comment.id, summaryHash: hash };
 }
 
+/**
+ * 送出 webhook 的人能不能改動 Task：Project 的 Member，或對 repo 有寫入權限（admin、maintain、write）的人。
+ */
+async function senderCanWrite(
+  ctx: IntegrationContext,
+  projectId: string,
+  repoId: string,
+  login: string,
+  githubUserId: number,
+): Promise<boolean> {
+  if (await ctx.domain.findMemberByGithubUserId(projectId, githubUserId)) return true;
+  const record = await ctx.domain.getRepo(repoId);
+  const repo = record && connectedRepo(record);
+  if (!repo) return false;
+  const role = await ctx.client.getCollaboratorRole(repo.installationId, repo.ref, login);
+  return WRITE_ROLES.has(role);
+}
+
 /** Issue 的 assignees 中第一個屬於 Team 的 Member。 */
 export async function mapAssignee(
   ctx: IntegrationContext,
@@ -216,6 +248,8 @@ export type IssueEventOutcome =
   | { kind: "ignored"; reason: "unhandled_action" | "not_linked" }
   | { kind: "unlinked"; taskId: string }
   | { kind: "no_change"; taskId: string }
+  /** 送出修改的人沒有 repo 的寫入權限，修改不寫回 Task，並把 Issue 改回 Task 的值。 */
+  | { kind: "rejected"; taskId: string; fields: SyncedField[]; reason: "sender_not_authorized" }
   | {
       kind: "applied";
       taskId: string;
@@ -294,6 +328,27 @@ async function applyIssueChange(
   );
   if (changed.length === 0) return { kind: "no_change", taskId };
 
+  const nextSnapshot = updateSnapshot(snapshot, incoming, changed, issue.updatedAt);
+  if (
+    !(await senderCanWrite(
+      ctx,
+      task.projectId,
+      link.repoId,
+      payload.sender.login,
+      payload.sender.id,
+    ))
+  ) {
+    // 例如公開 repo 上 Issue 的作者可以改自己 Issue 的內容、關閉自己的 Issue，但不應該因此改動 Task。
+    await ctx.store.saveIssueLink({ ...link, snapshot: nextSnapshot });
+    const notice = `@${payload.sender.login} 沒有這個 repo 的寫入權限，對 Issue 的修改已還原。`;
+    await pushTaskLocked(ctx, taskId, { notice });
+    ctx.logger.warn(
+      { taskId, issue: link.issueUrl, sender: payload.sender.login, fields: changed },
+      "沒有寫入權限的人修改了 Issue，已還原",
+    );
+    return { kind: "rejected", taskId, fields: changed, reason: "sender_not_authorized" };
+  }
+
   const assignee = task.assigneeMemberId ? await ctx.domain.getMember(task.assigneeMemberId) : null;
   const current = fieldsFromTask(task, assignee?.githubUserId ?? null);
   // Task 這邊沒改過，或 Issue 的修改比較新 → GitHub 勝出；否則 Task 勝出，稍後寫回 GitHub。
@@ -318,10 +373,7 @@ async function applyIssueChange(
   }
 
   // 快照記錄 GitHub 目前的實際狀態；被拒絕的狀態轉換、Task 勝出的欄位，會在下面的 push 中寫回。
-  await ctx.store.saveIssueLink({
-    ...link,
-    snapshot: updateSnapshot(snapshot, incoming, changed, issue.updatedAt),
-  });
+  await ctx.store.saveIssueLink({ ...link, snapshot: nextSnapshot });
   await pushTaskLocked(ctx, taskId, notice ? { notice } : {});
 
   ctx.logger.info(

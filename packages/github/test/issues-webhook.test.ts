@@ -164,8 +164,8 @@ describe("同步的回音", () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w);
 
-    // Orbis 端修改 → 寫到 GitHub → GitHub 送回 sender 是 App bot 的 webhook
-    w.domain.editTask(task.id, { title: "Orbis 改的標題", labels: ["p2"], status: "done" });
+    // Task 端修改 → 寫到 GitHub → GitHub 送回 sender 是 App bot 的 webhook
+    w.domain.editTask(task.id, { title: "Task 端改的標題", labels: ["p2"], status: "done" });
     await w.integration.onTaskChanged(task.id);
     const issue = w.github.issue(w.repo.id, issueNumber);
     for (const action of ["edited", "labeled", "closed"]) {
@@ -180,7 +180,7 @@ describe("同步的回音", () => {
   it("就算 sender 不是 App（例如 bot 名稱設定錯），payload 與快照相同也不會寫入", async () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w);
-    w.domain.editTask(task.id, { title: "Orbis 改的標題" });
+    w.domain.editTask(task.id, { title: "Task 端改的標題" });
     await w.integration.onTaskChanged(task.id);
     const issue = w.github.issue(w.repo.id, issueNumber);
 
@@ -191,7 +191,7 @@ describe("同步的回音", () => {
     expect(w.github.callsTo("updateIssue")).toHaveLength(1);
   });
 
-  it("比 App 的寫入還舊的 payload（晚到的 webhook）不會蓋掉 Orbis 的值", async () => {
+  it("比 App 的寫入還舊的 payload（晚到的 webhook）不會蓋掉 Task 的值", async () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w);
 
@@ -199,13 +199,13 @@ describe("同步的回音", () => {
     const stale = w.github.humanEdit(w.repo.id, issueNumber, { title: "GitHub 舊的修改" });
     const stalePayload = w.issuePayload("edited", stale, w.userRef(w.bob));
     // 2. 之後 Orbis 改了 title 並寫出
-    w.domain.editTask(task.id, { title: "Orbis 較新的修改" });
+    w.domain.editTask(task.id, { title: "Task 端較新的修改" });
     await w.integration.onTaskChanged(task.id);
     // 3. 晚到的 webhook
     await w.deliver("issues", stalePayload);
 
-    expect(w.domain.task(task.id).title).toBe("Orbis 較新的修改");
-    expect(w.github.issue(w.repo.id, issueNumber).title).toBe("Orbis 較新的修改");
+    expect(w.domain.task(task.id).title).toBe("Task 端較新的修改");
+    expect(w.github.issue(w.repo.id, issueNumber).title).toBe("Task 端較新的修改");
     expect(w.domain.fieldUpdates).toEqual([]);
   });
 });
@@ -251,7 +251,7 @@ describe("衝突：最後寫入者為準", () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w);
     // Orbis 改了 title，但還沒同步出去（例如上次同步失敗）
-    w.domain.editTask(task.id, { title: "Orbis 的修改" });
+    w.domain.editTask(task.id, { title: "Task 端的修改" });
     // 之後有人在 GitHub 也改了 title
     await humanChange(w, issueNumber, "edited", { title: "GitHub 的修改" });
 
@@ -259,37 +259,37 @@ describe("衝突：最後寫入者為準", () => {
     expect(w.github.issue(w.repo.id, issueNumber).title).toBe("GitHub 的修改");
   });
 
-  it("同一欄位兩邊都改過，Orbis 比較新 → 保留 Orbis 的值並寫回 GitHub", async () => {
+  it("同一欄位兩邊都改過，Task 比較新 → 保留 Task 的值並寫回 GitHub", async () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w);
     // 有人在 GitHub 改了 title，webhook 還沒到
     const issue = w.github.humanEdit(w.repo.id, issueNumber, { title: "GitHub 的修改" });
     const payload = w.issuePayload("edited", issue, w.userRef(w.bob));
     // Orbis 之後也改了 title，但同步還沒跑
-    w.domain.editTask(task.id, { title: "Orbis 的修改" });
+    w.domain.editTask(task.id, { title: "Task 端的修改" });
 
     const response = await w.deliver("issues", payload);
 
     expect(response.body).toMatchObject({
       result: [{ kind: "applied", applied: [], overridden: ["title"] }],
     });
-    expect(w.domain.task(task.id).title).toBe("Orbis 的修改");
-    expect(w.github.issue(w.repo.id, issueNumber).title).toBe("Orbis 的修改");
+    expect(w.domain.task(task.id).title).toBe("Task 端的修改");
+    expect(w.github.issue(w.repo.id, issueNumber).title).toBe("Task 端的修改");
     expect(w.domain.fieldUpdates).toEqual([]);
   });
 
   it("兩邊改不同欄位時兩邊的修改都保留", async () => {
     const w = createWorld();
     const { task, issueNumber } = await syncedTask(w);
-    w.domain.editTask(task.id, { description: "Orbis 改的描述" });
+    w.domain.editTask(task.id, { description: "Task 端改的描述" });
     await humanChange(w, issueNumber, "labeled", { labels: ["from-github"] });
 
     expect(w.domain.task(task.id)).toMatchObject({
-      description: "Orbis 改的描述",
+      description: "Task 端改的描述",
       labels: ["from-github"],
     });
     expect(w.github.issue(w.repo.id, issueNumber)).toMatchObject({
-      body: "Orbis 改的描述",
+      body: "Task 端改的描述",
       labels: ["from-github"],
     });
   });
@@ -322,5 +322,72 @@ describe("issue_comment webhook", () => {
     const response = await w.deliver("issue_comment", payload);
     expect(response.body).toMatchObject({ result: { recreated: [] } });
     expect(w.github.calls).toEqual([]);
+  });
+});
+
+describe("修改者的權限", () => {
+  it("沒有寫入權限的人（例如公開 repo 上 Issue 的作者）關閉 Issue：Task 不變，Issue 重新打開並說明", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w, { status: "ready" });
+
+    const { response } = await humanChange(
+      w,
+      issueNumber,
+      "closed",
+      { state: "closed" },
+      w.outsider,
+    );
+
+    expect(response.body).toMatchObject({
+      result: [{ kind: "rejected", fields: ["state"], reason: "sender_not_authorized" }],
+    });
+    expect(w.domain.transitions).toEqual([]);
+    expect(w.domain.task(task.id).status).toBe("ready");
+    expect(w.github.issue(w.repo.id, issueNumber).state).toBe("open");
+    const [summary] = w.github.commentsOn(w.repo.id, issueNumber);
+    expect(summary?.body).toContain("@outsider 沒有這個 repo 的寫入權限");
+    expect(w.github.callsTo("getCollaboratorRole").map((c) => c.args[2])).toEqual(["outsider"]);
+  });
+
+  it("沒有寫入權限的人改 title：不寫回 Task，Issue 改回 Task 的值", async () => {
+    const w = createWorld();
+    w.github.roles.set("outsider", "triage");
+    const { task, issueNumber } = await syncedTask(w);
+    await humanChange(w, issueNumber, "edited", { title: "亂改的標題" }, w.outsider);
+    expect(w.domain.fieldUpdates).toEqual([]);
+    expect(w.github.issue(w.repo.id, issueNumber).title).toBe(task.title);
+  });
+
+  it("不是 Team 成員、但對 repo 有寫入權限的人的修改會套用", async () => {
+    const w = createWorld();
+    w.github.roles.set("outsider", "write");
+    const { task, issueNumber } = await syncedTask(w);
+    await humanChange(w, issueNumber, "edited", { title: "協作者改的標題" }, w.outsider);
+    expect(w.domain.task(task.id).title).toBe("協作者改的標題");
+  });
+
+  it("Team 成員不需要查詢 repo 權限", async () => {
+    const w = createWorld();
+    const { issueNumber } = await syncedTask(w);
+    await humanChange(w, issueNumber, "edited", { title: "成員改的" }, w.userRef(w.bob));
+    expect(w.github.callsTo("getCollaboratorRole")).toEqual([]);
+  });
+});
+
+describe("Issue 對應的 repo 與 Task 的 Repo 不同", () => {
+  it("不寫到另一個 repo 的 Issue，改為在 Task 的 Repo 重新建立", async () => {
+    const w = createWorld();
+    const { task, issueNumber } = await syncedTask(w);
+    const link = await w.store.getIssueLinkByTask(task.id);
+    if (!link) throw new Error("沒有對應");
+    await w.store.saveIssueLink({ ...link, githubRepoId: 424242 });
+
+    w.domain.editTask(task.id, { title: "改了標題" });
+    const outcome = await w.integration.onTaskChanged(task.id);
+
+    expect(outcome).toMatchObject({ kind: "synced", created: true });
+    expect(w.github.callsTo("updateIssue")).toEqual([]);
+    expect(w.github.issue(w.repo.id, issueNumber).title).toBe(task.title);
+    expect((await w.store.getIssueLinkByTask(task.id))?.githubRepoId).toBe(w.repo.id);
   });
 });

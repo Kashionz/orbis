@@ -24,6 +24,8 @@ export function createGitHubWebhookRoutes(github: Pick<GitHubIntegration, "handl
 }
 
 export const InspectRepoQuery = z.object({
+  /** 要把 Repo 登記到哪個 Project（用來檢查權限）。 */
+  projectId: z.string().min(1),
   owner: z.string().trim().min(1),
   name: z.string().trim().min(1),
 });
@@ -34,15 +36,23 @@ export const ImportIssuesInput = z
 
 export interface GitHubApiRoutesOptions {
   github: Pick<GitHubIntegration, "inspectRepo" | "listImportableIssues" | "importIssues">;
-  /** Server 的登入與 Role 檢查（建立 Task 所需的權限）。 */
-  authorize: MiddlewareHandler;
-  /** 目前登入的 Member（authorize 之後一定有值）。 */
+  /** Server 的登入檢查（沒有登入時擋下）。 */
+  authenticate: MiddlewareHandler;
+  /** 目前登入的 Member（authenticate 之後一定有值）。 */
   memberIdOf: (c: Context) => string;
+  /** 目前的 Member 能不能在這個 Project 登記 Repo（Role 檢查由 Server 負責）。 */
+  canManageRepos: (c: Context, projectId: string) => Promise<boolean>;
+  /** 目前的 Member 能不能在這個 Repo 所屬的 Project 建立 Task；Repo 不存在時回傳 false。 */
+  canCreateTasksInRepo: (c: Context, repoId: string) => Promise<boolean>;
 }
 
 export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
   const app = new Hono();
-  app.use("*", options.authorize);
+  app.use("*", options.authenticate);
+
+  const forbidden = (c: Context) => c.json({ error: "forbidden" }, 403);
+  // 以 repoId 為單位檢查權限：不同 Project（甚至不同 Team）的 Repo 不能互相讀取或匯入。
+  const canUseRepo = (c: Context) => options.canCreateTasksInRepo(c, c.req.param("repoId") ?? "");
 
   app.onError((error, c) => {
     if (error instanceof RepoNotConnectedError) {
@@ -54,14 +64,17 @@ export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
   app.get("/repos/inspect", async (c) => {
     const query = InspectRepoQuery.safeParse(c.req.query());
     if (!query.success) return c.json({ error: "invalid_input", issues: query.error.issues }, 400);
+    if (!(await options.canManageRepos(c, query.data.projectId))) return forbidden(c);
     return c.json(await options.github.inspectRepo(query.data.owner, query.data.name));
   });
 
   app.get("/repos/:repoId/importable-issues", async (c) => {
+    if (!(await canUseRepo(c))) return forbidden(c);
     return c.json({ issues: await options.github.listImportableIssues(c.req.param("repoId")) });
   });
 
   app.post("/repos/:repoId/import", async (c) => {
+    if (!(await canUseRepo(c))) return forbidden(c);
     const input = ImportIssuesInput.safeParse(await c.req.json().catch(() => null));
     if (!input.success) return c.json({ error: "invalid_input", issues: input.error.issues }, 400);
     const results = await options.github.importIssues({

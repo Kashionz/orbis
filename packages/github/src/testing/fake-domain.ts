@@ -16,7 +16,11 @@ import type {
   TransitionCause,
   TransitionResult,
 } from "../ports";
-import type { TestClock } from "./clock";
+/** FakeDomainService 用到的時鐘：測試用 TestClock，dev harness 用真實時間。 */
+export interface DomainClock {
+  now(): Date;
+  advance(ms: number): Date;
+}
 
 const clone = <T>(value: T): T => structuredClone(value);
 
@@ -47,7 +51,7 @@ export class FakeDomainService implements DomainService {
   #nextTask = 1;
   #failures = new Set<keyof DomainService>();
 
-  constructor(readonly clock: TestClock) {}
+  constructor(readonly clock: DomainClock) {}
 
   /** 讓下一次呼叫 `method` 丟出錯誤（例如資料庫暫時連不上）。 */
   failNext(method: keyof DomainService): void {
@@ -93,6 +97,12 @@ export class FakeDomainService implements DomainService {
     this.clock.advance(1000);
     Object.assign(task, clone(patch), { updatedAt: this.clock.now() });
     return clone(task);
+  }
+
+  repo(repoId: string): RepoRecord {
+    const repo = this.repos.get(repoId);
+    if (!repo) throw new Error(`沒有 Repo ${repoId}`);
+    return clone(repo);
   }
 
   task(taskId: string): TaskRecord {
