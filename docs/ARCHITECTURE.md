@@ -429,6 +429,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - Runner 以 HTTP `PUT` 上傳 blob，以 Runner token 認證，Server 驗證 SHA-256 與大小。
   - 上傳成功後，Runner 才送出參照它的 Event。
   - 到期的 blob 會被清除，但 **`run_events` 不刪**：Run 永遠可以完整重播，到期的內容顯示為已過期。
+  - Review 用的完整 diff（§10）也存在 `run_events` 中。**超過 90 天的 Run，review diff 中放在 blob 的大檔案無法顯示**，只剩檔案清單與內嵌的小檔案。
 - **斷線處理**：Runner 斷線時，Event 先暫存在本機，重新連上後以 seq 補送。UI 可以從 Event 重播整個 Run。
   - Server 以 `event_ack` 回報每個 Run 已連續保存的最大 seq，Runner 據此清除本機暫存。
 - **過期 Dispatch**：Runner 送出的 `event` frame 帶有 Dispatch ID。不屬於該 Run 目前 Dispatch 的 Event，Server 一律拒絕。存進 `run_events` 的只有 run_id、seq、ts 與 Event 內容，不含 Dispatch ID。
@@ -461,6 +462,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - 偵測到 Web UI 登入後，Electron 取得 Local Runner 的 Pairing token 並啟動 Runner。
     - 登出時，如果還有 Run 執行中，先詢問使用者。
     - 確認後，先撤銷這台 Local Runner，再停止 Runner、清除本機狀態。
+    - Server 端也會撤銷：Pairing 時記下取得 Pairing token 的 session。登出或清除過期 session 時，Server 會撤銷由這個 session 配對的 Local Runner。所以 Desktop 當掉、或 session 自然過期時，Runner 也不會一直保持配對。
 - **Team Runner**：以 Docker image 發布。
 
 ---
