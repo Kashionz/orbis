@@ -1,0 +1,31 @@
+# 正常完成並產出 diff：讀取 → 新增檔案 → 修改既有檔案 → 用量 → end_turn。
+description: 正常完成並產出 diff
+turns:
+  - steps:
+      - thought: 先看看專案裡有什麼。
+      - message: 我來新增 hello.txt，並更新 README.md。
+      - tool_call:
+          id: read-readme
+          title: 讀取 README.md
+          kind: read
+          raw_input: { path: README.md }
+          output: "# Demo\n"
+      - tool_call:
+          id: write-hello
+          title: 新增 hello.txt
+          edit:
+            path: hello.txt
+            content: "hello from fake agent\n"
+      - tool_call:
+          id: edit-readme
+          title: 編輯 README.md
+          edit:
+            path: README.md
+            old_text: "# Demo"
+            new_text: "# Demo\n\n已由 Fake Agent 更新。"
+      - usage:
+          used: 1200
+          size: 200000
+          cost: { amount: 0.0125, currency: USD }
+      - message: 完成了。
+      - stop: end_turn

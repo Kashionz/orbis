@@ -1,0 +1,6 @@
+# cancel：送出一段訊息後一直等，直到收到 session/cancel，以 stop reason cancelled 結束。
+description: 等待 session/cancel
+turns:
+  - steps:
+      - message: 開始一個很長的工作……
+      - wait_for_cancel

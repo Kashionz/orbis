@@ -1,0 +1,16 @@
+# 呼叫注入的 MCP 工具：依 session/new 收到的 stdio MCP server 設定啟動 fake-mcp，呼叫 echo 與 get_env。
+description: 呼叫注入的 MCP 工具
+turns:
+  - steps:
+      - message: 我來呼叫 MCP 工具。
+      - mcp_call:
+          id: mcp-echo
+          server: fake-mcp
+          tool: echo
+          arguments: { text: hello mcp }
+      - mcp_call:
+          id: mcp-env
+          server: fake-mcp
+          tool: get_env
+          arguments: { name: FAKE_MCP_GREETING }
+      - stop: end_turn
