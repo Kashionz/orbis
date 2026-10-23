@@ -7,13 +7,9 @@
 //   payload 與快照相同（或不比快照新）也不會寫入。
 
 import { createHash } from "node:crypto";
+import { senderCanWrite } from "../authz";
 import { toIssue } from "../client/http";
-import {
-  type GitHubIssue,
-  type GitHubUserRef,
-  type IssuePatch,
-  WRITE_ROLES,
-} from "../client/types";
+import type { GitHubIssue, GitHubUserRef, IssuePatch } from "../client/types";
 import { type ConnectedRepo, connectedRepo, type IntegrationContext, isOwnEcho } from "../context";
 import { renderSummaryComment } from "../markdown";
 import type {
@@ -224,29 +220,6 @@ async function upsertSummaryComment(
     body,
   );
   return { ...link, summaryCommentId: comment.id, summaryHash: hash };
-}
-
-/**
- * 送出 webhook 的人能不能改動 Task：在 Project 中能編輯 Task 的 Member，
- * 或對 repo 有寫入權限（admin、maintain、write）的人。
- */
-async function senderCanWrite(
-  ctx: IntegrationContext,
-  projectId: string,
-  repoId: string,
-  login: string,
-  githubUserId: number,
-): Promise<boolean> {
-  const member = await ctx.domain.findMemberByGithubUserId(projectId, githubUserId);
-  if (member && (await ctx.domain.canEditTasks(projectId, member.id))) return true;
-  const record = await ctx.domain.getRepo(repoId);
-  const repo = record && connectedRepo(record);
-  if (!repo) return false;
-  const role = await ctx.client.getCollaboratorRole(repo.installationId, repo.ref, {
-    login,
-    id: githubUserId,
-  });
-  return WRITE_ROLES.has(role);
 }
 
 /** 這個 action 改到的同步欄位。`edited` 依 payload 的 `changes`。 */

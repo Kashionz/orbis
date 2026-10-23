@@ -1,5 +1,6 @@
 // 開 PR（Review Gate 核准、Runner push 完成後）與 PR 關閉的處理（ARCHITECTURE §5、§11）。
 
+import { senderCanWrite } from "./authz";
 import { GitHubApiError } from "./client/types";
 import { connectedRepo, type IntegrationContext, taskOwner } from "./context";
 import { pushTask } from "./issues/sync";
@@ -114,11 +115,16 @@ export type PullRequestEventOutcome =
   | { kind: "ignored"; reason: "unhandled_action" | "not_linked" | "already_handled" }
   | { kind: "merged"; taskId: string; transitioned: boolean }
   | { kind: "closed"; taskId: string; transitioned: boolean }
-  | { kind: "reopened"; taskId: string; transitioned: boolean };
+  | { kind: "reopened"; taskId: string; transitioned: boolean }
+  /** 沒有寫入權限的人關閉或重開 PR：Task 不轉換，通知負責人。 */
+  | { kind: "rejected"; taskId: string; reason: "sender_not_authorized" };
 
 /**
  * `pull_request.closed`：merged → Task 轉 Done；沒有 merge 就關閉 → 退回 Review Gate 並通知負責人。
  * `pull_request.reopened`：回到 PR Open。只處理以 App 開出、有對應 Task 的 PR。
+ *
+ * 沒有 merge 的關閉與重開，和 Issue 一樣只採用能編輯 Task 的 Member 或對 repo 有寫入權限的人
+ * （GitHub 上 triage 角色也能關閉、重開 PR）。merge 本身就需要寫入權限。
  */
 export async function handlePullRequestEvent(
   ctx: IntegrationContext,
@@ -130,69 +136,102 @@ export async function handlePullRequestEvent(
   const link = await ctx.store.findPullRequestLink(payload.repository.id, payload.number);
   if (!link) return { kind: "ignored", reason: "not_linked" };
 
-  return ctx.taskLocks.run(`pr:${link.githubRepoId}:${link.number}`, async () => {
-    // 重新讀取：同一個 PR 的 webhook 可能同時到達。
-    const current = (await ctx.store.findPullRequestLink(link.githubRepoId, link.number)) ?? link;
-    const pullRequestUrl = payload.pull_request.html_url;
-    const merged = payload.action === "closed" && payload.pull_request.merged === true;
-    const nextState = payload.action === "reopened" ? "open" : merged ? "merged" : "closed";
-    if (current.state === nextState || current.state === "merged") {
-      return { kind: "ignored", reason: "already_handled" } as const;
-    }
+  return ctx.taskLocks.run(
+    `pr:${link.githubRepoId}:${link.number}`,
+    async (): Promise<PullRequestEventOutcome> => {
+      // 重新讀取：同一個 PR 的 webhook 可能同時到達。
+      const current = (await ctx.store.findPullRequestLink(link.githubRepoId, link.number)) ?? link;
+      const pullRequestUrl = payload.pull_request.html_url;
+      const merged = payload.action === "closed" && payload.pull_request.merged === true;
+      const nextState = payload.action === "reopened" ? "open" : merged ? "merged" : "closed";
+      if (current.state === nextState || current.state === "merged") {
+        return { kind: "ignored", reason: "already_handled" } as const;
+      }
 
-    const task = await ctx.domain.getTask(current.taskId);
-    if (!task) return { kind: "ignored", reason: "not_linked" } as const;
+      const task = await ctx.domain.getTask(current.taskId);
+      if (!task) return { kind: "ignored", reason: "not_linked" } as const;
 
-    let transitioned: boolean;
-    const owner = taskOwner(task);
-    if (merged) {
-      const result = await ctx.domain.transitionTask(task.id, "done", {
-        kind: "pr_merged",
-        doneReason: "completed",
-        pullRequestUrl,
-      });
-      transitioned = result.ok;
-      if (owner) {
-        await ctx.notifier.notify({
-          memberId: owner,
+      const owner = taskOwner(task);
+      if (
+        !merged &&
+        !(await senderCanWrite(
+          ctx,
+          task.projectId,
+          current.repoId,
+          payload.sender.login,
+          payload.sender.id,
+        ))
+      ) {
+        // PR 的狀態照實記錄，Task 維持原狀；由負責人決定要不要處理。
+        await ctx.store.savePullRequestLink({ ...current, state: nextState });
+        if (owner) {
+          await ctx.notifier.notify({
+            memberId: owner,
+            kind: "pr_closed_unmerged",
+            taskId: task.id,
+            message: `${task.key} 的 PR 被沒有寫入權限的 @${payload.sender.login} ${
+              payload.action === "closed" ? "關閉" : "重新打開"
+            }，Task 維持原狀態`,
+            url: pullRequestUrl,
+          });
+        }
+        ctx.logger.warn(
+          { taskId: task.id, pullRequest: pullRequestUrl, sender: payload.sender.login },
+          "沒有寫入權限的人變更了 PR 狀態，Task 不轉換",
+        );
+        return { kind: "rejected", taskId: task.id, reason: "sender_not_authorized" } as const;
+      }
+
+      let transitioned: boolean;
+      if (merged) {
+        const result = await ctx.domain.transitionTask(task.id, "done", {
           kind: "pr_merged",
-          taskId: task.id,
-          message: `${task.key} 的 PR 已 merge，Task 轉為 Done`,
-          url: pullRequestUrl,
+          doneReason: "completed",
+          pullRequestUrl,
         });
-      }
-    } else if (payload.action === "closed") {
-      const result = await ctx.domain.transitionTask(task.id, "review_gate", {
-        kind: "pr_closed",
-        pullRequestUrl,
-        byGithubLogin: payload.sender.login,
-      });
-      transitioned = result.ok;
-      if (owner) {
-        await ctx.notifier.notify({
-          memberId: owner,
-          kind: "pr_closed_unmerged",
-          taskId: task.id,
-          message: `${task.key} 的 PR 被 @${payload.sender.login} 關閉（沒有 merge），Task 退回 Review Gate`,
-          url: pullRequestUrl,
+        transitioned = result.ok;
+        if (owner) {
+          await ctx.notifier.notify({
+            memberId: owner,
+            kind: "pr_merged",
+            taskId: task.id,
+            message: `${task.key} 的 PR 已 merge，Task 轉為 Done`,
+            url: pullRequestUrl,
+          });
+        }
+      } else if (payload.action === "closed") {
+        const result = await ctx.domain.transitionTask(task.id, "review_gate", {
+          kind: "pr_closed",
+          pullRequestUrl,
+          byGithubLogin: payload.sender.login,
         });
+        transitioned = result.ok;
+        if (owner) {
+          await ctx.notifier.notify({
+            memberId: owner,
+            kind: "pr_closed_unmerged",
+            taskId: task.id,
+            message: `${task.key} 的 PR 被 @${payload.sender.login} 關閉（沒有 merge），Task 退回 Review Gate`,
+            url: pullRequestUrl,
+          });
+        }
+      } else {
+        const result = await ctx.domain.transitionTask(task.id, "pr_open", {
+          kind: "pr_reopened",
+          pullRequestUrl,
+        });
+        transitioned = result.ok;
       }
-    } else {
-      const result = await ctx.domain.transitionTask(task.id, "pr_open", {
-        kind: "pr_reopened",
-        pullRequestUrl,
-      });
-      transitioned = result.ok;
-    }
 
-    await ctx.store.savePullRequestLink({ ...current, state: nextState });
-    // 由 GitHub 觸發的轉換 Server 不會回呼 onTaskChanged，這裡自己同步 Issue 與摘要留言。
-    await pushTask(ctx, task.id);
-    ctx.logger.info(
-      { taskId: task.id, pullRequest: pullRequestUrl, state: nextState, transitioned },
-      "已處理 PR 狀態變更",
-    );
-    const kind = merged ? "merged" : payload.action === "closed" ? "closed" : "reopened";
-    return { kind, taskId: task.id, transitioned };
-  });
+      await ctx.store.savePullRequestLink({ ...current, state: nextState });
+      // 由 GitHub 觸發的轉換 Server 不會回呼 onTaskChanged，這裡自己同步 Issue 與摘要留言。
+      await pushTask(ctx, task.id);
+      ctx.logger.info(
+        { taskId: task.id, pullRequest: pullRequestUrl, state: nextState, transitioned },
+        "已處理 PR 狀態變更",
+      );
+      const kind = merged ? "merged" : payload.action === "closed" ? "closed" : "reopened";
+      return { kind, taskId: task.id, transitioned };
+    },
+  );
 }

@@ -202,6 +202,38 @@ describe("pull_request webhook", () => {
     expect((await w.store.findPullRequestLink(w.repo.id, number))?.state).toBe("open");
   });
 
+  it("沒有寫入權限的人（例如 triage）關閉 PR：Task 不轉換，記錄 PR 狀態並通知負責人", async () => {
+    const w = createWorld();
+    const { task, number } = await openedPr(w);
+    w.github.roles.set(w.outsider.login, "triage");
+    const response = await w.deliver(
+      "pull_request",
+      w.pullRequestPayload("closed", number, { merged: false, sender: w.outsider }),
+    );
+    expect(response.body).toMatchObject({
+      result: { kind: "rejected", reason: "sender_not_authorized" },
+    });
+    expect(w.domain.transitions).toEqual([]);
+    expect(w.domain.task(task.id).status).toBe("pr_open");
+    expect((await w.store.findPullRequestLink(w.repo.id, number))?.state).toBe("closed");
+    expect(w.notifier.sent).toMatchObject([{ memberId: w.alice.id, taskId: task.id }]);
+    expect(w.notifier.sent[0]?.message).toContain(`@${w.outsider.login}`);
+  });
+
+  it("沒有寫入權限的人重開 PR：Task 不轉換", async () => {
+    const w = createWorld();
+    const { task, number } = await openedPr(w);
+    await w.deliver(
+      "pull_request",
+      w.pullRequestPayload("closed", number, { merged: false, sender: w.userRef(w.bob) }),
+    );
+    await w.deliver(
+      "pull_request",
+      w.pullRequestPayload("reopened", number, { merged: false, sender: w.outsider }),
+    );
+    expect(w.domain.task(task.id).status).toBe("review_gate");
+  });
+
   it("沒有負責人時通知建立者", async () => {
     const w = createWorld();
     const { number } = await openedPr(w, { assigneeMemberId: null, createdByMemberId: w.bob.id });
