@@ -107,7 +107,7 @@ export const acceptanceCriteria = pgTable(
     position: integer("position").notNull(),
     kind: acceptanceCriterionKindEnum("kind").notNull(),
     description: text("description").notNull(),
-    /** `command` 類型要執行的指令；其他類型為 null。 */
+    /** `command` 類型要執行的指令；null 表示沿用 Repo 設定檔（§6.3）的 `verify`。其他類型一律為 null。 */
     command: text("command"),
     passed: boolean("passed"),
     /** 判定的證據，格式保留彈性（例如 `{ exit_code, output_blob }`、`{ screenshots: [...] }`）。 */
@@ -124,9 +124,10 @@ export const acceptanceCriteria = pgTable(
   },
   (t) => [
     index("acceptance_criteria_task_id_idx").on(t.taskId),
+    // 與契約一致：只有 command 類型可以設定指令；command 類型的指令可以為 null（ARCHITECTURE §5.1）。
     check(
-      "acceptance_criteria_command_required",
-      sql`${t.kind} <> 'command' OR ${t.command} IS NOT NULL`,
+      "acceptance_criteria_command_only_for_command_kind",
+      sql`${t.kind} = 'command' OR ${t.command} IS NULL`,
     ),
   ],
 );

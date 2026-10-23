@@ -15,6 +15,13 @@
       "when": 1792732638658,
       "tag": "0001_w2_contracts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792745406719,
+      "tag": "0002_ac_command_optional",
+      "breakpoints": true
     }
   ]
 }

@@ -754,7 +754,7 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       ]);
     });
 
-    it("command 類型要有指令；其他類型不能有指令", async () => {
+    it("只有 command 類型可以有指令", async () => {
       const { task, add } = await setup();
       const cmd = await add("lint 通過", { kind: "command", command: "pnpm lint" });
       expect(cmd).toMatchObject({ kind: "command", command: "pnpm lint", result: "pending" });
@@ -777,6 +777,35 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         kind: "agent",
         command: null,
       });
+    });
+
+    it("command 類型可以不填指令（null 表示沿用設定檔的 verify）：建立、改成 null、再補上指令", async () => {
+      const { task, add, list } = await setup();
+      const omitted = await add("沿用 verify", { kind: "command" });
+      expect(omitted).toMatchObject({ kind: "command", command: null, result: "pending" });
+      const explicit = await add("明確給 null", { kind: "command", command: null });
+      expect(explicit.command).toBeNull();
+
+      const withCommand = await add("lint 通過", { kind: "command", command: "pnpm lint" });
+      const cleared = await as("member").patch(`/api/acceptance-criteria/${withCommand.id}`, {
+        command: null,
+      });
+      expect(cleared.status).toBe(200);
+      expect(expectContract(AcceptanceCriterion, cleared.body)).toMatchObject({
+        kind: "command",
+        command: null,
+      });
+      const restored = await as("member").patch(`/api/acceptance-criteria/${omitted.id}`, {
+        command: "pnpm test",
+      });
+      expect(expectContract(AcceptanceCriterion, restored.body).command).toBe("pnpm test");
+      expect((await list()).map((c) => c.command)).toEqual(["pnpm test", null, null]);
+
+      // 只有不填指令的 command 類型 Acceptance Criterion，也滿足進入 Ready 的條件。
+      const transition = await as("member").post(`/api/tasks/${task.id}/transition`, {
+        status: "ready",
+      });
+      expect(transition.status).toBe(200);
     });
 
     it("移動位置與刪除後重新排序", async () => {

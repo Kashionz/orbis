@@ -436,7 +436,7 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
       expect(count).toBe(0);
     });
 
-    it("CHECK 限制：Child Run 必須有 Delegation 模式、Runner 種類與綁定對象一致、command 類型必須有指令", async () => {
+    it("CHECK 限制：Child Run 必須有 Delegation 模式、Runner 種類與綁定對象一致、只有 command 類型可以有指令", async () => {
       const { team, project } = await createTeamAndProject("CHK");
       const [task] = await db
         .insert(tasks)
@@ -474,11 +474,19 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
         db.insert(acceptanceCriteria).values({
           taskId: task.id,
           position: 0,
-          kind: "command",
-          description: "沒有指令",
+          kind: "manual",
+          description: "manual 類型不能有指令",
+          command: "pnpm test",
         }),
         PG.checkViolation,
       );
+      // command 類型沒有指令時沿用 Repo 設定檔的 verify（ARCHITECTURE §5.1）
+      await db.insert(acceptanceCriteria).values({
+        taskId: task.id,
+        position: 1,
+        kind: "command",
+        description: "沿用 verify",
+      });
     });
   });
 });
