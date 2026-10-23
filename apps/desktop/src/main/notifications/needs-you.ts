@@ -8,7 +8,9 @@ export const NEEDS_YOU_POLL_INTERVAL_MS = 5_000;
 /**
  * 點擊通知後要前往的 Web UI 路徑，和 Web UI 的 Needs You 頁「一鍵跳到」的位置相同：
  * Review Gate 到 diff review，權限請求到 Run 頁並聚焦在該請求，其他到 Run 頁。
- * TODO(contract): 路由取自 C1 分支（track/c1-web-core）的 router.tsx 與 NeedsYouPage.tsx，C1 合併後確認。
+ * 路由對應 apps/web 的 `src/router.tsx`（`/runs/$runId`、`/runs/$runId/review`、`focus` search 參數）
+ * 與 `src/features/needs-you/NeedsYouPage.tsx` 的 `JumpLink`。apps/web 依賴 @orbis/desktop，
+ * 不能反過來匯入，Web 改路由時要一起改這裡。
  */
 export function needsYouHref(item: NeedsYouItem): string {
   const run = `/runs/${encodeURIComponent(item.runId)}`;
