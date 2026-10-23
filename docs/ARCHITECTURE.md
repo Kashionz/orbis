@@ -139,11 +139,12 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 - **Local Runner**：Member 在 Electron 登入後自動完成 Pairing，Runner 綁定該 Member。
 - **Team Runner**：Admin 在 UI 產生 Team token，Runner 用這組 token 完成 Pairing。
 - **派工規則**：
-  - Run 選擇「在我的電腦跑」→ 只有負責人的 Local Runner 會領取。
+  - Run 選擇「在我的電腦跑」→ 只有派工者本人的 Local Runner 會領取（「我」是派工的人，不是 Task 的負責人）。
   - Run 選擇「Team Runner」→ 進入 Team 佇列。
   - Local Runner 離線時，Run 停在佇列中，**不會自動轉給 Team Runner**。
-  - **改派**也遵守上面的規則：Dispatch 逾時或 Runner 離線過久時，Run 回到佇列重新派工；「在我的電腦跑」的 Run 只會再派給負責人的 Local Runner。
+  - **改派**也遵守上面的規則：Dispatch 逾時或 Runner 離線過久時，Run 回到佇列重新派工；「在我的電腦跑」的 Run 只會再派給派工者本人的 Local Runner。
   - Runner 在心跳中回報是否接受新的 Dispatch（Desktop 的「暫停領取」）。不接受時，Server 不派工給它。
+  - 每次連線後，Server 收到第一個 Heartbeat 才知道 Runner 是否接受派工，所以在那之前不派工；`agent_availability` 只記錄，不觸發派工。
 - **Pairing token**：Local Runner 的 Pairing token 由已登入的 Member 取得，綁定本人；Team Runner 的由 Admin 以上產生。token 只能用一次，Server 只存 hash。
 - **撤銷**：Member 可以撤銷自己的 Local Runner，Admin 以上可以撤銷任何 Runner。撤銷時立刻斷線。
 - **Dispatch 協定**：每次 Dispatch 有唯一的 Dispatch ID；Runner 定時送心跳。過期 Dispatch 回報的結果會被拒絕。
