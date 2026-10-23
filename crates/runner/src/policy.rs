@@ -171,12 +171,12 @@ fn decide_command(command: &str, ctx: &PolicyContext<'_>) -> Decision {
         if let Some(reason) = dangerous_args(segment) {
             return Decision::ask(reason);
         }
-        if let Some(path) = outside_path(segment, ctx.worktree, cwd) {
+        if let Some(path) = outside_path(segment, ctx.worktree, cwd.as_deref()) {
             return Decision::ask(format!("存取 Worktree 以外的路徑：{path}"));
         }
     }
     for (segment, cwd) in analysis.segments.iter().zip(&cwds) {
-        if is_harmless_navigation(segment, ctx.worktree, cwd) {
+        if is_harmless_navigation(segment, ctx.worktree, cwd.as_deref()) {
             continue;
         }
         let text = segment.join(" ");
@@ -409,21 +409,48 @@ fn redirect_target(word: &str) -> Option<&str> {
 
 /// 每一段指令執行時的目前目錄：從 Worktree 開始，遇到 `cd <目錄>` 就換過去（之後的相對路徑
 /// 以那裡為基準）。沒有參數的 `cd` 是家目錄，以 Worktree 外的路徑表示。
-fn segment_cwds(segments: &[Vec<String>], worktree: &Path) -> Vec<PathBuf> {
-    let mut cwd = worktree.to_path_buf();
+///
+/// 只追蹤單純的 `cd <目錄>`；`cd -`、帶選項或多個參數時目錄視為未知（`None`），之後的相對路徑
+/// 一律問人。管線中的 `cd` 實際上在子 shell 執行、不會改變目錄，所以判斷時 Worktree 與這裡的
+/// 目錄兩個基準都要檢查（[`outside_path`]）。
+fn segment_cwds(segments: &[Vec<String>], worktree: &Path) -> Vec<Option<PathBuf>> {
+    let mut cwd = Some(worktree.to_path_buf());
     segments
         .iter()
         .map(|segment| {
             let current = cwd.clone();
             if segment.first().map(String::as_str) == Some("cd") {
-                cwd = match segment.get(1) {
-                    Some(dir) => path_like(dir, &current).unwrap_or_else(|| current.join(dir)),
-                    None => path_like("~", &current).unwrap_or_default(),
+                cwd = match &segment[1..] {
+                    [] => path_like("~", worktree),
+                    [dir] if !dir.starts_with('-') => match path_like(dir, worktree) {
+                        Some(abs) if absolute_word(dir) => Some(abs),
+                        _ => current.as_ref().map(|base| base.join(dir)),
+                    },
+                    _ => None,
                 };
             }
             current
         })
         .collect()
+}
+
+/// 詞是否是絕對路徑（含 Windows 的 `C:\`、UNC 與 `~` 開頭），不受目前目錄影響。
+fn absolute_word(word: &str) -> bool {
+    let bytes = word.as_bytes();
+    let windows_abs = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    windows_abs || word.starts_with('/') || word.starts_with("\\\\") || word.starts_with('~')
+}
+
+/// 判斷相對路徑時的基準：Worktree，加上追蹤到的目前目錄（不同時）。
+fn path_bases<'a>(worktree: &'a Path, cwd: Option<&'a Path>) -> Vec<&'a Path> {
+    let mut bases = vec![worktree];
+    if let Some(cwd) = cwd.filter(|c| *c != worktree) {
+        bases.push(cwd);
+    }
+    bases
 }
 
 /// 指令中指向 Worktree 外的詞，回傳那個詞（issue #61）。
@@ -432,7 +459,7 @@ fn segment_cwds(segments: &[Vec<String>], worktree: &Path) -> Vec<PathBuf> {
 /// 絕對路徑、`~` 開頭與含 `..` 的詞直接判斷；其他相對路徑以這段指令的目前目錄（`cwd`，見
 /// [`segment_cwds`]）為基準，用會解開 symlink／junction 的 [`inside`] 判斷（Worktree 內指向外面的
 /// 連結視為在外面）。
-fn outside_path(segment: &[String], worktree: &Path, cwd: &Path) -> Option<String> {
+fn outside_path(segment: &[String], worktree: &Path, cwd: Option<&Path>) -> Option<String> {
     segment.iter().find_map(|word| {
         let candidate = redirect_target(word).unwrap_or(word);
         let candidate = match candidate.split_once('=') {
@@ -444,8 +471,22 @@ fn outside_path(segment: &[String], worktree: &Path, cwd: &Path) -> Option<Strin
                 None => candidate,
             },
         };
-        let path = path_like(candidate, cwd).or_else(|| relative_path(candidate, cwd))?;
-        (!inside(&path, worktree)).then(|| word.clone())
+        let absolute = path_like(candidate, worktree).filter(|_| absolute_word(candidate));
+        if let Some(path) = absolute {
+            return (!inside(&path, worktree)).then(|| word.clone());
+        }
+        relative_path(candidate, worktree)?;
+        if cwd.is_none() {
+            // 目前目錄未知（`cd -` 等）：相對路徑無法判斷。
+            return Some(word.clone());
+        }
+        path_bases(worktree, cwd)
+            .into_iter()
+            .any(|base| {
+                let path = path_like(candidate, base).unwrap_or_else(|| base.join(candidate));
+                !inside(&path, worktree)
+            })
+            .then(|| word.clone())
     })
 }
 
@@ -692,7 +733,7 @@ fn program_name(word: &str) -> String {
 }
 
 /// 接受長參數縮寫的程式（只要不會混淆，`--amen` 就等於 `--amend`）。
-const ABBREVIATES_LONG_OPTIONS: &[&str] = &["git", "tar"];
+const ABBREVIATES_LONG_OPTIONS: &[&str] = &["git", "tar", "grep", "wc", "du"];
 
 /// 參數是否符合規則中的 `flag`。`abbreviations` 為 `true` 時，長參數的縮寫（至少 `--` 加一個字元）
 /// 也算符合。
@@ -762,6 +803,17 @@ fn dangerous_args(segment: &[String]) -> Option<String> {
         return Some(format!("{program} {word} 會下載或執行任意程式：{text}"));
     }
     let abbreviations = ABBREVIATES_LONG_OPTIONS.contains(&program.as_str());
+    // tar 的傳統寫法：第一個引數沒有 `-` 時是合併的短參數（`tar xTf list a.tar`）。
+    let tar_bundle;
+    let args = match args.split_first() {
+        Some((first, rest)) if program == "tar" && !first.starts_with('-') => {
+            tar_bundle = std::iter::once(format!("-{first}"))
+                .chain(rest.iter().cloned())
+                .collect::<Vec<_>>();
+            tar_bundle.as_slice()
+        }
+        _ => args,
+    };
     for (rule_program, rule_sub, flags) in DANGEROUS_ARGS {
         if *rule_program != program || rule_sub.is_some_and(|s| Some(s) != sub) {
             continue;
@@ -800,16 +852,15 @@ fn deletes_outside(segment: &[String], worktree: &Path) -> Option<PathBuf> {
 
 /// `cd`／`pwd` 到 Worktree 內的目錄：本身沒有副作用，不要求列在 allow_commands 中。
 /// `cwd` 是這段指令的目前目錄（相對路徑的基準）。
-fn is_harmless_navigation(segment: &[String], worktree: &Path, cwd: &Path) -> bool {
+fn is_harmless_navigation(segment: &[String], worktree: &Path, cwd: Option<&Path>) -> bool {
     match segment.first().map(String::as_str) {
         Some("pwd") => segment.len() == 1,
         Some("cd") => match segment.get(1) {
             None => false,
             Some(dir) => {
-                segment.len() == 2 && {
-                    let path = path_like(dir, cwd).unwrap_or_else(|| cwd.join(dir));
-                    inside(&path, worktree)
-                }
+                segment.len() == 2
+                    && !dir.starts_with('-')
+                    && outside_path(segment, worktree, cwd).is_none()
             }
         },
         _ => false,
@@ -1120,7 +1171,7 @@ mod tests {
             "~-",
         ] {
             let segment = vec!["cat".to_owned(), word.to_owned()];
-            assert!(outside_path(&segment, &wt, &wt).is_some(), "{word}");
+            assert!(outside_path(&segment, &wt, Some(&wt)).is_some(), "{word}");
         }
         // allow_commands 放行了 cat，讀別人的家目錄仍然要問人
         let allow = vec!["cat *".to_owned()];
@@ -1229,6 +1280,10 @@ mod tests {
             "rg -L foo",
             "rg --follow foo",
             "wc --files0-from=list.txt",
+            "wc --files0=list.txt",
+            "grep --dereference-rec foo .",
+            "tar xTf list.txt a.tar",
+            "tar xIf evil a.tar",
         ] {
             let decision = decide_allow_all(command, &wt);
             assert_eq!(kind(&decision), "ask", "{command} → {decision:?}");
@@ -1326,13 +1381,22 @@ mod tests {
             kind(&decide_allow_all("cd sub && cat inner/key", &wt)),
             "ask"
         );
+        // 相對路徑同時以 Worktree 與 cd 之後的目錄判斷（管線中的 cd 不會改變目錄），
+        // 所以 cd 之後的 `..` 保守地問人。
         assert_eq!(
             kind(&decide_allow_all("cd sub && cat ../README.md", &wt)),
+            "ask"
+        );
+        assert_eq!(
+            kind(&decide_allow_all("cd sub && cat README.md", &wt)),
             "allow"
         );
         assert_eq!(
             kind(&decide_allow_all("cd sub && cd inner && cat key", &wt)),
             "ask"
         );
+        assert_eq!(kind(&decide_allow_all("cd sub | cat link/key", &wt)), "ask");
+        // `cd -` 之後的目錄未知：相對路徑一律問人。
+        assert_eq!(kind(&decide_allow_all("cd - && cat README.md", &wt)), "ask");
     }
 }
