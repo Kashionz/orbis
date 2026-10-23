@@ -95,6 +95,8 @@ export interface World {
   feedbackRuns: FakeFeedbackRuns;
   /** Project 的 bot 白名單。 */
   botAllowlist: string[];
+  /** 寫下的 Task note。 */
+  taskNotes: { taskId: string; runId: string | null; body: string; url: string | null }[];
   /** 以 App 開出一個 PR（Review Gate 核准後 push 完成）。 */
   openPullRequest(overrides?: Partial<TaskRecord>): Promise<{ task: TaskRecord; number: number }>;
   /** 以錄製的 `pull_request_review.submitted` 為底；行內留言放進 FakeGitHub。 */
@@ -176,6 +178,7 @@ export function createWorld(options: { feedback?: boolean; repoSpecs?: boolean }
   const feedbackRuns = new FakeFeedbackRuns();
   const repoSpecs = new FakeRepoSpecs();
   const botAllowlist: string[] = [];
+  const taskNotes: World["taskNotes"] = [];
   const integration = createGitHubIntegration({
     ...(options.repoSpecs === false
       ? {}
@@ -197,6 +200,9 @@ export function createWorld(options: { feedback?: boolean; repoSpecs?: boolean }
             runs: feedbackRuns,
             botAllowlist: async (projectId: string) =>
               projectId === PROJECT_ID ? [...botAllowlist] : [],
+            addTaskNote: async (note: World["taskNotes"][number]) => {
+              taskNotes.push(structuredClone(note));
+            },
           },
         }),
     config: { appId: 1, privateKey: "unused", webhookSecret: WEBHOOK_SECRET, slug: APP_SLUG },
@@ -227,6 +233,7 @@ export function createWorld(options: { feedback?: boolean; repoSpecs?: boolean }
     repoSpecs,
     feedbackRuns,
     botAllowlist,
+    taskNotes,
 
     async openPullRequest(overrides = {}) {
       const task = domain.addTask({

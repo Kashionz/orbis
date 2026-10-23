@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { CI_DETAILS_MAX_CHARS } from "../src/feedback/ci-details";
 import { extractFailureExcerpt, FAILURE_EXCERPT_LINES } from "../src/feedback/ci-log";
 import { CHECK_OUTPUT_MAX_CHARS } from "../src/feedback/prompt";
+import { FEEDBACK_FIX_LIMIT, FEEDBACK_FIX_MARKER } from "../src/feedback/records";
+import type { TaskRecord } from "../src/ports";
 import { createWorld, HEAD_SHA, type World } from "./helpers/world";
 
 /** 在 orbis-sandbox 錄下的真實 job log（test job 故意失敗）。 */
@@ -249,5 +251,246 @@ describe("log 摘要的擷取", () => {
   it("沒有 ##[error] 時取 log 的最後幾行", () => {
     const excerpt = extractFailureExcerpt("a\nb\n\nc\n");
     expect(excerpt).toEqual({ step: null, lines: ["a", "b", "c"], truncated: false });
+  });
+});
+
+/** 第 n 個 commit 的 SHA（40 碼）。 */
+const sha = (n: number) => n.toString(16).padStart(40, "a");
+
+/** 這個 PR 正在進行的修正的 Run。 */
+async function activeFixRun(w: World, number: number): Promise<string> {
+  const fixes = await w.store.listFeedbackFixes(w.repo.id, number);
+  return fixes.find((f) => f.status === "sent")?.runId ?? "no-active-fix";
+}
+
+/** 一輪 review 修正：送出 review → 修正的 Run push。回傳這輪的 webhook 結果。 */
+async function reviewRound(w: World, task: TaskRecord, number: number, round: number) {
+  const response = await w.deliver(
+    "pull_request_review",
+    w.reviewPayload(number, { author: w.userRef(w.alice), body: `第 ${round} 輪` }),
+  );
+  const runId = await activeFixRun(w, number);
+  await w.integration.onBranchPushed({
+    taskId: task.id,
+    runId,
+    branch: `feature/${task.key}`,
+    commitSha: sha(round),
+  });
+  return response;
+}
+
+/** 一輪 CI 修正：PR 目前 head 的 CI 失敗 → 修正的 Run push 新的 commit。 */
+async function ciRound(w: World, task: TaskRecord, number: number, round: number) {
+  const link = await w.store.findPullRequestLink(w.repo.id, number);
+  const head = link?.headSha ?? HEAD_SHA;
+  w.setChecks(head, [{ id: 7000 + round, name: "test", conclusion: "failure" }]);
+  const response = await w.deliver("check_suite", w.checkSuitePayload(number, { sha: head }));
+  const runId = await activeFixRun(w, number);
+  await w.integration.onBranchPushed({
+    taskId: task.id,
+    runId,
+    branch: `feature/${task.key}`,
+    commitSha: sha(100 + round),
+  });
+  return response;
+}
+
+/** App 在 PR 上留下的自動修正紀錄。 */
+function fixComments(w: World, number: number) {
+  return w.github
+    .commentsOn(w.repo.id, number)
+    .filter((c) => c.body.startsWith(FEEDBACK_FIX_MARKER));
+}
+
+describe("次數上限", () => {
+  it(`review 每個 PR 最多自動修正 ${FEEDBACK_FIX_LIMIT} 次，超過時停下、在 PR 上說明並通知負責人一次`, async () => {
+    const w = createWorld();
+    const { task, number } = await w.openPullRequest();
+    for (let round = 1; round <= FEEDBACK_FIX_LIMIT; round++) {
+      await reviewRound(w, task, number, round);
+    }
+    expect(w.feedbackRuns.requests).toHaveLength(FEEDBACK_FIX_LIMIT);
+
+    const sixth = await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, { author: w.userRef(w.alice), body: "第 6 輪" }),
+    );
+    expect(sixth).toMatchObject({
+      body: { result: { flush: { kind: "limit_reached", source: "review", notified: true } } },
+    });
+    expect(w.feedbackRuns.requests).toHaveLength(FEEDBACK_FIX_LIMIT);
+    expect(w.notifier.sent).toContainEqual(
+      expect.objectContaining({
+        memberId: w.alice.id,
+        kind: "feedback_limit_reached",
+        taskId: task.id,
+      }),
+    );
+    const limit = fixComments(w, number).at(-1);
+    expect(limit?.body).toContain(
+      `自動修正已達上限（review ${FEEDBACK_FIX_LIMIT}／${FEEDBACK_FIX_LIMIT} 次）`,
+    );
+    expect(limit?.body).toMatch(/這次沒有送出的回饋：\n- @Codertocat 的 \[review\]/);
+    expect(w.taskNotes.at(-1)?.body).toContain("已達上限");
+
+    // 之後再觸發：不送、不再留言、不再通知
+    const comments = fixComments(w, number).length;
+    const notified = w.notifier.sent.length;
+    const seventh = await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, { author: w.userRef(w.alice), body: "第 7 輪" }),
+    );
+    expect(seventh).toMatchObject({
+      body: { result: { flush: { kind: "limit_reached", notified: false } } },
+    });
+    expect(fixComments(w, number)).toHaveLength(comments);
+    expect(w.notifier.sent).toHaveLength(notified);
+    expect(w.feedbackRuns.requests).toHaveLength(FEEDBACK_FIX_LIMIT);
+  });
+
+  it("CI 與 review 分開計數：review 達到上限後，CI 失敗仍然會自動修正", async () => {
+    const w = createWorld();
+    const { task, number } = await w.openPullRequest();
+    for (let round = 1; round <= FEEDBACK_FIX_LIMIT + 1; round++) {
+      await reviewRound(w, task, number, round);
+    }
+    expect(w.feedbackRuns.requests.map((r) => r.source)).toEqual(
+      Array(FEEDBACK_FIX_LIMIT).fill("review"),
+    );
+    await ciRound(w, task, number, 1);
+    expect(w.feedbackRuns.requests.at(-1)?.source).toBe("ci");
+    expect(fixComments(w, number).at(-1)?.body).toContain(
+      `自動修正（CI 第 1／${FEEDBACK_FIX_LIMIT} 次）`,
+    );
+  });
+
+  it(`CI 每個 PR 最多自動修正 ${FEEDBACK_FIX_LIMIT} 次；之後 review 仍然會自動修正`, async () => {
+    const w = createWorld();
+    const { task, number } = await w.openPullRequest();
+    for (let round = 1; round <= FEEDBACK_FIX_LIMIT; round++) {
+      await ciRound(w, task, number, round);
+    }
+    expect(w.feedbackRuns.requests).toHaveLength(FEEDBACK_FIX_LIMIT);
+    const sixth = await ciRound(w, task, number, FEEDBACK_FIX_LIMIT + 1);
+    expect(sixth).toMatchObject({
+      body: { result: [{ flush: { kind: "limit_reached", source: "ci", notified: true } }] },
+    });
+    expect(w.feedbackRuns.requests).toHaveLength(FEEDBACK_FIX_LIMIT);
+
+    await reviewRound(w, task, number, 1);
+    expect(w.feedbackRuns.requests.at(-1)?.source).toBe("review");
+  });
+
+  it("沒有開成 Run 的修正不計入次數", async () => {
+    const w = createWorld();
+    const { task, number } = await w.openPullRequest();
+    w.feedbackRuns.failNext("run_not_resumable", "Runner 離線");
+    await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, { author: w.userRef(w.alice), body: "沒送出" }),
+    );
+    for (let round = 1; round <= FEEDBACK_FIX_LIMIT; round++) {
+      await reviewRound(w, task, number, round);
+    }
+    // 1 次失敗 + 5 次成功的要求
+    expect(w.feedbackRuns.requests).toHaveLength(FEEDBACK_FIX_LIMIT + 1);
+    const fixes = await w.store.listFeedbackFixes(w.repo.id, number);
+    expect(fixes.filter((f) => f.status === "pushed")).toHaveLength(FEEDBACK_FIX_LIMIT);
+  });
+});
+
+describe("紀錄", () => {
+  it("每次自動修正在 PR 上留言（註明觸發的留言與次數），push 後在同一則留言附上新的 commit", async () => {
+    const w = createWorld();
+    const { task, number } = await w.openPullRequest();
+    await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, {
+        author: w.userRef(w.alice),
+        body: "請修正",
+        comments: [{ body: "標題", path: "src/calculator.html", line: 7 }],
+      }),
+    );
+    const [comment] = fixComments(w, number);
+    expect(comment?.author).toBe(w.bot.login);
+    expect(comment?.body).toContain(`自動修正（review 第 1／${FEEDBACK_FIX_LIMIT} 次）`);
+    expect(comment?.body).toMatch(/- @Codertocat 的 \[review\]\(.+#pullrequestreview-\d+\)/);
+    expect(comment?.body).toMatch(
+      /- @Codertocat 在 `src\/calculator\.html` 第 7 行 的 \[留言\]\(.+\)/,
+    );
+    expect(comment?.body).toContain("⏳ Agent 修正中");
+
+    const [fix] = await w.store.listFeedbackFixes(w.repo.id, number);
+    expect(fix?.prCommentId).toBe(comment?.id);
+
+    await w.integration.onBranchPushed({
+      taskId: task.id,
+      runId: "fix-run-1",
+      branch: `feature/${task.key}`,
+      commitSha: sha(1),
+    });
+    const updated = fixComments(w, number);
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.body).toContain(
+      `✅ 修正已 push：[\`${sha(1).slice(0, 7)}\`](${w.repo.htmlUrl}/commit/${sha(1)})`,
+    );
+  });
+
+  it("每次自動修正在 Task 上留下 Task note，連到修正的 Run 與 PR 上的紀錄留言", async () => {
+    const w = createWorld();
+    const { task, number } = await w.openPullRequest();
+    w.setChecks(HEAD_SHA, [{ id: 2, name: "test", conclusion: "failure" }]);
+    await w.deliver("check_suite", w.checkSuitePayload(number));
+    const [comment] = fixComments(w, number);
+    expect(w.taskNotes).toEqual([
+      {
+        taskId: task.id,
+        runId: "fix-run-1",
+        body: `Feedback Loop：自動修正（CI 第 1／${FEEDBACK_FIX_LIMIT} 次）。觸發來源：commit \`${HEAD_SHA.slice(0, 7)}\` 的 1 個失敗的 check。`,
+        url: `${w.repo.htmlUrl}/pull/${number}#issuecomment-${comment?.id}`,
+      },
+    ]);
+    expect(comment?.body).toMatch(/- check \[`test`\]\(.+\)（failure）/);
+  });
+
+  it("修正的 Run 沒有 push 就結束：同一則留言改成說明", async () => {
+    const w = createWorld();
+    const { number } = await w.openPullRequest();
+    await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, { author: w.userRef(w.alice), body: "請修正" }),
+    );
+    await w.integration.onFeedbackRunEnded({ runId: "fix-run-1" });
+    const [comment] = fixComments(w, number);
+    expect(comment?.body).toContain("⚠️ 修正的 Run 沒有 push 就結束");
+  });
+
+  it("沒有開成 Run：PR 上與 Task 上都說明原因", async () => {
+    const w = createWorld();
+    const { number } = await w.openPullRequest();
+    w.feedbackRuns.failNext("run_not_resumable", "Runner 離線");
+    await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, { author: w.userRef(w.alice), body: "請修正" }),
+    );
+    const [comment] = fixComments(w, number);
+    expect(comment?.body).toContain("自動修正沒有送出（review）");
+    expect(comment?.body).toContain("原因：Runner 離線");
+    expect(w.taskNotes.at(-1)).toMatchObject({ runId: null });
+    expect(w.taskNotes.at(-1)?.body).toContain("Runner 離線");
+  });
+
+  it("在 PR 上留言失敗不影響修正；Task note 改連到 PR", async () => {
+    const w = createWorld();
+    const { number } = await w.openPullRequest();
+    w.github.failNext("createIssueComment");
+    await w.deliver(
+      "pull_request_review",
+      w.reviewPayload(number, { author: w.userRef(w.alice), body: "請修正" }),
+    );
+    expect(w.feedbackRuns.requests).toHaveLength(1);
+    const [fix] = await w.store.listFeedbackFixes(w.repo.id, number);
+    expect(fix).toMatchObject({ status: "sent", prCommentId: null });
+    expect(w.taskNotes.at(-1)?.url).toBe(`${w.repo.htmlUrl}/pull/${number}`);
   });
 });

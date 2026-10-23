@@ -119,6 +119,7 @@ function feedbackFix(overrides: Partial<FeedbackFix> = {}): FeedbackFix {
     trigger: ciBatch(),
     status: "sent",
     commitSha: null,
+    prCommentId: null,
     message: null,
     createdAt: T0,
     updatedAt: T0,
@@ -302,6 +303,7 @@ export function describeFeedbackStoreContract(
           runId: "run-a",
           status: "pushed",
           commitSha: "c".repeat(40),
+          prCommentId: 777,
           updatedAt: later(20),
         });
         await store.saveFeedbackFix(pushed);

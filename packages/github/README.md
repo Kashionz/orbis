@@ -118,6 +118,7 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
   - `store: FeedbackStore`：待送批次與自動修正紀錄，Drizzle 的實作要通過 `describeFeedbackStoreContract`。
   - `runs: FeedbackRunPort`：`requestFix` 開一個新的 Run 修正回饋。新的 Run 的 origin 是 `feedback_loop`，連到 `previousRunId`，使用同一個 Runner、分支與 Worktree，resume 原本的 session。Task 轉回 Running，修正經過 Verifying，通過後直接 push、不經過 Review Gate。
   - `botAllowlist(projectId)`：Project 的 bot 白名單。
+  - `addTaskNote({ taskId, runId, body, url })`：寫一筆 `source = feedback_loop` 的 Task note。
 - **`repoSpecs`**（選填）：
   - `store: RepoSpecStore`：Spec PR 的對應，要通過 `describeRepoSpecStoreContract`。
   - `getRepoSpec`。
@@ -185,9 +186,14 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
   - 每次 `check_suite.completed` 或失敗的 `check_run.completed` 都重新查一次這個 commit 的 suite 與 check run，所以判斷是冪等的。
   - 有 check run 的 suite 都完成後，才把還沒觸發過的失敗 check 合併成一批。
   - 沒有 check run、一直是 `queued` 的 suite 不等，例如 Vercel、Fly.io 這類安裝了但沒在跑 check 的 App。
-- **prompt**（`prompt.ts`）：
+- **prompt**（`prompt.ts`、`ci-details.ts`、`ci-log.ts`）：
   - review：附上檔案、行號、留言與 `diff_hunk` 的最後 20 行。
   - CI：附上 check 名稱、結論與 output。output 放在 code block 中當資料，長度有上限。
+  - GitHub Actions 的 check 另外讀 job log（`actions: read`），只擷取第一個 `##[error]` 所在步驟中錯誤之前的最後 60 行。job log 以串流讀取，最多讀最後 8 MiB。
+  - 沒有權限、log 已過期，或不是 Actions 的 check：改附 failure 等級的 annotations。
+- **次數與紀錄**（`records.ts`）：
+  - 每種來源最多 5 次，次數由 `FeedbackFix` 數出（開成 Run 的才算）。第一次超過時記一筆 `limit_reached`，在 PR 上說明，並以 `feedback_limit_reached` 通知負責人。
+  - 每次修正都在 PR 上留下以 `<!-- <產品 slug>:feedback-fix -->` 標記的留言，並寫一筆 Task note；push 後更新同一則留言。
 
 ## Repo Spec 提交到 repo
 

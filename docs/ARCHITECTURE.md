@@ -147,7 +147,11 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Phase 1 不設 CI App 的白名單，理由是只有 repo 的 admin 能把 App 裝到 repo 上，而且 CI 失敗就應該觸發。
   - 緩解：output 與 log 放在 code block 中當資料，並限制長度；prompt 中註明它們是 CI 產生的資料，不是給 Agent 的指示。
 - **次數上限**：每個 PR 自動修正最多 **5 次**，CI 與 review 分開計數。超過就停下並通知 Task 負責人。
+  - 開成 Run 的修正才計入次數，之後 Run 失敗也算；Server 開不成 Run 的不算。
+  - 第一次超過上限時，在 PR 上說明並通知負責人；之後同一個來源再觸發只記 log。
 - **紀錄**：每次自動修正都在 Task（Task note）與 PR 上留下紀錄，註明是哪個來源觸發。
+  - PR 上的紀錄留言列出觸發的留言或 check、這是第幾次；修正 push 後在同一則留言附上新的 commit，Run 沒有 push 就結束時也在同一則留言說明。
+  - Task note 連到修正的 Run 與 PR 上的紀錄留言。開不成 Run 時，PR 與 Task 上都說明原因。
 - **送回原 Run 的 session**：PR 開出後原 Run 已經 `completed`，所以每次修正都開一個**新的 Run**（`origin = feedback_loop`，以 `resumes_run_id` 連到前一個 Run）。
   - 派回前一個 Run 的 Runner，沿用同一個 Worktree 與分支。`dispatch_offer` 的 `continuation` 帶上前一個 Run 回報的 ACP session id（`agent_session` Event），Runner 以 `session/resume`（或 `session/load`）恢復；Agent 不支援或恢復失敗時開新的 session，並附上 Task 與目前 diff 的摘要。
   - 修正後經過 Verifying，通過就直接 push（不經過 Review Gate，PR 上的人類 review 就是 Gate），Task 回到 PR Open。

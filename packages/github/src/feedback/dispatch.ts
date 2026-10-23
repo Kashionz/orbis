@@ -12,6 +12,7 @@ import type {
 } from "../ports";
 import { collectCiDetails } from "./ci-details";
 import { renderFeedbackPrompt } from "./prompt";
+import { countsTowardLimit, FEEDBACK_FIX_LIMIT, recordFix, updateFixComment } from "./records";
 
 /** 零散的留言在最後一則之後等這麼久才送出（同一段時間內的留言合併成一批）。 */
 export const LOOSE_COMMENT_DELAY_MS = 2 * 60 * 1000;
@@ -29,7 +30,12 @@ export type FlushOutcome =
   /** 前一次自動修正還沒完成，批次留著。 */
   | { kind: "held"; fixId: string }
   | { kind: "sent"; source: FeedbackSource; fixId: string; runId: string }
-  | { kind: "failed"; source: FeedbackSource; fixId: string; message: string };
+  | { kind: "failed"; source: FeedbackSource; fixId: string; message: string }
+  /**
+   * 這個來源已經達到次數上限，批次丟掉不送。`notified` 為 true 表示這次第一次達到上限，
+   * 已經在 PR 上說明並通知負責人；之後再觸發只記 log。
+   */
+  | { kind: "limit_reached"; source: FeedbackSource; notified: boolean };
 
 /** 把回饋併進批次（同一則回饋只留一份），存回 store。 */
 export async function mergeIntoBatch(
@@ -92,7 +98,7 @@ export async function flushPullRequestLocked(
       await deps.store.deleteFeedbackBatch(githubRepoId, prNumber, source);
       continue;
     }
-    return dispatchBatch(ctx, deps, link, batch);
+    return dispatchBatch(ctx, deps, link, batch, fixes);
   }
   return { kind: "nothing" };
 }
@@ -103,8 +109,10 @@ async function dispatchBatch(
   deps: FeedbackDependencies,
   link: PullRequestLink,
   batch: FeedbackBatch,
+  fixes: readonly FeedbackFix[],
 ): Promise<FlushOutcome> {
   await deps.store.deleteFeedbackBatch(batch.githubRepoId, batch.prNumber, batch.source);
+  const task = await ctx.domain.getTask(link.taskId);
   const now = ctx.now();
   const fix: FeedbackFix = {
     id: randomUUID(),
@@ -117,10 +125,31 @@ async function dispatchBatch(
     trigger: batch,
     status: "failed",
     commitSha: null,
+    prCommentId: null,
     message: null,
     createdAt: now,
     updatedAt: now,
   };
+
+  // 次數上限：CI 與 review 分開計數，開成 Run 的才算。
+  const used = fixes.filter((f) => f.source === batch.source && countsTowardLimit(f)).length;
+  if (used >= FEEDBACK_FIX_LIMIT) {
+    if (fixes.some((f) => f.source === batch.source && f.status === "limit_reached")) {
+      ctx.logger.info(
+        { taskId: link.taskId, pullRequest: link.url, source: batch.source },
+        "Feedback Loop 已達次數上限，略過新的回饋",
+      );
+      return { kind: "limit_reached", source: batch.source, notified: false };
+    }
+    fix.status = "limit_reached";
+    await deps.store.saveFeedbackFix(fix);
+    await recordFix(ctx, deps, link, task, fix, [...fixes, fix]);
+    ctx.logger.warn(
+      { taskId: link.taskId, pullRequest: link.url, source: batch.source },
+      "Feedback Loop 達到次數上限，停止自動修正並通知負責人",
+    );
+    return { kind: "limit_reached", source: batch.source, notified: true };
+  }
 
   if (!link.runId) {
     fix.message = "開出這個 PR 的 Run 已經不存在，無法接續";
@@ -145,6 +174,7 @@ async function dispatchBatch(
     }
   }
   await deps.store.saveFeedbackFix(fix);
+  await recordFix(ctx, deps, link, task, fix, [...fixes, fix]);
 
   if (fix.status === "sent" && fix.runId) {
     ctx.logger.info(
@@ -209,6 +239,11 @@ export async function finishFeedbackFix(
       }
       fix.updatedAt = ctx.now();
       await deps.store.saveFeedbackFix(fix);
+      await updateFixComment(
+        ctx,
+        fix,
+        await deps.store.listFeedbackFixes(fix.githubRepoId, fix.prNumber),
+      );
     }
     const flush = await flushPullRequestLocked(ctx, deps, fix.githubRepoId, fix.prNumber);
     return { fix, flush };

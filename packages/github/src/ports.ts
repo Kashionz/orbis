@@ -148,7 +148,12 @@ export interface DomainService {
 }
 
 /** 通知的種類（ARCHITECTURE §12.3「自己的 Task 被 merge 或被退回」）。 */
-export type GitHubNotificationKind = "pr_merged" | "pr_closed_unmerged" | "pr_open_failed";
+export type GitHubNotificationKind =
+  | "pr_merged"
+  | "pr_closed_unmerged"
+  | "pr_open_failed"
+  /** Feedback Loop 達到次數上限（§12.3）。 */
+  | "feedback_limit_reached";
 
 export interface Notifier {
   notify(notification: {
@@ -350,8 +355,9 @@ export type FeedbackBatch =
  * - `sent`：已經交給 Server 開新的 Run 修正，等待 push。同一個 PR 同時只有一筆 `sent`。
  * - `pushed`：修正已經 push。
  * - `failed`：沒有開成 Run，或 Run 沒有 push 就結束。
+ * - `limit_reached`：這個來源已經達到次數上限，沒有送出（每個 PR 每種來源只記一筆）。
  */
-export type FeedbackFixStatus = "sent" | "pushed" | "failed";
+export type FeedbackFixStatus = "sent" | "pushed" | "failed" | "limit_reached";
 
 export interface FeedbackFix {
   id: string;
@@ -368,6 +374,8 @@ export interface FeedbackFix {
   status: FeedbackFixStatus;
   /** 修正 push 出去的 commit（`pushed` 時）。 */
   commitSha: string | null;
+  /** PR 上這次修正的紀錄留言；push 後在同一則留言補上新的 commit。留言失敗時為 null。 */
+  prCommentId: number | null;
   /** 失敗的原因（`failed` 時）。 */
   message: string | null;
   createdAt: Date;
@@ -417,6 +425,16 @@ export interface FeedbackDependencies {
    * Feedback Loop（ARCHITECTURE §5.2）；比對不分大小寫。
    */
   botAllowlist(projectId: string): Promise<string[]>;
+  /** 在 Task 上留下一筆 Task note（source 為 `feedback_loop`），每次自動修正一筆。 */
+  addTaskNote(note: {
+    taskId: string;
+    /** 修正用的 Run；沒有開成 Run 時為 null。 */
+    runId: string | null;
+    /** markdown。 */
+    body: string;
+    /** PR 上的紀錄留言；沒有時是 PR 本身。 */
+    url: string | null;
+  }): Promise<void>;
 }
 
 // ── Repo Spec 提交到 repo（ARCHITECTURE §12.1）─────────────────────────
