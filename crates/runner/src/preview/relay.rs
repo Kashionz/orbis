@@ -319,11 +319,17 @@ const WS_HANDSHAKE: &[&str] = &[
 ];
 
 /// 轉給 dev server 的 header：移除 hop-by-hop，改寫 Host、Origin，原本的 Host 放進 X-Forwarded-Host。
+///
+/// Origin 只有在和原本的 Host 同一個 host 時才改寫（同一個 Preview 網址的頁面發出的請求）；
+/// 其他 origin 原樣轉送，讓 dev server 自己的檢查擋下（Server 也會先擋下跨 origin 的請求）。
+/// `X-Forwarded-Host` 一律由 Runner 依 Host 設定，不採用請求中帶來的值。
 pub fn upstream_headers(headers: &PreviewHeaders, port: u16, websocket: bool) -> PreviewHeaders {
     let local = format!("localhost:{port}");
+    let original_host = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("host"))
+        .map(|(_, value)| value.to_ascii_lowercase());
     let mut out = Vec::with_capacity(headers.len() + 2);
-    let mut forwarded_host = None;
-    let mut has_forwarded_host = false;
     for (name, value) in headers {
         let lower = name.to_ascii_lowercase();
         if HOP_BY_HOP.contains(&lower.as_str())
@@ -332,11 +338,17 @@ pub fn upstream_headers(headers: &PreviewHeaders, port: u16, websocket: bool) ->
             continue;
         }
         match lower.as_str() {
-            "host" => forwarded_host = Some(value.clone()),
-            "origin" => out.push((name.clone(), format!("http://{local}"))),
-            "x-forwarded-host" => {
-                has_forwarded_host = true;
-                out.push((name.clone(), value.clone()));
+            "host" | "x-forwarded-host" => {}
+            "origin" => {
+                let same = original_host
+                    .as_deref()
+                    .is_some_and(|host| origin_host(value).as_deref() == Some(host));
+                let origin = if same {
+                    format!("http://{local}")
+                } else {
+                    value.clone()
+                };
+                out.push((name.clone(), origin));
             }
             _ => out.push((name.clone(), value.clone())),
         }
@@ -344,10 +356,16 @@ pub fn upstream_headers(headers: &PreviewHeaders, port: u16, websocket: bool) ->
     if !websocket {
         out.insert(0, ("host".to_owned(), local));
     }
-    if let (Some(host), false) = (forwarded_host, has_forwarded_host) {
+    if let Some(host) = original_host {
         out.push(("x-forwarded-host".to_owned(), host));
     }
     out
+}
+
+/// Origin（`scheme://host[:port]`）的 host 部分，小寫。
+fn origin_host(origin: &str) -> Option<String> {
+    let (_, rest) = origin.split_once("://")?;
+    (!rest.is_empty() && !rest.contains('/')).then(|| rest.to_ascii_lowercase())
 }
 
 /// 轉回給 Server 的回應 header：移除 hop-by-hop。
@@ -740,6 +758,30 @@ mod tests {
                 ("x-forwarded-host", "r1.preview.example.com"),
             ])
         );
+    }
+
+    #[test]
+    fn 其他_origin_不改寫_x_forwarded_host_不採用請求帶來的值() {
+        let headers = upstream_headers(
+            &h(&[
+                ("Host", "r1.preview.example.com"),
+                ("Origin", "https://r2.preview.example.com"),
+                ("X-Forwarded-Host", "evil.example.com"),
+                ("X-Forwarded-Proto", "https"),
+            ]),
+            4100,
+            true,
+        );
+        assert_eq!(
+            headers,
+            h(&[
+                ("Origin", "https://r2.preview.example.com"),
+                ("X-Forwarded-Proto", "https"),
+                ("x-forwarded-host", "r1.preview.example.com"),
+            ])
+        );
+        assert_eq!(origin_host("null"), None);
+        assert_eq!(origin_host("https://a.b/c"), None);
     }
 
     #[test]
