@@ -23,11 +23,7 @@ export { PULL_REQUEST_MARKER, SUMMARY_MARKER } from "./markdown";
 export * from "./ports";
 export type { BranchPushed, OpenPullRequestResult, PullRequestEventOutcome } from "./pull-requests";
 export { installUrl, type RepoInspection } from "./repos";
-export {
-  createGitHubApiRoutes,
-  createGitHubWebhookRoutes,
-  type GitHubApiRoutesOptions,
-} from "./routes";
+export { createGitHubWebhookRoutes } from "./routes";
 export {
   DELIVERY_STALE_AFTER_MS,
   WEBHOOK_HANDLERS,

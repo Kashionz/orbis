@@ -60,15 +60,17 @@ GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙�
 ## Server 的接法
 
 ```ts
-import { createGitHubIntegration, createGitHubApiRoutes, createGitHubWebhookRoutes, loadGitHubAppConfig } from "@orbis/github";
+import { API_ROUTES } from "@orbis/api-contract";
+import { createGitHubIntegration, createGitHubWebhookRoutes, loadGitHubAppConfig } from "@orbis/github";
 
 const config = loadGitHubAppConfig(process.env);
 if (config) {
   const github = createGitHubIntegration({ config, domain, store, notifier, logger, taskUrl });
-  app.route("/api/webhooks/github", createGitHubWebhookRoutes(github));
-  app.route("/api/github", createGitHubApiRoutes({ github, authenticate, memberIdOf, canManageRepos, canCreateTasksInRepo }));
+  app.route(API_ROUTES.githubWebhook, createGitHubWebhookRoutes(github));
 }
 ```
+
+這個套件只提供 webhook 的路由。匯入 Issue 的端點由 Server 依 `API_ROUTES`（`repoImportableIssues`、`repoImportIssues`）提供，登入與 Role 檢查、錯誤格式和其他端點一致，內部呼叫 `listImportableIssues`、`importIssues`。實際的掛載在 `apps/server/src/routes/github.ts`。
 
 ### Server 呼叫這個套件
 
@@ -77,6 +79,7 @@ if (config) {
 | Task 建立或修改之後：title、描述、狀態、關閉原因、負責人、labels、Acceptance Criterion 的結果、Run 狀態。Draft Task 確認、進入 Backlog 之前不要呼叫 | `github.onTaskChanged(taskId, { actorMemberId })`：`actorMemberId` 是做出修改的 Member，系統觸發的修改不用傳 |
 | Runner 回報 `branch_pushed`（Review Gate 核准之後） | `github.onBranchPushed({ taskId, runId, branch, commitSha })` |
 | Project 新增 Repo | `github.inspectRepo(owner, name, requesterMemberId)` |
+| Member 從 Issue 匯入 Task（`API_ROUTES.repoImportableIssues`、`repoImportIssues`） | `github.listImportableIssues(repoId)`、`github.importIssues({ repoId, issueNumbers, importedByMemberId })`；Repo 沒有安裝 App 時丟出 `RepoNotConnectedError` |
 | Team Runner 要 push | `github.getInstallationTokenForRepo(repoId)`：只限該 repo、只有 contents 寫入權限 |
 
 Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5），這個套件只負責之後開 PR；開 PR 失敗時回傳 `{ ok: false }` 並通知 Task 負責人，Task 維持 `pr_open`。
