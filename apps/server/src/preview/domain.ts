@@ -62,9 +62,24 @@ export function runIdFromHost(
   return z.uuid().safeParse(label).success ? label : null;
 }
 
-/** callback 與 authorize 的 `return`：只接受同一個 origin 內的路徑。 */
+/** 解析 `return` 用的假 origin；解析後 origin 不變才表示是同一個 origin 內的路徑。 */
+const RETURN_BASE = "http://return.invalid";
+
+/**
+ * callback 與 authorize 的 `return`：只接受同一個 origin 內的路徑。
+ * 先拒絕控制字元與反斜線（瀏覽器會去掉 tab、換行，或把 `\` 當成 `/`，例如 `/<tab>/evil.test`
+ * 會變成 `//evil.test`），再以 URL 解析確認沒有跳到其他 origin。
+ */
 export function safeReturnPath(value: string | null | undefined): string {
   if (!value || value.length > 2000) return "/";
-  if (!value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return "/";
-  return value;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 就是要擋下控制字元
+  if (/[\u0000-\u001f\u007f\\]/.test(value)) return "/";
+  if (!value.startsWith("/") || value.startsWith("//")) return "/";
+  try {
+    const url = new URL(value, RETURN_BASE);
+    if (url.origin !== RETURN_BASE) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
 }

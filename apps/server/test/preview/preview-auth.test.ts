@@ -48,6 +48,17 @@ describe("Preview 網域", () => {
     expect(safeReturnPath("/\\evil.test/")).toBe("/");
     expect(safeReturnPath("https://evil.test/")).toBe("/");
     expect(safeReturnPath(null)).toBe("/");
+    // 瀏覽器會去掉 tab、換行，或把反斜線當成斜線，這些都可能變成 `//evil.test`
+    for (const tricky of [
+      "/\t/evil.test",
+      "/\n/evil.test",
+      "/\r//evil.test",
+      "\\evil.test",
+      "/a\\b",
+    ]) {
+      expect(safeReturnPath(tricky), JSON.stringify(tricky)).toBe("/");
+    }
+    expect(safeReturnPath("/a b?q=中文#x")).toBe("/a%20b?q=%E4%B8%AD%E6%96%87#x");
   });
 
   it("設定值必須是網域，不含 scheme 與路徑", () => {
