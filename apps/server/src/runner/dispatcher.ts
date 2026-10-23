@@ -400,21 +400,32 @@ export async function runSequence(db: Executor, run: RunRow): Promise<number> {
   return Math.max(1, row?.n ?? 1);
 }
 
+/** 分支 slug 的最大長度（以字元計，不是 UTF-16 code unit）。 */
+const BRANCH_SLUG_MAX_CHARS = 40;
+
+/**
+ * Task 標題的分支 slug：NFKC 正規化後只保留字母與數字（含中文等 Unicode 字母，不做音譯），
+ * 其他字元一律換成 `-`，最多 BRANCH_SLUG_MAX_CHARS 個字元；全是符號時退回 `task`。
+ * 結果只含 `\p{L}`、`\p{N}` 與 `-`，所以不會出現 git 不允許的 `..`、`@{`、結尾的 `.lock`、
+ * 控制字元與空白。
+ */
+export function branchSlug(title: string): string {
+  const slug = title
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  const truncated = Array.from(slug).slice(0, BRANCH_SLUG_MAX_CHARS).join("").replace(/-+$/g, "");
+  return truncated || "task";
+}
+
 /**
  * Run 的分支名稱：`<分支前綴><Task Key>-<slug>`（ARCHITECTURE §6.2）。
  * 同一個 Task 的第 2 個以後的 Run 加上 `-r<序號>`，避免與前一個 Run 的分支衝突。
  */
 export function branchName(taskKey: string, title: string, runSeq: number): string {
-  const slug =
-    title
-      .normalize("NFKD")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40)
-      .replace(/-+$/g, "") || "task";
   const suffix = runSeq > 1 ? `-r${runSeq}` : "";
-  return `${NAMES.branchPrefix}${taskKey}-${slug}${suffix}`;
+  return `${NAMES.branchPrefix}${taskKey}-${branchSlug(title)}${suffix}`;
 }
 
 /** 送給 Agent 的第一個 prompt：Task 標題、描述、Spec 連結與 Acceptance Criterion。 */

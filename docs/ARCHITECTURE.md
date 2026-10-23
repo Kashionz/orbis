@@ -221,6 +221,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 沒有對應時 `copy` 不生效，因為 Runner 自己的 clone 中沒有 `.env` 這類檔案。
   - `ORBIS_ROOT_PATH` 是這份來源 repo 的路徑。
 - **分支名稱**：由 Server 產生，格式是 `orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。同一個 Task 的第 2 個以後的 Run（例如失敗後重新派工），分支加上 `-r<序號>`，例如 `orbis/ORB-12-login-fix-r2`，避免和前一個 Run 保留下來的分支衝突。
+  - slug 取自 Task 標題：NFKC 正規化後保留字母與數字（含中文等 Unicode 字母，不做音譯），其他字元換成 `-`，最多 40 個字元；全是符號時用 `task`。所以分支名稱不會有 git 不允許的字元。
   - **注意**：分支名稱不可以用 `/c<n>` 當後綴，因為 git 不允許 `a` 與 `a/b` 兩個分支同時存在。
 - **Base**：
   - Task 的 Run 從 Repo 的 base ref 開出，預設是 `origin/<default-branch>`。
@@ -648,7 +649,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 
 - **Fake Agent**（`crates/fake-agent`）：依 YAML 劇本送出訊息、tool call、diff、權限請求、plan、錯誤、rate limit。**所有整合測試都用它**，不呼叫真實模型。
 - **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS、Linux 三平台都跑。
-- **Server**：用 Testcontainers 啟動真實的 Postgres 來測試。
+- **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在三平台安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
 - **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上三平台都跑；完整系統的 M1 e2e 在 PR 上只跑 Linux，push 到 `main` 時三平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
 - **真實 Agent 煙霧測試**：Claude Code、Codex、Gemini、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
