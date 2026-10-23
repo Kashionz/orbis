@@ -27,6 +27,7 @@ export const project = {
     defaultPermissionPolicy: "auto",
     autoCreateIssues: true,
   },
+  viewerRole: "member",
   createdAt: NOW,
   updatedAt: NOW,
 } satisfies Project;

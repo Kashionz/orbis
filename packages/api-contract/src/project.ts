@@ -39,6 +39,11 @@ export const Project = z.object({
   keyPrefix: ProjectKeyPrefix,
   description: z.string(),
   policy: ProjectPolicy,
+  /**
+   * 目前登入者在這個 Project 的有效 Role：有 Project 的 Role 覆寫時用覆寫，否則用 Team Role（§12.2）。
+   * Web UI 依它隱藏操作；實際權限一律以 Server 的判斷為準。
+   */
+  viewerRole: Role,
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
