@@ -19,7 +19,8 @@ use orbis_protocol::frame::RunnerToServer;
 use orbis_protocol::ids::RunId;
 use tokio::sync::{mpsc, watch};
 
-use crate::agent::{self, Profiles};
+use crate::agent::acp::AcpSession;
+use crate::agent::{self, Learned, LearnedAgents, Profiles};
 use crate::connection::now;
 use crate::home::RunnerHome;
 use crate::outbox::Outbox;
@@ -45,7 +46,14 @@ pub struct Supervisor {
     paused: watch::Sender<bool>,
     snapshot: watch::Sender<Snapshot>,
     detected: tokio::sync::Mutex<Option<Vec<(String, agent::Detected)>>>,
+    /// 從 `initialize` 得知的能力旗標與版本（issue #18）。
+    learned: Arc<LearnedAgents>,
+    /// AgentAvailability 的內容改變了（並行數、能力旗標），連線要重送一次完整清單。
+    availability_changed: Arc<tokio::sync::Notify>,
 }
+
+/// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -73,8 +81,14 @@ impl Supervisor {
                 claiming_paused: false,
             }),
             detected: tokio::sync::Mutex::new(None),
+            learned: Arc::new(LearnedAgents::default()),
+            availability_changed: Arc::new(tokio::sync::Notify::new()),
         });
         supervisor.recover();
+        // 在背景探測各 Agent 的能力旗標，不拖慢第一次的 AgentAvailability（每個 Agent 最多等
+        // PROBE_TIMEOUT）；探測完再重送一次。
+        let probing = supervisor.clone();
+        tokio::spawn(async move { probing.probe_all().await });
         Ok((supervisor, frames_rx))
     }
 
@@ -175,6 +189,74 @@ impl Supervisor {
         list
     }
 
+    /// 探測每個偵測為可用的 Agent；無法啟動的改成無法使用。完成後通知重送 AgentAvailability。
+    async fn probe_all(&self) {
+        let detected = self.detected().await;
+        let mut failed = Vec::new();
+        for profile in self.profiles.iter() {
+            let available = detected
+                .iter()
+                .any(|(id, d)| id == &profile.id && d.available);
+            if available && let Err(reason) = self.probe(profile).await {
+                tracing::warn!(agent = %profile.id, %reason, "Agent 無法啟動");
+                failed.push((profile.id.clone(), reason));
+            }
+        }
+        if !failed.is_empty() {
+            let mut cache = self.detected.lock().await;
+            for (id, d) in cache.iter_mut().flatten() {
+                if let Some((_, reason)) = failed.iter().find(|(f, _)| f == id) {
+                    d.available = false;
+                    d.unavailable_reason = Some(reason.clone());
+                }
+            }
+        }
+        self.availability_changed.notify_one();
+    }
+
+    /// 啟動 Agent 跑一次 `initialize`，記下實際的能力旗標（issue #18）。Runner 代管、還沒安裝的
+    /// adapter 跳過（第一次派工時才安裝，之後由 Run 更新）。回傳 `Err` 表示 Agent 無法啟動。
+    async fn probe(&self, profile: &agent::AgentProfile) -> Result<(), String> {
+        let agents_dir = self.home.agents_dir();
+        if let agent::Launch::ManagedNpm {
+            package,
+            version,
+            entry,
+            ..
+        } = &profile.launch
+            && !agent::install::entry_path(&agents_dir, package, version, entry).is_file()
+        {
+            return Ok(());
+        }
+        let spec = profile
+            .launch_spec(&agents_dir)
+            .map_err(|e| format!("無法啟動：{e:#}"))?
+            .unattended_git();
+        let cwd = std::env::temp_dir();
+        match tokio::time::timeout(PROBE_TIMEOUT, AcpSession::probe(profile, spec, &cwd)).await {
+            Ok(Ok(probe)) => {
+                self.learned.record(
+                    &profile.id,
+                    Learned {
+                        capabilities: probe.capabilities,
+                        version: probe.agent_info.map(|(_, version)| version),
+                    },
+                );
+                Ok(())
+            }
+            Ok(Err(error)) => Err(format!("無法啟動：{error}")),
+            Err(_) => {
+                tracing::warn!(agent = %profile.id, "探測 Agent 逾時，能力旗標要等第一次派工後才知道");
+                Ok(())
+            }
+        }
+    }
+
+    /// 等到 AgentAvailability 的內容改變（連線收到後重送一次完整清單）。
+    pub async fn availability_changed(&self) {
+        self.availability_changed.notified().await;
+    }
+
     /// 這台 Runner 能跑的 Agent 與各 Credential 的並行狀況。
     pub async fn availability(&self) -> AgentAvailability {
         let detected = self.detected().await;
@@ -195,14 +277,14 @@ impl Supervisor {
                 .map_or((false, None, Some("尚未偵測".into())), |d| {
                     (d.available, d.version.clone(), d.unavailable_reason.clone())
                 });
+            let learned = self.learned.get(&profile.id).unwrap_or_default();
             agents.push(AgentInfo {
                 id: profile.id.clone(),
-                version,
+                version: version.or(learned.version),
                 available,
                 unavailable_reason: reason,
-                // 能力旗標要等 `initialize` 才知道；Agent 啟動後以 Run 的 log 記錄。
-                // TODO(A2, #18)：啟動時先跑一次 initialize，回報實際的能力旗標。
-                capabilities: Vec::new(),
+                // 啟動時探測的結果；還沒探測過（代管的 adapter 尚未安裝）時，第一次派工後更新。
+                capabilities: learned.capabilities,
                 models: Vec::new(),
                 permission_gaps: profile.permission_gaps.clone(),
                 credential: Some(profile.credential.clone()),
@@ -253,6 +335,8 @@ impl Supervisor {
                         outbox: self.outbox.clone(),
                         frames: self.frames.clone(),
                         previews: self.previews.clone(),
+                        learned: self.learned.clone(),
+                        availability_changed: self.availability_changed.clone(),
                     },
                 );
                 lock(&self.runs).insert(handle.run_id.clone(), handle);

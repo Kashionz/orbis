@@ -1,0 +1,7 @@
+# Agent Profile 的修補檢查：回報目前的 session mode 與建立 session 時收到的 _meta，然後完成。
+description: 回報 session mode 與 _meta
+turns:
+  - steps:
+      - echo_session_mode
+      - echo_session_meta
+      - stop: end_turn

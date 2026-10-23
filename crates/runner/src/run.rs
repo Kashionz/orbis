@@ -68,6 +68,10 @@ pub struct RunContext {
     pub frames: mpsc::UnboundedSender<RunnerToServer>,
     /// 正在執行的 Preview（relay 依此轉送，§13）。
     pub previews: Arc<PreviewRegistry>,
+    /// 從 `initialize` 得知的能力旗標（啟動 Agent 後更新）。
+    pub learned: Arc<crate::agent::LearnedAgents>,
+    /// 通知連線重送 AgentAvailability（能力旗標或並行數改變時）。
+    pub availability_changed: Arc<tokio::sync::Notify>,
 }
 
 /// 送給 Run 的訊息。
@@ -235,6 +239,8 @@ impl Run {
                 self.set_status(RunStatus::Failed, None, Some(message));
             }
         }
+        // Run 不再佔用並行數。
+        self.ctx.availability_changed.notify_one();
         // 終止狀態之後仍可能收到 RunControl（例如晚到的 cancel）；一律回覆，不卡住 Server。
         if !matches!(*self.status_tx.borrow(), RunStatus::Completed) {
             self.ctx.outbox.finish_run(self.run_id());
@@ -548,6 +554,13 @@ impl Run {
             "Agent 已啟動"
         );
         let resumed = session.resumed();
+        let learned = crate::agent::Learned {
+            capabilities: session.capabilities().to_vec(),
+            version: session.agent_info().map(|(_, version)| version),
+        };
+        if self.ctx.learned.record(&self.profile.id, learned) {
+            self.ctx.availability_changed.notify_one();
+        }
         self.session = Some(session);
         let mut rx = rx;
         if resumed {
@@ -1284,6 +1297,7 @@ impl Run {
                             completed = true;
                             self.set_status(RunStatus::Completed, None, None);
                             self.ctx.outbox.finish_run(self.run_id());
+                            self.ctx.availability_changed.notify_one();
                         }
                     }
                     Err(message) => self.reject(&control, RunControlRejectReason::Failed, &message),

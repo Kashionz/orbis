@@ -19,10 +19,10 @@ use agent_client_protocol::schema::v1::{
     Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
     McpServer, NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, Plan,
     PlanEntry, PromptRequest, PromptResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionId,
-    SessionNotification, SessionResumeCapabilities, SessionUpdate, StopReason, ToolCall,
-    ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind, UsageUpdate,
+    ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionId, SessionMode,
+    SessionModeState, SessionNotification, SessionResumeCapabilities, SessionUpdate,
+    SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCall, ToolCallContent,
+    ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{self as acp, BoxFuture, Client, ConnectionTo, Responder};
 use serde_json::json;
@@ -71,7 +71,14 @@ pub struct Options {
     pub state_dir: Option<PathBuf>,
     /// 有保存目錄時是否也宣告並支援 `session/resume`。
     pub resume: bool,
+    /// 提供的 session mode（`session/new` 回報、`session/set_mode` 可以切換）；空的表示不支援 mode。
+    pub modes: Vec<String>,
+    /// 新 session 一開始的 mode，預設是 `modes` 的第一個。
+    pub initial_mode: Option<String>,
 }
+
+/// `echo_session_mode` 回報的前綴。
+pub const SESSION_MODE_PREFIX: &str = "mode: ";
 
 /// `session/load` 恢復 session 後補送的訊息（ACP 規定 load 要重播對話；Fake Agent 只送這一則）。
 pub const LOADED_SESSION_TEXT: &str = "（已載入之前的 session）";
@@ -151,6 +158,18 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
         .on_receive_request(
             {
                 let agent = agent.clone();
+                async move |request: SetSessionModeRequest, responder, _cx| match agent
+                    .set_mode(&request.session_id, &request.mode_id.0)
+                {
+                    Ok(()) => responder.respond(SetSessionModeResponse::new()),
+                    Err(error) => responder.respond_with_error(error),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
                 async move |request: PromptRequest, responder, cx| {
                     agent.prompt(request, responder, cx)
                 }
@@ -194,6 +213,8 @@ struct Session {
     state_file: Option<PathBuf>,
     /// 建立或接續 session 時收到的 `_meta`（`echo_session_meta` 步驟回報）。
     meta: Option<serde_json::Map<String, serde_json::Value>>,
+    /// 目前的 session mode（`echo_session_mode` 步驟回報）。
+    mode: Mutex<Option<String>>,
     mcp_servers: Vec<McpServer>,
     slot: Mutex<TurnSlot>,
     runtime: tokio::sync::Mutex<SessionRuntime>,
@@ -259,7 +280,31 @@ impl FakeAgent {
         });
         let session = self.insert_session(&id, &request.cwd, request.mcp_servers, 0, request.meta);
         session.save()?;
-        Ok(NewSessionResponse::new(id))
+        let modes = (!self.options.modes.is_empty()).then(|| {
+            SessionModeState::new(
+                lock(&session.mode).clone().unwrap_or_default(),
+                self.options
+                    .modes
+                    .iter()
+                    .map(|m| SessionMode::new(m.clone(), m.clone()))
+                    .collect(),
+            )
+        });
+        Ok(NewSessionResponse::new(id).modes(modes))
+    }
+
+    /// `session/set_mode`：只接受 `modes` 中的 mode。
+    fn set_mode(&self, id: &SessionId, mode: &str) -> Result<(), acp::Error> {
+        let Some(session) = self.session(id) else {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown session", "session_id": id })));
+        };
+        if !self.options.modes.iter().any(|m| m == mode) {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown mode", "mode": mode })));
+        }
+        *lock(&session.mode) = Some(mode.to_owned());
+        Ok(())
     }
 
     fn insert_session(
@@ -279,6 +324,12 @@ impl FakeAgent {
                 .as_ref()
                 .map(|dir| dir.join(format!("{}.json", id.0))),
             meta,
+            mode: Mutex::new(
+                self.options
+                    .initial_mode
+                    .clone()
+                    .or_else(|| self.options.modes.first().cloned()),
+            ),
             mcp_servers,
             slot: Mutex::new(TurnSlot {
                 next_turn,
@@ -575,6 +626,14 @@ impl TurnRunner<'_> {
                     () = tokio::time::sleep(std::time::Duration::from_millis(*ms)) => {}
                     () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
                 }
+            }
+            Step::EchoSessionMode => {
+                let mode = lock(&self.session.mode)
+                    .clone()
+                    .unwrap_or_else(|| "none".to_owned());
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(format!("{SESSION_MODE_PREFIX}{mode}")),
+                )))?;
             }
             Step::EchoSessionMeta => {
                 let meta = serde_json::to_string(&self.session.meta).unwrap_or_default();

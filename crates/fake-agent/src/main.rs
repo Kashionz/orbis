@@ -26,6 +26,14 @@ struct Cli {
     /// 有保存目錄時不宣告 `session/resume`，只支援 `session/load`。
     #[arg(long)]
     no_resume: bool,
+
+    /// 提供的 session mode（逗號分隔），例如 `default,plan`。
+    #[arg(long, value_delimiter = ',')]
+    modes: Vec<String>,
+
+    /// 新 session 一開始的 mode，預設是 `--modes` 的第一個。
+    #[arg(long)]
+    initial_mode: Option<String>,
 }
 
 #[tokio::main]
@@ -47,6 +55,8 @@ async fn main() -> ExitCode {
     let options = agent::Options {
         state_dir: cli.state_dir,
         resume: !cli.no_resume,
+        modes: cli.modes,
+        initial_mode: cli.initial_mode,
     };
     match agent::serve_stdio_with(script, options).await {
         Ok(()) => ExitCode::SUCCESS,

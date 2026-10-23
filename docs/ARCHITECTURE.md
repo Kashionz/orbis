@@ -308,12 +308,14 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 
 | Agent | 接入方式 | 備註 |
 |---|---|---|
-| Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | 版本鎖定（目前 0.94.0），由 Runner 以 npm 安裝在狀態目錄的 `agents/`，以 `node` 直接啟動；plan mode 與 bypassPermissions 有已知 bug，建立 session 後一律切回 `default` 模式 |
-| Codex | `codex-acp` adapter | `CODEX_PATH` 含空白時會失敗 |
-| Gemini CLI | 原生 `gemini --acp` | 路徑檢查區分大小寫 |
-| Grok Build | 原生 `grok agent stdio` | beta；需要 SuperGrok 系列訂閱 |
+| Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | 版本鎖定（目前 0.94.0），由 Runner 以 npm 安裝在狀態目錄的 `agents/`，以 `node` 直接啟動；plan mode 與 bypassPermissions 有已知 bug，建立 session 後一律切回 `default` 模式；預設不載入使用者全域設定（§8） |
+| Codex | `@agentclientprotocol/codex-acp` adapter（內附相容的 `@openai/codex`） | 版本鎖定（目前 2.2.2），由 Runner 代管安裝、以 `node` 啟動；session 一律用 `read-only` 模式（修改檔案與連網先問），Codex 在自己沙盒中執行的唯讀指令不經過 Runner；`CODEX_PATH` 含空白時會失敗，Runner 只在內附執行檔路徑過長時才設定；需要先 `codex login` |
+| Gemini CLI | 原生 `gemini --acp` | `@google/gemini-cli` 版本鎖定（目前 0.65.0），由 Runner 代管安裝；以 `--approval-mode default` 啟動；唯讀工具不經過 Runner；路徑檢查區分大小寫 |
+| Grok Build | 原生 `grok agent stdio --no-leader` | 使用者自己安裝；偵測版本，低於測過的最低版本（目前 1.0.52）時回報無法使用；不共用 leader 程序；beta；需要 SuperGrok 系列訂閱 |
 
   registry 中其他支援 ACP 的 Agent 列為「實驗性」。
+- **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
+- **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Gemini CLI（`~/.gemini`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
   - Local Runner 只沿用各 CLI 自己的登入狀態，Orbis 不讀取、不保存。
   - Team Runner **共用一個 Claude 訂閱**，Credential 存放在 Runner 主機的 Docker secret 中。設定頁會顯示條款風險警告。

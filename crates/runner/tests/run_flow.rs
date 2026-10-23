@@ -12,93 +12,14 @@ use orbis_protocol::control::RunControlAction;
 use orbis_protocol::enums::{GateDecision, GateKind, PermissionPolicy};
 use orbis_protocol::event::ContentBlock;
 use serde_json::Value;
+use support::flow::{
+    Env, agent_state_args, answer, approve_config, claude_code_as_fake, claude_code_as_fake_with,
+};
 use support::server::{
     FakeServer, RunnerOptions, RunnerSide, fake_agent_toml, offer, parse_result, process_alive,
     result_outcome, send_offer, spawn_runner, write_runner_toml,
 };
 use support::{Remote, branch, cfg, git, runner_script, script, temp_dir, toml_string};
-
-/// 一次測試的環境：remote、Runner 本機目錄、Server。
-struct Env {
-    dir: tempfile::TempDir,
-    remote: Remote,
-    server: FakeServer,
-}
-
-impl Env {
-    async fn new(files: &[(&str, &str)], runner_toml: impl Fn(&Path) -> String) -> Self {
-        let dir = temp_dir("orbis run");
-        let remote = Remote::new(files);
-        write_runner_toml(
-            &dir.path().join("home"),
-            &runner_toml(&dir.path().join("wt")),
-        );
-        Self {
-            dir,
-            remote,
-            server: FakeServer::start().await,
-        }
-    }
-
-    fn home(&self) -> std::path::PathBuf {
-        self.dir.path().join("home")
-    }
-
-    fn spawn(&self) -> support::server::RunnerProcess {
-        spawn_runner(RunnerOptions::new(&self.server.base_url(), &self.home()))
-    }
-
-    /// 連上、完成交握並送出 Dispatch，等到 Runner 接受。
-    async fn dispatch(&mut self, run_id: &str, agent: &str, prompt: &str) -> RunnerSide {
-        let mut conn = self.server.accept().await;
-        conn.handshake(Vec::new(), Some("rt_test")).await;
-        self.offer(&mut conn, run_id, agent, prompt, 1).await;
-        conn
-    }
-
-    async fn offer(
-        &self,
-        conn: &mut RunnerSide,
-        run_id: &str,
-        agent: &str,
-        prompt: &str,
-        run_seq: u32,
-    ) {
-        let mut o = offer(
-            run_id,
-            &format!("d-{run_id}"),
-            self.remote.dispatch_repo("web"),
-            agent,
-            prompt,
-        );
-        o.run_seq = run_seq;
-        conn.send(&send_offer(o)).await;
-        let reply = conn
-            .wait_for("dispatch 回覆", |v| {
-                v["type"] == "dispatch_accept" || v["type"] == "dispatch_reject"
-            })
-            .await;
-        assert_eq!(reply["type"], "dispatch_accept", "{reply}");
-    }
-}
-
-/// 回覆設定檔的信任核准（allow_once）。
-async fn approve_config(conn: &mut RunnerSide, run_id: &str) {
-    let request = conn.wait_event("permission_request").await;
-    assert_eq!(request["purpose"], "config_trust", "{request}");
-    let result = conn
-        .control(
-            run_id,
-            &format!("d-{run_id}"),
-            "trust",
-            RunControlAction::PermissionResponse {
-                request_id: request["request_id"].as_str().unwrap().into(),
-                option_id: "allow_once".into(),
-            },
-        )
-        .await;
-    assert_eq!(result_outcome(&result), "applied");
-}
 
 fn text(body: &Value) -> String {
     body["text"]
@@ -579,52 +500,6 @@ async fn allow_commands_中的指令自動允許() {
     assert_eq!(subject, "feat: 測試 Task（ORB-1）");
 }
 
-/// runner.toml：用內建 claude-code profile 的修補與受保護路徑，但啟動指令換成 Fake Agent。
-fn claude_code_as_fake(wt: &Path, script: &Path) -> String {
-    claude_code_as_fake_with(wt, script, &[])
-}
-
-/// 同 [`claude_code_as_fake`]，另外加上 Fake Agent 的參數。
-fn claude_code_as_fake_with(wt: &Path, script: &Path, extra: &[String]) -> String {
-    let mut args = vec![
-        toml_string("--script"),
-        toml_string(&script.to_string_lossy()),
-    ];
-    args.extend(extra.iter().map(|a| toml_string(a)));
-    format!(
-        "worktree_root = {}\n[agents.claude-code]\ncommand = {}\nargs = [{}]\n",
-        toml_string(&wt.to_string_lossy()),
-        toml_string(&support::fake_agent_bin().to_string_lossy()),
-        args.join(", "),
-    )
-}
-
-/// Fake Agent 的 session 保存目錄參數（讓重新啟動的 Agent 能接續 session）。
-fn agent_state_args(wt: &Path, load_only: bool) -> Vec<String> {
-    let dir = wt.parent().unwrap().join("agent-state");
-    let mut args = vec!["--state-dir".to_owned(), dir.to_string_lossy().into_owned()];
-    if load_only {
-        args.push("--no-resume".to_owned());
-    }
-    args
-}
-
-/// 回覆權限請求，確認被接受。
-async fn answer(conn: &mut RunnerSide, control_id: &str, request: &Value, option_id: &str) {
-    let result = conn
-        .control(
-            "r1",
-            "d-r1",
-            control_id,
-            RunControlAction::PermissionResponse {
-                request_id: request["request_id"].as_str().unwrap().into(),
-                option_id: option_id.into(),
-            },
-        )
-        .await;
-    assert_eq!(result_outcome(&result), "applied", "{result}");
-}
-
 /// Agent 修改自己的設定檔（issue #52）：經權限請求寫入時問人，人允許的寫入視為已接受；
 /// 不經過權限請求的寫入在 session 中途就被發現 → 中止回合並問人，選「還原」後檔案還原、
 /// 重新啟動 Agent（讓它重新讀取設定）並以 `session/resume` 接續同一個 session。
@@ -783,14 +658,9 @@ async fn session_meta(conn: &mut RunnerSide) -> Value {
 /// 只載入 Repo 的 project／local 設定。
 #[tokio::test(flavor = "multi_thread")]
 async fn claude_code_預設不載入使用者全域設定() {
-    let mut env = Env::new(
-        &[(
-            "README.md",
-            "a
-",
-        )],
-        |wt| claude_code_as_fake(wt, &runner_script("session-meta.yaml")),
-    )
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        claude_code_as_fake(wt, &runner_script("session-meta.yaml"))
+    })
     .await;
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", "claude-code", "做事").await;
@@ -805,20 +675,12 @@ async fn claude_code_預設不載入使用者全域設定() {
 /// runner.toml 的 `user_settings = true`：照 Claude Code 的預設載入使用者全域設定。
 #[tokio::test(flavor = "multi_thread")]
 async fn claude_code_設定_user_settings_時載入使用者全域設定() {
-    let mut env = Env::new(
-        &[(
-            "README.md",
-            "a
-",
-        )],
-        |wt| {
-            format!(
-                "{}user_settings = true
-",
-                claude_code_as_fake(wt, &runner_script("session-meta.yaml"))
-            )
-        },
-    )
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        format!(
+            "{}user_settings = true\n",
+            claude_code_as_fake(wt, &runner_script("session-meta.yaml"))
+        )
+    })
     .await;
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", "claude-code", "做事").await;

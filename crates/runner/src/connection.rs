@@ -450,6 +450,12 @@ impl Session {
                 }
                 Some(frame) = frames.recv() => self.conn.send(&frame).await?,
                 () = outbox.notified() => {}
+                () = self.supervisor.availability_changed() => {
+                    let availability = self.supervisor.availability().await;
+                    self.conn
+                        .send(&RunnerToServer::AgentAvailability(availability))
+                        .await?;
+                }
                 frame = self.conn.recv() => match frame? {
                     // Preview 的控制 frame 交給 relay，其他照常處理
                     Some(Inbound::Frame(frame)) => {

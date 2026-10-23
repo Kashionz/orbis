@@ -50,6 +50,14 @@ pub enum AgentError {
     Acp(acp::Error),
 }
 
+/// [`AcpSession::probe`] 的結果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Probe {
+    pub capabilities: Vec<AgentCapability>,
+    /// `initialize` 回報的 Agent 名稱與版本。
+    pub agent_info: Option<(String, String)>,
+}
+
 /// 一個 Agent 程序與它的 ACP session。
 pub struct AcpSession {
     cx: ConnectionTo<Agent>,
@@ -86,6 +94,54 @@ impl AcpSession {
         cwd: &Path,
         notices: mpsc::UnboundedSender<AgentNotice>,
         resume: Option<&str>,
+    ) -> Result<Self, AgentError> {
+        let mut session = Self::connect(profile, spec, cwd, notices).await?;
+        if let Err(error) = session.handshake(profile, cwd, resume).await {
+            return Err(session.fail(error).await);
+        }
+        Ok(session)
+    }
+
+    /// 只啟動 Agent 並跑一次 `initialize`（不建立 session）就結束，取得實際的能力旗標與版本
+    /// （issue #18）。Runner 啟動時用來回報 AgentAvailability。
+    pub async fn probe(
+        profile: &AgentProfile,
+        spec: ProcessSpec,
+        cwd: &Path,
+    ) -> Result<Probe, AgentError> {
+        let (notices, _ignored) = mpsc::unbounded_channel();
+        let mut session = Self::connect(profile, spec, cwd, notices).await?;
+        match session.initialize(profile).await {
+            Ok(_) => {
+                let probe = Probe {
+                    capabilities: session.capabilities.clone(),
+                    agent_info: session.agent_info(),
+                };
+                session.shutdown().await;
+                Ok(probe)
+            }
+            Err(error) => Err(session.fail(error).await),
+        }
+    }
+
+    /// 交握失敗：結束程序樹，錯誤訊息附上 Agent stderr 的最後幾行。
+    async fn fail(self, error: AgentError) -> AgentError {
+        let tail = self.stderr_tail();
+        self.shutdown().await;
+        match error {
+            AgentError::Acp(e) if !tail.is_empty() => {
+                AgentError::Start(anyhow::anyhow!("{e}\nAgent stderr：\n{tail}"))
+            }
+            other => other,
+        }
+    }
+
+    /// 啟動 Agent 程序並建立 ACP 連線（還沒有 `initialize`）。
+    async fn connect(
+        profile: &AgentProfile,
+        spec: ProcessSpec,
+        cwd: &Path,
+        notices: mpsc::UnboundedSender<AgentNotice>,
     ) -> Result<Self, AgentError> {
         let mut tree = ProcessTree::spawn(&spec.cwd(cwd), Pipes::ALL).map_err(AgentError::Start)?;
         let stdin = tree
@@ -156,7 +212,7 @@ impl AcpSession {
             let _ = closed_tx.send(true);
         });
 
-        let mut session = Self {
+        Ok(Self {
             cx: match ready_rx.await {
                 Ok(cx) => cx,
                 Err(_) => {
@@ -174,26 +230,14 @@ impl AcpSession {
             driver,
             closed,
             stderr_tail,
-        };
-        if let Err(error) = session.handshake(profile, cwd, resume).await {
-            let tail = session.stderr_tail();
-            session.shutdown().await;
-            return Err(match error {
-                AgentError::Acp(e) if !tail.is_empty() => {
-                    AgentError::Start(anyhow::anyhow!("{e}\nAgent stderr：\n{tail}"))
-                }
-                other => other,
-            });
-        }
-        Ok(session)
+        })
     }
 
-    async fn handshake(
+    /// `initialize`：記下能力旗標與 Agent 的名稱、版本。
+    async fn initialize(
         &mut self,
         profile: &AgentProfile,
-        cwd: &Path,
-        resume: Option<&str>,
-    ) -> Result<(), AgentError> {
+    ) -> Result<InitializeResponse, AgentError> {
         let init: InitializeResponse = self
             .cx
             .send_request(InitializeRequest::new(ProtocolVersion::V1).client_info(
@@ -204,7 +248,16 @@ impl AcpSession {
             .map_err(AgentError::Acp)?;
         self.capabilities = profile.capabilities(&init);
         self.agent_info = init.agent_info.clone();
+        Ok(init)
+    }
 
+    async fn handshake(
+        &mut self,
+        profile: &AgentProfile,
+        cwd: &Path,
+        resume: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let init = self.initialize(profile).await?;
         let caps = &init.agent_capabilities;
         let modes = match resume {
             Some(id) if caps.session_capabilities.resume.is_some() => {

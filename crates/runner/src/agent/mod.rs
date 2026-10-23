@@ -30,6 +30,30 @@ pub const CLAUDE_ACP_ENTRY: &str = "dist/index.js";
 /// claude-agent-acp 需要的最低 Node 主版本。
 pub const CLAUDE_ACP_MIN_NODE: u32 = 22;
 
+/// 內建 Codex profile 的 id。
+pub const CODEX: &str = "codex";
+/// Codex 的 ACP adapter（原本的 `@zed-industries/codex-acp` 已停更，改名到這裡），內附相容的
+/// `@openai/codex`。版本鎖定（ADR-0002）。
+pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
+pub const CODEX_ACP_VERSION: &str = "2.2.2";
+const CODEX_ACP_ENTRY: &str = "dist/index.js";
+/// `@openai/codex` 需要的最低 Node 主版本。
+const CODEX_ACP_MIN_NODE: u32 = 20;
+
+/// 內建 Gemini CLI profile 的 id。
+pub const GEMINI: &str = "gemini";
+/// Gemini CLI 本身就支援 ACP（`--acp`），由 Runner 代管安裝精確版本。
+pub const GEMINI_PACKAGE: &str = "@google/gemini-cli";
+pub const GEMINI_VERSION: &str = "0.65.0";
+const GEMINI_ENTRY: &str = "bundle/gemini.js";
+const GEMINI_MIN_NODE: u32 = 20;
+
+/// 內建 Grok Build profile 的 id。
+pub const GROK: &str = "grok";
+/// Grok Build 由使用者自己安裝（原生安裝程式，無法代管）；這是測過的最低版本，
+/// 偵測到更舊的版本時回報無法使用。
+pub const GROK_MIN_VERSION: &str = "1.0.52";
+
 /// Agent 的啟動方式。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Launch {
@@ -39,11 +63,14 @@ pub enum Launch {
         args: Vec<String>,
         env: BTreeMap<String, String>,
     },
-    /// Runner 代管安裝的 npm 套件，以 `node <entry>` 啟動（不經過 npx 與 shim）。
+    /// Runner 代管安裝的 npm 套件，以 `node <entry> <args>` 啟動（不經過 npx 與 shim）。
     ManagedNpm {
         package: &'static str,
         version: &'static str,
         entry: &'static str,
+        args: &'static [&'static str],
+        /// 固定加上的環境變數。
+        env: &'static [(&'static str, &'static str)],
         min_node: u32,
         /// 套件內附、由套件再啟動的原生執行檔。
         native: Option<NativeBinary>,
@@ -61,8 +88,8 @@ pub struct NativeBinary {
     pub env: &'static str,
     /// 平台套件名稱的前綴，後面接 `<os>-<arch>`，例如 `@anthropic-ai/claude-agent-sdk-`。
     pub platform_package_prefix: &'static str,
-    /// 平台套件內的執行檔名稱（Windows）。
-    pub windows_file: &'static str,
+    /// 平台套件內的執行檔位置（Windows）：npm 的 arch（`x64`、`arm64`）→ 以 `/` 分隔的相對路徑。
+    pub windows_files: &'static [(&'static str, &'static str)],
 }
 
 impl NativeBinary {
@@ -76,11 +103,15 @@ impl NativeBinary {
             "aarch64" => "arm64",
             _ => return None,
         };
+        let (_, file) = self.windows_files.iter().find(|(a, _)| *a == arch)?;
         let mut path = node_modules.to_owned();
         for part in format!("{}win32-{arch}", self.platform_package_prefix).split('/') {
             path.push(part);
         }
-        Some(path.join(self.windows_file))
+        for part in file.split('/') {
+            path.push(part);
+        }
+        Some(path)
     }
 }
 
@@ -88,7 +119,17 @@ impl NativeBinary {
 const CLAUDE_NATIVE: NativeBinary = NativeBinary {
     env: "CLAUDE_CODE_EXECUTABLE",
     platform_package_prefix: "@anthropic-ai/claude-agent-sdk-",
-    windows_file: "claude.exe",
+    windows_files: &[("x64", "claude.exe"), ("arm64", "claude.exe")],
+};
+
+/// codex-acp 內附的 `@openai/codex` 原生執行檔（adapter 接受 `CODEX_PATH`）。
+const CODEX_NATIVE: NativeBinary = NativeBinary {
+    env: "CODEX_PATH",
+    platform_package_prefix: "@openai/codex-",
+    windows_files: &[
+        ("x64", "vendor/x86_64-pc-windows-msvc/bin/codex.exe"),
+        ("arm64", "vendor/aarch64-pc-windows-msvc/bin/codex.exe"),
+    ],
 };
 
 /// 一個 Agent 的接入設定。
@@ -112,6 +153,9 @@ pub struct AgentProfile {
     /// 使用的 Credential 標籤與並行上限（§7）。
     pub credential: String,
     pub max_concurrent_runs: u32,
+    /// 測過的最低版本（使用者自己安裝的 CLI）。偵測到更舊的版本時回報無法使用；
+    /// runner.toml 覆寫啟動指令時不檢查。
+    pub min_version: Option<&'static str>,
 }
 
 /// Claude Code 在 Run 中載入的設定來源（claude-agent-acp 的 `_meta.claudeCode.options.settingSources`，
@@ -152,6 +196,8 @@ impl AgentProfile {
                 package: CLAUDE_ACP_PACKAGE,
                 version: CLAUDE_ACP_VERSION,
                 entry: CLAUDE_ACP_ENTRY,
+                args: &[],
+                env: &[],
                 min_node: CLAUDE_ACP_MIN_NODE,
                 native: Some(CLAUDE_NATIVE),
             },
@@ -175,6 +221,105 @@ impl AgentProfile {
             reports_usage: true,
             credential: format!("{CLAUDE_CODE}-local"),
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
+            min_version: None,
+        }
+    }
+
+    /// 內建的 Codex profile（codex-acp adapter）。
+    ///
+    /// - 一開始就以 `read-only` 模式建立 session，建立後也切到這個模式：修改檔案與連網都要先問，
+    ///   權限請求由 Runner 依 Permission Policy 回覆（ADR-0006）。預設的 `agent` 模式會自動核准。
+    /// - 登入沿用使用者自己的 `~/.codex`（`codex login`）。
+    pub fn codex() -> Self {
+        Self {
+            id: CODEX.into(),
+            launch: Launch::ManagedNpm {
+                package: CODEX_ACP_PACKAGE,
+                version: CODEX_ACP_VERSION,
+                entry: CODEX_ACP_ENTRY,
+                args: &[],
+                env: &[("INITIAL_AGENT_MODE", "read-only"), ("NO_BROWSER", "1")],
+                min_node: CODEX_ACP_MIN_NODE,
+                native: Some(CODEX_NATIVE),
+            },
+            session_mode: Some("read-only"),
+            session_meta: None,
+            protected_paths: vec![".codex/config.toml".into()],
+            permission_gaps: vec![
+                "read-only 模式下，Codex 在自己的沙盒中直接執行它認為唯讀的指令（含讀取 Worktree 以外的檔案），不會詢問 Runner".into(),
+                "Codex 自己的設定與規則（~/.codex/config.toml、~/.codex/rules）中允許的指令不會詢問 Runner".into(),
+            ],
+            known_issues: vec![
+                "CODEX_PATH 含空白時 adapter 無法啟動 Codex；Runner 只在內附執行檔的路徑超過 MAX_PATH 時才設定它".into(),
+                "Windows 上 Codex 的沙盒仍是實驗性功能".into(),
+                "需要先在本機執行 codex login；未登入時 session/new 會失敗".into(),
+            ],
+            reports_usage: true,
+            credential: format!("{CODEX}-local"),
+            max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
+            min_version: None,
+        }
+    }
+
+    /// 內建的 Gemini CLI profile（原生 ACP：`gemini --acp`）。
+    ///
+    /// - 以 `default` 審核模式啟動（每個工具都先問），不使用 `--yolo`／`auto_edit`。
+    /// - 登入沿用使用者自己的 `~/.gemini`。
+    pub fn gemini() -> Self {
+        Self {
+            id: GEMINI.into(),
+            launch: Launch::ManagedNpm {
+                package: GEMINI_PACKAGE,
+                version: GEMINI_VERSION,
+                entry: GEMINI_ENTRY,
+                args: &["--acp", "--approval-mode", "default"],
+                env: &[],
+                min_node: GEMINI_MIN_NODE,
+                native: None,
+            },
+            session_mode: None,
+            session_meta: None,
+            protected_paths: vec![".gemini/settings.json".into()],
+            permission_gaps: vec![
+                "Gemini 自己的設定（~/.gemini/settings.json、Repo 的 .gemini/settings.json）中允許的工具不會詢問 Runner".into(),
+                "Gemini 直接執行的唯讀工具（讀檔、搜尋）不會詢問 Runner".into(),
+            ],
+            known_issues: vec![
+                "路徑檢查區分大小寫：Runner 傳給 Agent 的 Worktree 路徑一律是正規化後、與磁碟一致的大小寫".into(),
+                "需要先在本機執行 gemini 完成登入".into(),
+            ],
+            reports_usage: true,
+            credential: format!("{GEMINI}-local"),
+            max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
+            min_version: None,
+        }
+    }
+
+    /// 內建的 Grok Build profile（原生 ACP：`grok agent stdio`，beta）。
+    ///
+    /// - 使用者自己安裝（`~/.grok/bin`），偵測版本，低於 [`GROK_MIN_VERSION`] 時回報無法使用。
+    /// - 不共用 leader 程序（`--no-leader`），每個 Run 各自一個程序樹，中止時才能整棵結束。
+    /// - 不使用 `--always-approve`。
+    pub fn grok() -> Self {
+        Self {
+            id: GROK.into(),
+            launch: Launch::Command {
+                command: PathBuf::from("grok"),
+                args: vec!["agent".into(), "stdio".into(), "--no-leader".into()],
+                env: BTreeMap::new(),
+            },
+            session_mode: None,
+            session_meta: None,
+            protected_paths: Vec::new(),
+            permission_gaps: vec!["Grok 自己的設定（~/.grok）中允許的工具不會詢問 Runner".into()],
+            known_issues: vec![
+                "beta；需要 SuperGrok 系列訂閱".into(),
+                "需要先在本機執行 grok 完成登入".into(),
+            ],
+            reports_usage: true,
+            credential: format!("{GROK}-local"),
+            max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
+            min_version: Some(GROK_MIN_VERSION),
         }
     }
 
@@ -197,6 +342,7 @@ impl AgentProfile {
             max_concurrent_runs: settings
                 .max_concurrent_runs
                 .unwrap_or(DEFAULT_MAX_CONCURRENT_RUNS),
+            min_version: None,
         }
     }
 
@@ -227,11 +373,16 @@ impl AgentProfile {
                 package,
                 version,
                 entry,
+                args,
+                env,
                 native,
                 ..
             } => {
                 let entry_file = install::entry_path(agents_dir, package, version, entry);
-                let mut spec = ProcessSpec::new("node").arg(entry_file);
+                let mut spec = ProcessSpec::new("node")
+                    .arg(entry_file)
+                    .args(args.iter())
+                    .envs(env.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())));
                 let native = native.as_ref().and_then(|native| {
                     let file = native
                         .windows_path(&install::node_modules(agents_dir, package, version))?;
@@ -345,7 +496,14 @@ impl Profiles {
                 .and_then(|a| a.user_settings)
                 .unwrap_or(false),
         );
-        profiles.insert(claude.id.clone(), claude);
+        for builtin in [
+            claude,
+            AgentProfile::codex(),
+            AgentProfile::gemini(),
+            AgentProfile::grok(),
+        ] {
+            profiles.insert(builtin.id.clone(), builtin);
+        }
         for (id, agent) in &settings.agents {
             let profile = match profiles.remove(id) {
                 Some(mut builtin) => {
@@ -357,6 +515,8 @@ impl Profiles {
                     if let Some(max) = agent.max_concurrent_runs {
                         builtin.max_concurrent_runs = max;
                     }
+                    // 換成使用者自己的啟動指令：版本無從比較。
+                    builtin.min_version = None;
                     builtin
                 }
                 None => AgentProfile::generic(id, agent),
@@ -375,12 +535,91 @@ impl Profiles {
     }
 }
 
+/// 從 `initialize` 得知的 Agent 資訊：Runner 啟動時探測，或 Run 啟動 Agent 時更新（issue #18）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Learned {
+    pub capabilities: Vec<AgentCapability>,
+    /// `initialize` 回報的版本。
+    pub version: Option<String>,
+}
+
+/// 各 Agent 的 [`Learned`]，Supervisor 與各個 Run 共用。
+#[derive(Debug, Default)]
+pub struct LearnedAgents(std::sync::Mutex<BTreeMap<String, Learned>>);
+
+impl LearnedAgents {
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Learned>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// 記下最新的資訊；內容有變化時回傳 `true`（要重送 AgentAvailability）。
+    pub fn record(&self, id: &str, learned: Learned) -> bool {
+        let mut map = self.lock();
+        if map.get(id) == Some(&learned) {
+            return false;
+        }
+        map.insert(id.to_owned(), learned);
+        true
+    }
+
+    pub fn get(&self, id: &str) -> Option<Learned> {
+        self.lock().get(id).cloned()
+    }
+}
+
 /// 偵測 Agent 是否能用（§7、AgentAvailability）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Detected {
     pub available: bool,
     pub version: Option<String>,
     pub unavailable_reason: Option<String>,
+}
+
+/// 執行 `<指令> --version`，和測過的最低版本比較。讀不出版本時視為可用（交給實際啟動判斷）。
+async fn check_version(command: &Path, min: &str) -> Detected {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        process::run(&ProcessSpec::new(command).arg("--version")),
+    )
+    .await;
+    let version = match output {
+        Ok(Ok(out)) => parse_version(&out.stdout).or_else(|| parse_version(&out.stderr)),
+        _ => None,
+    };
+    match version {
+        Some(found) if version_less(&found, min) => Detected {
+            available: false,
+            version: Some(found.clone()),
+            unavailable_reason: Some(format!("版本 {found} 低於測過的最低版本 {min}，請更新")),
+        },
+        found => Detected {
+            available: true,
+            version: found,
+            unavailable_reason: None,
+        },
+    }
+}
+
+/// 從 `--version` 的輸出取出第一個 `x.y.z` 形式的版本。
+fn parse_version(text: &str) -> Option<String> {
+    text.split(|c: char| c.is_whitespace() || c == ',' || c == '(' || c == ')')
+        .map(|w| w.trim_start_matches('v'))
+        .find(|w| {
+            let parts: Vec<&str> = w.split('.').collect();
+            parts.len() >= 2
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        })
+        .map(str::to_owned)
+}
+
+/// `a` 是否比 `b` 舊（逐段比較數字）。
+fn version_less(a: &str, b: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> { v.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
+    parse(a) < parse(b)
 }
 
 /// 偵測 profile 需要的執行檔是否存在。代管安裝的 adapter 會在第一次派工時安裝，
@@ -394,10 +633,13 @@ pub async fn detect(profile: &AgentProfile) -> Detected {
                 std::env::var_os("PATHEXT").as_deref(),
             );
             match found {
-                Some(_) => Detected {
-                    available: true,
-                    version: None,
-                    unavailable_reason: None,
+                Some(path) => match profile.min_version {
+                    None => Detected {
+                        available: true,
+                        version: None,
+                        unavailable_reason: None,
+                    },
+                    Some(min) => check_version(&path, min).await,
                 },
                 None => Detected {
                     available: false,
@@ -642,17 +884,100 @@ mod tests {
         );
         assert!(!isolated.permission_gaps[0].contains("~/.claude/settings.json）"));
 
-        let settings = Settings::parse(
-            "[agents.claude-code]
-command = \"x\"
-user_settings = true
-",
-        )
-        .unwrap();
+        let settings =
+            Settings::parse("[agents.claude-code]\ncommand = \"x\"\nuser_settings = true\n")
+                .unwrap();
         let profiles = Profiles::from_settings(&settings);
         let with_user = profiles.get(CLAUDE_CODE).unwrap();
         assert_eq!(with_user.session_meta, None);
         assert!(with_user.permission_gaps[0].contains("~/.claude/settings.json"));
+    }
+
+    /// issue #31：Codex、Gemini CLI 由 Runner 代管安裝精確版本；Grok Build 檢查最低版本。
+    #[test]
+    fn 內建的_agent_profile_與版本鎖定() {
+        let exact = |v: &str| v.chars().all(|c| c.is_ascii_digit() || c == '.');
+        let codex = AgentProfile::codex();
+        let Launch::ManagedNpm {
+            package,
+            version,
+            env,
+            ..
+        } = &codex.launch
+        else {
+            panic!("Codex 由 Runner 代管安裝");
+        };
+        assert_eq!(*package, "@agentclientprotocol/codex-acp");
+        assert!(exact(version), "{version}");
+        assert!(env.contains(&("INITIAL_AGENT_MODE", "read-only")));
+        assert_eq!(codex.session_mode, Some("read-only"));
+
+        let gemini = AgentProfile::gemini();
+        let spec = gemini.launch_spec(Path::new("/agents")).unwrap();
+        assert_eq!(spec.program, PathBuf::from("node"));
+        let args: Vec<String> = spec
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args[0].contains(GEMINI_VERSION), "{args:?}");
+        assert_eq!(&args[1..], ["--acp", "--approval-mode", "default"]);
+
+        let grok = AgentProfile::grok();
+        assert!(matches!(&grok.launch, Launch::Command { command, args, .. }
+                if command == Path::new("grok") && args == &["agent", "stdio", "--no-leader"]));
+        assert_eq!(grok.min_version, Some(GROK_MIN_VERSION));
+
+        let profiles = Profiles::from_settings(&Settings::default());
+        let ids: Vec<&str> = profiles.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, [CLAUDE_CODE, CODEX, GEMINI, GROK]);
+        for profile in profiles.iter() {
+            assert!(
+                !profile.permission_gaps.is_empty(),
+                "{} 要寫落差",
+                profile.id
+            );
+        }
+    }
+
+    #[test]
+    fn runner_toml_覆寫_grok_的啟動指令時不檢查版本() {
+        let settings = Settings::parse("[agents.grok]\ncommand = \"my-grok\"\n").unwrap();
+        let grok = Profiles::from_settings(&settings)
+            .get(GROK)
+            .cloned()
+            .unwrap();
+        assert_eq!(grok.min_version, None);
+    }
+
+    #[test]
+    fn 解析與比較版本() {
+        assert_eq!(
+            parse_version("grok 1.0.52 (0920c8169e27) [stable]"),
+            Some("1.0.52".into())
+        );
+        assert_eq!(parse_version("codex-cli 0.160.0\n"), Some("0.160.0".into()));
+        assert_eq!(parse_version("v24.1.0"), Some("24.1.0".into()));
+        assert_eq!(parse_version("沒有版本"), None);
+        assert!(version_less("1.0.9", "1.0.52"));
+        assert!(!version_less("1.0.52", "1.0.52"));
+        assert!(!version_less("1.1.0", "1.0.52"));
+        assert!(version_less("0.99", "1.0.52"));
+    }
+
+    /// codex-acp 內附的 codex.exe 在平台套件的 vendor 目錄中。
+    #[cfg(windows)]
+    #[test]
+    fn codex_內附執行檔的位置() {
+        let path = CODEX_NATIVE
+            .windows_path(Path::new(r"C:\nm"))
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(
+            path.starts_with("C:/nm/@openai/codex-win32-") && path.ends_with("/bin/codex.exe"),
+            "{path}"
+        );
     }
 
     #[test]
