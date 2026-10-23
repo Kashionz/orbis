@@ -3,4 +3,4 @@
 /**
  * Runner 讀取的環境變數名稱。
  */
-export type RunnerEnvNames = { home: string, stateDir: string, };
+export type RunnerEnvNames = { home: string, stateDir: string, serverUrl: string, pairingToken: string, };

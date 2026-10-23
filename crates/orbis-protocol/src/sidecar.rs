@@ -3,7 +3,12 @@
 //! Desktop（Electron）以子程序啟動 Runner，並加上 [`SIDECAR_FLAG`]：
 //!
 //! - Runner 的 stdout 每行一個 [`SidecarOutput`] JSON；log 一律走 stderr。
-//! - Desktop 從 stdin 每行送一個 [`SidecarCommand`] JSON。
+//!   **啟動後立刻送出一行 status**（`connecting`），之後狀態有變化時再送，不要等到第一次變化。
+//! - Desktop 從 stdin 每行送一個 [`SidecarCommand`] JSON。Runner **一啟動就要接受指令**：
+//!   Desktop 會在 spawn 後馬上送 `pause_claiming`，恢復使用者上次的暫停狀態，
+//!   所以連上 Server 之前收到的指令也要生效。
+//! - Server 網址與 Pairing token 以環境變數傳入（[`crate::names::ENV_SERVER_URL`]、
+//!   [`crate::names::ENV_PAIRING_TOKEN`]），不放在命令列。
 //! - stdin 關閉（EOF）視為 [`SidecarCommand::Shutdown`]：Desktop 當掉時 Runner 會自己結束，
 //!   並結束它啟動的所有 Run。
 //! - 結束碼：0＝正常結束；[`SIDECAR_EXIT_NEEDS_PAIRING`]＝Runner token 無效或已被撤銷，

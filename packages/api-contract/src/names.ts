@@ -24,6 +24,8 @@ export const NAMES = {
   runnerEnv: {
     home: "ORBIS_HOME",
     stateDir: "ORBIS_RUNNER_STATE_DIR",
+    serverUrl: "ORBIS_SERVER_URL",
+    pairingToken: "ORBIS_PAIRING_TOKEN",
   },
 } as const satisfies Names;
 
