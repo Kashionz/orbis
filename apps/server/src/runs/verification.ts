@@ -14,7 +14,12 @@
 // 所以不會再開始一輪。
 
 import type { VerificationDecisionInput } from "@orbis/api-contract";
-import type { ContentBlock, VerificationCriterion, VerificationOutcome } from "@orbis/protocol";
+import type {
+  ContentBlock,
+  RunControlAction,
+  VerificationCriterion,
+  VerificationOutcome,
+} from "@orbis/protocol";
 import { and, asc, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import type { Clock } from "../clock";
 import {
@@ -283,6 +288,15 @@ export class VerificationService {
     task: TaskRow,
     actedBy?: { source: "api"; actorMemberId: string },
   ): Promise<void> {
+    if (run.origin === "feedback_loop") {
+      // Feedback Loop 的修正通過後直接 push，不經過 Review Gate（PR 上的 review 就是 Gate，§5.2）。
+      await this.deps.lifecycle.transition(uow, task.id, "pr_open", "feedback_loop", actedBy ?? {});
+      const send = (action: RunControlAction) =>
+        this.deps.runControls.send(uow.tx, run.id, action, uow, actedBy?.actorMemberId);
+      await send({ action: "gate_result", gate: "review", decision: "approved" });
+      await send({ action: "push_branch" });
+      return;
+    }
     const updated = await this.deps.lifecycle.transition(
       uow,
       task.id,

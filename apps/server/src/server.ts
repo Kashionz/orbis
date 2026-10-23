@@ -125,6 +125,8 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   });
   const { port } = server.address() as AddressInfo;
   const intervalMs = deps.dispatcherIntervalMs ?? 1000;
+  // Feedback Loop 的零散留言在 2 分鐘時間窗後送出（packages/github 每 15 秒檢查一次）。
+  const feedbackTimer = intervalMs > 0 ? services.github.app?.startFeedbackTimer() : undefined;
   if (intervalMs > 0) {
     services.dispatcher.start(intervalMs);
     services.blobCleanup.start();
@@ -139,6 +141,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     collabEndpoint,
     close: async () => {
       services.dispatcher.stop();
+      feedbackTimer?.stop();
       services.blobCleanup.stop();
       services.sessionCleanup.stop();
       await services.dispatcher.idle();

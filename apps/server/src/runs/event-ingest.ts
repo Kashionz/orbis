@@ -22,6 +22,7 @@ import {
   childQuestions,
   dispatches,
   needsYouItems,
+  runControls,
   runEvents,
   runs,
   taskComments,
@@ -133,6 +134,8 @@ export interface EventIngestDeps {
   verification: VerificationService;
   runControls: RunControlService;
   watch: RunWatch;
+  /** Feedback Loop 的修正 Run 沒有 push 就結束（GitHub 整合的 onFeedbackRunEnded）。 */
+  onFeedbackRunEnded?: (runId: string) => void | Promise<void>;
   notify: Notify;
   clock: Clock;
   logger: Logger;
@@ -431,6 +434,18 @@ export class EventIngest {
           isNull(needsYouItems.resolvedAt),
         ),
       );
+    if (run.origin === "feedback_loop") {
+      // Feedback Loop 的修正 Run：PR 還開著，Task 回到 PR Open；沒有 push 就結束時通知 GitHub 整合。
+      if (task.status === "running" || task.status === "verifying") {
+        await this.lifecycle.transition(uow, task.id, "pr_open", "feedback_loop");
+      }
+      const pushed = await uow.tx
+        .select({ id: runControls.controlId })
+        .from(runControls)
+        .where(and(eq(runControls.runId, runId), eq(runControls.outcome, "branch_pushed")));
+      if (pushed.length === 0) uow.afterCommit(() => this.deps.onFeedbackRunEnded?.(runId));
+      return;
+    }
     if (status !== "completed" && primary && isInFlight(task.status)) {
       await this.lifecycle.transition(uow, task.id, "ready", "run_stopped");
     }

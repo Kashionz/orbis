@@ -272,7 +272,14 @@ describe.skipIf(dbSkipReason !== null)("Child Run（MCP 工具）", () => {
 
     it("wait_run 阻塞到 Child Run 結束，回傳最後的回覆", async () => {
       const child = await acceptChild(childId((await delegate()).result));
-      const waiting = tool({ tool: "wait_run", run_id: child.as.runId, timeout_ms: 5000 });
+      // 全部測試平行時比較慢：wait_run 等 20 秒，測試等 30 秒。
+      const waiting = parent.mine.toolCall(
+        parent.offer.dispatch_id,
+        parent.run.id,
+        { tool: "wait_run", run_id: child.as.runId, timeout_ms: 20_000 },
+        undefined,
+        30_000,
+      );
       await parent.mine.eventAcked(child.as.dispatchId, child.as.runId, {
         kind: "final_message",
         text: { type: "inline", text: "看過了，沒問題" },

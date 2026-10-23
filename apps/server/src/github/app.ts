@@ -3,18 +3,22 @@
 
 import {
   createGitHubIntegration,
+  type FeedbackRunPort,
   type GitHubAppConfig,
   type GitHubClient,
   installUrl,
   type Notifier,
 } from "@orbis/github";
+import { eq, sql } from "drizzle-orm";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
+import { projects, repoSpecs, taskNotes } from "../db/schema";
 import type { DomainEvents } from "../domain/events";
 import { GitHubDomainService } from "../domain/github-domain";
 import type { TaskLifecycleService } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
 import type { Notify } from "../notifications/types";
+import { DrizzleFeedbackStore, DrizzleRepoSpecStore } from "./feedback-store";
 import type { GitHubApp } from "./integration";
 import { DrizzleGitHubStore } from "./store";
 
@@ -74,6 +78,7 @@ export function createGitHubApp(
     clock: Clock;
     logger: Logger;
     notify: Notify;
+    feedbackRuns: FeedbackRunPort;
     publicUrl: string;
   },
 ): { app: GitHubApp; installUrl: string; idle: () => Promise<void> } {
@@ -86,6 +91,57 @@ export function createGitHubApp(
     logger,
     taskUrl: (task) => taskUrl(deps.publicUrl, task.key),
     now: () => deps.clock.now(),
+    feedback: {
+      store: new DrizzleFeedbackStore(deps.db),
+      runs: deps.feedbackRuns,
+      botAllowlist: async (projectId) => {
+        const [project] = await deps.db
+          .select({ allowlist: projects.feedbackBotAllowlist })
+          .from(projects)
+          .where(eq(projects.id, projectId));
+        return project?.allowlist ?? [];
+      },
+      addTaskNote: async (note) => {
+        await deps.db.insert(taskNotes).values({
+          taskId: note.taskId,
+          runId: note.runId,
+          source: "feedback_loop",
+          body: note.body,
+          url: note.url,
+        });
+      },
+    },
+    repoSpecs: {
+      store: new DrizzleRepoSpecStore(deps.db),
+      getRepoSpec: async (repoSpecId) => {
+        const [spec] = await deps.db.select().from(repoSpecs).where(eq(repoSpecs.id, repoSpecId));
+        return spec
+          ? {
+              id: spec.id,
+              repoId: spec.repoId,
+              path: spec.path,
+              title: spec.title,
+              version: spec.version,
+              committedSha: spec.committedSha,
+              committedBlobSha: spec.committedBlobSha,
+            }
+          : null;
+      },
+      recordRepoSpecMerged: async (repoSpecId, merged) => {
+        // 版本以原子操作遞增，同一個 Spec 的兩個 PR 同時 merge 也不會算重。
+        const [updated] = await deps.db
+          .update(repoSpecs)
+          .set({
+            version: sql`${repoSpecs.version} + 1`,
+            committedSha: merged.commitSha,
+            committedBlobSha: merged.blobSha,
+          })
+          .where(eq(repoSpecs.id, repoSpecId))
+          .returning({ version: repoSpecs.version });
+        if (!updated) throw new Error(`Repo Spec ${repoSpecId} 不存在`);
+        return { version: updated.version };
+      },
+    },
     ...(options.client && { client: options.client }),
   });
 

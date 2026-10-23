@@ -305,7 +305,7 @@ export interface MentionAuthor {
   targetId: string;
 }
 
-/** 文件中所有的 mention 節點（attrs：id、label、nodeId）。 */
+/** 文件中所有的 mention 節點（attrs：id、label、nodeId）；nodeId 重複的節點不列出。 */
 export function mentionNodes(
   fragment: Y.XmlFragment,
 ): { id: string; label: string; nodeId: string }[] {
@@ -323,5 +323,8 @@ export function mentionNodes(
     }
   };
   walk(fragment);
-  return found;
+  // 同一個 nodeId 出現在多個節點時無法判斷是誰加的，這些節點一律不算（不記錄作者，也不處理）。
+  const counts = new Map<string, number>();
+  for (const node of found) counts.set(node.nodeId, (counts.get(node.nodeId) ?? 0) + 1);
+  return found.filter((node) => counts.get(node.nodeId) === 1);
 }

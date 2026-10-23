@@ -29,6 +29,7 @@ import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
 import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
+import { FeedbackRunService } from "./runs/feedback";
 import { RunControlService } from "./runs/run-control";
 import { VerificationService } from "./runs/verification";
 import { delegationToolHandlers } from "./tools/delegation-tools";
@@ -115,24 +116,6 @@ export function createServices(options: ServicesOptions): Services {
     channels: [new InAppChannel(webPush), new DesktopChannel()],
   });
   notify.watch(events);
-  const githubApp = options.github?.app
-    ? createGitHubApp(options.github.app, {
-        db,
-        lifecycle,
-        events,
-        clock,
-        logger,
-        notify,
-        publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
-      })
-    : null;
-  const github: GitHubIntegration = {
-    userLookup: options.github?.userLookup ?? createGitHubUserLookup(),
-    app: githubApp?.app ?? null,
-    installUrl: githubApp?.installUrl ?? null,
-    pullRequestOpener:
-      options.github?.pullRequestOpener ?? createPullRequestOpener(githubApp?.app ?? null, logger),
-  };
   const hub = new RunnerHub();
   const eventStore = new EventStore(db);
   const dispatcher = new Dispatcher({
@@ -145,6 +128,26 @@ export function createServices(options: ServicesOptions): Services {
     offerTimeoutMs: options.offerTimeoutMs,
     rejectCooldownMs: options.rejectCooldownMs,
   });
+  const feedbackRuns = new FeedbackRunService({ db, lifecycle, hub, dispatcher });
+  const githubApp = options.github?.app
+    ? createGitHubApp(options.github.app, {
+        db,
+        lifecycle,
+        events,
+        clock,
+        logger,
+        notify,
+        feedbackRuns,
+        publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
+      })
+    : null;
+  const github: GitHubIntegration = {
+    userLookup: options.github?.userLookup ?? createGitHubUserLookup(),
+    app: githubApp?.app ?? null,
+    installUrl: githubApp?.installUrl ?? null,
+    pullRequestOpener:
+      options.github?.pullRequestOpener ?? createPullRequestOpener(githubApp?.app ?? null, logger),
+  };
   const blobStore =
     options.blobStore ?? new FileSystemBlobStore(options.blobDir ?? DEFAULT_BLOB_DIR);
   const sessionCleanup = new SessionCleanup({ db, clock, hub, dispatcher }, logger);
@@ -184,6 +187,9 @@ export function createServices(options: ServicesOptions): Services {
       notify,
       clock,
       logger,
+      onFeedbackRunEnded: async (runId) => {
+        await githubApp?.app.onFeedbackRunEnded({ runId });
+      },
     }),
     runControls,
     verification,
