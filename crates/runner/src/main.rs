@@ -30,7 +30,8 @@ struct Cli {
 
     /// 第一次連線用的 Pairing token。未指定時讀取環境變數 <前綴>PAIRING_TOKEN。
     /// 已經和這個 Server 完成 Pairing（本機有 Runner token）時忽略。
-    #[arg(long, value_name = "TOKEN")]
+    /// token 是 base64url，可能以 `-` 開頭，所以值不會被當成另一個參數（issue #21）。
+    #[arg(long, value_name = "TOKEN", allow_hyphen_values = true)]
     pairing_token: Option<String>,
 
     /// 在 UI 上顯示的名稱，預設是主機名稱。

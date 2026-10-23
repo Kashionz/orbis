@@ -235,6 +235,20 @@ async fn missing_server_names_the_environment_variable() {
     );
 }
 
+/// Pairing token 以 `-` 開頭時（base64url 可能如此），仍當成 `--pairing-token` 的值（issue #21）。
+#[tokio::test]
+async fn pairing_token_may_start_with_a_hyphen() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.pairing_token = Some("-uAbC_123");
+    let _runner = spawn_runner(opts);
+    let mut conn = server.accept().await;
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["token"], "-uAbC_123");
+}
+
 /// 沒有參數時從環境變數讀取連線設定。
 #[tokio::test]
 async fn reads_connection_settings_from_environment() {

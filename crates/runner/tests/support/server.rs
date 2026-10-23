@@ -404,6 +404,8 @@ pub fn result_outcome(result: &Value) -> &str {
 pub struct RunnerProcess {
     pub child: Child,
     pub stderr: Arc<Mutex<String>>,
+    /// 讀 stderr 的背景工作；讀到 EOF 才結束。
+    stderr_reader: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RunnerProcess {
@@ -411,11 +413,20 @@ impl RunnerProcess {
         self.stderr.lock().unwrap().clone()
     }
 
+    /// 等 Runner 結束，並等 stderr 讀到 EOF：程序結束時 pipe 中可能還有沒讀完的輸出，
+    /// 不等的話接著檢查 stderr 會偶爾看到空字串（issue #22、#65）。
     pub async fn wait_exit(&mut self) -> std::process::ExitStatus {
-        timeout(WAIT, self.child.wait())
+        let status = timeout(WAIT, self.child.wait())
             .await
             .unwrap_or_else(|_| panic!("Runner 沒有結束；stderr：\n{}", self.stderr()))
-            .unwrap()
+            .unwrap();
+        if let Some(reader) = self.stderr_reader.take() {
+            timeout(WAIT, reader)
+                .await
+                .unwrap_or_else(|_| panic!("Runner 已結束，但 stderr 沒有關閉"))
+                .unwrap();
+        }
+        status
     }
 }
 
@@ -483,7 +494,7 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
     let stderr = Arc::new(Mutex::new(String::new()));
     let pipe = child.stderr.take().unwrap();
     let sink = stderr.clone();
-    tokio::spawn(async move {
+    let stderr_reader = tokio::spawn(async move {
         let mut lines = BufReader::new(pipe).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             let mut s = sink.lock().unwrap();
@@ -491,7 +502,11 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
             s.push('\n');
         }
     });
-    RunnerProcess { child, stderr }
+    RunnerProcess {
+        child,
+        stderr,
+        stderr_reader: Some(stderr_reader),
+    }
 }
 
 /// 在 Runner 本機目錄寫入 runner.toml。
