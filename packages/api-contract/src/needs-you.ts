@@ -57,13 +57,30 @@ export const NeedsYouStoppedRun = NeedsYouBase.extend({
 });
 export type NeedsYouStoppedRun = z.infer<typeof NeedsYouStoppedRun>;
 
+/**
+ * Child Run 以 `ask_parent` 提出、父 Run 的回合已經結束而改由人回答的問題（§9）。
+ * `runId` 是父 Run；以 `POST` childQuestionAnswer 回答。
+ */
+export const NeedsYouChildQuestion = NeedsYouBase.extend({
+  kind: z.literal("child_question"),
+  questionId: Id,
+  childRunId: Id,
+  question: z.string().min(1),
+});
+export type NeedsYouChildQuestion = z.infer<typeof NeedsYouChildQuestion>;
+
 export const NeedsYouItem = z.discriminatedUnion("kind", [
   NeedsYouPermissionRequest,
   NeedsYouGate,
   NeedsYouStoppedRun,
+  NeedsYouChildQuestion,
 ]);
 export type NeedsYouItem = z.infer<typeof NeedsYouItem>;
 
 /** `GET` Needs You 的回應：目前 Member 待處理的項目，依建立時間排序（新的在前）。 */
 export const NeedsYouListResponse = z.array(NeedsYouItem);
 export type NeedsYouListResponse = z.infer<typeof NeedsYouListResponse>;
+
+/** 人回答 Child Run 的問題（`POST` childQuestionAnswer）。答案交給 Child Run 的 `ask_parent`。 */
+export const AnswerChildQuestionInput = z.object({ answer: z.string().trim().min(1) }).strict();
+export type AnswerChildQuestionInput = z.infer<typeof AnswerChildQuestionInput>;

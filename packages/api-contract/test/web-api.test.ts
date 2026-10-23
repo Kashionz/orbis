@@ -255,6 +255,9 @@ describe("Gate 與 Review", () => {
             updatedAt: NOW,
           },
         ],
+        previewComments: [],
+        planSeq: null,
+        reviewDiffSeq: 30,
         createdAt: NOW,
       }).success,
     ).toBe(true);

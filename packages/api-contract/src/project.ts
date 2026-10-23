@@ -29,6 +29,13 @@ export const ProjectPolicy = z.object({
   defaultPermissionPolicy: PermissionPolicy,
   /** 有 Repo 的 Task 是否自動建立對應的 GitHub Issue（§11）。 */
   autoCreateIssues: z.boolean(),
+  /** Verification 失敗時自動重試的上限（§5.1，預設 3）。 */
+  verificationMaxRetries: z.number().int().min(1).max(10),
+  /**
+   * 會觸發 Feedback Loop 的 bot 的 GitHub login（例如 `coderabbitai[bot]`），其他 bot 的留言
+   * 不觸發（§5.2）。
+   */
+  feedbackBotAllowlist: z.array(z.string().trim().min(1).max(100)).max(50),
 });
 export type ProjectPolicy = z.infer<typeof ProjectPolicy>;
 

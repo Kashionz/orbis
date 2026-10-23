@@ -11,8 +11,8 @@ import {
   encodePreviewData,
   type MERGE_OUTCOMES,
   type MergeOutcome,
-  type ORBIS_TOOL_ERROR_CODES,
-  ORBIS_TOOLS,
+  type MCP_TOOL_ERROR_CODES,
+  MCP_TOOLS,
   type OrbisToolCall,
   type OrbisToolErrorCode,
   type OrbisToolName,
@@ -76,8 +76,8 @@ describe("W5–7 契約：協定版本與列舉", () => {
     expectTypeOf<(typeof PLAN_SOURCES)[number]>().toEqualTypeOf<PlanSource>();
     expectTypeOf<(typeof MERGE_OUTCOMES)[number]>().toEqualTypeOf<MergeOutcome>();
     expectTypeOf<(typeof PREVIEW_STOP_REASONS)[number]>().toEqualTypeOf<PreviewStopReason>();
-    expectTypeOf<(typeof ORBIS_TOOLS)[number]>().toEqualTypeOf<OrbisToolName>();
-    expectTypeOf<(typeof ORBIS_TOOL_ERROR_CODES)[number]>().toEqualTypeOf<OrbisToolErrorCode>();
+    expectTypeOf<(typeof MCP_TOOLS)[number]>().toEqualTypeOf<OrbisToolName>();
+    expectTypeOf<(typeof MCP_TOOL_ERROR_CODES)[number]>().toEqualTypeOf<OrbisToolErrorCode>();
     expectTypeOf<(typeof DELEGATION_PURPOSES)[number]>().toEqualTypeOf<DelegationPurpose>();
     expectTypeOf<(typeof PREVIEW_STREAM_KINDS)[number]>().toEqualTypeOf<PreviewStreamKind>();
     expectTypeOf<(typeof PREVIEW_RESET_REASONS)[number]>().toEqualTypeOf<PreviewResetReason>();
@@ -128,7 +128,7 @@ describe("W5–7 契約：Event 與 RunControl", () => {
   });
 });
 
-describe("W5–7 契約：Orbis MCP 工具呼叫", () => {
+describe("W5–7 契約：MCP 工具呼叫", () => {
   it("呼叫與輸出都以 tool 區分，種類一一對應", () => {
     expectTypeOf<OrbisToolCall["tool"]>().toEqualTypeOf<OrbisToolName>();
     expectTypeOf<OrbisToolOutput["tool"]>().toEqualTypeOf<OrbisToolName>();
@@ -138,13 +138,13 @@ describe("W5–7 契約：Orbis MCP 工具呼叫", () => {
     const calls = new Set(
       fixtures("runner_to_server.tool_call.").map((f) => (f.call as { tool: string }).tool),
     );
-    expect([...calls].sort()).toEqual([...ORBIS_TOOLS].sort());
+    expect([...calls].sort()).toEqual([...MCP_TOOLS].sort());
     const outputs = new Set(
       fixtures("server_to_runner.tool_result.")
         .map((f) => f.result as { outcome: string; output?: { tool: string } })
         .flatMap((r) => (r.output ? [r.output.tool] : [])),
     );
-    expect([...outputs].sort()).toEqual([...ORBIS_TOOLS].sort());
+    expect([...outputs].sort()).toEqual([...MCP_TOOLS].sort());
   });
 });
 

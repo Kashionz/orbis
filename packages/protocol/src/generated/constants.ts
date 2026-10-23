@@ -112,9 +112,9 @@ export const MERGE_OUTCOMES = ["merged", "conflict"] as const satisfies readonly
 
 export const PREVIEW_STOP_REASONS = ["exited", "ready_timeout", "spawn_failed"] as const satisfies readonly PreviewStopReason[];
 
-export const ORBIS_TOOLS = ["delegate", "get_run", "wait_run", "list_runs", "merge_child", "ask_parent", "answer_child", "propose_tasks", "update_task_note"] as const satisfies readonly OrbisToolName[];
+export const MCP_TOOLS = ["delegate", "get_run", "wait_run", "list_runs", "merge_child", "ask_parent", "answer_child", "propose_tasks", "update_task_note"] as const satisfies readonly OrbisToolName[];
 
-export const ORBIS_TOOL_ERROR_CODES = ["delegation_disabled", "agent_not_allowed", "agent_unavailable", "depth_exceeded", "child_limit_exceeded", "permission_not_narrower", "not_found", "not_child", "invalid_state", "internal"] as const satisfies readonly OrbisToolErrorCode[];
+export const MCP_TOOL_ERROR_CODES = ["delegation_disabled", "agent_not_allowed", "agent_unavailable", "depth_exceeded", "child_limit_exceeded", "permission_not_narrower", "not_found", "not_child", "invalid_state", "internal"] as const satisfies readonly OrbisToolErrorCode[];
 
 export const DELEGATION_PURPOSES = ["tool", "verification"] as const satisfies readonly DelegationPurpose[];
 

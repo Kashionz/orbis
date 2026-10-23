@@ -220,7 +220,7 @@ wire_enum! {
 }
 
 wire_enum! {
-    /// [`OrbisToolCall`] 的 `tool` 值。TS 端的 `ORBIS_TOOLS` 由此產生。
+    /// [`OrbisToolCall`] 的 `tool` 值。TS 端的 `MCP_TOOLS` 由此產生。
     OrbisToolName {
         Delegate => "delegate",
         GetRun => "get_run",

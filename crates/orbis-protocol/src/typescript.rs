@@ -305,13 +305,13 @@ fn value_lists() -> Vec<ValueList> {
             PreviewStopReason::as_str,
         ),
         list(
-            "ORBIS_TOOLS",
+            "MCP_TOOLS",
             "OrbisToolName",
             OrbisToolName::ALL.iter().copied(),
             OrbisToolName::as_str,
         ),
         list(
-            "ORBIS_TOOL_ERROR_CODES",
+            "MCP_TOOL_ERROR_CODES",
             "OrbisToolErrorCode",
             OrbisToolErrorCode::ALL.iter().copied(),
             OrbisToolErrorCode::as_str,

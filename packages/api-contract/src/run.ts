@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
-import { DelegationMode, PermissionPolicy, RunnerKind, RunStatus } from "./enums";
+import { DelegationMode, PermissionPolicy, RunnerKind, RunOrigin, RunStatus } from "./enums";
 
 const TokenCount = z.number().int().nonnegative().nullable();
 
@@ -57,6 +57,14 @@ export const Run = z
     usage: RunUsage,
     /** 觸發這個 Run 的 Member；由 Delegation 產生的 Child Run 為 null。 */
     startedByMemberId: Id.nullable(),
+    /** Run 為什麼產生。Child Run 樹與 Run 頁用來標示。 */
+    origin: RunOrigin,
+    /** 使用的 Credential（Runner 上的名稱）；還沒派工時為 null。 */
+    credential: z.string().min(1).nullable(),
+    /** 沒有父 Run 的 `consult` Run（@agent）唯讀讀取哪個 Run 的 Worktree；其他 Run 為 null。 */
+    consultOfRunId: Id.nullable(),
+    /** Feedback Loop 的 Run 接續的前一個 Run；其他 Run 為 null。 */
+    resumesRunId: Id.nullable(),
     createdAt: Timestamp,
     /** Runner 開始執行的時間；尚未開始時為 null。 */
     startedAt: Timestamp.nullable(),
