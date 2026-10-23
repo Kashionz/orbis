@@ -308,23 +308,13 @@ impl Connection {
     pub async fn recv(&mut self) -> anyhow::Result<Option<Inbound>> {
         while let Some(message) = self.ws.next().await {
             match message.context("接收 frame 失敗")? {
-                Message::Text(text) => {
-                    // TODO(contract): 契約 v2 合併後 preview frame 是 ServerToRunner 的變體（#29）。
-                    if let Some(parsed) = preview::wire::PreviewFromServer::parse(&text) {
-                        match parsed {
-                            Ok(frame) => return Ok(Some(Inbound::Preview(frame))),
-                            Err(e) => warn!(error = %e, "無法解析 preview frame，略過"),
-                        }
-                        continue;
+                Message::Text(text) => match serde_json::from_str::<ServerToRunner>(&text) {
+                    Ok(frame) => {
+                        debug!(frame = frame.type_name(), "收到 frame");
+                        return Ok(Some(Inbound::Frame(frame)));
                     }
-                    match serde_json::from_str::<ServerToRunner>(&text) {
-                        Ok(frame) => {
-                            debug!(frame = frame.type_name(), "收到 frame");
-                            return Ok(Some(Inbound::Frame(frame)));
-                        }
-                        Err(e) => warn!(error = %e, "無法解析 Server 送來的 frame，略過"),
-                    }
-                }
+                    Err(e) => warn!(error = %e, "無法解析 Server 送來的 frame，略過"),
+                },
                 Message::Close(frame) => {
                     debug!(?frame, "Server 關閉連線");
                     return Ok(None);
@@ -343,9 +333,7 @@ impl Connection {
 #[derive(Debug)]
 pub enum Inbound {
     Frame(ServerToRunner),
-    /// Preview 的控制 frame（§13）。
-    Preview(preview::wire::PreviewFromServer),
-    /// Preview 的資料（binary 訊息）。
+    /// Preview 的資料（binary 訊息，§13）。
     PreviewData(Vec<u8>),
 }
 
@@ -463,8 +451,13 @@ impl Session {
                 Some(frame) = frames.recv() => self.conn.send(&frame).await?,
                 () = outbox.notified() => {}
                 frame = self.conn.recv() => match frame? {
-                    Some(Inbound::Frame(frame)) => self.handle(frame).await?,
-                    Some(Inbound::Preview(frame)) => relay.handle_frame(frame),
+                    // Preview 的控制 frame 交給 relay，其他照常處理
+                    Some(Inbound::Frame(frame)) => {
+                        match preview::wire::PreviewFromServer::from_frame(frame) {
+                            Ok(preview) => relay.handle_frame(preview),
+                            Err(frame) => self.handle(frame).await?,
+                        }
+                    }
                     Some(Inbound::PreviewData(bytes)) => relay.handle_data(&bytes),
                     None => return Ok(false),
                 },
@@ -511,13 +504,14 @@ impl Session {
                 debug!(run_id = %ack.run_id, seq = ack.seq, "收到 event_ack");
                 self.supervisor.outbox().ack(&ack.run_id, ack.seq);
             }
-            // 協定版本 2 的 frame：Orbis MCP 工具呼叫由 A2、Preview 通道由 E2 實作，在那之前略過。
-            ServerToRunner::ToolResult(_)
-            | ServerToRunner::PreviewOpen(_)
+            // Preview 的 frame 在 run() 中已經交給 relay，不會到這裡
+            ServerToRunner::PreviewOpen(_)
             | ServerToRunner::PreviewWindow(_)
             | ServerToRunner::PreviewEnd(_)
             | ServerToRunner::PreviewReset(_)
-            | ServerToRunner::PreviewWsClose(_) => {
+            | ServerToRunner::PreviewWsClose(_) => {}
+            // 協定版本 2 的 frame：Orbis MCP 工具呼叫由 A2 實作，在那之前略過。
+            ServerToRunner::ToolResult(_) => {
                 warn!(frame = frame.type_name(), "尚未支援的 frame，略過");
             }
         }

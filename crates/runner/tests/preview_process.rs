@@ -312,23 +312,100 @@ async fn dev_server_自己結束時回報輸出() {
     )
     .await;
     let (_runner, mut conn) = env.dispatch().await;
-    // TODO(contract): 契約 v2 加入 `preview_stopped` Event 後改成等它，並檢查 reason／exit_code 欄位（#29）。
-    let stopped = conn
-        .wait_for("Preview 停止", |v| {
-            v["kind"] == "error"
-                && v["message"]
-                    .as_str()
-                    .is_some_and(|m| m.starts_with("Preview 已停止"))
-        })
-        .await;
-    let message = stopped["message"].as_str().unwrap();
-    assert!(message.contains("exited"), "{message}");
-    assert!(message.contains('3'), "{message}");
-    assert!(message.contains("無法載入 vite.config.ts"), "{message}");
-    assert_eq!(stopped["fatal"], false, "{stopped}");
+    let stopped = conn.wait_event("preview_stopped").await;
+    assert_eq!(stopped["reason"], "exited", "{stopped}");
+    assert_eq!(stopped["exit_code"], 3, "{stopped}");
+    assert!(
+        stopped["output"]
+            .as_str()
+            .unwrap()
+            .contains("無法載入 vite.config.ts"),
+        "{stopped}"
+    );
     reached_status(&mut conn, "awaiting_gate").await;
     assert!(
         !conn.events.iter().any(|e| e["kind"] == "preview_ready"),
         "沒有就緒就不能回報 preview_ready"
     );
+}
+
+/// worktree_ready 帶 Preview 的 port；`restart_preview` 結束目前的 dev server 並重新啟動，就緒後再送 preview_ready。
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_preview_重新啟動_dev_server() {
+    let mut env = Env::new(
+        &[
+            ("server.js", &dev_server_js()),
+            (&cfg(), &preview_config("node server.js", "/ready")),
+        ],
+        &runner_script("simple.yaml"),
+    )
+    .await;
+    let (_runner, mut conn) = env.dispatch().await;
+    let worktree = conn
+        .events
+        .iter()
+        .find(|e| e["kind"] == "worktree_ready")
+        .cloned()
+        .unwrap();
+    let first = conn.wait_event("preview_ready").await;
+    assert_eq!(worktree["preview_port"], first["port"], "{worktree}");
+    let before = preview_info(&first).await;
+
+    let result = conn
+        .control("r1", "d-r1", "restart", RunControlAction::RestartPreview)
+        .await;
+    assert_eq!(result_outcome(&result), "applied", "{result}");
+    let second = conn.wait_event("preview_ready").await;
+    assert_eq!(second["port"], first["port"]);
+    let after = preview_info(&second).await;
+    assert_ne!(after["pid"], before["pid"], "重新啟動後是新的程序");
+    wait_dead(before["pid"].as_u64().unwrap(), "重新啟動前的 dev server").await;
+    wait_dead(before["child"].as_u64().unwrap(), "重新啟動前的子程序").await;
+    assert!(
+        !conn.events.iter().any(|e| e["kind"] == "preview_stopped"),
+        "要求重新啟動時不回報 preview_stopped"
+    );
+}
+
+/// dev server 自己停止後也可以重新啟動；沒有設定 Preview 的 Run 拒絕 restart_preview。
+#[tokio::test(flavor = "multi_thread")]
+async fn 停止後可以重新啟動_沒有設定時拒絕() {
+    let mut env = Env::new(
+        &[
+            ("crash.js", CRASHING_SERVER_JS),
+            (&cfg(), &preview_config("node crash.js", "/")),
+        ],
+        &runner_script("simple.yaml"),
+    )
+    .await;
+    let (_runner, mut conn) = env.dispatch().await;
+    conn.wait_event("preview_stopped").await;
+    let result = conn
+        .control("r1", "d-r1", "restart", RunControlAction::RestartPreview)
+        .await;
+    assert_eq!(result_outcome(&result), "applied", "{result}");
+    // crash.js 每次啟動都會結束：再收到一次 preview_stopped
+    let again = conn.wait_event("preview_stopped").await;
+    assert_eq!(again["reason"], "exited");
+
+    let mut plain = Env::new(&[("README.md", "a\n")], &runner_script("simple.yaml")).await;
+    let runner = spawn_runner(RunnerOptions::new(&plain.server.base_url(), &plain.home));
+    let mut conn = plain.server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_test")).await;
+    conn.send(&send_offer(offer(
+        "r1",
+        "d-r1",
+        plain.repo.clone(),
+        "fake",
+        "做事",
+    )))
+    .await;
+    let worktree = conn.wait_event("worktree_ready").await;
+    assert!(worktree["preview_port"].is_null(), "{worktree}");
+    reached_status(&mut conn, "awaiting_gate").await;
+    let result = conn
+        .control("r1", "d-r1", "restart", RunControlAction::RestartPreview)
+        .await;
+    assert_eq!(result["reason"], "invalid_state", "{result}");
+    drop(runner);
 }

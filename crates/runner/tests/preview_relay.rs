@@ -159,6 +159,18 @@ async fn serve_ws(stream: TcpStream) {
 
 // ── 扮演 Server ─────────────────────────────────────────────────────────────
 
+/// relay 送出的 JSON 必須是協定的 RunnerToServer frame。
+fn parse_frame(text: &str) -> PreviewToServer {
+    let frame: orbis_protocol::frame::RunnerToServer =
+        serde_json::from_str(text).unwrap_or_else(|e| {
+            panic!(
+                "不是協定的 frame：{e}
+{text}"
+            )
+        });
+    PreviewToServer::from_frame(frame).expect("relay 只送 preview 的 frame")
+}
+
 struct FakeServer {
     relay: PreviewRelay,
     out: mpsc::Receiver<Outbound>,
@@ -250,7 +262,7 @@ impl FakeServer {
             .expect("等不到 relay 送出的訊息")
             .expect("relay 的送出 channel 已關閉");
         match outbound {
-            Outbound::Text(text) => Received::Frame(serde_json::from_str(&text).unwrap()),
+            Outbound::Text(text) => Received::Frame(parse_frame(&text)),
             Outbound::Binary(bytes) => {
                 let data = PreviewData::decode(&bytes).expect("binary 訊息格式正確");
                 Received::Data(data.kind, data.stream_id, data.payload.to_vec())
@@ -263,9 +275,7 @@ impl FakeServer {
         match tokio::time::timeout(Duration::from_millis(400), self.out.recv()).await {
             Err(_) => None,
             Ok(None) => panic!("relay 的送出 channel 已關閉"),
-            Ok(Some(Outbound::Text(text))) => {
-                Some(Received::Frame(serde_json::from_str(&text).unwrap()))
-            }
+            Ok(Some(Outbound::Text(text))) => Some(Received::Frame(parse_frame(&text))),
             Ok(Some(Outbound::Binary(bytes))) => {
                 let data = PreviewData::decode(&bytes).expect("binary 訊息格式正確");
                 Some(Received::Data(

@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use orbis_protocol::availability::{AgentAvailability, AgentInfo, CredentialInfo};
 use orbis_protocol::connection::Heartbeat;
 use orbis_protocol::control::{
-    RunControl, RunControlOutcome, RunControlRejectReason, RunControlResult,
+    RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason, RunControlResult,
 };
 use orbis_protocol::dispatch::{
     DispatchAccept, DispatchOffer, DispatchReject, DispatchRejectReason,
@@ -355,6 +355,27 @@ impl Supervisor {
                     control.dispatch_id
                 ),
             );
+        }
+        // 重新啟動 Preview（§13）在 Run 的任何狀態都可以做，不經過 Run 的狀態機
+        if matches!(control.action, RunControlAction::RestartPreview) {
+            if !handle.is_active() {
+                return reject(RunControlRejectReason::InvalidState, "Run 已經結束".into());
+            }
+            if !self.previews.restart(&control.run_id) {
+                return reject(
+                    RunControlRejectReason::InvalidState,
+                    "這個 Run 沒有設定 Preview".into(),
+                );
+            }
+            let _ = self
+                .frames
+                .send(RunnerToServer::RunControlResult(RunControlResult {
+                    control_id: control.control_id.clone(),
+                    run_id: control.run_id.clone(),
+                    dispatch_id: control.dispatch_id.clone(),
+                    outcome: RunControlOutcome::Applied,
+                }));
+            return;
         }
         if handle.tx.send(RunInput::Control(control.clone())).is_err() {
             reject(RunControlRejectReason::InvalidState, "Run 已經結束".into());

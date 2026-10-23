@@ -301,8 +301,8 @@ impl Run {
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
         self.emit(EventKind::WorktreeReady {
-            // Preview 的 port 由 E2 填入。
-            preview_port: None,
+            // 設定了 [preview] 時是分配給這個 Worktree 的 port（Server 據此區分「沒有設定」與「啟動中」）
+            preview_port: PreviewSpec::from_worktree(&wt).map(|spec| spec.port),
             worktree_path: wt.path.to_string_lossy().into_owned(),
             branch: wt.branch.clone(),
             base_commit: wt.base_commit.clone(),
@@ -467,20 +467,14 @@ impl Run {
         let notify = move |notice| {
             let kind = match notice {
                 PreviewNotice::Ready { port, url } => EventKind::PreviewReady { port, url },
-                // TODO(contract): 契約 v2 加入 `preview_stopped` Event 後改用它（#29）。
                 PreviewNotice::Stopped {
                     reason,
                     exit_code,
                     output,
-                } => EventKind::Error {
-                    code: RunErrorCode::Internal,
-                    message: format!(
-                        "Preview 已停止（{}，結束碼 {}）：{}",
-                        reason.as_str(),
-                        exit_code.map_or_else(|| "無".to_owned(), |c| c.to_string()),
-                        normalize::truncate(output, 4000)
-                    ),
-                    fatal: false,
+                } => EventKind::PreviewStopped {
+                    reason,
+                    exit_code,
+                    output: normalize::truncate(output, 4000),
                 },
             };
             if let Err(e) = outbox.emit(&run_id, now(), kind) {
@@ -1067,7 +1061,7 @@ impl Run {
                     RunControlRejectReason::UnknownPermissionRequest,
                     "沒有等待中的權限請求",
                 ),
-                // 協定版本 2 的動作，由 A2（verify、archive）與 E2（restart_preview）實作。
+                // 協定版本 2 的動作，由 A2（verify、archive）實作；restart_preview 由 Supervisor 處理，不會到這裡。
                 RunControlAction::Verify(_)
                 | RunControlAction::Archive
                 | RunControlAction::RestartPreview => self.reject(

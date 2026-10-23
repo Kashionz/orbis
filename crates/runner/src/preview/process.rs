@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use orbis_protocol::enums::RunStatus;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::registry::Registration;
@@ -81,26 +81,8 @@ fn normalize_ready_path(path: Option<&str>) -> String {
     }
 }
 
-/// Preview 停下來的原因。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PreviewStopReason {
-    /// dev server 自己結束。
-    Exited,
-    /// 在時限內沒有就緒，Runner 結束了程序。
-    ReadyTimeout,
-    /// 無法啟動。
-    SpawnFailed,
-}
-
-impl PreviewStopReason {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Exited => "exited",
-            Self::ReadyTimeout => "ready_timeout",
-            Self::SpawnFailed => "spawn_failed",
-        }
-    }
-}
+/// Preview 停下來的原因（協定的 `preview_stopped`）。
+pub use orbis_protocol::event::PreviewStopReason;
 
 /// Preview 狀態的變化，由 Run 轉成 Event。因 Run 結束或 [`Preview::stop`] 而停止時不回報。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +137,7 @@ impl Preview {
         redactor: Redactor,
         status: watch::Receiver<RunStatus>,
         timing: PreviewTiming,
-        notify: impl Fn(PreviewNotice) + Send + 'static,
+        notify: impl Fn(PreviewNotice) + Send + Sync + 'static,
     ) -> Self {
         let (stop, stop_rx) = oneshot::channel();
         let port = spec.port;
@@ -217,11 +199,23 @@ impl Tail {
     }
 }
 
-/// 為什麼不再監看。
+/// 一次 dev server 為什麼結束。
 enum End {
     /// Run 結束或被要求停止：結束程序，不回報。
     Stopped,
+    /// 要求重新啟動（`restart_preview`）。
+    Restart,
     Exited(Option<i32>),
+}
+
+/// 一次 dev server 的結果。
+enum Once {
+    /// Run 結束或被要求停止。
+    Stopped,
+    /// 要求重新啟動。
+    Restart,
+    /// dev server 自己停了（已經回報）。
+    Ended,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -233,7 +227,7 @@ async fn supervise(
     mut status: watch::Receiver<RunStatus>,
     timing: PreviewTiming,
     mut stop: oneshot::Receiver<()>,
-    notify: impl Fn(PreviewNotice) + Send + 'static,
+    notify: impl Fn(PreviewNotice) + Send + Sync + 'static,
 ) {
     if let Some(after) = after {
         let setup_ok = tokio::select! {
@@ -245,6 +239,53 @@ async fn supervise(
             return;
         }
     }
+    // 重新啟動的要求：登記在 registry，整個 Run 期間都可以要求（包括 dev server 已經停了之後）
+    let (restart_tx, mut restart_rx) = mpsc::unbounded_channel();
+    // 自己也留一份 sender：沒有登記時 channel 也不會關閉（recv 回傳 None 會被當成要求重新啟動）
+    let _control = registration
+        .as_ref()
+        .map(|r| r.clone().control(restart_tx.clone()));
+    let _keep_open = restart_tx;
+    let mut ctx = OnceContext {
+        spec: &spec,
+        registration: registration.as_ref(),
+        redactor: &redactor,
+        status: &mut status,
+        timing,
+        stop: &mut stop,
+        restart: &mut restart_rx,
+        notify: &notify,
+    };
+    loop {
+        match run_once(&mut ctx).await {
+            Once::Stopped => return,
+            Once::Restart => {}
+            Once::Ended => {
+                // dev server 停了：等重新啟動的要求，或 Run 結束
+                tokio::select! {
+                    request = ctx.restart.recv() => if request.is_none() { return },
+                    () = wait_terminal(ctx.status) => return,
+                    _ = &mut *ctx.stop => return,
+                }
+            }
+        }
+    }
+}
+
+struct OnceContext<'a, N> {
+    spec: &'a PreviewSpec,
+    registration: Option<&'a Registration>,
+    redactor: &'a Redactor,
+    status: &'a mut watch::Receiver<RunStatus>,
+    timing: PreviewTiming,
+    stop: &'a mut oneshot::Receiver<()>,
+    restart: &'a mut mpsc::UnboundedReceiver<()>,
+    notify: &'a N,
+}
+
+/// 啟動一次 dev server，直到它停止、Run 結束或要求重新啟動。
+async fn run_once<N: Fn(PreviewNotice)>(ctx: &mut OnceContext<'_, N>) -> Once {
+    let spec = ctx.spec;
     let process_spec = Shell::for_script(&spec.command)
         .spec(&spec.command)
         .cwd(&spec.cwd)
@@ -253,61 +294,69 @@ async fn supervise(
     let mut tree = match ProcessTree::spawn(&process_spec, Pipes::OUTPUT) {
         Ok(tree) => tree,
         Err(e) => {
-            notify(PreviewNotice::Stopped {
+            (ctx.notify)(PreviewNotice::Stopped {
                 reason: PreviewStopReason::SpawnFailed,
                 exit_code: None,
-                output: redactor.redact(&format!("{e:#}")),
+                output: ctx.redactor.redact(&format!("{e:#}")),
             });
-            return;
+            return Once::Ended;
         }
     };
-    // 程序在執行期間登記 port，relay 才會轉送；結束（這個函式返回）時取消登記
-    let _registered = registration.map(|r| r.register(spec.port));
+    // 程序在執行期間登記 port，relay 才會轉送；這一次結束時取消登記
+    let _registered = ctx.registration.map(|r| r.clone().register(spec.port));
     let tail = Arc::new(Mutex::new(Tail::default()));
     let drains = [
         tree.take_stdout().map(|r| drain(r, tail.clone())),
         tree.take_stderr().map(|r| drain(r, tail.clone())),
     ];
     let output = |tail: &Arc<Mutex<Tail>>| {
-        redactor.redact(&tail.lock().unwrap_or_else(|e| e.into_inner()).text())
+        ctx.redactor
+            .redact(&tail.lock().unwrap_or_else(|e| e.into_inner()).text())
     };
 
     // 第一階段：等就緒。
-    let ready = wait_ready(spec.port, &spec.ready_path, timing);
+    let ready = wait_ready(spec.port, &spec.ready_path, ctx.timing);
     let end = tokio::select! {
-        () = wait_terminal(&mut status) => End::Stopped,
-        _ = &mut stop => End::Stopped,
+        () = wait_terminal(ctx.status) => End::Stopped,
+        _ = &mut *ctx.stop => End::Stopped,
+        _ = ctx.restart.recv() => End::Restart,
         exit = tree.wait() => End::Exited(exit.ok().and_then(|s| s.code())),
         ok = ready => {
             if ok {
-                notify(PreviewNotice::Ready { port: spec.port, url: spec.local_url() });
-                // 第二階段：就緒後持續到 Run 結束或 dev server 自己結束。
+                (ctx.notify)(PreviewNotice::Ready { port: spec.port, url: spec.local_url() });
+                // 第二階段：就緒後持續到 Run 結束、要求重新啟動或 dev server 自己結束。
                 tokio::select! {
-                    () = wait_terminal(&mut status) => End::Stopped,
-                    _ = &mut stop => End::Stopped,
+                    () = wait_terminal(ctx.status) => End::Stopped,
+                    _ = &mut *ctx.stop => End::Stopped,
+                    _ = ctx.restart.recv() => End::Restart,
                     exit = tree.wait() => End::Exited(exit.ok().and_then(|s| s.code())),
                 }
             } else {
                 kill(&mut tree, spec.port).await;
                 settle(drains).await;
-                notify(PreviewNotice::Stopped {
+                (ctx.notify)(PreviewNotice::Stopped {
                     reason: PreviewStopReason::ReadyTimeout,
                     exit_code: None,
                     output: output(&tail),
                 });
-                return;
+                return Once::Ended;
             }
         }
     };
     // 殼（cmd、sh）結束時，它開的子程序可能還在，一律結束整棵樹。
     kill(&mut tree, spec.port).await;
     settle(drains).await;
-    if let End::Exited(exit_code) = end {
-        notify(PreviewNotice::Stopped {
-            reason: PreviewStopReason::Exited,
-            exit_code,
-            output: output(&tail),
-        });
+    match end {
+        End::Stopped => Once::Stopped,
+        End::Restart => Once::Restart,
+        End::Exited(exit_code) => {
+            (ctx.notify)(PreviewNotice::Stopped {
+                reason: PreviewStopReason::Exited,
+                exit_code,
+                output: output(&tail),
+            });
+            Once::Ended
+        }
     }
 }
 

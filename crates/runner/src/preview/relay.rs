@@ -56,7 +56,8 @@ pub enum Outbound {
 
 impl Outbound {
     fn frame(frame: &PreviewToServer) -> Self {
-        Self::Text(serde_json::to_string(frame).expect("preview frame 一定能序列化"))
+        let frame = orbis_protocol::frame::RunnerToServer::from(frame.clone());
+        Self::Text(serde_json::to_string(&frame).expect("preview frame 一定能序列化"))
     }
 
     fn data(kind: PreviewDataKind, stream_id: u32, payload: &[u8]) -> Self {
@@ -140,7 +141,7 @@ impl PreviewRelay {
 
     /// 處理 Server 送來的 binary 資料訊息。
     pub fn handle_data(&mut self, bytes: &[u8]) {
-        let Some(data) = PreviewData::decode(bytes) else {
+        let Ok(data) = PreviewData::decode(bytes) else {
             debug!("無法解析的 preview 資料，略過");
             return;
         };
