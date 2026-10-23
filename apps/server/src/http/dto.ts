@@ -18,12 +18,12 @@ import type {
   Verification,
 } from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import {
   acceptanceCriteria,
   type gates,
   type members,
-  type needsYouItems,
+  needsYouItems,
   type projects,
   repoSpecs,
   type repos,
@@ -361,11 +361,29 @@ export async function toVerifications(
       ),
     )
     .orderBy(asc(acceptanceCriteria.position));
+  // 停下來等人決定的那一輪（verification.ts 建立「停下來的 Run」時記下 verificationId）。
+  const waiting = await db
+    .select({ payload: needsYouItems.payload })
+    .from(needsYouItems)
+    .where(
+      and(
+        inArray(
+          needsYouItems.runId,
+          rows.map((r) => r.runId),
+        ),
+        eq(needsYouItems.kind, "stopped_run"),
+        isNull(needsYouItems.resolvedAt),
+      ),
+    );
+  const awaiting = new Set(
+    waiting.map((w) => (w.payload as { verificationId?: string }).verificationId),
+  );
   return rows.map((row) => ({
     id: row.id,
     runId: row.runId,
     taskId: row.taskId,
     attempt: row.attempt,
+    awaitingDecision: awaiting.has(row.id),
     status: row.status,
     resolution: row.resolution,
     resolvedByMemberId: row.resolvedByMemberId,

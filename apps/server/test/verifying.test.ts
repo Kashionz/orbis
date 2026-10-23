@@ -151,8 +151,8 @@ describe.skipIf(dbSkipReason !== null)("Verifying", () => {
     expect((await taskRow(database.db, started.task.id)).status).toBe("review_gate");
   });
 
-  /** 連續失敗到 Project 的上限（預設 3 次）。 */
-  async function failUntilStopped(started: StartedRun, times = 3) {
+  /** 連續失敗到 Project 的上限（第一輪之後重試 3 次，共 4 輪）。 */
+  async function failUntilStopped(started: StartedRun, times = 4) {
     const commandId = started.criteria[0]?.id ?? "";
     for (let attempt = 1; attempt <= times; attempt++) {
       if (attempt > 1) await started.send(RUNNING);
@@ -164,7 +164,7 @@ describe.skipIf(dbSkipReason !== null)("Verifying", () => {
     }
   }
 
-  it("連續失敗 3 次：Task 停在 Verifying，加入負責人的 Needs You（停下來的 Run），不再送回 Agent", async () => {
+  it("第一輪之後重試 3 次仍失敗：Task 停在 Verifying，加入負責人的 Needs You（停下來的 Run），不再送回 Agent", async () => {
     const started = await startRun(flow, {
       criteria: [...CRITERIA],
       task: { assigneeMemberId: flow.team.members.admin.id },
@@ -177,13 +177,11 @@ describe.skipIf(dbSkipReason !== null)("Verifying", () => {
       (await flow.as("admin").get("/api/needs-you")).body,
     );
     expect(items).toMatchObject([
-      { kind: "stopped_run", runId: started.run.id, reason: "Verification 連續失敗 3 次" },
+      { kind: "stopped_run", runId: started.run.id, reason: "Verification 連續失敗 4 次" },
     ]);
-    expect((await verificationsOf(started.run.id)).map((v) => v.status)).toEqual([
-      "failed",
-      "failed",
-      "failed",
-    ]);
+    const list = await verificationsOf(started.run.id);
+    expect(list.map((v) => v.status)).toEqual(["failed", "failed", "failed", "failed"]);
+    expect(list.map((v) => v.awaitingDecision)).toEqual([false, false, false, true]);
   });
 
   it("Project 可以調整重試上限", async () => {
@@ -191,7 +189,7 @@ describe.skipIf(dbSkipReason !== null)("Verifying", () => {
     await resetDatabase(database.db);
     flow = await startFlow(database.db, { verificationMaxRetries: 1 });
     const started = await startRun(flow, { criteria: [...CRITERIA] });
-    await failUntilStopped(started, 1);
+    await failUntilStopped(started, 2);
     expect((await taskRow(database.db, started.task.id)).status).toBe("verifying");
   });
 
@@ -225,7 +223,11 @@ describe.skipIf(dbSkipReason !== null)("Verifying", () => {
       const next = await started.mine.answerVerification(started.offer.dispatch_id, started.run.id);
       expect(next.attempt).toBe(1);
       const list = await verificationsOf(started.run.id);
-      expect(list[2]).toMatchObject({ resolution: "retry", comment: "改用 vitest" });
+      expect(list[3]).toMatchObject({
+        resolution: "retry",
+        comment: "改用 vitest",
+        awaitingDecision: false,
+      });
       expect(
         expectContract(
           NeedsYouListResponse,

@@ -5,8 +5,8 @@
 // 2. 每條條件的 `verification_result` 存進 verification_results，最新的結果寫回 acceptance_criteria。
 // 3. `verification_completed`：
 //    - 全部通過 → Review Gate。
-//    - 有失敗、還沒到 Project 的重試上限（預設 3）→ Task 回到 Running，把失敗原因當 prompt 送回原 Run
-//      （同一個 session）；Agent 再次結束回合時開始下一輪。
+//    - 有失敗、還沒到 Project 的重試上限（第一輪之後最多重試 3 次）→ Task 回到 Running，把失敗原因
+//      當 prompt 送回原 Run（同一個 session）；Agent 再次結束回合時開始下一輪。
 //    - 到了上限 → Task 停在 Verifying，加入 Needs You（停下來的 Run）並通知，等人決定：附意見再試
 //      （次數重算）、略過失敗進入 Review Gate、或中止。
 //
@@ -206,7 +206,8 @@ export class VerificationService {
       .select({ maxRetries: projects.verificationMaxRetries })
       .from(projects)
       .where(eq(projects.id, task.projectId));
-    if (verification.attempt < (project?.maxRetries ?? 3)) {
+    // 第一輪之後最多自動重試 verificationMaxRetries 次（預設 3，所以最多 4 輪）。
+    if (verification.attempt <= (project?.maxRetries ?? 3)) {
       await this.retry(uow, run, task, verification, null);
       return;
     }
