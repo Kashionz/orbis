@@ -136,32 +136,43 @@ export interface StartedStack {
   processes: () => number[];
 }
 
+export interface StackOptions {
+  /** Fake Agent 的劇本（`crates/fake-agent/scripts/` 下的檔名）；省略時用 stack 的預設 `m1.yaml`。 */
+  agentScript?: string;
+  /** log 檔名的前綴（同一次測試啟動多組 stack 時區分）。 */
+  logPrefix?: string;
+}
+
 /**
  * 啟動 `e2e:stack`，等它印出 ready 行。Runner 與 Fake Agent 要先 `cargo build`。
- * 有 repo 根目錄的 `.env` 時讀取（例如本機的 `<前綴>DATABASE_URL`），沒有資料庫設定時 stack 以
- * Testcontainers 啟動 Postgres。
+ * 不讀 repo 根目錄的 `.env`（那裡的資料庫是使用者的開發 DB）：資料庫由 stack 依
+ * `<前綴>TEST_DATABASE_URL` 每次建立獨立的 database，沒有設定時以 Testcontainers 啟動 Postgres。
  */
-export async function startStack(serverPort: number, webOrigin: string): Promise<StartedStack> {
-  const log = logTo("stack.log");
-  const child = spawn(
-    process.execPath,
-    [
-      `--env-file-if-exists=${join(repoRoot, ".env")}`,
-      "--import",
-      "tsx",
-      "scripts/system-e2e-stack.ts",
-    ],
-    {
-      cwd: serverDir,
-      env: {
-        ...process.env,
-        [envVar("SERVER_PORT")]: String(serverPort),
-        [envVar("PUBLIC_URL")]: webOrigin,
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
+export async function startStack(
+  serverPort: number,
+  webOrigin: string,
+  options: StackOptions = {},
+): Promise<StartedStack> {
+  const log = logTo(`${options.logPrefix ?? ""}stack.log`);
+  const child = spawn(process.execPath, ["--import", "tsx", "scripts/system-e2e-stack.ts"], {
+    cwd: serverDir,
+    env: {
+      ...process.env,
+      [envVar("SERVER_PORT")]: String(serverPort),
+      [envVar("PUBLIC_URL")]: webOrigin,
+      ...(options.agentScript && {
+        [envVar("E2E_AGENT_SCRIPT")]: join(
+          repoRoot,
+          "crates",
+          "fake-agent",
+          "scripts",
+          options.agentScript,
+        ),
+      }),
     },
-  );
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
   child.stderr?.pipe(log);
 
   let stdout = "";
@@ -200,8 +211,12 @@ export interface StartedWeb {
 }
 
 /** 啟動 Vite（一般模式，`/api` proxy 到 stack 的 Server），等到首頁可以取得。 */
-export async function startWeb(webPort: number, serverPort: number): Promise<StartedWeb> {
-  const log = logTo("vite.log");
+export async function startWeb(
+  webPort: number,
+  serverPort: number,
+  logPrefix = "",
+): Promise<StartedWeb> {
+  const log = logTo(`${logPrefix}vite.log`);
   const child = spawn(
     process.execPath,
     [

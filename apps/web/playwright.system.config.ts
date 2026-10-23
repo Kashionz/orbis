@@ -1,8 +1,8 @@
 // 完整系統的 e2e：真實 Server + Postgres + Local Runner + Fake Agent，Web 以 Vite 接到 Server。
 //
 // globalSetup 啟動 B1 的 `e2e:stack` 與 Vite（都用空的 port），teardown 關閉它們並確認沒有殘留的程序。
-// 執行前要先 `cargo build -p <產品>-runner -p <產品>-fake-agent`。需要 Postgres：有 `<前綴>DATABASE_URL`
-// 時用它，沒有時 stack 以 Testcontainers 啟動（需要 Docker）。
+// 執行前要先 `cargo build -p <產品>-runner -p <產品>-fake-agent`。需要 Postgres：有 `<前綴>TEST_DATABASE_URL`
+// （admin 連線，stack 每次建立獨立的 database）時用它，沒有時 stack 以 Testcontainers 啟動（需要 Docker）。
 
 import { defineConfig, devices } from "@playwright/test";
 import { systemPorts } from "./e2e/system/ports";
