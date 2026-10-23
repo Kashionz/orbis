@@ -52,6 +52,8 @@ pub struct Supervisor {
     availability_changed: Arc<tokio::sync::Notify>,
     /// 各組 Credential 的 rate limit（issue #33）。
     rate_limits: Arc<crate::rate_limit::RateLimits>,
+    /// 從 Server 下載 blob（prompt 中的圖片）。
+    blobs: Arc<crate::blobs::BlobFetcher>,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -86,6 +88,7 @@ impl Supervisor {
             learned: Arc::new(LearnedAgents::default()),
             availability_changed: Arc::new(tokio::sync::Notify::new()),
             rate_limits: Arc::new(crate::rate_limit::RateLimits::default()),
+            blobs: Arc::new(crate::blobs::BlobFetcher::default()),
         });
         supervisor.recover();
         // 在背景探測各 Agent 的能力旗標，不拖慢第一次的 AgentAvailability（每個 Agent 最多等
@@ -106,6 +109,11 @@ impl Supervisor {
     /// 正在執行的 Preview（Preview 的 relay 使用）。
     pub fn previews(&self) -> &Arc<PreviewRegistry> {
         &self.previews
+    }
+
+    /// 下載 blob 用的 client（連線交握後設定 Server 網址與 Runner token）。
+    pub fn blobs(&self) -> &Arc<crate::blobs::BlobFetcher> {
+        &self.blobs
     }
 
     /// 上次 Runner 結束時還在進行的 Run：Agent 已經不在了，補上失敗的 Event 讓 Server 知道。
@@ -359,6 +367,7 @@ impl Supervisor {
                         learned: self.learned.clone(),
                         availability_changed: self.availability_changed.clone(),
                         rate_limits: self.rate_limits.clone(),
+                        blobs: self.blobs.clone(),
                     },
                 );
                 lock(&self.runs).insert(handle.run_id.clone(), handle);

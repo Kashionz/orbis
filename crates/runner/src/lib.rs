@@ -2,6 +2,7 @@
 //! 讓整合測試可以直接使用。
 
 pub mod agent;
+pub mod blobs;
 pub mod config;
 pub mod connection;
 pub mod diff;

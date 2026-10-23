@@ -239,6 +239,7 @@ async fn connect_once(
     let id = Some(ack.runner_id.to_string());
     state.send_replace((SidecarConnectionState::Connected, id.clone()));
     supervisor.on_connected(&ack.resume);
+    supervisor.blobs().set_access(&config.http_base, &token);
     let session = Session {
         conn,
         supervisor: supervisor.clone(),

@@ -18,14 +18,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1 as acp;
+use orbis_protocol::availability::AgentCapability;
 use orbis_protocol::control::{
     RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason, RunControlResult,
 };
 use orbis_protocol::dispatch::DispatchOffer;
 use orbis_protocol::enums::{GateDecision, GateKind, RunStatus};
 use orbis_protocol::event::{
-    EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose, RunErrorCode, TextBody,
-    ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
+    ContentBlock, EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose,
+    RunErrorCode, TextBody, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use orbis_protocol::frame::RunnerToServer;
 use orbis_protocol::ids::{PermissionRequestId, RunId, Timestamp};
@@ -76,6 +77,8 @@ pub struct RunContext {
     pub availability_changed: Arc<tokio::sync::Notify>,
     /// 各組 Credential 的 rate limit（到恢復時間之前不接受新的 Dispatch）。
     pub rate_limits: Arc<crate::rate_limit::RateLimits>,
+    /// 從 Server 下載 blob（prompt 中的圖片）。
+    pub blobs: Arc<crate::blobs::BlobFetcher>,
 }
 
 /// 送給 Run 的訊息。
@@ -605,9 +608,45 @@ impl Run {
                 SETTINGS_RESUME_PROMPT.to_owned(),
             )]);
         }
-        let mut prompt = normalize::prompt_to_acp(&self.offer.prompt);
+        let mut prompt = self.prompt_blocks(&self.offer.prompt).await;
         prompt.push(acp::ContentBlock::from(SETTINGS_RESTART_NOTE.to_owned()));
         Ok(prompt)
+    }
+
+    /// 協定的 prompt 轉成 ACP 的內容。圖片在 Agent 支援時從 Server 下載、以圖片送出（issue #17，
+    /// 例如 Review Gate 退回時附上的 Preview 截圖）；Agent 不支援或下載失敗時改成說明文字。
+    async fn prompt_blocks(&self, blocks: &[ContentBlock]) -> Vec<acp::ContentBlock> {
+        use base64::Engine as _;
+        let images = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.capabilities().contains(&AgentCapability::ImagePrompt));
+        let mut out = Vec::new();
+        for block in blocks {
+            let ContentBlock::Image(blob) = block else {
+                out.extend(normalize::prompt_to_acp(std::slice::from_ref(block)));
+                continue;
+            };
+            if !images {
+                out.extend(normalize::prompt_to_acp(std::slice::from_ref(block)));
+                continue;
+            }
+            match self.ctx.blobs.fetch(blob).await {
+                Ok(bytes) => out.push(acp::ContentBlock::Image(acp::ImageContent::new(
+                    base64::engine::general_purpose::STANDARD.encode(bytes),
+                    blob.media_type.clone(),
+                ))),
+                Err(error) => {
+                    tracing::warn!(run_id = %self.run_id(), blob_id = %blob.blob_id, %error, "無法下載 prompt 中的圖片");
+                    out.extend(normalize::prompt_to_acp(std::slice::from_ref(block)));
+                    out.push(acp::ContentBlock::from(format!(
+                        "（無法下載這張圖片：{}）",
+                        self.redactor.redact(&error.to_string())
+                    )));
+                }
+            }
+        }
+        out
     }
 
     /// 執行一個不會碰到 Run 狀態的長時間工作，期間仍處理 cancel 與其他 RunControl。
@@ -904,7 +943,7 @@ impl Run {
     // ── 執行與 Review ──────────────────────────────────────────────────────────
 
     async fn work(&mut self) -> Result<(), Stop> {
-        let mut prompt = normalize::prompt_to_acp(&self.offer.prompt);
+        let mut prompt = self.prompt_blocks(&self.offer.prompt).await;
         loop {
             match self.turn(prompt).await? {
                 TurnEnd::RateLimited { resets_at, message } => {
@@ -1367,7 +1406,7 @@ impl Run {
                 }
                 RunControlAction::Prompt { prompt, .. } => {
                     self.applied(&control);
-                    return Ok(Some(normalize::prompt_to_acp(prompt)));
+                    return Ok(Some(self.prompt_blocks(prompt).await));
                 }
                 RunControlAction::GateResult {
                     gate: GateKind::Plan,

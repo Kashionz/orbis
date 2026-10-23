@@ -324,6 +324,7 @@ fn plan_status(s: &acp::PlanEntryStatus) -> PlanEntryStatus {
 }
 
 /// 協定的 prompt 內容轉成 ACP（RunControl `prompt`、DispatchOffer 的第一個 prompt）。
+/// 圖片在這裡只轉成說明文字；Agent 支援圖片時，Run 會先下載再以圖片送出（issue #17）。
 pub fn prompt_to_acp(blocks: &[ContentBlock]) -> Vec<acp::ContentBlock> {
     blocks
         .iter()
@@ -332,7 +333,6 @@ pub fn prompt_to_acp(blocks: &[ContentBlock]) -> Vec<acp::ContentBlock> {
             ContentBlock::ResourceLink { uri, name } => {
                 acp::ContentBlock::ResourceLink(acp::ResourceLink::new(name.clone(), uri.clone()))
             }
-            // TODO(A2, #17)：下載 blob 後以圖片送出（Preview 上的留言截圖）。
             ContentBlock::Image(blob) => acp::ContentBlock::from(format!(
                 "[圖片 {}（{}，{} bytes）]",
                 blob.blob_id, blob.media_type, blob.size
