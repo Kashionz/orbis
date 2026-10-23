@@ -297,7 +297,7 @@ export class Dispatcher {
       model: run.model,
       permission_policy: run.permissionPolicy,
       prompt: await buildPrompt(this.db, task),
-      // TODO(B2)：Planning 與 Plan Gate 在 B2 實作；B1 一律不進 plan 模式。
+      // TODO(B2, #15)：Planning 與 Plan Gate 在 B2 實作；B1 一律不進 plan 模式。
       plan_gate: false,
       delegation: null,
       last_event_seq: await this.options.eventStore.lastContiguousSeq(run.id),

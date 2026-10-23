@@ -305,7 +305,7 @@ export class EventIngest {
       return;
     }
     if (status === "awaiting_gate" && gate === "plan") {
-      // TODO(B2)：Planning 與 Plan Gate。
+      // TODO(B2, #15)：Planning 與 Plan Gate。
       this.logger.warn({ runId }, "B1 尚未支援 Plan Gate，忽略");
       return;
     }

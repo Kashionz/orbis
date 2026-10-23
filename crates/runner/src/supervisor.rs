@@ -193,7 +193,7 @@ impl Supervisor {
                 available,
                 unavailable_reason: reason,
                 // 能力旗標要等 `initialize` 才知道；Agent 啟動後以 Run 的 log 記錄。
-                // TODO(A2)：啟動時先跑一次 initialize，回報實際的能力旗標。
+                // TODO(A2, #18)：啟動時先跑一次 initialize，回報實際的能力旗標。
                 capabilities: Vec::new(),
                 models: Vec::new(),
                 permission_gaps: profile.permission_gaps.clone(),
