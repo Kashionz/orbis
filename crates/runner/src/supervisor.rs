@@ -532,6 +532,82 @@ impl Supervisor {
                     outcome: RunControlOutcome::Rejected { reason, message },
                 }));
         };
+        // 封存（§6.2）在 Run 結束後才做，Run 可能已經不在記憶體中：依本機的 Worktree 紀錄處理。
+        if matches!(control.action, RunControlAction::Archive) {
+            if let Some(handle) = runs.get(&control.run_id) {
+                if handle.dispatch_id != control.dispatch_id {
+                    return reject(
+                        RunControlRejectReason::StaleDispatch,
+                        format!(
+                            "Dispatch {} 不是這個 Run 目前的 Dispatch",
+                            control.dispatch_id
+                        ),
+                    );
+                }
+                if handle.is_active() {
+                    return reject(
+                        RunControlRejectReason::InvalidState,
+                        "Run 還在執行，先取消再封存".into(),
+                    );
+                }
+            } else if self
+                .home
+                .run_worktree(control.run_id.as_str())
+                .is_some_and(|r| r.dispatch_id != control.dispatch_id.as_str())
+            {
+                return reject(
+                    RunControlRejectReason::StaleDispatch,
+                    format!(
+                        "Dispatch {} 不是這個 Run 最後的 Dispatch",
+                        control.dispatch_id
+                    ),
+                );
+            }
+            // 執行中的 Run 正在用的 Worktree（例如 Feedback Loop 的新 Run 沿用的）不能刪。
+            let active: Vec<(String, std::path::PathBuf)> = runs
+                .values()
+                .filter(|h| h.is_active())
+                .filter_map(|h| {
+                    let record = self.home.run_worktree(h.run_id.as_str())?;
+                    Some((h.run_id.to_string(), record.path))
+                })
+                .collect();
+            drop(runs);
+            let (home, worktrees, frames) = (
+                self.home.clone(),
+                self.worktrees.clone(),
+                self.frames.clone(),
+            );
+            tokio::spawn(async move {
+                let in_use = |path: &std::path::Path| {
+                    active
+                        .iter()
+                        .find(|(_, p)| crate::paths::same_path(p, path))
+                        .map(|(id, _)| id.clone())
+                };
+                let outcome = match crate::archive::archive(
+                    &home,
+                    &worktrees,
+                    control.run_id.as_str(),
+                    in_use,
+                )
+                .await
+                {
+                    Ok(()) => RunControlOutcome::Applied,
+                    Err(e) => RunControlOutcome::Rejected {
+                        reason: e.reason,
+                        message: e.message,
+                    },
+                };
+                let _ = frames.send(RunnerToServer::RunControlResult(RunControlResult {
+                    control_id: control.control_id,
+                    run_id: control.run_id,
+                    dispatch_id: control.dispatch_id,
+                    outcome,
+                }));
+            });
+            return;
+        }
         let Some(handle) = runs.get(&control.run_id) else {
             return reject(
                 RunControlRejectReason::UnknownRun,

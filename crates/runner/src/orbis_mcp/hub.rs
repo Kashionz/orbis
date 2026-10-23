@@ -4,7 +4,9 @@
 //! - `wait_run`、`ask_parent` 在 Server 端阻塞，這裡沒有逾時。
 //! - 斷線重連後，以同一個 `call_id` 重送還沒有結果的呼叫（Server 依 `call_id` 去除重複）。
 //! - `merge_child`：Server 回覆子分支後，在呼叫者的 Worktree 執行 merge，結果以 `child_merged` Event 回報。
-//! - `report_verdict` 只在本機處理：判定 Verification 條件的 Child Run 回報結果。
+//! - `report_verdict` 只在本機處理：判定 Verification 條件的 Child Run 回報結果，只接受指派給它的條件。
+//! - Verification 的判定：父 Run 先登記要判定的條件（[`JudgeAssignment`]），再請 Server 建立
+//!   Child Run；Child Run 啟動時依父 Run 取得指派（同一個父 Run 一次只有一組判定在進行）。
 //! - 深度與 Child Run 數量先在本機擋一次（Server 仍會檢查，以 Server 為準）。
 
 use std::collections::HashMap;
@@ -43,8 +45,24 @@ pub struct Caller {
     pub depth: u32,
     pub parent: Option<RunId>,
     pub mode: Option<DelegationMode>,
-    /// 判定 Verification 條件的 Child Run，可以呼叫 `report_verdict`。
-    pub judge: bool,
+    /// 判定 Verification 條件的 Child Run 被指派的條件（`criterion_id`），可以對這些條件呼叫
+    /// `report_verdict`；不是判定用的 Run 時為 `None`。
+    pub judge: Option<Vec<String>>,
+}
+
+/// 父 Run 交給判定用 Child Run 的工作。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JudgeAssignment {
+    /// 要判定的條件（`criterion_id`）。
+    pub criteria: Vec<String>,
+    /// `browser` 類型：要注入的 Playwright MCP 可以連的 Preview 網址與截圖目錄。
+    pub browser: Option<BrowserJudge>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserJudge {
+    pub url: String,
+    pub output_dir: std::path::PathBuf,
 }
 
 /// `report_verdict` 回報的判定。
@@ -66,6 +84,8 @@ pub struct McpHub {
     callers: Mutex<HashMap<String, Caller>>,
     pending: Mutex<HashMap<String, PendingCall>>,
     verdicts: Mutex<HashMap<RunId, Vec<Verdict>>>,
+    /// 父 Run → 正在進行的判定。
+    assignments: Mutex<HashMap<RunId, JudgeAssignment>>,
     frames: mpsc::UnboundedSender<RunnerToServer>,
     outbox: Arc<Outbox>,
 }
@@ -95,6 +115,7 @@ impl McpHub {
             callers: Mutex::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
             verdicts: Mutex::new(HashMap::new()),
+            assignments: Mutex::new(HashMap::new()),
             frames,
             outbox,
         });
@@ -127,6 +148,7 @@ impl McpHub {
             return;
         };
         lock(&self.pending).retain(|_, p| p.frame.run_id != caller.run_id);
+        lock(&self.assignments).remove(&caller.run_id);
     }
 
     /// 已登記的 Run（Child Run 用來找父 Run 的 Worktree）。
@@ -135,6 +157,21 @@ impl McpHub {
             .values()
             .find(|c| &c.run_id == run_id)
             .cloned()
+    }
+
+    /// 父 Run 登記接下來要建立的判定用 Child Run 的工作（取代之前的）。
+    pub fn assign_judge(&self, parent: &RunId, assignment: JudgeAssignment) {
+        lock(&self.assignments).insert(parent.clone(), assignment);
+    }
+
+    /// 判定用的 Child Run 啟動時取得父 Run 登記的工作。
+    pub fn judge_assignment(&self, parent: &RunId) -> Option<JudgeAssignment> {
+        lock(&self.assignments).get(parent).cloned()
+    }
+
+    /// 判定結束（或父 Run 結束）：取消登記。
+    pub fn clear_judge(&self, parent: &RunId) {
+        lock(&self.assignments).remove(parent);
     }
 
     /// 取出某個 Child Run 回報的判定。
@@ -252,16 +289,25 @@ impl McpHub {
     }
 
     fn report_verdict(&self, caller: &Caller, arguments: serde_json::Value) -> BridgeResponse {
-        if !caller.judge {
+        let Some(assigned) = &caller.judge else {
             return error(
                 OrbisToolErrorCode::InvalidState,
                 "只有判定 Verification 條件的 Child Run 可以回報判定",
             );
-        }
+        };
         let verdict: Verdict = match serde_json::from_value(arguments) {
             Ok(v) => v,
             Err(e) => return error(OrbisToolErrorCode::InvalidState, format!("參數不正確：{e}")),
         };
+        if !assigned.contains(&verdict.criterion_id) {
+            return error(
+                OrbisToolErrorCode::InvalidState,
+                format!(
+                    "沒有指派這條條件給你判定；要判定的是：{}",
+                    assigned.join(", ")
+                ),
+            );
+        }
         if !matches!(verdict.outcome.as_str(), "passed" | "failed") {
             return error(
                 OrbisToolErrorCode::InvalidState,

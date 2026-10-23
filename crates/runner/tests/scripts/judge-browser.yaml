@@ -1,0 +1,30 @@
+# Verification 的判定用 Child Run（browser 類型）：瀏覽器工具不問人，截圖後回報 ac-3 通過。
+description: 判定 browser 類型的條件
+turns:
+  - expect_prompt_contains: playwright
+    steps:
+      - permission:
+          tool_call:
+            id: browser-click
+            title: mcp__playwright__browser_click
+            kind: other
+          allow:
+            - message: 已點擊
+          reject:
+            - message: 被拒絕
+      - mcp_call:
+          id: browser-shot
+          server: playwright
+          tool: browser_take_screenshot
+          arguments: { filename: home.png }
+      - mcp_call:
+          id: browser-args
+          server: playwright
+          tool: get_args
+          arguments: {}
+      - mcp_call:
+          id: verdict-ac-3
+          server: orbis
+          tool: report_verdict
+          arguments: { criterion_id: ac-3, outcome: passed, summary: 首頁顯示 hello preview }
+      - stop: end_turn

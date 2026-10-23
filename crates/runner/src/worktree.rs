@@ -95,6 +95,8 @@ pub struct Worktree {
     pub base_commit: String,
     pub base_ref: String,
     pub default_branch: String,
+    /// 讀設定檔的 commit（通常就是 base commit）。
+    pub config_commit: String,
     /// 從 base commit 讀出的設定檔。
     pub config: LoadedConfig,
     pub port: u16,
@@ -385,6 +387,7 @@ impl WorktreeManager {
             base_commit,
             base_ref: req.repo.base_ref.clone(),
             default_branch: req.repo.default_branch.clone(),
+            config_commit,
             config,
             port,
             run_id: req.run_id.clone(),

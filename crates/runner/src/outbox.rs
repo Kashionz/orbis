@@ -19,6 +19,7 @@ use orbis_protocol::event::{
     BlobRef, EventEnvelope, EventFrame, EventKind, TextBody, ToolCallContent,
 };
 use orbis_protocol::ids::{BlobId, DispatchId, RunId};
+use orbis_protocol::verification::VerificationEvidence;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -335,6 +336,18 @@ impl Outbox {
         std::fs::read(&path).with_context(|| format!("讀不到 blob {}", path.display()))
     }
 
+    /// 把檔案內容（例如 Verification 的截圖）存成 blob，回傳參照；參照它的 Event 送出前會先上傳。
+    pub fn store_blob(&self, bytes: &[u8], media_type: &str) -> anyhow::Result<BlobRef> {
+        let blob = BlobRef {
+            blob_id: uuid::Uuid::now_v7().to_string().into(),
+            sha256: sha256_hex(bytes),
+            size: bytes.len() as u64,
+            media_type: media_type.into(),
+        };
+        crate::home::write_atomic(&self.blob_file(&blob.blob_id), bytes, false)?;
+        Ok(blob)
+    }
+
     /// 把大型的 `TextBody` 改存成 blob。
     fn externalize(&self, kind: EventKind) -> anyhow::Result<(EventKind, Vec<BlobRef>)> {
         let mut blobs = Vec::new();
@@ -344,6 +357,7 @@ impl Outbox {
             }
             Ok(())
         };
+        let mut stored = Vec::new();
         let mut kind = kind;
         match &mut kind {
             EventKind::ToolCall(call) => {
@@ -368,8 +382,30 @@ impl Outbox {
                     convert(&mut file.new)?;
                 }
             }
+            EventKind::PlanProposed { body, .. } | EventKind::FinalMessage { text: body } => {
+                let mut wrapped = Some(body.clone());
+                convert(&mut wrapped)?;
+                *body = wrapped.expect("剛剛放進去的");
+            }
+            EventKind::VerificationResult(result) => {
+                for evidence in &mut result.evidence {
+                    match evidence {
+                        VerificationEvidence::CommandOutput { output, .. } => {
+                            let mut wrapped = Some(output.clone());
+                            convert(&mut wrapped)?;
+                            *output = wrapped.expect("剛剛放進去的");
+                        }
+                        // 截圖已經以 store_blob 存好，這裡只列入要上傳的 blob。
+                        VerificationEvidence::Screenshot { image, .. } => {
+                            stored.push(image.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
+        blobs.extend(stored);
         Ok((kind, blobs))
     }
 

@@ -120,6 +120,9 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 
 - **流程**：主 Run 的 Agent 結束回合（`awaiting_gate`，review）後，沒有 `command`、`agent`、`browser` 類型的條件時直接進入 Review Gate；有的話 Server 送 RunControl `verify`，列出這一輪要檢查的條件。
   - Runner 回報 `verifying`，逐條執行。`command` 在 Worktree 執行；`agent`、`browser` 以 Orbis MCP 的 `delegate`（`purpose = verification`）請 Server 建立 `consult` Child Run 判定，`browser` 另外注入 Playwright MCP。
+  - **`command` 的指令信任**：Task 上的指令 Member 就能改，卻在派工者的 Runner 執行。所以 Runner 先比對 Repo 設定檔（base commit）的 `[verify].commands` 與 `allow_commands`：在清單內直接執行；不在清單內照 Permission Policy 問人（`manual`、`auto` 都要問，`yolo` 自動允許），同一個 Run 中同一個指令只問一次。條件沒有指定指令時執行 `[verify].commands` 本身，不需要問。
+  - **判定用的 Child Run**：`agent` 與 `browser` 類型各由一個 Child Run 一起判定（Agent 是 `verify` 指定的 judge，沒有指定時與被驗證的 Run 相同）。它以 Orbis MCP 的 `report_verdict` 逐條回報，只接受指派給它的條件；Child Run 結束時沒有回報的條件記為 `error`。
+  - **`browser` 的瀏覽器**：Runner 管理的 Playwright MCP（`@playwright/mcp`，鎖定版本，第一次使用時安裝；`runner.toml` 的 `[browser_judge]` 可以換成別的指令）以 headless、isolated 啟動，`--allowed-origins` 只允許這個 Run 的 Preview。判定用的 Child Run 呼叫瀏覽、操作頁面與截圖的工具時自動允許；執行任意程式碼（`browser_evaluate`、`browser_run_code`）、上傳本機檔案、安裝瀏覽器等其他工具照 Permission Policy 問人。截圖存成 blob，作為每條 `browser` 條件的證據。Preview 沒有在執行時記為 `error`。
   - 每條條件一筆 `verification_result` Event（`passed`、`failed`，或無法判定的 `error`，附證據），全部結束送 `verification_completed`，再回到 `awaiting_gate`（review）。
   - 結果與證據存在 `verifications` 與 `verification_results`，最新一次也寫回 Acceptance Criterion。
 - **失敗重試**：Verification 失敗時，Server 自動把失敗原因以 `prompt` 送回原 Run 重試，第一輪之後**預設最多重試 3 次**（Project 可以設定，所以最多 4 輪），超過就停在 Verifying，加入 Needs You 並通知。`error`（無法判定）視為失敗。人可以選擇：
@@ -241,6 +244,10 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 拒絕刪除家目錄或 Worktree 根目錄以外的路徑。
   - `archive` hook 失敗時擋下刪除。
   - 父 Run 被中止或封存時，連同 Child Run 一起處理。
+- **封存**（RunControl `archive`）：Server 在 Run 結束後送出，這時 Run 已不在 Runner 的記憶體中，Runner 依本機記下的 Worktree 紀錄（路徑、Repo、分支、base commit、讀設定檔的 commit）重建資訊後刪除。
+  - Run 還在執行時拒絕（`invalid_state`），要先取消；還有執行中的 Run 沿用同一個 Worktree（Feedback Loop）時也拒絕。
+  - `archive` hook 只用紀錄中那個 commit 的設定檔，而且只在這份設定檔已「永遠允許」時執行：Run 期間的「允許這次」已經失效，Run 結束後也沒有人可以問。沒有核准時回 `rejected`（`failed`），Worktree 不刪。沒有 hook 時直接刪。
+  - `branch` 模式的 Child Run 一起刪；`consult` 模式的 Child Run 沒有自己的 Worktree。Worktree 已經不在時視為完成，重送的 `archive` 不會失敗。
 - **設定的信任核准**：
   - `.orbis/config.toml` 中的腳本第一次執行前要人工核准；檔案內容（hash）改變後要重新核准。
   - 核准以權限請求的形式加入 Needs You，只有 Admin 以上能回覆（§12.2）。
@@ -564,7 +571,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 一般瀏覽器中不能選取元素，只能附整頁截圖：以 `getDisplayMedia` 擷取目前的分頁，再裁成 Preview 的範圍；不支援或使用者拒絕時，改成貼上或上傳圖片。
   - Preview 留言和 diff 行內留言一樣先存成草稿，Review Gate 退回時一起打包成 prompt 送回 Agent（§10），截圖以圖片附上。
   - 留言的權限和 Review Gate 退回相同；看 Preview 的權限是能查看該 Run。
-- **Agent 操作瀏覽器**：Runner 額外注入 Playwright MCP（headless），連到同一個 Preview，用來判定 `browser` 類型的 Acceptance Criterion。UI 顯示截圖與操作紀錄。即時觀看 Agent 的瀏覽器畫面留到 Phase 2。
+- **Agent 操作瀏覽器**：Runner 額外注入 Playwright MCP（headless，只允許連到這個 Preview，§5.1），連到同一個 Preview，用來判定 `browser` 類型的 Acceptance Criterion。UI 顯示截圖與操作紀錄。即時觀看 Agent 的瀏覽器畫面留到 Phase 2。
 
 ---
 

@@ -70,6 +70,8 @@ pub const PLAN_APPROVED_PROMPT: &str = "Plan 已核准，請依照核准的計�
 const VERIFY_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Verification 失敗時摘要中保留的輸出行數（完整輸出在證據中）。
 const VERIFY_SUMMARY_LINES: usize = 20;
+/// 判定用的 Child Run 最多等這麼久。
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// setup 的 tool call ID（Runner 自己產生）。
 const SETUP_TOOL_CALL: &str = "orbis-setup";
 
@@ -149,6 +151,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         settings_baseline: HashMap::new(),
         preview: None,
         approved_settings_writes: HashMap::new(),
+        judge: None,
         rate_limit_hint: None,
         rate_limit_set: None,
         planning: false,
@@ -262,6 +265,8 @@ struct Run {
     /// 經權限請求允許（人或政策）、會寫入受保護設定檔的 tool call：tool call ID → 設定檔。
     /// 這些 tool call 結束時的寫入視為已接受，不算 session 中途被改（issue #52）。
     approved_settings_writes: HashMap<String, Vec<String>>,
+    /// 判定 Verification 條件的 Child Run：父 Run 登記的工作（啟動 Agent 時取得）。
+    judge: Option<crate::orbis_mcp::hub::JudgeAssignment>,
     /// 這個回合中 Agent 以事件回報過額度用完（Claude Code 的 rate limit 事件）。
     rate_limit_hint: Option<crate::rate_limit::RateLimit>,
     /// 這個 Run 設下的 Credential 暫停（恢復時間），結束時解除。
@@ -447,7 +452,8 @@ impl Run {
         });
         let path = continuation
             .as_ref()
-            .and_then(|c| self.ctx.home.run_worktree(c.previous_run_id.as_str()));
+            .and_then(|c| self.ctx.home.run_worktree(c.previous_run_id.as_str()))
+            .map(|record| record.path);
         if self.offer.origin == Some(orbis_protocol::enums::RunOrigin::Mention) {
             self.read_only = true;
         }
@@ -470,10 +476,24 @@ impl Run {
             .interruptible(async move { manager.create(&request).await })
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
+        let record = crate::home::RunWorktreeRecord {
+            dispatch_id: self.offer.dispatch_id.to_string(),
+            path: wt.path.clone(),
+            root_checkout: wt.root_checkout.clone(),
+            clone_url: self.offer.repo.clone_url.clone(),
+            branch: wt.branch.clone(),
+            base_commit: wt.base_commit.clone(),
+            base_ref: wt.base_ref.clone(),
+            default_branch: wt.default_branch.clone(),
+            config_commit: wt.config_commit.clone(),
+            port: wt.port,
+            task_key: wt.task_key.clone(),
+            parent_run_id: parent.as_ref().map(|(caller, _)| caller.run_id.to_string()),
+        };
         if let Err(e) = self
             .ctx
             .home
-            .record_run_worktree(self.offer.run_id.as_str(), &wt.path)
+            .record_run_worktree(self.offer.run_id.as_str(), record)
         {
             tracing::warn!(error = %e, "無法記下 Run 的 Worktree 位置");
         }
@@ -767,7 +787,22 @@ impl Run {
     /// 啟動 Agent。`resume` 是要接續的 session ID；回傳是否真的接續了（Agent 不支援時開新的）。
     async fn start_agent(&mut self, resume: Option<String>) -> Result<bool, Stop> {
         let wt = self.wt().clone();
-        let mcp_servers = vec![self.orbis_mcp_server()];
+        let mut mcp_servers = vec![self.orbis_mcp_server()];
+        if let Some(browser) = self.judge.as_ref().and_then(|j| j.browser.clone()) {
+            let home = self.ctx.home.clone();
+            let server = self
+                .interruptible(async move {
+                    crate::judge::browser_server(&home, &browser.url, &browser.output_dir).await
+                })
+                .await?
+                .map_err(|e| {
+                    Stop::failed(
+                        RunErrorCode::AgentStartFailed,
+                        format!("無法準備判定 browser 條件用的瀏覽器 MCP server：{e:#}"),
+                    )
+                })?;
+            mcp_servers.push(server);
+        }
         let agents_dir = self.ctx.home.agents_dir();
         let profile = self.profile.clone();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -825,7 +860,21 @@ impl Run {
     /// 注入到 session 的 Orbis MCP server（ARCHITECTURE §9）。第一次呼叫時在 hub 登記這個 Run。
     fn orbis_mcp_server(&mut self) -> agent_client_protocol::schema::v1::McpServer {
         let delegation = self.offer.delegation.clone();
-        let judge = self.offer.origin == Some(orbis_protocol::enums::RunOrigin::Verification);
+        // 判定用的 Child Run：依父 Run 取得登記的工作；沒有登記時不能回報任何條件。
+        if self.offer.origin == Some(orbis_protocol::enums::RunOrigin::Verification)
+            && self.judge.is_none()
+        {
+            self.judge = Some(
+                delegation
+                    .as_ref()
+                    .and_then(|d| self.ctx.mcp.judge_assignment(&d.parent_run_id))
+                    .unwrap_or(crate::orbis_mcp::hub::JudgeAssignment {
+                        criteria: Vec::new(),
+                        browser: None,
+                    }),
+            );
+        }
+        let judge = self.judge.as_ref().map(|j| j.criteria.clone());
         let token = match &self.mcp_token {
             Some(token) => token.clone(),
             None => {
@@ -842,7 +891,7 @@ impl Run {
                 token
             }
         };
-        crate::orbis_mcp::session_server(self.ctx.mcp.endpoint(), &token, judge)
+        crate::orbis_mcp::session_server(self.ctx.mcp.endpoint(), &token, self.judge.is_some())
     }
 
     /// 結束 Agent、把設定檔還原成已接受的內容，再重新啟動 Agent，盡量接續同一個 session。
@@ -1726,13 +1775,18 @@ impl Run {
         let mut decision = policy::decide(&subject, &policy_ctx);
         // Orbis 自己的 MCP 工具：防護規則由 Server 套用，不轉給人（Planning 中也可以用）。
         // 只用在「其他」類的請求（不是指令、讀寫檔案），而且只把問人改成允許，不推翻拒絕。
+        // 判定 browser 條件的 Child Run 也一樣自動允許注入的瀏覽器 MCP server 的工具（只能連 Preview）。
+        let browser_judge = self.judge.as_ref().is_some_and(|j| j.browser.is_some());
         let is_orbis_call = matches!(subject, crate::policy::PermissionSubject::Other { .. })
             && request
                 .tool_call
                 .fields
                 .title
                 .as_deref()
-                .is_some_and(crate::orbis_mcp::is_orbis_tool);
+                .is_some_and(|title| {
+                    crate::orbis_mcp::is_orbis_tool(title)
+                        || (browser_judge && crate::judge::is_browser_tool(title))
+                });
         if is_orbis_call && matches!(decision, Decision::Ask { .. }) {
             decision = Decision::Allow;
         }
@@ -1970,11 +2024,11 @@ impl Run {
                     RunControlRejectReason::UnknownPermissionRequest,
                     "沒有等待中的權限請求",
                 ),
-                // 協定版本 2 的動作：archive 由 A2 實作；restart_preview 由 Supervisor 處理，不會到這裡。
+                // archive 與 restart_preview 由 Supervisor 處理，不會到這裡。
                 RunControlAction::Archive | RunControlAction::RestartPreview => self.reject(
                     &control,
                     RunControlRejectReason::InvalidState,
-                    "這個 Runner 還不支援這個動作",
+                    "這個動作不經過 Run 處理",
                 ),
             }
         }
@@ -1989,15 +2043,30 @@ impl Run {
         use orbis_protocol::verification::{VerificationKind, VerificationOutcome};
         self.set_status(RunStatus::Verifying, None, None);
         let mut outcomes = Vec::new();
+        // agent／browser 類型各由一個判定用的 Child Run 一起判定，遇到該類型的第一條時執行。
+        let mut judged: HashMap<String, Judged> = HashMap::new();
         for criterion in &request.criteria {
-            let (outcome, summary, evidence) = match criterion.kind {
-                VerificationKind::Command => self.verify_command(criterion).await?,
-                // TODO(A2, #32)：agent／browser 以 delegate（purpose = verification）建立 consult Child Run 判定。
-                VerificationKind::Agent | VerificationKind::Browser => (
-                    VerificationOutcome::Error,
-                    "這台 Runner 還不支援 agent／browser 類型的判定".to_owned(),
-                    Vec::new(),
-                ),
+            let (outcome, summary, evidence, judged_by) = match criterion.kind {
+                VerificationKind::Command => {
+                    let (outcome, summary, evidence) = self.verify_command(criterion).await?;
+                    (outcome, summary, evidence, None)
+                }
+                kind @ (VerificationKind::Agent | VerificationKind::Browser) => {
+                    if !judged.contains_key(criterion.criterion_id.as_str()) {
+                        let group: Vec<&orbis_protocol::verification::VerificationCriterion> =
+                            request.criteria.iter().filter(|c| c.kind == kind).collect();
+                        judged.extend(self.judge_criteria(request, kind, &group).await?);
+                    }
+                    judged
+                        .remove(criterion.criterion_id.as_str())
+                        .unwrap_or_else(|| Judged {
+                            outcome: VerificationOutcome::Error,
+                            summary: "沒有判定結果".to_owned(),
+                            evidence: Vec::new(),
+                            judged_by: None,
+                        })
+                        .into_parts()
+                }
             };
             outcomes.push(outcome);
             self.emit(EventKind::VerificationResult(
@@ -2008,7 +2077,7 @@ impl Run {
                     outcome,
                     summary: self.redactor.redact(&summary),
                     evidence,
-                    judged_by_run_id: None,
+                    judged_by_run_id: judged_by,
                 },
             ));
         }
@@ -2026,6 +2095,194 @@ impl Run {
         });
         self.set_status(RunStatus::AwaitingGate, Some(GateKind::Review), None);
         Ok(())
+    }
+
+    /// `agent`／`browser` 類型：以 `delegate`（`purpose = verification`、`consult`）請 Server 建立判定用的
+    /// Child Run，等它結束後取出它回報的判定（ARCHITECTURE §5.1）。回傳每條條件的結果。
+    async fn judge_criteria(
+        &mut self,
+        request: &orbis_protocol::verification::VerificationRequest,
+        kind: orbis_protocol::verification::VerificationKind,
+        criteria: &[&orbis_protocol::verification::VerificationCriterion],
+    ) -> Result<HashMap<String, Judged>, Stop> {
+        use orbis_protocol::tool::{
+            DelegationPurpose, OrbisToolCall, OrbisToolOutput, OrbisToolResult,
+        };
+        use orbis_protocol::verification::{
+            VerificationEvidence, VerificationKind, VerificationOutcome,
+        };
+        let all = |summary: String| -> HashMap<String, Judged> {
+            criteria
+                .iter()
+                .map(|c| {
+                    (
+                        c.criterion_id.to_string(),
+                        Judged {
+                            outcome: VerificationOutcome::Error,
+                            summary: summary.clone(),
+                            evidence: Vec::new(),
+                            judged_by: None,
+                        },
+                    )
+                })
+                .collect()
+        };
+        let Some(caller) = self.ctx.mcp.caller(self.run_id()) else {
+            return Ok(all(
+                "這個 Run 沒有可以建立 Child Run 的 Orbis MCP 登記".into()
+            ));
+        };
+        let browser = if kind == VerificationKind::Browser {
+            let url = self
+                .ctx
+                .previews
+                .port(self.run_id())
+                .and(PreviewSpec::from_worktree(self.wt()))
+                .map(|spec| spec.local_url());
+            let Some(url) = url else {
+                return Ok(all(format!(
+                    "沒有執行中的 Preview（{} 沒有設定 [preview]，或 Preview 還沒啟動），無法判定 browser 條件",
+                    crate::repo_config::config_path()
+                )));
+            };
+            let output_dir = self
+                .ctx
+                .home
+                .state_dir()
+                .join("judge-screenshots")
+                .join(format!("{}-{}", request.verification_id, request.attempt));
+            let _ = std::fs::remove_dir_all(&output_dir);
+            Some(crate::orbis_mcp::hub::BrowserJudge { url, output_dir })
+        } else {
+            None
+        };
+        self.ctx.mcp.assign_judge(
+            self.run_id(),
+            crate::orbis_mcp::hub::JudgeAssignment {
+                criteria: criteria
+                    .iter()
+                    .map(|c| c.criterion_id.to_string())
+                    .collect(),
+                browser: browser.clone(),
+            },
+        );
+        let (agent, model) = match &request.judge {
+            Some(judge) => (judge.agent.clone(), judge.model.clone()),
+            None => (self.offer.agent.clone(), self.offer.model.clone()),
+        };
+        let prompt = crate::judge::prompt(
+            &self.offer.task.task_key.to_string(),
+            criteria,
+            &request.context,
+            browser.as_ref().map(|b| b.url.as_str()),
+        );
+        let hub = self.ctx.mcp.clone();
+        let delegate = OrbisToolCall::Delegate {
+            agent,
+            model,
+            mode: DelegationMode::Consult,
+            prompt,
+            permission_policy: None,
+            purpose: DelegationPurpose::Verification,
+            verification_id: Some(request.verification_id.clone()),
+        };
+        let forwarded = {
+            let (hub, caller) = (hub.clone(), caller.clone());
+            self.interruptible(async move { hub.forward(&caller, delegate).await })
+                .await?
+        };
+        let child = match forwarded {
+            Ok(OrbisToolResult::Ok { output }) => match *output {
+                OrbisToolOutput::Delegate { child_run_id, .. } => child_run_id,
+                other => {
+                    self.ctx.mcp.clear_judge(self.run_id());
+                    return Ok(all(format!("Server 回覆了非預期的結果：{other:?}")));
+                }
+            },
+            Ok(OrbisToolResult::Error { message, .. }) | Err(message) => {
+                self.ctx.mcp.clear_judge(self.run_id());
+                return Ok(all(format!("無法建立判定用的 Child Run：{message}")));
+            }
+        };
+        let deadline = tokio::time::Instant::now() + JUDGE_TIMEOUT;
+        let finished = loop {
+            let wait = OrbisToolCall::WaitRun {
+                run_id: child.clone(),
+                timeout_ms: None,
+            };
+            let waited = {
+                let (hub, caller) = (hub.clone(), caller.clone());
+                self.interruptible(async move { hub.forward(&caller, wait).await })
+                    .await?
+            };
+            match waited {
+                Ok(OrbisToolResult::Ok { output }) => match *output {
+                    OrbisToolOutput::WaitRun(summary) if summary.status.is_terminal() => {
+                        break Ok(summary);
+                    }
+                    _ if tokio::time::Instant::now() >= deadline => {
+                        break Err(format!(
+                            "判定用的 Child Run 超過 {} 分鐘沒有結束",
+                            JUDGE_TIMEOUT.as_secs() / 60
+                        ));
+                    }
+                    // 還在進行（或在等人回答問題）：稍等再問一次。
+                    _ => {
+                        self.interruptible(tokio::time::sleep(Duration::from_secs(1)))
+                            .await?;
+                    }
+                },
+                Ok(OrbisToolResult::Error { message, .. }) | Err(message) => {
+                    break Err(format!("無法取得判定用 Child Run 的狀態：{message}"));
+                }
+            }
+        };
+        self.ctx.mcp.clear_judge(self.run_id());
+        let verdicts = self.ctx.mcp.take_verdicts(&child);
+        let mut screenshots = Vec::new();
+        if let Some(browser) = &browser {
+            for (name, bytes, media_type) in crate::judge::screenshots(&browser.output_dir) {
+                match self.ctx.outbox.store_blob(&bytes, media_type) {
+                    Ok(image) => screenshots.push(VerificationEvidence::Screenshot {
+                        image,
+                        caption: Some(name),
+                        url: None,
+                    }),
+                    Err(e) => tracing::warn!(error = %e, "無法保存 Verification 的截圖"),
+                }
+            }
+            let _ = std::fs::remove_dir_all(&browser.output_dir);
+        }
+        let missing = match &finished {
+            Ok(summary) => format!(
+                "判定用的 Child Run 結束（{}）但沒有回報這條條件{}",
+                summary.status.as_str(),
+                summary
+                    .final_message
+                    .as_deref()
+                    .map(|m| format!("：{}", m.chars().take(500).collect::<String>()))
+                    .unwrap_or_default()
+            ),
+            Err(message) => message.clone(),
+        };
+        Ok(criteria
+            .iter()
+            .map(|c| {
+                let id = c.criterion_id.to_string();
+                let verdict = verdicts.iter().find(|v| v.criterion_id == id);
+                let judged = Judged {
+                    outcome: match verdict {
+                        Some(v) if v.outcome == "passed" => VerificationOutcome::Passed,
+                        Some(_) => VerificationOutcome::Failed,
+                        None => VerificationOutcome::Error,
+                    },
+                    summary: verdict.map_or_else(|| missing.clone(), |v| v.summary.clone()),
+                    evidence: screenshots.clone(),
+                    judged_by: Some(child.clone()),
+                };
+                (id, judged)
+            })
+            .collect())
     }
 
     /// `command` 類型：在 Worktree 執行指令（沒有指定時用 Repo 設定檔的 `[verify].commands`，
@@ -2378,6 +2635,27 @@ fn stop_reason_text(reason: acp::StopReason) -> String {
         .ok()
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap_or_else(|| format!("{reason:?}"))
+}
+
+/// 判定用 Child Run 對一條條件的結果。
+struct Judged {
+    outcome: orbis_protocol::verification::VerificationOutcome,
+    summary: String,
+    evidence: Vec<orbis_protocol::verification::VerificationEvidence>,
+    judged_by: Option<RunId>,
+}
+
+impl Judged {
+    fn into_parts(
+        self,
+    ) -> (
+        orbis_protocol::verification::VerificationOutcome,
+        String,
+        Vec<orbis_protocol::verification::VerificationEvidence>,
+        Option<RunId>,
+    ) {
+        (self.outcome, self.summary, self.evidence, self.judged_by)
+    }
 }
 
 #[cfg(test)]
