@@ -78,7 +78,7 @@ test.describe("Task 頁", () => {
 
   test("Run 樹連到 Run 即時檢視", async ({ page }) => {
     await page.goto("/tasks/ORB-4");
-    const rows = page.getByRole("treeitem");
+    const rows = page.locator(".run-node");
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText("claude-code");
     await expect(rows.first()).toContainText("我的電腦");

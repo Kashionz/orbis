@@ -37,7 +37,7 @@ export function RunTree({ taskId, permissions }: { taskId: string; permissions: 
       {runs.length === 0 ? (
         <p className="empty">還沒有 Run</p>
       ) : (
-        <ul className="run-tree" role="tree" aria-label="Run 與 Child Run">
+        <ul className="run-tree" aria-label="Run 與 Child Run">
           {tree.map((node) => (
             <RunTreeNode
               key={node.run.id}
@@ -74,11 +74,9 @@ function RunTreeNode({
   const selected = selectedId === run.id;
   return (
     <li
-      role="treeitem"
-      aria-level={node.depth + 1}
-      aria-selected={selected}
-      aria-expanded={node.children.length > 0 ? true : undefined}
       data-run-id={run.id}
+      data-depth={node.depth}
+      data-selected={String(selected)}
       className="run-node"
     >
       <div className="run-node-row">
@@ -121,7 +119,7 @@ function RunTreeNode({
       </div>
       <ErrorText error={cancel.error} />
       {node.children.length > 0 && (
-        <ul role="group">
+        <ul aria-label={`${run.id} 的 Child Run`}>
           {node.children.map((child) => (
             <RunTreeNode
               key={child.run.id}

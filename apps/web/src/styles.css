@@ -1030,7 +1030,7 @@ textarea {
   padding: 0.25rem 0;
 }
 
-.run-node[aria-selected="true"] > .run-node-row {
+.run-node[data-selected="true"] > .run-node-row {
   background: var(--surface);
   outline: 1px solid var(--accent);
   border-radius: 4px;

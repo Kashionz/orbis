@@ -9,9 +9,9 @@ const row = (page: Page, runId: string) => page.locator(`[data-run-id="${runId}"
 
 test("樹狀顯示 Agent、model、狀態、來源；點節點顯示即時檢視", async ({ page }) => {
   await page.goto("/tasks/ORB-4");
-  const tree = page.getByRole("tree", { name: "Run 與 Child Run" });
-  await expect(tree.getByRole("treeitem")).toHaveCount(5);
-  await expect(tree.locator('[data-run-id="run-child-api"]')).toHaveAttribute("aria-level", "2");
+  const tree = page.getByRole("list", { name: "Run 與 Child Run" });
+  await expect(tree.locator(".run-node")).toHaveCount(5);
+  await expect(tree.locator('[data-run-id="run-child-api"]')).toHaveAttribute("data-depth", "1");
   const api = row(page, "run-child-api");
   await expect(api).toContainText("codex");
   await expect(api).toContainText("gpt-5");
@@ -19,15 +19,15 @@ test("樹狀顯示 Agent、model、狀態、來源；點節點顯示即時檢視
   await expect(api).toContainText("Delegation");
   await expect(api).toContainText("branch（子分支）");
   await expect(tree.locator('[data-run-id="run-child-api-review"]')).toHaveAttribute(
-    "aria-level",
-    "3",
+    "data-depth",
+    "2",
   );
 
   await api.getByRole("button", { name: "run-child-api" }).click();
   const live = page.getByRole("region", { name: "Run run-child-api 的即時檢視" });
   await expect(live.getByTestId("timeline")).toContainText("run-child-api：開始處理。");
   await expect(tree.locator('[data-run-id="run-child-api"]')).toHaveAttribute(
-    "aria-selected",
+    "data-selected",
     "true",
   );
 
@@ -44,7 +44,7 @@ test("可以單獨中止 Child Run，父 Run 與 Task 不受影響", async ({ pa
   await api.getByRole("button", { name: "中止" }).click();
   await expect(api).toContainText("已中止");
   await expect(api.getByRole("button", { name: "中止" })).toHaveCount(0);
-  await expect(page.getByRole("treeitem").first().locator("> .run-node-row")).toContainText(
+  await expect(page.locator(".run-node").first().locator("> .run-node-row")).toContainText(
     "等待 Gate",
   );
   await expect(page.locator(".page-header .status-badge")).toHaveText("Review Gate");
@@ -55,7 +55,7 @@ test("可以單獨中止 Child Run，父 Run 與 Task 不受影響", async ({ pa
 test("中止父 Run 時連同還在執行的 Child Run 一起中止", async ({ page }) => {
   await page.goto("/tasks/ORB-4");
   await page
-    .getByRole("treeitem")
+    .locator(".run-node")
     .first()
     .locator("> .run-node-row")
     .getByRole("button", { name: "中止" })
@@ -81,7 +81,7 @@ test.describe("Viewer", () => {
 
   test("看得到樹但沒有中止按鈕", async ({ page }) => {
     await page.goto("/tasks/ORB-4");
-    await expect(page.getByRole("treeitem")).toHaveCount(5);
-    await expect(page.getByRole("tree").getByRole("button", { name: "中止" })).toHaveCount(0);
+    await expect(page.locator(".run-node")).toHaveCount(5);
+    await expect(page.locator(".run-tree").getByRole("button", { name: "中止" })).toHaveCount(0);
   });
 });
