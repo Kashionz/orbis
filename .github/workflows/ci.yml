@@ -1,9 +1,20 @@
 name: CI
 
+# 只改文件時不跑 CI。ARCHITECTURE.md 例外：lint 會檢查 §3 列出的路徑都存在。
 on:
   push:
     branches: [main]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "docs/ARCHITECTURE.md"
   pull_request:
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "docs/ARCHITECTURE.md"
   workflow_dispatch:
 
 concurrency:
@@ -24,6 +35,9 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      # 完整系統 e2e（Web／Desktop 的 M1）：PR 上只在 Linux 跑，push 到 main 與手動執行時三平台都跑。
+      SYSTEM_E2E: ${{ github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest' }}
     defaults:
       run:
         shell: bash
@@ -50,12 +64,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 完整系統 e2e 用的原生 Postgres（三平台都裝；macOS 與 Windows 的 runner 不能跑 Linux container）。
+      # 完整系統 e2e 用的原生 Postgres（macOS 與 Windows 的 runner 不能跑 Linux container）。
       # 只有完整系統 e2e 的步驟會拿到 DATABASE_URL，其他 DB 測試照舊用 Testcontainers。
       # 固定在 master 的 commit：v8 的 Linux 安裝用 apt-key，ubuntu-latest（26.04）已經沒有這個指令，
       # master 已改用 /etc/apt/keyrings，但還沒有發新版
       - name: Install Postgres
         id: postgres
+        if: env.SYSTEM_E2E == 'true'
         uses: ikalnytskyi/action-setup-postgres@0f1fdf59c857aabfa61ab1a2619e9af34de678d3
         with:
           postgres-version: "17"
@@ -103,8 +118,9 @@ jobs:
         run: pnpm --filter @orbis/web test:e2e
 
       # 完整系統的 M1 e2e：真實 Server + Postgres + Local Runner + Fake Agent（apps/server 的 e2e:stack）。
-      # stack 接上面安裝的原生 Postgres，三平台都跑。
+      # stack 接上面安裝的原生 Postgres。
       - name: Playwright（Web 完整系統 M1）
+        if: env.SYSTEM_E2E == 'true'
         env:
           ORBIS_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: |
@@ -124,6 +140,7 @@ jobs:
       # Electron 版的 M1 路徑：stack 不啟動 Runner，由 Desktop 的 sidecar 自己 Pairing，走到 merge 後 Task 轉 Done。
       # 看板要 1280×720 的 viewport，Linux 的虛擬螢幕要夠大。
       - name: Playwright（Desktop 完整系統 M1）
+        if: env.SYSTEM_E2E == 'true'
         env:
           ORBIS_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: |
