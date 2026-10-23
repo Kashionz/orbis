@@ -8,6 +8,7 @@ import { createBlobRoutes } from "./blobs/routes";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import { handleError } from "./http/errors";
+import { requireTrustedOrigin } from "./http/origin-check";
 import type { Logger } from "./logger";
 import { createAuthRoutes } from "./routes/auth";
 import { createGitHubRoutes, createGitHubWebhookRoute } from "./routes/github";
@@ -35,6 +36,15 @@ export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
 
   app.onError(handleError(deps.logger));
+
+  // 帶 session cookie 的寫入請求只接受 Web 與 Server 自己的 Origin（Preview 子網域是 same-site）。
+  app.use(
+    "*",
+    requireTrustedOrigin([
+      deps.config.publicUrl,
+      ...(deps.config.apiOrigin ? [deps.config.apiOrigin] : []),
+    ]),
+  );
 
   app.get(API_ROUTES.health, (c) =>
     c.json({
