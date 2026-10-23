@@ -16,6 +16,8 @@ blob-report/
 .env
 .env.*
 !.env.example
+# Agent 自己寫的本機權限設定（例如 Claude Code 的「永遠允許」），不可以跟著 Run 的分支 push
+.claude/settings.local.json
 
 # OS / editor
 .DS_Store
