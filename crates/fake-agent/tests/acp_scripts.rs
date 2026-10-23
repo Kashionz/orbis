@@ -679,12 +679,19 @@ async fn mcp_劇本_啟動注入的_server_並回報結果() {
     );
 }
 
-/// 把 MCP server 執行檔複製到含空白的目錄。
+/// 把 MCP server 執行檔放到含空白的目錄。
+///
+/// Unix 上用 symlink 而不是複製：剛寫完的執行檔，如果同一個測試程序中其他執行緒正好 fork
+/// （fork 到 exec 之間子程序還持有寫入用的 fd），執行時會失敗（`ETXTBSY`，Text file busy）。
+/// 路徑一樣含空白，測的仍是同一件事。
 fn copy_mcp_server_to_spaced_dir(dir: &Path) -> PathBuf {
     let source = Path::new(env!("CARGO_BIN_EXE_orbis-fake-mcp-server"));
     let spaced = dir.join("MCP Server Dir");
     std::fs::create_dir_all(&spaced).unwrap();
     let target = spaced.join(format!("fake mcp server{}", std::env::consts::EXE_SUFFIX));
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(source, &target).unwrap();
+    #[cfg(not(unix))]
     std::fs::copy(source, &target).unwrap();
     target
 }
