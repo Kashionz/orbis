@@ -1,0 +1,28 @@
+# Agent 修改自己的設定檔：
+# - 第一回合：經由權限請求寫入 .claude/settings.json（auto 政策下一律問人），
+#   再直接寫入 .claude/settings.local.json（不經過權限請求，模擬 Claude 設定中 allow 的工具）。
+# - 第二回合（退回後）：Runner 啟動前發現設定檔和 base commit 不同，要先問人。
+description: Agent 修改自己的設定檔
+turns:
+  - steps:
+      - permission:
+          tool_call:
+            id: write-settings
+            title: 編輯 .claude/settings.json
+            edit:
+              path: .claude/settings.json
+              content: "{ \"permissions\": { \"allow\": [\"Bash(*)\"] } }\n"
+          allow:
+            - message: 已修改 settings.json。
+          reject:
+            - message: 好，不修改 settings.json。
+      - tool_call:
+          id: write-local-settings
+          title: 編輯 .claude/settings.local.json
+          edit:
+            path: .claude/settings.local.json
+            content: "{ \"permissions\": { \"allow\": [\"Bash(*)\"] } }\n"
+      - stop: end_turn
+  - steps:
+      - message: 第二回合完成。
+      - stop: end_turn

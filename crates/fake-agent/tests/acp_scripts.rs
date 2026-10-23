@@ -21,14 +21,16 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 8] = [
+const COVERED_SCRIPTS: [&str; 10] = [
     "cancel.yaml",
     "diff.yaml",
     "error.yaml",
+    "m1.yaml",
     "mcp.yaml",
     "permission.yaml",
     "plan.yaml",
     "rate-limit.yaml",
+    "spawn-child.yaml",
     "two-turns.yaml",
 ];
 
@@ -677,12 +679,19 @@ async fn mcp_劇本_啟動注入的_server_並回報結果() {
     );
 }
 
-/// 把 MCP server 執行檔複製到含空白的目錄。
+/// 把 MCP server 執行檔放到含空白的目錄。
+///
+/// Unix 上用 symlink 而不是複製：剛寫完的執行檔，如果同一個測試程序中其他執行緒正好 fork
+/// （fork 到 exec 之間子程序還持有寫入用的 fd），執行時會失敗（`ETXTBSY`，Text file busy）。
+/// 路徑一樣含空白，測的仍是同一件事。
 fn copy_mcp_server_to_spaced_dir(dir: &Path) -> PathBuf {
     let source = Path::new(env!("CARGO_BIN_EXE_orbis-fake-mcp-server"));
     let spaced = dir.join("MCP Server Dir");
     std::fs::create_dir_all(&spaced).unwrap();
     let target = spaced.join(format!("fake mcp server{}", std::env::consts::EXE_SUFFIX));
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(source, &target).unwrap();
+    #[cfg(not(unix))]
     std::fs::copy(source, &target).unwrap();
     target
 }
@@ -794,6 +803,37 @@ async fn 兩個回合劇本_第二個_prompt_再修改並完成() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn m1_劇本_允許寫檔後完成_依退回的_prompt_改成第二版() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let file = dir.path().join("m1.txt");
+    let check = file.clone();
+    let (first, after_first, second) = with_agent(
+        "m1.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let first = conn.prompt(&session, "請新增 m1.txt").await;
+            let after_first = std::fs::read_to_string(&check).unwrap();
+            let second = conn.prompt(&session, "m1.txt 第 1 行：請改成第二版").await;
+            Ok((first, after_first, second))
+        },
+    )
+    .await;
+
+    assert_eq!(first.stop_reason(), StopReason::EndTurn);
+    let [request] = first.permissions.as_slice() else {
+        panic!("第一回合應該剛好有一次權限請求");
+    };
+    assert_eq!(request.tool_call.tool_call_id.0.as_ref(), "write-m1");
+    assert_eq!(after_first, "version 1\n");
+
+    assert_eq!(second.stop_reason(), StopReason::EndTurn);
+    assert!(second.permissions.is_empty());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "version 2\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_送出_session_cancel_後回合以_cancelled_結束() {
     let dir = workdir();
     let cwd = dir.path().to_owned();
@@ -819,6 +859,72 @@ async fn cancel_送出_session_cancel_後回合以_cancelled_結束() {
     assert_eq!(stop_reason, StopReason::Cancelled);
     let described: Vec<_> = updates.iter().map(describe).collect();
     assert_eq!(described, ["message 開始一個很長的工作……"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spawn_child_回報子程序的_pid_而且子程序持續執行() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let pid = with_agent(
+        "spawn-child.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let pending = conn
+                .cx
+                .send_request(Conn::prompt_request(&session, "開一個背景程序"));
+            while conn.recorded.lock().unwrap().updates.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let first = describe(&conn.recorded.lock().unwrap().updates[0]);
+            let pid: u32 = first
+                .strip_prefix("message child pid: ")
+                .unwrap_or_else(|| panic!("第一個 update 應該回報 PID：{first}"))
+                .parse()
+                .unwrap();
+            // Agent 還在執行時，子程序也在執行（Agent 結束後由誰清掉子程序是 Runner 的責任；
+            // 這個測試的 ACP client 在 Unix 上會連同 process group 一起結束）。
+            assert!(process_alive(pid), "子程序 {pid} 應該在執行");
+            conn.cx
+                .send_notification(CancelNotification::new(session.clone()))?;
+            let response = pending.block_task().await?;
+            assert_eq!(response.stop_reason, StopReason::Cancelled);
+            Ok(pid)
+        },
+    )
+    .await;
+    kill_process(pid);
+}
+
+fn process_alive(pid: u32) -> bool {
+    let output = if cfg!(windows) {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .unwrap()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .unwrap()
+    };
+    if cfg!(windows) {
+        String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+    } else {
+        output.status.success()
+    }
+}
+
+fn kill_process(pid: u32) {
+    let _ = if cfg!(windows) {
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output()
+    };
 }
 
 /// 把測試專用的劇本寫到暫存目錄，回傳絕對路徑（`Path::join` 遇到絕對路徑會直接取代）。

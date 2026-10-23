@@ -44,6 +44,21 @@ const PERMISSION_OPTIONS: [(&str, &str, PermissionOptionKind); 3] = [
 /// 使用者拒絕權限時，tool call 的內容。
 const REJECTED_TEXT: &str = "使用者拒絕了這個操作";
 
+/// `spawn_child` 回報子程序 PID 的訊息前綴。
+pub const CHILD_PID_PREFIX: &str = "child pid: ";
+
+/// 啟動一個一直執行的子程序（自己這個執行檔加上 `--hold`），回傳 PID。
+/// 不等它結束：模擬 Agent 開了 dev server 之類的背景程序。
+fn spawn_child() -> std::io::Result<u32> {
+    let child = std::process::Command::new(std::env::current_exe()?)
+        .arg("--hold")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    Ok(child.id())
+}
+
 /// 以 stdio 執行 Fake Agent，直到 stdin 關閉。
 pub async fn serve_stdio(script: Script) -> Result<(), acp::Error> {
     let agent = Arc::new(FakeAgent::new(script));
@@ -393,6 +408,14 @@ impl TurnRunner<'_> {
                     () = tokio::time::sleep(std::time::Duration::from_millis(*ms)) => {}
                     () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
                 }
+            }
+            Step::SpawnChild => {
+                let pid = spawn_child().map_err(|error| {
+                    acp::Error::internal_error().data(json!({ "reason": error.to_string() }))
+                })?;
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(format!("{CHILD_PID_PREFIX}{pid}")),
+                )))?;
             }
             Step::WaitForCancel => {
                 cancelled(self.cancel.clone()).await;

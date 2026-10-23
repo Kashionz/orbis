@@ -1,0 +1,14 @@
+# 中途停一下：測試斷線期間的 Event 暫存與重新連線後的補送。
+description: 送出訊息、等待、再送出訊息後完成
+turns:
+  - steps:
+      - message: 第一段
+      - sleep_ms: 2500
+      - message: 第二段
+      - tool_call:
+          id: write-after
+          title: 新增 after.txt
+          edit:
+            path: after.txt
+            content: "after reconnect\n"
+      - stop: end_turn

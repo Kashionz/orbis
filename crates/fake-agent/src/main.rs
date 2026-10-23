@@ -11,14 +11,24 @@ use orbis_fake_agent::{Script, agent};
 #[command(version)]
 struct Cli {
     /// 劇本 YAML 路徑。
-    #[arg(long)]
-    script: PathBuf,
+    #[arg(long, required_unless_present = "hold")]
+    script: Option<PathBuf>,
+
+    /// 不講 ACP，只是一直執行到被結束（劇本的 `spawn_child` 步驟用來模擬背景程序）。
+    #[arg(long, hide = true)]
+    hold: bool,
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let script = match Script::from_path(&cli.script) {
+    if cli.hold {
+        std::future::pending::<()>().await;
+    }
+    let Some(path) = cli.script else {
+        return ExitCode::from(2);
+    };
+    let script = match Script::from_path(&path) {
         Ok(script) => script,
         Err(error) => {
             eprintln!("{error}");
