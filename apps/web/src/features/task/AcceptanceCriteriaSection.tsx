@@ -15,6 +15,7 @@ import {
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { AC_KIND_LABELS, AC_RESULT_LABELS } from "../../lib/labels";
+import { CollabEditor } from "../collab/CollabEditor";
 
 interface Draft {
   kind: AcceptanceCriterionKind;
@@ -32,9 +33,11 @@ function commandOf(draft: Draft): string | null {
 /** Acceptance Criterion 清單：新增、編輯（含類型）、刪除、排序。 */
 export function AcceptanceCriteriaSection({
   taskId,
+  projectId,
   canEdit,
 }: {
   taskId: string;
+  projectId: string;
   canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -88,6 +91,8 @@ export function AcceptanceCriteriaSection({
             key={criterion.id}
             criterion={criterion}
             canEdit={canEdit}
+            projectId={projectId}
+            onCollabClosed={invalidate}
             first={index === 0}
             last={index === criteria.length - 1}
             onMove={(offset) => move(index, offset)}
@@ -113,6 +118,9 @@ export function AcceptanceCriteriaSection({
 interface CriterionRowProps {
   criterion: AcceptanceCriterion;
   canEdit: boolean;
+  projectId: string;
+  /** 共同編輯結束後重新取得條件（Server 已把描述回寫）。 */
+  onCollabClosed: () => void;
   first: boolean;
   last: boolean;
   onMove: (offset: -1 | 1) => void;
@@ -123,6 +131,8 @@ interface CriterionRowProps {
 function CriterionRow({
   criterion,
   canEdit,
+  projectId,
+  onCollabClosed,
   first,
   last,
   onMove,
@@ -130,6 +140,7 @@ function CriterionRow({
   onSave,
 }: CriterionRowProps) {
   const [editing, setEditing] = useState<Draft | null>(null);
+  const [collab, setCollab] = useState(false);
 
   if (editing) {
     return (
@@ -195,6 +206,27 @@ function CriterionRow({
             刪除
           </button>
         </span>
+      )}
+      <button
+        type="button"
+        className="link-button"
+        aria-expanded={collab}
+        onClick={() => {
+          if (collab) onCollabClosed();
+          setCollab(!collab);
+        }}
+      >
+        {collab ? "結束共同編輯" : canEdit ? "共同編輯描述" : "即時檢視描述"}
+      </button>
+      {collab && (
+        <div className="ac-collab">
+          <CollabEditor
+            docRef={{ kind: "acceptance-criterion", id: criterion.id }}
+            label={`條件「${criterion.description}」的描述`}
+            canEdit={canEdit}
+            projectId={projectId}
+          />
+        </div>
       )}
     </li>
   );

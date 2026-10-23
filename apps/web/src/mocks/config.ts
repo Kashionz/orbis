@@ -28,6 +28,25 @@ export interface MockConfig {
   configTrust?: boolean;
   /** review diff 中 README.md 修改後的內容放在 blob，並多一個二進位檔案。 */
   blobDiff?: boolean;
+  /**
+   * 「重新檢查 App 安裝狀態」時 GitHub App 已安裝的 owner（模擬登記之後才安裝），
+   * 省略時與登記時相同（只有 `acme`）。
+   */
+  githubAppOwnersOnRefresh?: string[];
+  /** 重新檢查時 GitHub 上同名 repo 的 id 已經不同（`owner/name`），回 409 `repo_mismatch`。 */
+  repoMismatch?: string[];
+  /** 每個 Run 的前幾輪 Verification 中，command 類型的條件失敗；預設 0（全部通過）。 */
+  verificationFailures?: number;
+  /** 在等待 Review Gate 的 Run（ORB-4）底下建立 Child Run 樹與一個向人提問的 Child Run。 */
+  childRuns?: boolean;
+  /** Run 的 Preview 已就緒；省略時所有 Run 都是「沒有設定」。 */
+  preview?: boolean;
+  /** 共同編輯的連線一律以這個 close code 關閉（4401、4403）。 */
+  collabClose?: number;
+  /** 共同編輯文件中有另一位成員 alice 在線；`edit` 時她在連線後加入一段文字。 */
+  collabPeer?: "online" | "edit";
+  /** Repo Spec 提交時，default branch 上的檔案已經被別人改過。 */
+  specUpstreamChanged?: boolean;
 }
 
 declare global {

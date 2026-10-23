@@ -8,12 +8,17 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
+import { AdminPage } from "./features/admin/AdminPage";
 import { AuthedLayout } from "./features/auth/AuthedLayout";
 import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
 import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
+import { DraftTasksPage } from "./features/draft-tasks/DraftTasksPage";
 import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
+import { NotificationSettingsPage } from "./features/notifications/NotificationSettingsPage";
+import { NotificationsPage } from "./features/notifications/NotificationsPage";
 import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
+import { RepoSpecPage } from "./features/repo-spec/RepoSpecPage";
 import { RunPage } from "./features/run/RunPage";
 import { TaskPage } from "./features/task/TaskPage";
 
@@ -87,6 +92,26 @@ const projectSettingsRoute = createRoute({
   errorComponent: PageError,
 });
 
+const draftTasksRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/projects/$projectId/draft-tasks",
+  component: function DraftTasksRouteComponent() {
+    const { projectId } = draftTasksRoute.useParams();
+    return <DraftTasksPage key={projectId} projectId={projectId} />;
+  },
+  errorComponent: PageError,
+});
+
+const repoSpecRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/repo-specs/$repoSpecId",
+  component: function RepoSpecRouteComponent() {
+    const { repoSpecId } = repoSpecRoute.useParams();
+    return <RepoSpecPage key={repoSpecId} repoSpecId={repoSpecId} />;
+  },
+  errorComponent: PageError,
+});
+
 const taskRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/tasks/$taskKey",
@@ -131,6 +156,27 @@ const needsYouRoute = createRoute({
   errorComponent: PageError,
 });
 
+const notificationsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/notifications",
+  component: NotificationsPage,
+  errorComponent: PageError,
+});
+
+const notificationSettingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/settings/notifications",
+  component: NotificationSettingsPage,
+  errorComponent: PageError,
+});
+
+const adminRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/admin",
+  component: AdminPage,
+  errorComponent: PageError,
+});
+
 function AuthErrorPage({ error }: ErrorComponentProps) {
   return (
     <main className="notice" role="alert">
@@ -155,10 +201,15 @@ const routeTree = rootRoute.addChildren([
   authedRoute.addChildren([
     boardRoute,
     projectSettingsRoute,
+    draftTasksRoute,
+    repoSpecRoute,
     taskRoute,
     runRoute,
     reviewRoute,
     needsYouRoute,
+    notificationsRoute,
+    notificationSettingsRoute,
+    adminRoute,
   ]),
 ]);
 

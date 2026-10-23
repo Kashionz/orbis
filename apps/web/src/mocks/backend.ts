@@ -6,45 +6,87 @@
 
 import {
   type AcceptanceCriterion,
+  type AddMemberInput,
   type ApiError,
+  type CollabMentionAttrs,
   type CreateAcceptanceCriterionInput,
   type CreateProjectInput,
   type CreateRepoInput,
+  type CreateRepoSpecInput,
   type CreateRunInput,
   type CreateTaskInput,
+  type CredentialStatus,
   canTransitionManually,
   type DispatchOptions,
+  type DraftTask,
+  formatMention,
+  formatMentionTargetId,
   formatTaskKey,
   type Gate,
   type GateDecisionInput,
+  type MarkNotificationsReadInput,
   type Member,
+  type Mention,
+  type MentionCandidates,
   type MeResponse,
   NAMES,
   type NeedsYouItem,
+  type Notification,
+  type NotificationKind,
+  type NotificationListResponse,
+  type NotificationPreferences,
+  type PairingTokenCreated,
+  type PreviewState,
   type Project,
+  type ProjectMemberRole,
+  parseCollabDocName,
+  parseMentions,
+  parseMentionTargetId,
   READY_REQUIREMENTS,
   type Repo,
+  type RepoSpec,
+  type RepoSpecCommitInput,
+  type RepoSpecCommitResponse,
   type ReviewDiff,
   type Role,
   type Run,
   type RunEvent,
+  type Runner,
+  type RunnerKind,
   type RunUsage,
   type Task,
+  type TaskComment,
   type TaskStatus,
+  type TeamRunnerQueueItem,
   type UpdateAcceptanceCriterionInput,
+  type UpdateDraftTaskInput,
   type UpdateProjectInput,
   type UpdateTaskInput,
+  type Verification,
+  type VerificationDecisionInput,
 } from "@orbis/api-contract";
-import type { EventKind, PermissionPurpose, RunDiff, RunDiffFile, TextBody } from "@orbis/protocol";
+import type {
+  EventKind,
+  GateKind,
+  PermissionPurpose,
+  RunDiff,
+  RunDiffFile,
+  TextBody,
+  VerificationEvidence,
+} from "@orbis/protocol";
 import { MOCK_STATE_STORAGE_KEY, type MockConfig, mockConfig } from "./config";
 import {
   BASE_COMMIT,
   BASE_FILES,
   configTrustTurn,
   generateLargeRun,
+  implementTurn,
   m1FirstTurn,
   m1RevisionTurn,
+  planRevisionTurn,
+  planTurn,
   type ScriptStep,
+  verificationFixTurn,
 } from "./scripts";
 
 export const ME_ID = "member-me";
@@ -73,10 +115,36 @@ export interface MockState {
   reviews: Record<string, GateDecisionInput[]>;
   /** 已登出：之後 `/api/auth/me` 回 401。 */
   loggedOut: boolean;
-  /** blob 的內容（review diff 中放在 blob 的大檔）。 */
+  /** blob 的內容（review diff 中放在 blob 的大檔；`data:` 開頭的是圖片）。 */
   blobs: Record<string, string>;
   nextId: number;
+  verifications: Verification[];
+  /**
+   * 正在 Verification 的 Run：`running`＝已送 verify；`done`＝已收到 verification_completed，
+   * 接著的 awaiting_gate(review) 是 Verification 結束的回報，不再開始新的一輪。
+   */
+  verificationPhase: Record<string, "running" | "done">;
+  /** 每個 Run 跑過幾輪 Verification（決定 `verificationFailures` 的哪幾輪失敗）。 */
+  verificationRounds: Record<string, number>;
+  draftTasks: DraftTask[];
+  /** 新的在後。 */
+  notifications: Notification[];
+  notificationPreferences: NotificationPreferences;
+  taskComments: TaskComment[];
+  mentions: Mention[];
+  /** 共同編輯文件的 Yjs 狀態（base64），依文件名稱。 */
+  collabDocs: Record<string, string>;
+  repoSpecs: RepoSpec[];
+  /** Repo Spec 草稿轉成的 markdown（提交時使用）。 */
+  repoSpecDrafts: Record<string, string>;
+  /** Credential 並行上限的覆寫，key 是 `<runnerId>/<credential>`。 */
+  credentialOverrides: Record<string, number>;
+  projectRoles: ProjectMemberRole[];
 }
+
+/** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
+const SCREENSHOT_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 /** 以契約 ApiError 的形狀回應的錯誤。 */
 export class MockError extends Error {
@@ -127,10 +195,18 @@ function now(): string {
 }
 
 type Listener = (runId: string, events: RunEvent[]) => void;
+type NotificationListener = (notification: Notification) => void;
+
+/** @mention 自動完成的 Agent。 */
+const MENTION_AGENTS: MentionCandidates["agents"] = [
+  { agent: "claude-code", label: "claude" },
+  { agent: "codex", label: "codex" },
+];
 
 export class MockBackend {
   private state: MockState;
   private readonly listeners = new Set<Listener>();
+  private readonly notificationListeners = new Set<NotificationListener>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private largeRun: RunEvent[] | null = null;
 
@@ -141,6 +217,19 @@ export class MockBackend {
       : sessionStorage,
   ) {
     this.state = this.load() ?? this.seed();
+    this.state.verifications ??= [];
+    this.state.verificationPhase ??= {};
+    this.state.verificationRounds ??= {};
+    this.state.draftTasks ??= [];
+    this.state.notifications ??= [];
+    this.state.notificationPreferences ??= { disabledKinds: [], quietHours: null };
+    this.state.taskComments ??= [];
+    this.state.mentions ??= [];
+    this.state.collabDocs ??= {};
+    this.state.repoSpecs ??= [];
+    this.state.repoSpecDrafts ??= {};
+    this.state.credentialOverrides ??= {};
+    this.state.projectRoles ??= [];
     this.save();
   }
 
@@ -160,6 +249,12 @@ export class MockBackend {
   onEvents(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** 新的 App 內通知（WebSocket 的 `notification` 推送）。 */
+  onNotification(listener: NotificationListener): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
   }
 
   /** 每個模擬中的 Run 前進一步。 */
@@ -313,6 +408,31 @@ export class MockBackend {
       loggedOut: false,
       blobs: {},
       nextId: 100,
+      verifications: [],
+      verificationPhase: {},
+      verificationRounds: {},
+      draftTasks: [],
+      notifications: [],
+      notificationPreferences: { disabledKinds: [], quietHours: null },
+      taskComments: [],
+      mentions: [],
+      collabDocs: {},
+      repoSpecs: [
+        {
+          id: "spec-1",
+          repoId: "repo-1",
+          path: "docs/specs/login.md",
+          title: "登入",
+          version: 2,
+          committedSha: "1".repeat(40),
+          openPullRequest: null,
+          createdAt: SEED_TIME,
+          updatedAt: SEED_TIME,
+        },
+      ],
+      repoSpecDrafts: { "spec-1": "# 登入\n\n使用 GitHub 帳號登入。" },
+      credentialOverrides: {},
+      projectRoles: [{ projectId: "project-1", memberId: "member-bob", role: "viewer" }],
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -327,6 +447,7 @@ export class MockBackend {
     const backlog = seedTask("設定 CI 快取", "backlog", {
       assigneeMemberId: null,
       description: "CI 的 pnpm store 加上快取。",
+      specPath: "docs/specs/login.md",
     });
     this.createAcceptanceCriterion(backlog.id, {
       kind: "command",
@@ -345,24 +466,43 @@ export class MockBackend {
 
     // 等待權限請求的 Run
     const waiting = seedTask("寫入 config.json", "ready");
-    this.dispatch(waiting.id, {
-      agent: "claude-code",
-      model: null,
-      runnerKind: "local",
-      permissionPolicy: "manual",
-    });
+    this.dispatch(
+      waiting.id,
+      {
+        agent: "claude-code",
+        model: null,
+        runnerKind: "local",
+        permissionPolicy: "manual",
+      },
+      true,
+    );
 
     // 等待 Review Gate 的 Run（劇本跑完第一回合，允許權限請求）
     const review = seedTask("整理 README", "ready", { assigneeMemberId: "member-alice" });
-    const reviewRun = this.dispatch(review.id, {
-      agent: "claude-code",
-      model: null,
-      runnerKind: "local",
-      permissionPolicy: "auto",
-    });
+    const reviewRun = this.dispatch(
+      review.id,
+      {
+        agent: "claude-code",
+        model: null,
+        runnerKind: "local",
+        permissionPolicy: "auto",
+      },
+      true,
+    );
     this.settle();
     this.respondToPermission(reviewRun.id, "perm-write-config", "allow");
     this.settle();
+    if (this.config.childRuns) this.seedChildRuns(reviewRun);
+    this.seedDraftTasks(reviewRun);
+    this.notify("task_assigned", "你被指派了 ORB-2", {
+      taskId: ready.id,
+      taskKey: ready.key,
+      url: `/tasks/${ready.key}`,
+      actorMemberId: "member-alice",
+    });
+    for (const n of this.state.notifications) {
+      if (n.kind === "task_assigned") n.readAt = SEED_TIME;
+    }
 
     seedTask("升級相依套件", "done", { assigneeMemberId: "member-bob", doneReason: "completed" });
 
@@ -382,12 +522,16 @@ export class MockBackend {
     // 等待設定的信任核准的 Run（只在指定時建立，避免影響其他測試的項目數）
     if (this.config.configTrust) {
       const trust = seedTask("執行 setup 腳本", "ready");
-      const trustRun = this.dispatch(trust.id, {
-        agent: "claude-code",
-        model: null,
-        runnerKind: "local",
-        permissionPolicy: "auto",
-      });
+      const trustRun = this.dispatch(
+        trust.id,
+        {
+          agent: "claude-code",
+          model: null,
+          runnerKind: "local",
+          permissionPolicy: "auto",
+        },
+        true,
+      );
       this.state.simulations[trustRun.id] = {
         queue: configTrustTurn(`feature/${trust.key.toLowerCase()}`),
         waiting: null,
@@ -409,6 +553,7 @@ export class MockBackend {
         needsYou: [],
         gates: [],
         simulations: {},
+        draftTasks: [],
       });
     }
     return this.state;
@@ -780,6 +925,42 @@ export class MockBackend {
     return repo;
   }
 
+  /** 重新讀取 GitHub App 的安裝狀態（#56）。 */
+  refreshRepoInstallation(repoId: string): Repo {
+    const repo = this.repo(repoId);
+    this.requireProjectAdmin(this.project(repo.projectId));
+    const fullName = `${repo.owner}/${repo.name}`;
+    if (this.config.repoMismatch?.includes(fullName)) {
+      throw new MockError(
+        409,
+        "repo_mismatch",
+        `GitHub 上的 ${fullName} 與登記時不是同一個 repository`,
+      );
+    }
+    const owners = this.config.githubAppOwnersOnRefresh ?? GITHUB_APP_OWNERS;
+    const installed = owners.includes(repo.owner);
+    repo.github = { installed, installUrl: installed ? null : GITHUB_APP_INSTALL_URL };
+    repo.updatedAt = now();
+    this.save();
+    return repo;
+  }
+
+  deleteRepo(repoId: string): void {
+    const repo = this.repo(repoId);
+    this.requireProjectAdmin(this.project(repo.projectId));
+    if (this.state.tasks.some((t) => t.repoId === repoId)) {
+      throw new MockError(409, "conflict", "還有 Task 使用這個 Repo，不能刪除");
+    }
+    this.state.repos = this.state.repos.filter((r) => r.id !== repoId);
+    this.save();
+  }
+
+  private repo(repoId: string): Repo {
+    const repo = this.state.repos.find((r) => r.id === repoId);
+    if (!repo) throw new MockError(404, "not_found", "找不到這個 Repo");
+    return repo;
+  }
+
   createTask(projectId: string, input: CreateTaskInput): Task {
     const project = this.project(projectId);
     const number = this.state.tasks.filter((t) => t.projectId === projectId).length + 1;
@@ -933,8 +1114,11 @@ export class MockBackend {
     };
   }
 
-  /** 派工：建立 Run，Task 進入 Running（Planning 在 B1 是直接通過）。 */
-  dispatch(taskId: string, input: CreateRunInput): Run {
+  /**
+   * 派工：建立 Run。Plan Gate 開啟時 Task 進入 Planning，否則直接 Running。
+   * 種子資料的 Run 一律略過 Plan Gate（`seeding`），不受測試設定的政策影響。
+   */
+  dispatch(taskId: string, input: CreateRunInput, seeding = false): Run {
     const task = this.task(taskId);
     if (task.status !== "ready") {
       throw new MockError(409, "invalid_transition", "只有 Ready 的 Task 可以派工");
@@ -951,14 +1135,21 @@ export class MockBackend {
     run.runnerId = input.runnerKind === "local" ? "runner-local" : "runner-team";
     this.state.runs.push(run);
     this.state.events[run.id] = [];
+    const branch = `feature/${task.key.toLowerCase()}`;
+    const planGate = !seeding && this.planGateEnabled(task);
     this.state.simulations[run.id] = {
-      queue: m1FirstTurn(`feature/${task.key.toLowerCase()}`),
+      queue: planGate ? planTurn(branch) : m1FirstTurn(branch),
       waiting: null,
     };
-    task.status = "running";
+    task.status = planGate ? "planning" : "running";
     task.updatedAt = now();
     this.save();
     return run;
+  }
+
+  /** Task 的覆寫優先，否則沿用 Project 的設定（§5）。 */
+  private planGateEnabled(task: Task): boolean {
+    return task.planGateEnabled ?? this.project(task.projectId).policy.planGateEnabled;
   }
 
   dispatchAsMember(taskId: string, input: CreateRunInput): Run {
@@ -1008,6 +1199,25 @@ export class MockBackend {
     if (input.action === "approve" && !this.mayApprove(task)) {
       throw new MockError(403, "forbidden", "這個 Project 不允許核准指派給自己的 Task");
     }
+    if (
+      gate.kind === "plan" &&
+      input.action === "reject" &&
+      ((input.reviewComments ?? []).length > 0 || (input.previewComments ?? []).length > 0)
+    ) {
+      throw new MockError(422, "invalid_input", "Plan Gate 只接受整體說明");
+    }
+    if (gate.kind === "review" && input.action === "approve") {
+      const unchecked = this.acceptanceCriteria(task.id).filter(
+        (c) => c.kind === "manual" && c.result !== "passed",
+      );
+      if (unchecked.length > 0) {
+        throw new MockError(
+          409,
+          "manual_criteria_unchecked",
+          `還有 ${unchecked.length} 條 manual 條件沒有打勾`,
+        );
+      }
+    }
     const runId = gate.runId ?? "";
     this.state.reviews[runId] = [...(this.state.reviews[runId] ?? []), input];
     const time = now();
@@ -1028,12 +1238,57 @@ export class MockBackend {
               updatedAt: time,
             }))
           : [],
+      previewComments:
+        input.action === "reject"
+          ? (input.previewComments ?? []).map((c) => ({
+              body: c.body,
+              url: c.url,
+              selector: c.selector ?? null,
+              screenshotBlobId: c.screenshotBlobId ?? null,
+              id: this.newId("preview-comment"),
+              gateId: gate.id,
+              authorMemberId: ME_ID,
+              createdAt: time,
+              updatedAt: time,
+            }))
+          : [],
     });
     this.state.needsYou = this.state.needsYou.filter(
       (i) => !(i.kind === "gate" && i.runId === runId),
     );
-    if (input.action === "reject") {
-      this.state.simulations[runId] = { queue: m1RevisionTurn(), waiting: null };
+    for (const comment of gate.reviewComments) {
+      comment.consultRunIds = this.consultForMentions(
+        task,
+        comment.body,
+        "review_comment",
+        comment.id,
+      );
+    }
+    const prompt = (source: "plan_gate" | "review_gate", text: string): ScriptStep => ({
+      type: "event",
+      event: { kind: "prompt_submitted", source, prompt: [{ type: "text", text }] },
+    });
+    if (gate.kind === "plan" && input.action !== "abort") {
+      const approved = input.action === "approve";
+      const branch = this.run(runId).branch ?? `feature/${task.key.toLowerCase()}`;
+      this.state.simulations[runId] = {
+        queue: approved
+          ? [prompt("plan_gate", "plan 已核准，開始實作。"), ...implementTurn(branch)]
+          : [prompt("plan_gate", input.comment ?? ""), ...planRevisionTurn()],
+        waiting: null,
+      };
+      task.status = approved ? "running" : "planning";
+    } else if (input.action === "reject") {
+      const lines = [
+        input.comment ?? "",
+        ...(input.reviewComments ?? []).map((c) => `${c.path}:${c.line} ${c.body}`),
+        ...(input.previewComments ?? []).map((c) => `${c.url} ${c.body}`),
+      ];
+      this.state.simulations[runId] = {
+        queue: [prompt("review_gate", lines.filter(Boolean).join("\n")), ...m1RevisionTurn()],
+        waiting: null,
+      };
+      task.status = "running";
     } else if (input.action === "approve") {
       this.append(runId, [
         { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
@@ -1047,20 +1302,1256 @@ export class MockBackend {
     return gate;
   }
 
+  // ---------- Preview（ARCHITECTURE §13；E 軌的 Preview 分頁） ----------
+
+  previewState(runId: string): PreviewState {
+    const run = this.run(runId);
+    if (!this.config.preview) {
+      return {
+        status: "not_configured",
+        port: null,
+        localUrl: null,
+        shareUrl: null,
+        runnerId: run.runnerId,
+        stopped: null,
+      };
+    }
+    return {
+      status: "ready",
+      port: 4123,
+      localUrl: "http://localhost:4123/",
+      // 測試只檢查 iframe 的網址，不需要真的有 dev server
+      shareUrl: "http://127.0.0.1:9/",
+      runnerId: run.runnerId,
+      stopped: null,
+    };
+  }
+
+  /** 上傳 Preview 留言的截圖：存成 data URL 的 blob，Review 頁可以顯示。 */
+  async uploadPreviewScreenshot(runId: string, file: Blob): Promise<{ blobId: string }> {
+    this.run(runId);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    const blobId = this.newId("blob");
+    this.state.blobs[blobId] = `data:image/png;base64,${btoa(binary)}`;
+    this.save();
+    return { blobId };
+  }
+
+  // ---------- 共同編輯（ARCHITECTURE §12.1；collab.ts 的 MockCollabServer 使用） ----------
+
+  get collabCloseCode(): number | null {
+    return this.config.collabClose ?? null;
+  }
+
+  get collabPeer(): { name: string; color: string; editText: string | null } | null {
+    if (!this.config.collabPeer) return null;
+    return {
+      name: "alice",
+      color: "#6f42c1",
+      editText: this.config.collabPeer === "edit" ? "alice 補充的一段" : null,
+    };
+  }
+
+  collabAccess(docName: string): { readOnly: boolean; initialMarkdown: string } | null {
+    const ref = parseCollabDocName(docName);
+    if (!ref) return null;
+    const readOnly = this.role === "viewer";
+    switch (ref.kind) {
+      case "task-description": {
+        const task = this.state.tasks.find((t) => t.id === ref.id);
+        return task ? { readOnly, initialMarkdown: task.description } : null;
+      }
+      case "acceptance-criterion": {
+        const criterion = this.state.acceptanceCriteria.find((c) => c.id === ref.id);
+        return criterion ? { readOnly, initialMarkdown: criterion.description } : null;
+      }
+      case "repo-spec-draft": {
+        const spec = this.state.repoSpecs.find((s) => s.id === ref.id);
+        return spec
+          ? { readOnly, initialMarkdown: this.state.repoSpecDrafts[spec.id] ?? "" }
+          : null;
+      }
+    }
+  }
+
+  collabSnapshot(docName: string): string | null {
+    return this.state.collabDocs[docName] ?? null;
+  }
+
+  /** 保存文件，並把 markdown 回寫 Task 描述或條件的描述（Repo Spec 草稿只存快照）。 */
+  saveCollabDocument(
+    docName: string,
+    snapshot: string,
+    markdown: string,
+    mentions: CollabMentionAttrs[],
+  ): void {
+    const ref = parseCollabDocName(docName);
+    if (!ref) return;
+    this.state.collabDocs[docName] = snapshot;
+    let task: Task | null = null;
+    if (ref.kind === "task-description") {
+      task = this.state.tasks.find((t) => t.id === ref.id) ?? null;
+      if (task) Object.assign(task, { description: markdown, updatedAt: now() });
+    } else if (ref.kind === "acceptance-criterion") {
+      const criterion = this.state.acceptanceCriteria.find((c) => c.id === ref.id);
+      if (criterion && markdown.trim() !== "") {
+        Object.assign(criterion, { description: markdown.trim(), updatedAt: now() });
+      }
+      task = criterion ? this.task(criterion.taskId) : null;
+    } else {
+      this.state.repoSpecDrafts[ref.id] = markdown;
+    }
+    if (task) {
+      // 新出現的 mention 節點才發通知或建立 consult Run（以 nodeId 去除重複）
+      const valid = mentions.flatMap((m) => {
+        const target = parseMentionTargetId(m.id);
+        return target && m.nodeId
+          ? [{ token: formatMention(m.label, target), nodeId: m.nodeId }]
+          : [];
+      });
+      this.consultForMentions(
+        task,
+        valid.map((m) => m.token).join(" "),
+        "collab_document",
+        docName,
+        valid.map((m) => m.nodeId),
+      );
+    }
+    this.save();
+  }
+
+  // ---------- Repo Spec（ARCHITECTURE §12.1） ----------
+
+  repoSpecs(repoId: string): RepoSpec[] {
+    this.repo(repoId);
+    return this.state.repoSpecs.filter((s) => s.repoId === repoId);
+  }
+
+  repoSpec(id: string): RepoSpec {
+    const spec = this.state.repoSpecs.find((s) => s.id === id);
+    if (!spec) throw new MockError(404, "not_found", "找不到這份 Repo Spec");
+    return spec;
+  }
+
+  createRepoSpec(repoId: string, input: CreateRepoSpecInput): RepoSpec {
+    this.requireEditor();
+    this.repo(repoId);
+    if (this.state.repoSpecs.some((s) => s.repoId === repoId && s.path === input.path)) {
+      throw new MockError(409, "conflict", `${input.path} 已經登記`);
+    }
+    const time = now();
+    const spec: RepoSpec = {
+      id: this.newId("spec"),
+      repoId,
+      path: input.path,
+      title: input.title ?? null,
+      version: 0,
+      committedSha: null,
+      openPullRequest: null,
+      createdAt: time,
+      updatedAt: time,
+    };
+    this.state.repoSpecs.push(spec);
+    this.save();
+    return spec;
+  }
+
+  /** 提交草稿：開 Spec PR，已經有開著的 PR 時更新它。 */
+  commitRepoSpec(id: string, _input: RepoSpecCommitInput): RepoSpecCommitResponse {
+    this.requireEditor();
+    const spec = this.repoSpec(id);
+    const repo = this.repo(spec.repoId);
+    const created = spec.openPullRequest === null;
+    spec.openPullRequest ??= {
+      number: 40 + this.state.repoSpecs.indexOf(spec),
+      url: `https://github.com/${repo.owner}/${repo.name}/pull/${40 + this.state.repoSpecs.indexOf(spec)}`,
+    };
+    spec.updatedAt = now();
+    this.save();
+    return {
+      pullRequest: spec.openPullRequest,
+      created,
+      overwritesUpstreamChanges: this.config.specUpstreamChanged ?? false,
+    };
+  }
+
+  // ---------- Runner、Credential 與佇列（ARCHITECTURE §6.1、§7） ----------
+
+  private get teamRole(): Role {
+    return this.config.role ?? "owner";
+  }
+
+  private requireTeamAdmin(): void {
+    if (this.config.forbidWrites || !roleAtLeast(this.teamRole, "admin")) {
+      throw new MockError(403, "forbidden", "需要 Admin 以上的 Role");
+    }
+  }
+
+  runners(): Runner[] {
+    const agent = (name: string, credential: string | null) => ({
+      agent: name,
+      credential,
+      available: true,
+      maxConcurrency: 30,
+      details: null,
+    });
+    const all: Runner[] = [
+      {
+        id: "runner-team",
+        teamId: "team-1",
+        kind: "team",
+        memberId: null,
+        name: "team-runner-1",
+        runnerVersion: "0.2.0",
+        os: "linux",
+        arch: "x64",
+        online: true,
+        acceptingDispatches: true,
+        lastHeartbeatAt: SEED_TIME,
+        agents: [agent("claude-code", "team-claude"), agent("codex", "team-openai")],
+        createdAt: SEED_TIME,
+      },
+      {
+        id: "runner-local",
+        teamId: "team-1",
+        kind: "local",
+        memberId: ME_ID,
+        name: "octocat-laptop",
+        runnerVersion: "0.2.0",
+        os: "windows",
+        arch: "x64",
+        online: true,
+        acceptingDispatches: true,
+        lastHeartbeatAt: SEED_TIME,
+        agents: [agent("claude-code", "default")],
+        createdAt: SEED_TIME,
+      },
+      {
+        id: "runner-alice",
+        teamId: "team-1",
+        kind: "local",
+        memberId: "member-alice",
+        name: "alice-mac",
+        runnerVersion: "0.2.0",
+        os: "macos",
+        arch: "arm64",
+        online: false,
+        acceptingDispatches: true,
+        lastHeartbeatAt: SEED_TIME,
+        agents: [agent("claude-code", "default")],
+        createdAt: SEED_TIME,
+      },
+    ];
+    // 同 Server：Admin 以上看得到全部，其他人只看得到 Team Runner 與自己的 Local Runner
+    return roleAtLeast(this.teamRole, "admin")
+      ? all
+      : all.filter((r) => r.kind === "team" || r.memberId === ME_ID);
+  }
+
+  credentials(): CredentialStatus[] {
+    return this.runners().flatMap((runner) => {
+      const groups = new Map<string, string[]>();
+      for (const a of runner.agents) {
+        if (a.credential) groups.set(a.credential, [...(groups.get(a.credential) ?? []), a.agent]);
+      }
+      return [...groups].map(([credential, agents]): CredentialStatus => {
+        const override = this.state.credentialOverrides[`${runner.id}/${credential}`] ?? null;
+        const team = runner.kind === "team";
+        return {
+          runnerId: runner.id,
+          runnerName: runner.name,
+          runnerKind: runner.kind,
+          online: runner.online,
+          credential,
+          agents,
+          reportedMaxConcurrentRuns: 30,
+          maxConcurrentRunsOverride: override,
+          maxConcurrentRuns: override ?? 30,
+          activeRuns: team && credential === "team-claude" ? 2 : 0,
+          queuedRuns: team && credential === "team-claude" ? 1 : 0,
+          rateLimitedUntil:
+            team && credential === "team-claude" ? "2026-10-24T10:30:00.000Z" : null,
+          usage24h: {
+            runs: team ? 12 : 3,
+            inputTokens: team ? 1_250_000 : 80_000,
+            outputTokens: team ? 64_000 : null,
+            cost: team ? { amount: 18.5, currency: "USD" } : null,
+          },
+        };
+      });
+    });
+  }
+
+  updateRunnerCredential(runnerId: string, credential: string, value: number | null): void {
+    this.requireTeamAdmin();
+    const key = `${runnerId}/${credential}`;
+    if (value === null) delete this.state.credentialOverrides[key];
+    else this.state.credentialOverrides[key] = value;
+    this.save();
+  }
+
+  teamRunnerQueue(): TeamRunnerQueueItem[] {
+    const task = this.state.tasks.find((t) => t.projectId === "project-1");
+    if (!task) return [];
+    return [
+      {
+        runId: "run-queued",
+        taskId: task.id,
+        taskKey: task.key,
+        agent: "claude-code",
+        credential: "team-claude",
+        position: 1,
+        waitingReason: "rate_limited",
+        queuedAt: SEED_TIME,
+      },
+    ];
+  }
+
+  createPairingToken(kind: RunnerKind): PairingTokenCreated {
+    if (kind === "team") this.requireTeamAdmin();
+    return {
+      id: this.newId("pairing"),
+      kind,
+      token: `pt_${kind}_${this.state.nextId}_mocktoken`,
+      expiresAt: "2026-10-25T08:00:00.000Z",
+    };
+  }
+
+  // ---------- 成員與 Project 的 Role 覆寫（ARCHITECTURE §12.2） ----------
+
+  /** 只有 Owner 能指派或改動 Owner。 */
+  private requireCanAssign(role: Role): void {
+    if (role === "owner" && this.teamRole !== "owner") {
+      throw new MockError(403, "forbidden", "只有 Owner 能指派或移除 Owner");
+    }
+  }
+
+  private lastOwnerGuard(member: Member, next: Role | null): void {
+    const owners = this.state.members.filter((m) => m.role === "owner");
+    if (member.role === "owner" && next !== "owner" && owners.length === 1) {
+      throw new MockError(409, "last_owner", "不能移除或降級最後一位 Owner");
+    }
+  }
+
+  addMember(input: AddMemberInput): Member {
+    this.requireTeamAdmin();
+    const role = input.role ?? "member";
+    this.requireCanAssign(role);
+    if (input.githubLogin === "ghost") {
+      throw new MockError(404, "not_found", "GitHub 上找不到 ghost");
+    }
+    if (this.state.members.some((m) => m.githubLogin === input.githubLogin)) {
+      throw new MockError(409, "conflict", `${input.githubLogin} 已經是 Member`);
+    }
+    const created = member(
+      this.newId("member"),
+      1000 + this.state.nextId,
+      input.githubLogin,
+      input.githubLogin,
+      role,
+    );
+    created.name = null;
+    this.state.members.push(created);
+    this.save();
+    return created;
+  }
+
+  updateMember(memberId: string, role: Role): Member {
+    this.requireTeamAdmin();
+    const target = this.state.members.find((m) => m.id === memberId);
+    if (!target) throw new MockError(404, "not_found", "找不到這位 Member");
+    this.requireCanAssign(target.role);
+    this.requireCanAssign(role);
+    this.lastOwnerGuard(target, role);
+    target.role = role;
+    target.updatedAt = now();
+    this.save();
+    return target;
+  }
+
+  removeMember(memberId: string): void {
+    this.requireTeamAdmin();
+    const target = this.state.members.find((m) => m.id === memberId);
+    if (!target) throw new MockError(404, "not_found", "找不到這位 Member");
+    this.requireCanAssign(target.role);
+    this.lastOwnerGuard(target, null);
+    this.state.members = this.state.members.filter((m) => m !== target);
+    this.save();
+  }
+
+  projectRoles(projectId: string): ProjectMemberRole[] {
+    this.requireProjectAdmin(this.project(projectId));
+    return this.state.projectRoles.filter((r) => r.projectId === projectId);
+  }
+
+  setProjectRole(
+    projectId: string,
+    memberId: string,
+    role: ProjectMemberRole["role"],
+  ): ProjectMemberRole {
+    this.requireProjectAdmin(this.project(projectId));
+    const target = this.state.members.find((m) => m.id === memberId);
+    if (!target) throw new MockError(404, "not_found", "找不到這位 Member");
+    if (target.role === "owner") {
+      throw new MockError(422, "invalid_input", "Team 的 Owner 不能被覆寫");
+    }
+    this.state.projectRoles = [
+      ...this.state.projectRoles.filter(
+        (r) => !(r.projectId === projectId && r.memberId === memberId),
+      ),
+      { projectId, memberId, role },
+    ];
+    this.save();
+    return { projectId, memberId, role };
+  }
+
+  deleteProjectRole(projectId: string, memberId: string): void {
+    this.requireProjectAdmin(this.project(projectId));
+    this.state.projectRoles = this.state.projectRoles.filter(
+      (r) => !(r.projectId === projectId && r.memberId === memberId),
+    );
+    this.save();
+  }
+
+  // ---------- 通知（ARCHITECTURE §12.3） ----------
+
+  /** 依個人設定建立 App 內通知並推送；關閉的事件類型不建立。 */
+  private notify(
+    kind: NotificationKind,
+    title: string,
+    extra: Partial<
+      Pick<
+        Notification,
+        "taskId" | "taskKey" | "runId" | "gateId" | "url" | "body" | "actorMemberId"
+      >
+    >,
+  ): void {
+    if (this.state.notificationPreferences.disabledKinds.includes(kind)) return;
+    const notification: Notification = {
+      id: this.newId("notification"),
+      kind,
+      taskId: null,
+      taskKey: null,
+      runId: null,
+      gateId: null,
+      actorMemberId: null,
+      title,
+      body: null,
+      url: null,
+      readAt: null,
+      createdAt: now(),
+      ...extra,
+    };
+    this.state.notifications.push(notification);
+    for (const listener of this.notificationListeners) listener(notification);
+  }
+
+  notifications(
+    unreadOnly: boolean,
+    before: string | null,
+    limit: number,
+  ): NotificationListResponse {
+    let list = [...this.state.notifications].reverse();
+    if (unreadOnly) list = list.filter((n) => n.readAt === null);
+    if (before) list = list.slice(list.findIndex((n) => n.id === before) + 1);
+    const items = list.slice(0, limit);
+    return { items, nextBefore: list.length > limit ? (items.at(-1)?.id ?? null) : null };
+  }
+
+  unreadNotificationCount(): { count: number } {
+    return { count: this.state.notifications.filter((n) => n.readAt === null).length };
+  }
+
+  markNotificationsRead(input: MarkNotificationsReadInput): void {
+    const time = now();
+    for (const n of this.state.notifications) {
+      if (n.readAt === null && ("all" in input || input.ids.includes(n.id))) n.readAt = time;
+    }
+    this.save();
+  }
+
+  notificationPreferences(): NotificationPreferences {
+    return this.state.notificationPreferences;
+  }
+
+  updateNotificationPreferences(input: NotificationPreferences): NotificationPreferences {
+    this.state.notificationPreferences = input;
+    this.save();
+    return input;
+  }
+
+  // ---------- 留言與 @mention（ARCHITECTURE §12.3） ----------
+
+  mentionCandidates(projectId: string): MentionCandidates {
+    this.project(projectId);
+    return {
+      members: this.members().map((m) => ({
+        memberId: m.id,
+        githubLogin: m.githubLogin,
+        name: m.name,
+        avatarUrl: m.avatarUrl,
+      })),
+      agents: MENTION_AGENTS,
+    };
+  }
+
+  taskComments(taskId: string): TaskComment[] {
+    this.task(taskId);
+    return this.state.taskComments.filter((c) => c.taskId === taskId);
+  }
+
+  taskMentions(taskId: string): Mention[] {
+    this.task(taskId);
+    return this.state.mentions.filter((m) => this.mentionTaskId(m) === taskId);
+  }
+
+  private mentionTaskId(mention: Mention): string | null {
+    if (mention.sourceKind === "task_comment") {
+      return this.state.taskComments.find((c) => c.id === mention.sourceId)?.taskId ?? null;
+    }
+    if (mention.sourceKind === "review_comment") {
+      return (
+        this.state.gates.find((g) => g.reviewComments.some((c) => c.id === mention.sourceId))
+          ?.taskId ?? null
+      );
+    }
+    // 共同編輯文件：sourceId 是文件名稱 `<種類>:<ID>`
+    const [kind, id] = mention.sourceId.split(":");
+    if (kind === "task-description") return id ?? null;
+    if (kind === "acceptance-criterion") {
+      return this.state.acceptanceCriteria.find((c) => c.id === id)?.taskId ?? null;
+    }
+    return null;
+  }
+
+  /** 留言時任何人都可以（Viewer 也能留言，§12.2）。 */
+  createTaskComment(taskId: string, body: string): TaskComment {
+    if (this.config.forbidWrites) throw new MockError(403, "forbidden", "沒有權限");
+    const task = this.task(taskId);
+    const time = now();
+    const comment: TaskComment = {
+      id: this.newId("comment"),
+      taskId,
+      authorMemberId: ME_ID,
+      authorRunId: null,
+      body,
+      consultRunIds: [],
+      createdAt: time,
+      updatedAt: time,
+    };
+    this.state.taskComments.push(comment);
+    comment.consultRunIds = this.consultForMentions(task, body, "task_comment", comment.id);
+    this.save();
+    return comment;
+  }
+
+  updateTaskComment(commentId: string, body: string): TaskComment {
+    const comment = this.ownComment(commentId);
+    const task = this.task(comment.taskId);
+    comment.body = body;
+    comment.updatedAt = now();
+    // 新增的 @mention 才建立 Run
+    comment.consultRunIds = [
+      ...comment.consultRunIds,
+      ...this.consultForMentions(task, body, "task_comment", comment.id),
+    ];
+    this.save();
+    return comment;
+  }
+
+  deleteTaskComment(commentId: string): void {
+    const comment = this.ownComment(commentId);
+    this.state.taskComments = this.state.taskComments.filter((c) => c !== comment);
+    this.save();
+  }
+
+  private ownComment(commentId: string): TaskComment {
+    const comment = this.state.taskComments.find((c) => c.id === commentId);
+    if (!comment) throw new MockError(404, "not_found", "找不到這則留言");
+    if (comment.authorMemberId !== ME_ID) {
+      throw new MockError(403, "forbidden", "只能修改自己的留言");
+    }
+    return comment;
+  }
+
+  /**
+   * 記下文字中新出現的 mention；@agent 建立 `consult` Run（有保留 Worktree 的主 Run 時唯讀讀它），
+   * 回傳建立的 Run。
+   */
+  consultForMentions(
+    task: Task,
+    text: string,
+    sourceKind: Mention["sourceKind"],
+    sourceId: string,
+    nodeIds: string[] = [],
+  ): string[] {
+    const created: string[] = [];
+    const matches = parseMentions(text);
+    const targets =
+      sourceKind === "collab_document"
+        ? matches.map((m, i) => ({
+            target: m.target,
+            nodeId: nodeIds[i] ?? formatMentionTargetId(m.target),
+          }))
+        : matches.map((m) => ({ target: m.target, nodeId: formatMentionTargetId(m.target) }));
+    for (const { target, nodeId } of targets) {
+      const exists = this.state.mentions.some(
+        (m) => m.sourceKind === sourceKind && m.sourceId === sourceId && m.nodeId === nodeId,
+      );
+      if (exists) continue;
+      let consultRunId: string | null = null;
+      if (target.type === "agent") {
+        consultRunId = this.startConsult(task, target.agent).id;
+        created.push(consultRunId);
+      }
+      this.state.mentions.push({
+        id: this.newId("mention"),
+        sourceKind,
+        sourceId,
+        nodeId,
+        target,
+        consultRunId,
+        createdAt: now(),
+      });
+    }
+    return created;
+  }
+
+  private startConsult(task: Task, agent: string): Run {
+    const main = this.state.runs.findLast(
+      (r) => r.taskId === task.id && r.parentRunId === null && r.worktreePath !== null,
+    );
+    const run = this.newRun(task.id, this.newId("run"), {
+      agent,
+      model: null,
+      runnerKind: "local",
+      permissionPolicy: "auto",
+    });
+    Object.assign(run, {
+      origin: "mention",
+      consultOfRunId: main?.id ?? null,
+      runnerId: "runner-local",
+    });
+    this.state.runs.push(run);
+    this.state.events[run.id] = [];
+    const say = (text: string): ScriptStep => ({
+      type: "event",
+      event: { kind: "message_chunk", content: { type: "text", text } },
+    });
+    this.state.simulations[run.id] = {
+      queue: [
+        {
+          type: "event",
+          event: { kind: "status_changed", status: "running", gate: null, message: null },
+        },
+        say("我看了一下這個 Task。"),
+        {
+          type: "event",
+          event: { kind: "status_changed", status: "completed", gate: null, message: null },
+        },
+      ],
+      waiting: null,
+    };
+    return run;
+  }
+
+  /** @agent 的 consult Run 結束後，Agent 的回覆貼回成一則留言（作者是那個 Run）。 */
+  private replyFromConsult(run: Run): void {
+    const time = now();
+    this.state.taskComments.push({
+      id: this.newId("comment"),
+      taskId: run.taskId,
+      authorMemberId: null,
+      authorRunId: run.id,
+      body: `${run.agent} 的回覆：README 可以再補上使用範例。`,
+      consultRunIds: [],
+      createdAt: time,
+      updatedAt: time,
+    });
+  }
+
+  // ---------- Draft Task（ARCHITECTURE §9；Agent 以 propose_tasks 提出） ----------
+
+  private seedDraftTasks(run: Run): void {
+    const time = now();
+    const draft = (
+      position: number,
+      title: string,
+      acceptanceCriteria: DraftTask["acceptanceCriteria"],
+      dependsOn: string[],
+    ): DraftTask => ({
+      id: `draft-${position}`,
+      projectId: "project-1",
+      batchId: "batch-1",
+      position,
+      proposedByRunId: run.id,
+      repoId: "repo-1",
+      spec: "docs/specs/login.md",
+      title,
+      description: `${title}（由 Agent 依 Spec 拆出）`,
+      acceptanceCriteria,
+      dependsOn,
+      createdAt: time,
+      updatedAt: time,
+    });
+    this.state.draftTasks = [
+      draft(
+        1,
+        "建立登入 API",
+        [
+          { kind: "command", description: "API 測試通過", command: "pnpm test" },
+          { kind: "agent", description: "API 文件符合 Spec", command: null },
+        ],
+        [],
+      ),
+      draft(2, "登入頁 UI", [{ kind: "browser", description: "可以登入", command: null }], ["#1"]),
+      draft(
+        3,
+        "登入流程的 e2e",
+        [{ kind: "command", description: "e2e 通過", command: null }],
+        ["#2", "ORB-1"],
+      ),
+    ];
+  }
+
+  draftTasks(projectId: string): DraftTask[] {
+    this.project(projectId);
+    return this.state.draftTasks
+      .filter((d) => d.projectId === projectId)
+      .sort((a, b) => a.batchId.localeCompare(b.batchId) || a.position - b.position);
+  }
+
+  private draftTask(id: string): DraftTask {
+    const draft = this.state.draftTasks.find((d) => d.id === id);
+    if (!draft) throw new MockError(404, "not_found", "找不到這個 Draft Task");
+    return draft;
+  }
+
+  updateDraftTask(id: string, input: UpdateDraftTaskInput): DraftTask {
+    this.requireEditor();
+    const draft = this.draftTask(id);
+    Object.assign(draft, input, { updatedAt: now() });
+    this.save();
+    return draft;
+  }
+
+  /** 確認一個 Draft Task：建立 Task（Backlog）與 Acceptance Criterion，同批指向它的 `#n` 改寫成 Task Key。 */
+  private confirmOne(draft: DraftTask): Task {
+    const dependsOn = draft.dependsOn.map((dep) => {
+      if (dep.startsWith("#")) {
+        throw new MockError(409, "conflict", `「${draft.title}」依賴的 Draft Task ${dep} 還沒確認`);
+      }
+      const target = this.state.tasks.find((t) => t.key === dep);
+      if (!target) throw new MockError(422, "invalid_input", `找不到 Task ${dep}`);
+      return target.id;
+    });
+    if (draft.repoId === null) {
+      throw new MockError(422, "invalid_input", `「${draft.title}」還沒有指定 Repo`);
+    }
+    const task = this.createTask(draft.projectId, {
+      repoId: draft.repoId,
+      title: draft.title,
+      description: draft.description,
+      dependsOn,
+    });
+    task.createdByMemberId = null;
+    for (const criterion of draft.acceptanceCriteria) {
+      this.createAcceptanceCriterion(task.id, criterion);
+    }
+    this.removeDraft(draft, task.key);
+    return task;
+  }
+
+  /** 移除 Draft Task；同批其他草稿指向它的 `#n` 改寫成 `replacement`，沒有時直接移除。 */
+  private removeDraft(draft: DraftTask, replacement: string | null): void {
+    this.state.draftTasks = this.state.draftTasks.filter((d) => d.id !== draft.id);
+    const ref = `#${draft.position}`;
+    for (const other of this.state.draftTasks) {
+      if (other.batchId !== draft.batchId || !other.dependsOn.includes(ref)) continue;
+      other.dependsOn = replacement
+        ? other.dependsOn.map((d) => (d === ref ? replacement : d))
+        : other.dependsOn.filter((d) => d !== ref);
+    }
+  }
+
+  confirmDraftTask(id: string): Task {
+    this.requireEditor();
+    const task = this.confirmOne(this.draftTask(id));
+    this.save();
+    return task;
+  }
+
+  dismissDraftTask(id: string): void {
+    this.requireEditor();
+    this.removeDraft(this.draftTask(id), null);
+    this.save();
+  }
+
+  /** 批次確認：依相依順序建立（被依賴的先）。依賴的草稿不在這一批又還沒確認時回 409，整批不建立。 */
+  confirmDraftTasks(projectId: string, ids: string[]): { draftTaskId: string; task: Task }[] {
+    this.requireEditor();
+    const drafts = ids.map((id) => this.draftTask(id));
+    if (drafts.some((d) => d.projectId !== projectId)) {
+      throw new MockError(404, "not_found", "Draft Task 不在這個 Project");
+    }
+    const selected = new Set(drafts.map((d) => `${d.batchId}#${d.position}`));
+    for (const draft of drafts) {
+      for (const dep of draft.dependsOn) {
+        if (dep.startsWith("#") && !selected.has(`${draft.batchId}${dep}`)) {
+          throw new MockError(
+            409,
+            "conflict",
+            `「${draft.title}」依賴的 Draft Task ${dep} 還沒確認`,
+          );
+        }
+      }
+    }
+    const created = new Map<string, Task>();
+    let remaining = [...drafts];
+    while (remaining.length > 0) {
+      const ready = remaining.filter((d) => !d.dependsOn.some((dep) => dep.startsWith("#")));
+      if (ready.length === 0) throw new MockError(409, "conflict", "Draft Task 的相依關係有循環");
+      for (const draft of ready) created.set(draft.id, this.confirmOne(draft));
+      remaining = remaining.filter((d) => !created.has(d.id));
+    }
+    this.save();
+    return ids.map((id) => ({ draftTaskId: id, task: created.get(id) as Task }));
+  }
+
+  dismissDraftTasks(projectId: string, ids: string[]): void {
+    this.requireEditor();
+    for (const draft of ids.map((id) => this.draftTask(id))) {
+      if (draft.projectId !== projectId) {
+        throw new MockError(404, "not_found", "Draft Task 不在這個 Project");
+      }
+      this.removeDraft(draft, null);
+    }
+    this.save();
+  }
+
+  // ---------- Verification（ARCHITECTURE §5.1；真實系統中由 Server 發起） ----------
+
+  verifications(runId: string): Verification[] {
+    this.run(runId);
+    return this.state.verifications.filter((v) => v.runId === runId);
+  }
+
+  /** Verification 超過重試上限後人的決定。 */
+  decideVerification(runId: string, input: VerificationDecisionInput): void {
+    this.requireEditor();
+    const run = this.run(runId);
+    if (input.action === "skip" && !this.mayApprove(this.task(run.taskId))) {
+      throw new MockError(403, "forbidden", "略過失敗進入 Review Gate 需要核准 Gate 的權限");
+    }
+    const latest = this.verifications(runId).at(-1);
+    if (!latest?.awaitingDecision) {
+      throw new MockError(409, "conflict", "這個 Run 沒有在等待 Verification 的決定");
+    }
+    Object.assign(latest, {
+      awaitingDecision: false,
+      resolution: input.action,
+      resolvedByMemberId: ME_ID,
+      comment: input.action === "retry" ? (input.comment ?? null) : null,
+    });
+    this.state.needsYou = this.state.needsYou.filter(
+      (i) => !(i.kind === "stopped_run" && i.runId === runId),
+    );
+    const task = this.task(run.taskId);
+    if (input.action === "retry") {
+      const reason = latest.results
+        .filter((r) => r.outcome !== "passed")
+        .map((r) => r.summary)
+        .join("\n");
+      this.state.simulations[runId] = {
+        queue: [
+          {
+            type: "event",
+            event: {
+              kind: "prompt_submitted",
+              source: "verification_retry",
+              prompt: [{ type: "text", text: [input.comment, reason].filter(Boolean).join("\n") }],
+            },
+          },
+          ...verificationFixTurn(),
+        ],
+        waiting: null,
+      };
+    } else if (input.action === "skip") {
+      this.createGate(run, task, "review");
+    } else {
+      this.cancelRun(runId);
+    }
+    task.updatedAt = now();
+    this.save();
+  }
+
+  /** 在 Review Gate 為 `manual` 條件打勾或取消。 */
+  checkAcceptanceCriterion(criterionId: string, checked: boolean): AcceptanceCriterion {
+    this.requireEditor();
+    const criterion = this.state.acceptanceCriteria.find((c) => c.id === criterionId);
+    if (!criterion) throw new MockError(404, "not_found", "找不到這條 Acceptance Criterion");
+    // 同 Server：打勾需要核准 Gate 的權限
+    if (!this.mayApprove(this.task(criterion.taskId))) {
+      throw new MockError(403, "forbidden", "沒有核准這個 Gate 的權限");
+    }
+    if (criterion.kind !== "manual") {
+      throw new MockError(422, "invalid_input", "只有 manual 類型的條件可以打勾");
+    }
+    const pending = this.state.gates.some(
+      (g) => g.taskId === criterion.taskId && g.kind === "review" && g.decision === null,
+    );
+    if (!pending) throw new MockError(409, "conflict", "只能在 Review Gate 中打勾");
+    const time = now();
+    Object.assign(criterion, {
+      result: checked ? "passed" : "pending",
+      resultUpdatedAt: checked ? time : null,
+      resultSummary: null,
+      checkedByMemberId: checked ? ME_ID : null,
+      updatedAt: time,
+    });
+    this.save();
+    return criterion;
+  }
+
+  /** 送 verify：列出非 manual 的條件，依 `verificationFailures` 決定這一輪的 command 條件是否失敗。 */
+  private startVerification(run: Run, task: Task): void {
+    const criteria = this.acceptanceCriteria(task.id).filter((c) => c.kind !== "manual");
+    const previous = this.verifications(run.id).at(-1);
+    // 連續失敗才累加；通過、人選擇再試或略過之後從 1 重新算
+    const attempt =
+      previous && previous.resolution === null && previous.status !== "passed"
+        ? previous.attempt + 1
+        : 1;
+    const round = (this.state.verificationRounds[run.id] ?? 0) + 1;
+    this.state.verificationRounds[run.id] = round;
+    const fail = round <= (this.config.verificationFailures ?? 0);
+    const verification: Verification = {
+      id: this.newId("verification"),
+      runId: run.id,
+      taskId: task.id,
+      attempt,
+      status: "running",
+      resolution: null,
+      resolvedByMemberId: null,
+      comment: null,
+      awaitingDecision: false,
+      results: [],
+      startedAt: now(),
+      completedAt: null,
+    };
+    this.state.verifications.push(verification);
+    task.status = "verifying";
+    const steps: EventKind[] = [
+      { kind: "status_changed", status: "verifying", gate: null, message: null },
+    ];
+    for (const criterion of criteria) {
+      const failed = fail && criterion.kind === "command";
+      let judgedBy: string | null = null;
+      if (criterion.kind !== "command") {
+        // agent／browser 以 consult Child Run 判定（§5.1）
+        const child = this.newRun(task.id, this.newId("run"), {
+          agent: "claude-code",
+          model: "claude-sonnet-5-5",
+          runnerKind: run.runnerKind,
+          permissionPolicy: run.permissionPolicy,
+        });
+        Object.assign(child, {
+          parentRunId: run.id,
+          delegationMode: "consult",
+          origin: "verification",
+          startedByMemberId: null,
+          runnerId: run.runnerId,
+          status: "completed",
+          startedAt: now(),
+          endedAt: now(),
+        });
+        this.state.runs.push(child);
+        this.state.events[child.id] = [];
+        judgedBy = child.id;
+      }
+      steps.push({
+        kind: "verification_result",
+        verification_id: verification.id,
+        attempt,
+        criterion_id: criterion.id,
+        outcome: failed ? "failed" : "passed",
+        summary: failed
+          ? `${criterion.command ?? "pnpm test"} 失敗：exit code 1`
+          : `${criterion.description}：通過`,
+        evidence: this.evidenceFor(criterion, failed),
+        judged_by_run_id: judgedBy,
+      });
+    }
+    steps.push(
+      {
+        kind: "verification_completed",
+        verification_id: verification.id,
+        attempt,
+        outcome: fail && criteria.some((c) => c.kind === "command") ? "failed" : "passed",
+      },
+      { kind: "status_changed", status: "awaiting_gate", gate: "review", message: null },
+    );
+    const simulation = this.state.simulations[run.id] ?? { queue: [], waiting: null };
+    simulation.queue.unshift(...steps.map((event): ScriptStep => ({ type: "event", event })));
+    this.state.simulations[run.id] = simulation;
+  }
+
+  private evidenceFor(criterion: AcceptanceCriterion, failed: boolean): VerificationEvidence[] {
+    switch (criterion.kind) {
+      case "command":
+        return [
+          {
+            type: "command_output",
+            command: criterion.command ?? "pnpm test",
+            exit_code: failed ? 1 : 0,
+            output: {
+              type: "inline",
+              text: failed ? "✗ 1 個測試失敗：hello.txt 不存在\n" : "✓ 3 個測試通過\n",
+            },
+            truncated: false,
+          },
+        ];
+      case "agent":
+        return [{ type: "text", text: "Agent 判定：diff 符合 Spec 的描述。" }];
+      case "browser": {
+        const blobId = this.newId("blob");
+        this.state.blobs[blobId] = SCREENSHOT_DATA_URL;
+        return [
+          {
+            type: "screenshot",
+            image: {
+              blob_id: blobId,
+              sha256: "0".repeat(64),
+              size: 68,
+              media_type: "image/png",
+            },
+            caption: "首頁",
+            url: "http://localhost:4123/",
+          },
+          { type: "action_log", steps: ["開啟首頁", "點擊「開始」", "看到歡迎訊息"] },
+        ];
+      }
+      default:
+        return [];
+    }
+  }
+
+  /** Verification 的一輪結束（Server 收到 verification_completed）：通過就進 Review Gate，失敗就重試或等人決定。 */
+  private finishVerification(run: Run, task: Task, verificationId: string, outcome: string): void {
+    const verification = this.state.verifications.find((v) => v.id === verificationId);
+    if (!verification) return;
+    verification.status =
+      outcome === "passed" ? "passed" : outcome === "error" ? "error" : "failed";
+    verification.completedAt = now();
+    this.state.verificationPhase[run.id] = "done";
+    if (verification.status === "passed") {
+      this.createGate(run, task, "review");
+      return;
+    }
+    const maxRetries = this.project(task.projectId).policy.verificationMaxRetries;
+    if (verification.attempt <= maxRetries) {
+      const reason = verification.results
+        .filter((r) => r.outcome !== "passed")
+        .map((r) => r.summary)
+        .join("\n");
+      const simulation = this.state.simulations[run.id] ?? { queue: [], waiting: null };
+      simulation.queue.push(
+        {
+          type: "event",
+          event: {
+            kind: "prompt_submitted",
+            source: "verification_retry",
+            prompt: [{ type: "text", text: reason }],
+          },
+        },
+        ...verificationFixTurn(),
+      );
+      this.state.simulations[run.id] = simulation;
+      return;
+    }
+    verification.awaitingDecision = true;
+    this.notify("verification_failed", `${task.key} 的 Verification 連續失敗`, {
+      taskId: task.id,
+      taskKey: task.key,
+      runId: run.id,
+      url: `/runs/${run.id}`,
+    });
+    this.state.needsYou.push({
+      id: this.newId("needs-you"),
+      kind: "stopped_run",
+      reason: `Verification 連續失敗 ${verification.attempt} 輪，超過重試上限`,
+      memberId: ME_ID,
+      taskId: task.id,
+      taskKey: task.key,
+      runId: run.id,
+      createdAt: now(),
+    });
+  }
+
+  /** 建立等待決定的 Gate，並加入 Needs You。 */
+  private createGate(run: Run, task: Task, kind: GateKind): void {
+    const planSeq =
+      kind === "plan"
+        ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "plan_proposed")
+            ?.seq ?? null)
+        : null;
+    const reviewDiffSeq =
+      kind === "review"
+        ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "run_diff")?.seq ??
+          null)
+        : null;
+    task.status = kind === "plan" ? "plan_gate" : "review_gate";
+    this.state.gates.push({
+      id: this.newId("gate"),
+      taskId: task.id,
+      runId: run.id,
+      kind,
+      decision: null,
+      decidedByMemberId: null,
+      decidedAt: null,
+      comment: null,
+      reviewComments: [],
+      previewComments: [],
+      planSeq,
+      reviewDiffSeq,
+      createdAt: now(),
+    });
+    this.notify(
+      "gate_pending",
+      `${task.key} 等待 ${kind === "plan" ? "Plan Gate" : "Review Gate"}`,
+      {
+        taskId: task.id,
+        taskKey: task.key,
+        runId: run.id,
+        url: kind === "plan" ? `/runs/${run.id}` : `/runs/${run.id}/review`,
+      },
+    );
+    this.state.needsYou.push({
+      id: this.newId("needs-you"),
+      kind: "gate",
+      gateKind: kind,
+      memberId: ME_ID,
+      taskId: task.id,
+      taskKey: task.key,
+      runId: run.id,
+      createdAt: now(),
+    });
+  }
+
   cancelRun(runId: string): Run {
     this.requireEditor();
     const run = this.run(runId);
-    delete this.state.simulations[runId];
-    this.state.needsYou = this.state.needsYou.filter((i) => i.runId !== run.id);
-    this.append(runId, [
-      { kind: "status_changed", status: "canceled", gate: null, message: "已中止" },
-    ]);
-    // Run 被中止後 Task 回到 Ready，可以重新派工（§5）
-    const task = this.task(run.taskId);
-    task.status = "ready";
-    task.updatedAt = now();
+    this.cancelTree(run);
+    // 頂層的 Run 被中止後 Task 回到 Ready，可以重新派工（§5）；Child Run 被中止不影響 Task
+    if (run.parentRunId === null && run.origin === "dispatch") {
+      const task = this.task(run.taskId);
+      task.status = "ready";
+      task.updatedAt = now();
+    }
     this.save();
     return run;
+  }
+
+  /** 中止 Run，連同還沒結束的 Child Run（§6.2「父 Run 被中止時連同 Child Run 一起處理」）。 */
+  private cancelTree(run: Run): void {
+    for (const child of this.state.runs.filter((r) => r.parentRunId === run.id)) {
+      this.cancelTree(child);
+    }
+    if (["completed", "failed", "canceled"].includes(run.status)) return;
+    delete this.state.simulations[run.id];
+    this.state.needsYou = this.state.needsYou.filter(
+      (i) => i.runId !== run.id && !(i.kind === "child_question" && i.childRunId === run.id),
+    );
+    this.append(run.id, [
+      { kind: "status_changed", status: "canceled", gate: null, message: "已中止" },
+    ]);
+  }
+
+  /** 人回答 Child Run 的 `ask_parent`（父 Run 的回合已經結束時，§9）。 */
+  answerChildQuestion(questionId: string, answer: string): void {
+    this.requireEditor();
+    const item = this.state.needsYou.find(
+      (i) => i.kind === "child_question" && i.questionId === questionId,
+    );
+    if (item?.kind !== "child_question") {
+      throw new MockError(409, "conflict", "這個問題已經回答過了");
+    }
+    this.state.needsYou = this.state.needsYou.filter((i) => i !== item);
+    this.append(item.childRunId, [
+      {
+        kind: "prompt_submitted",
+        source: "child_question",
+        prompt: [{ type: "text", text: answer }],
+      },
+      { kind: "status_changed", status: "running", gate: null, message: null },
+    ]);
+    this.save();
+  }
+
+  /**
+   * `childRuns` 設定的種子：在等待 Review Gate 的 Run 底下建立 Child Run 樹——branch 模式的
+   * Child Run（執行中，底下還有一層 consult）、已完成的 consult，以及一個向人提問的 Child Run。
+   */
+  private seedChildRuns(parent: Run): void {
+    const child = (
+      id: string,
+      parentRun: Run,
+      mode: "consult" | "branch",
+      agent: string,
+      status: Run["status"],
+    ): Run => {
+      const run = this.newRun(parentRun.taskId, id, {
+        agent,
+        model: agent === "codex" ? "gpt-5" : "claude-sonnet-5-5",
+        runnerKind: parentRun.runnerKind,
+        permissionPolicy: parentRun.permissionPolicy,
+      });
+      Object.assign(run, {
+        parentRunId: parentRun.id,
+        delegationMode: mode,
+        origin: "delegation",
+        startedByMemberId: null,
+        runnerId: parentRun.runnerId,
+      });
+      this.state.runs.push(run);
+      this.state.events[run.id] = [];
+      this.append(run.id, [
+        {
+          kind: "worktree_ready",
+          worktree_path: `C:/wt/demo/${id}`,
+          branch: mode === "branch" ? `feature/${id}` : null,
+          base_commit: BASE_COMMIT,
+        },
+        { kind: "status_changed", status: "running", gate: null, message: null },
+        { kind: "message_chunk", content: { type: "text", text: `${id}：開始處理。` } },
+      ]);
+      if (status !== "running") {
+        this.append(run.id, [
+          { kind: "message_chunk", content: { type: "text", text: `${id}：完成了。` } },
+          { kind: "status_changed", status, gate: null, message: null },
+        ]);
+      }
+      return run;
+    };
+    const api = child("run-child-api", parent, "branch", "codex", "running");
+    child("run-child-api-review", api, "consult", "claude-code", "completed");
+    child("run-child-docs", parent, "consult", "claude-code", "completed");
+    const asking = child("run-child-ask", parent, "consult", "gemini-cli", "running");
+    const task = this.task(parent.taskId);
+    this.state.needsYou.push({
+      id: this.newId("needs-you"),
+      kind: "child_question",
+      memberId: ME_ID,
+      taskId: task.id,
+      taskKey: task.key,
+      runId: parent.id,
+      questionId: "question-1",
+      childRunId: asking.id,
+      question: "README 要用中文還是英文？",
+      createdAt: now(),
+    });
   }
 
   // ---------- Event 的副作用（真實系統中由 Server 處理） ----------
@@ -1089,39 +2580,60 @@ export class MockBackend {
         return;
       case "status_changed":
         run.status = event.status;
+        // Child Run 與 @agent 的 consult Run 的狀態不影響 Task
+        if (run.parentRunId !== null || run.origin === "mention") {
+          if (["completed", "failed", "canceled"].includes(event.status)) run.endedAt = now();
+          if (event.status === "completed" && run.origin === "mention") this.replyFromConsult(run);
+          return;
+        }
         if (event.status === "running") {
           run.startedAt ??= now();
-          task.status = "running";
+          if (task.status !== "planning") task.status = "running";
+        }
+        if (event.status === "verifying") task.status = "verifying";
+        if (event.status === "awaiting_gate" && event.gate === "plan") {
+          this.createGate(run, task, "plan");
+          return;
         }
         if (["completed", "failed", "canceled"].includes(event.status)) run.endedAt = now();
         if (event.status === "awaiting_gate" && event.gate === "review") {
-          task.status = "review_gate";
-          this.state.gates.push({
-            id: this.newId("gate"),
-            taskId: task.id,
-            runId: run.id,
-            kind: "review",
-            decision: null,
-            decidedByMemberId: null,
-            decidedAt: null,
-            comment: null,
-            reviewComments: [],
-            previewComments: [],
-            planSeq: null,
-            reviewDiffSeq: null,
-            createdAt: now(),
-          });
-          this.state.needsYou.push({
-            id: this.newId("needs-you"),
-            kind: "gate",
-            gateKind: "review",
-            memberId: ME_ID,
-            taskId: task.id,
-            taskKey: task.key,
-            runId: run.id,
-            createdAt: now(),
+          if (this.state.verificationPhase[run.id] === "done") {
+            // Verification 結束的回報；結果已在 verification_completed 處理
+            delete this.state.verificationPhase[run.id];
+            return;
+          }
+          const verifiable = this.acceptanceCriteria(task.id).some((c) => c.kind !== "manual");
+          if (verifiable) {
+            this.state.verificationPhase[run.id] = "running";
+            this.startVerification(run, task);
+          } else {
+            this.createGate(run, task, "review");
+          }
+        }
+        return;
+      case "verification_result": {
+        const verification = this.state.verifications.find((v) => v.id === event.verification_id);
+        verification?.results.push({
+          criterionId: event.criterion_id,
+          outcome: event.outcome,
+          summary: event.summary,
+          evidence: event.evidence,
+          judgedByRunId: event.judged_by_run_id,
+          createdAt: now(),
+        });
+        const criterion = this.state.acceptanceCriteria.find((c) => c.id === event.criterion_id);
+        if (criterion) {
+          Object.assign(criterion, {
+            result: event.outcome === "passed" ? "passed" : "failed",
+            resultSummary: event.summary,
+            resultUpdatedAt: now(),
+            checkedByRunId: event.judged_by_run_id,
           });
         }
+        return;
+      }
+      case "verification_completed":
+        this.finishVerification(run, task, event.verification_id, event.outcome);
         return;
       case "permission_request":
         run.status = "awaiting_permission";

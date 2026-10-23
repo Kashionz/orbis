@@ -7,17 +7,23 @@ import type { RunEvent } from "@orbis/api-contract";
 import {
   type ContentBlock,
   type GateKind,
+  type MergeOutcome,
   type PermissionOption,
   type PermissionPurpose,
   type PlanEntry,
+  type PlanSource,
+  type PreviewStopReason,
+  type PromptSource,
   RUN_ERROR_CODES,
   type RunErrorCode,
   type RunStatus,
+  type TextBody,
   type ToolCallContent,
   type ToolCallLocation,
   type ToolCallStatus,
   type ToolKind,
   type Usage,
+  type VerificationOutcome,
 } from "@orbis/protocol";
 
 interface ItemBase {
@@ -70,6 +76,31 @@ export type TimelineItem =
       type: "run_diff";
       /** 有變更的檔案數。完整內容由 review diff 端點取得，不放進時間軸。 */
       fileCount: number;
+    })
+  /** Agent 提出 plan，等待 Plan Gate（全文在 Run 頁的 plan 面板）。 */
+  | (ItemBase & { type: "plan_proposed"; body: TextBody; source: PlanSource })
+  | (ItemBase & {
+      type: "verification_result";
+      attempt: number;
+      criterionId: string;
+      outcome: VerificationOutcome;
+      summary: string;
+    })
+  | (ItemBase & { type: "verification_completed"; attempt: number; outcome: VerificationOutcome })
+  | (ItemBase & {
+      type: "child_merged";
+      childRunId: string;
+      outcome: MergeOutcome;
+      commitSha: string | null;
+      conflictedPaths: string[];
+    })
+  /** 送給 Agent 的 prompt（派工、Gate 退回、Verification 重試、Feedback Loop 等）。 */
+  | (ItemBase & { type: "prompt"; source: PromptSource; blocks: ContentBlock[] })
+  | (ItemBase & {
+      type: "preview_stopped";
+      reason: PreviewStopReason;
+      exitCode: number | null;
+      output: string;
     });
 
 export interface Timeline {
@@ -264,6 +295,55 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
 
     case "run_diff":
       draft.items.push({ ...base, type: "run_diff", fileCount: event.files.length });
+      return;
+
+    case "plan_proposed":
+      draft.items.push({ ...base, type: "plan_proposed", body: event.body, source: event.source });
+      return;
+
+    case "verification_result":
+      draft.items.push({
+        ...base,
+        type: "verification_result",
+        attempt: event.attempt,
+        criterionId: event.criterion_id,
+        outcome: event.outcome,
+        summary: event.summary,
+      });
+      return;
+
+    case "verification_completed":
+      draft.items.push({
+        ...base,
+        type: "verification_completed",
+        attempt: event.attempt,
+        outcome: event.outcome,
+      });
+      return;
+
+    case "child_merged":
+      draft.items.push({
+        ...base,
+        type: "child_merged",
+        childRunId: event.child_run_id,
+        outcome: event.outcome,
+        commitSha: event.commit_sha,
+        conflictedPaths: event.conflicted_paths,
+      });
+      return;
+
+    case "prompt_submitted":
+      draft.items.push({ ...base, type: "prompt", source: event.source, blocks: event.prompt });
+      return;
+
+    case "preview_stopped":
+      draft.items.push({
+        ...base,
+        type: "preview_stopped",
+        reason: event.reason,
+        exitCode: event.exit_code,
+        output: event.output,
+      });
       return;
 
     default:

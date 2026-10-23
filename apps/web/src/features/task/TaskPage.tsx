@@ -6,8 +6,10 @@ import {
   membersQuery,
   projectsQuery,
   queryKeys,
+  repoSpecsQuery,
   reposQuery,
   taskByKeyQuery,
+  taskMentionsQuery,
   tasksQuery,
   updateTask,
 } from "../../api/resources";
@@ -16,11 +18,13 @@ import { ErrorText } from "../../components/ErrorText";
 import { unfinishedDependencies } from "../../lib/dependencies";
 import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
+import { CollabEditor } from "../collab/CollabEditor";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
 import { AcceptanceCriteriaSection } from "./AcceptanceCriteriaSection";
 import { DependsOnField } from "./DependsOnField";
-import { DescriptionEditor } from "./DescriptionEditor";
-import { RunHistory } from "./RunHistory";
+import { ReadyPanel } from "./ReadyPanel";
+import { RunTree } from "./RunTree";
+import { TaskComments } from "./TaskComments";
 
 /** Task 頁（交付 2）：描述、Acceptance Criterion、depends_on、指派對象、Run 歷史。 */
 export function TaskPage({ taskKey }: { taskKey: string }) {
@@ -53,6 +57,12 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
   const canDispatch = permissions.can("run.dispatchLocal") || permissions.can("run.dispatchTeam");
   const { data: projectTasks = [] } = useQuery(tasksQuery(project.id));
   const blockers = unfinishedDependencies(task, projectTasks);
+  const { data: mentions = [] } = useQuery(taskMentionsQuery(task.id));
+  const { data: specs = [] } = useQuery({
+    ...repoSpecsQuery(task.repoId ?? ""),
+    enabled: task.repoId !== null && task.specPath !== null,
+  });
+  const spec = specs.find((s) => s.path === task.specPath);
 
   return (
     <main className="task-page">
@@ -92,20 +102,46 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
 
       <div className="task-layout">
         <div className="task-main">
-          <DescriptionEditor
-            value={task.description}
-            canEdit={canEdit}
-            saving={update.isPending}
-            onSave={(description) => update.mutateAsync({ description })}
+          <section className="section" aria-labelledby="description-heading">
+            <h2 id="description-heading">描述</h2>
+            <CollabEditor
+              docRef={{ kind: "task-description", id: task.id }}
+              label="描述"
+              canEdit={canEdit}
+              projectId={project.id}
+              mentions={mentions}
+              placeholder="描述要做什麼。輸入 @ 提及成員或 Agent。"
+            />
+          </section>
+          <AcceptanceCriteriaSection taskId={task.id} projectId={project.id} canEdit={canEdit} />
+          <RunTree taskId={task.id} permissions={permissions} />
+          <TaskComments
+            taskId={task.id}
+            projectId={project.id}
+            memberId={permissions.ctx.memberId}
+            canComment={permissions.can("view")}
           />
-          <AcceptanceCriteriaSection taskId={task.id} canEdit={canEdit} />
-          <RunHistory taskId={task.id} />
         </div>
         <aside className="task-side">
+          <ReadyPanel task={task} canEdit={canEdit} />
           <dl>
             <dt>Repo</dt>
             <dd>{repo ? `${repo.owner}/${repo.name}` : "尚未指定"}</dd>
           </dl>
+          {task.specPath && (
+            <dl>
+              <dt>Spec</dt>
+              <dd>
+                {spec ? (
+                  <Link to="/repo-specs/$repoSpecId" params={{ repoSpecId: spec.id }}>
+                    {task.specPath}
+                  </Link>
+                ) : (
+                  <code>{task.specPath}</code>
+                )}
+              </dd>
+            </dl>
+          )}
           <AssigneeField
             task={task}
             permissions={permissions}
@@ -115,6 +151,12 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
             task={task}
             canEdit={canEdit}
             onSave={(dependsOn) => update.mutate({ dependsOn })}
+          />
+          <PlanGateField
+            task={task}
+            project={project}
+            canEdit={canEdit}
+            onSave={(planGateEnabled) => update.mutate({ planGateEnabled })}
           />
         </aside>
       </div>
@@ -210,6 +252,47 @@ function AssigneeField({
           </select>
         ) : (
           <span id="assignee">{assignee ? `@${assignee.githubLogin}` : "未指派"}</span>
+        )}
+      </dd>
+    </dl>
+  );
+}
+
+/** Task 層級的 Plan Gate 設定：沿用 Project，或在這個 Task 開啟、關閉（§5）。 */
+function PlanGateField({
+  task,
+  project,
+  canEdit,
+  onSave,
+}: {
+  task: Task;
+  project: Project;
+  canEdit: boolean;
+  onSave: (planGateEnabled: boolean | null) => void;
+}) {
+  const inherited = `沿用 Project（${project.policy.planGateEnabled ? "開啟" : "關閉"}）`;
+  const value = task.planGateEnabled === null ? "inherit" : task.planGateEnabled ? "on" : "off";
+  const labels = { inherit: inherited, on: "開啟", off: "關閉" } as const;
+  return (
+    <dl>
+      <dt>
+        <label htmlFor="plan-gate">Plan Gate</label>
+      </dt>
+      <dd>
+        {canEdit ? (
+          <select
+            id="plan-gate"
+            value={value}
+            onChange={(event) =>
+              onSave(event.target.value === "inherit" ? null : event.target.value === "on")
+            }
+          >
+            <option value="inherit">{labels.inherit}</option>
+            <option value="on">{labels.on}</option>
+            <option value="off">{labels.off}</option>
+          </select>
+        ) : (
+          <span id="plan-gate">{labels[value]}</span>
         )}
       </dd>
     </dl>

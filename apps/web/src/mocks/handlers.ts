@@ -2,18 +2,34 @@
 // 回應與錯誤的形狀和 Server 相同。
 
 import {
+  AddMemberInput,
+  AnswerChildQuestionInput,
   API_ROUTES,
+  CheckAcceptanceCriterionInput,
   CreateAcceptanceCriterionInput,
+  CreatePairingTokenInput,
   CreateProjectInput,
   CreateRepoInput,
+  CreateRepoSpecInput,
   CreateRunInput,
+  CreateTaskCommentInput,
   CreateTaskInput,
+  DraftTaskBatchInput,
   GateDecisionInput,
+  MarkNotificationsReadInput,
+  NotificationPreferences,
   PermissionResponseInput,
+  RepoSpecCommitInput,
+  SetProjectRoleInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
+  UpdateDraftTaskInput,
+  UpdateMemberInput,
   UpdateProjectInput,
+  UpdateRunnerCredentialInput,
+  UpdateTaskCommentInput,
   UpdateTaskInput,
+  VerificationDecisionInput,
   WEB_WS_MAX_SUBSCRIPTIONS,
   WebClientMessage,
   type WebServerMessage,
@@ -21,6 +37,7 @@ import {
 import { HttpResponse, http, ws } from "msw";
 import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
+import { MockCollabServer } from "./collab";
 
 /** 重播時每則 `run_events` 最多帶幾筆 Event（同 Server）。 */
 const REPLAY_BATCH_SIZE = 500;
@@ -70,6 +87,30 @@ export function createHandlers(backend: MockBackend) {
   const socketUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${API_ROUTES.ws}`;
   const events = ws.link(socketUrl);
 
+  const collab = new MockCollabServer(backend);
+  const collabLink = ws.link(`${socketUrl.slice(0, -API_ROUTES.ws.length)}/api/collab/*`);
+  const collabHandler = collabLink.addEventListener("connection", ({ client }) => {
+    const docName = decodeURIComponent(client.url.pathname.slice("/api/collab/".length));
+    const result = collab.connect(docName, (data) => client.send(new Uint8Array(data)));
+    if (typeof result === "number") {
+      client.close(result, "rejected");
+      return;
+    }
+    client.addEventListener("message", async (message) => {
+      const data = message.data;
+      const bytes =
+        data instanceof Blob
+          ? new Uint8Array(await data.arrayBuffer())
+          : data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : ArrayBuffer.isView(data)
+              ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+              : null;
+      if (bytes) result.onMessage(bytes);
+    });
+    client.addEventListener("close", result.onClose);
+  });
+
   const eventsHandler = events.addEventListener("connection", ({ client }) => {
     const subscribed = new Set<string>();
     const send = (message: WebServerMessage) => client.send(JSON.stringify(message));
@@ -115,11 +156,18 @@ export function createHandlers(backend: MockBackend) {
         });
       }
     });
-    client.addEventListener("close", unlisten);
+    const unlistenNotifications = backend.onNotification((notification) =>
+      send({ type: "notification", notification }),
+    );
+    client.addEventListener("close", () => {
+      unlisten();
+      unlistenNotifications();
+    });
   });
 
   return [
     eventsHandler,
+    collabHandler,
 
     http.get(API_ROUTES.authMe, () => {
       if (session === "unauthorized" || backend.snapshot.loggedOut) {
@@ -170,6 +218,38 @@ export function createHandlers(backend: MockBackend) {
         201,
       ),
     ),
+    http.post(
+      API_ROUTES.repoRefreshInstallation,
+      handle((_, p) => backend.refreshRepoInstallation(p.repoId ?? "")),
+    ),
+    http.delete(
+      API_ROUTES.repo,
+      handle((_, p) => {
+        backend.deleteRepo(p.repoId ?? "");
+      }),
+    ),
+    http.get(
+      API_ROUTES.repoSpecs,
+      handle((_, p) => backend.repoSpecs(p.repoId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.repoSpecs,
+      handle(
+        async (request, p) =>
+          backend.createRepoSpec(p.repoId ?? "", await parse(request, CreateRepoSpecInput)),
+        201,
+      ),
+    ),
+    http.get(
+      API_ROUTES.repoSpec,
+      handle((_, p) => backend.repoSpec(p.repoSpecId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.repoSpecCommit,
+      handle(async (request, p) =>
+        backend.commitRepoSpec(p.repoSpecId ?? "", await parse(request, RepoSpecCommitInput)),
+      ),
+    ),
     http.get(
       API_ROUTES.projectTasks,
       handle((_, p) => backend.tasks(p.projectId ?? "")),
@@ -181,6 +261,44 @@ export function createHandlers(backend: MockBackend) {
           backend.createTaskAsMember(p.projectId ?? "", await parse(request, CreateTaskInput)),
         201,
       ),
+    ),
+    http.get(
+      API_ROUTES.projectDraftTasks,
+      handle((_, p) => backend.draftTasks(p.projectId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.projectDraftTasksConfirm,
+      handle(async (request, p) =>
+        backend.confirmDraftTasks(
+          p.projectId ?? "",
+          (await parse(request, DraftTaskBatchInput)).draftTaskIds,
+        ),
+      ),
+    ),
+    http.post(
+      API_ROUTES.projectDraftTasksDismiss,
+      handle(async (request, p) => {
+        backend.dismissDraftTasks(
+          p.projectId ?? "",
+          (await parse(request, DraftTaskBatchInput)).draftTaskIds,
+        );
+      }),
+    ),
+    http.patch(
+      API_ROUTES.draftTask,
+      handle(async (request, p) =>
+        backend.updateDraftTask(p.draftTaskId ?? "", await parse(request, UpdateDraftTaskInput)),
+      ),
+    ),
+    http.post(
+      API_ROUTES.draftTaskConfirm,
+      handle((_, p) => backend.confirmDraftTask(p.draftTaskId ?? ""), 201),
+    ),
+    http.post(
+      API_ROUTES.draftTaskDismiss,
+      handle((_, p) => {
+        backend.dismissDraftTask(p.draftTaskId ?? "");
+      }),
     ),
     http.get(
       API_ROUTES.projectDispatchOptions,
@@ -282,6 +400,50 @@ export function createHandlers(backend: MockBackend) {
       API_ROUTES.runCancel,
       handle((_, p) => backend.cancelRun(p.runId ?? ""), 202),
     ),
+    http.get(
+      API_ROUTES.runPreview,
+      handle((_, p) => backend.previewState(p.runId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.runPreviewRestart,
+      handle((_, p) => {
+        backend.previewState(p.runId ?? "");
+      }),
+    ),
+    http.post(
+      API_ROUTES.runPreviewScreenshots,
+      handle(async (request, p) => {
+        const file = (await request.formData()).get("file");
+        if (!(file instanceof Blob)) throw new MockError(400, "invalid_input", "缺少截圖");
+        return backend.uploadPreviewScreenshot(p.runId ?? "", file);
+      }, 201),
+    ),
+    http.get(
+      API_ROUTES.runVerifications,
+      handle((_, p) => backend.verifications(p.runId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.runVerificationDecision,
+      handle(async (request, p) => {
+        backend.decideVerification(p.runId ?? "", await parse(request, VerificationDecisionInput));
+      }),
+    ),
+    http.post(
+      API_ROUTES.acceptanceCriterionCheck,
+      handle(async (request, p) =>
+        backend.checkAcceptanceCriterion(
+          p.criterionId ?? "",
+          (await parse(request, CheckAcceptanceCriterionInput)).checked,
+        ),
+      ),
+    ),
+    http.post(
+      API_ROUTES.childQuestionAnswer,
+      handle(async (request, p) => {
+        const { answer } = await parse(request, AnswerChildQuestionInput);
+        backend.answerChildQuestion(p.questionId ?? "", answer);
+      }),
+    ),
     http.post(
       API_ROUTES.gateDecision,
       handle(async (request, p) =>
@@ -291,7 +453,14 @@ export function createHandlers(backend: MockBackend) {
 
     http.get(API_ROUTES.blob, ({ params }) => {
       try {
-        return new HttpResponse(backend.blob(String(params.blobId ?? "")), {
+        const content = backend.blob(String(params.blobId ?? ""));
+        // 圖片（Verification 的截圖）以 data URL 保存
+        if (content.startsWith("data:")) {
+          const [meta = "", data = ""] = content.slice("data:".length).split(",");
+          const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+          return new HttpResponse(bytes, { headers: { "content-type": meta.split(";")[0] ?? "" } });
+        }
+        return new HttpResponse(content, {
           headers: { "content-type": "text/plain" },
         });
       } catch (error) {
@@ -303,6 +472,142 @@ export function createHandlers(backend: MockBackend) {
       }
     }),
 
+    http.get(
+      API_ROUTES.notifications,
+      handle((request) => {
+        const url = new URL(request.url);
+        return backend.notifications(
+          url.searchParams.get("unreadOnly") === "true",
+          url.searchParams.get("before"),
+          Number(url.searchParams.get("limit") ?? 50),
+        );
+      }),
+    ),
+    http.get(
+      API_ROUTES.notificationsUnreadCount,
+      handle(() => backend.unreadNotificationCount()),
+    ),
+    http.post(
+      API_ROUTES.notificationsRead,
+      handle(async (request) => {
+        backend.markNotificationsRead(await parse(request, MarkNotificationsReadInput));
+      }),
+    ),
+    http.get(
+      API_ROUTES.notificationPreferences,
+      handle(() => backend.notificationPreferences()),
+    ),
+    http.put(
+      API_ROUTES.notificationPreferences,
+      handle(async (request) =>
+        backend.updateNotificationPreferences(await parse(request, NotificationPreferences)),
+      ),
+    ),
+    http.get(
+      API_ROUTES.projectMentionCandidates,
+      handle((_, p) => backend.mentionCandidates(p.projectId ?? "")),
+    ),
+    http.get(
+      API_ROUTES.taskMentions,
+      handle((_, p) => backend.taskMentions(p.taskId ?? "")),
+    ),
+    http.get(
+      API_ROUTES.taskComments,
+      handle((_, p) => backend.taskComments(p.taskId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.taskComments,
+      handle(
+        async (request, p) =>
+          backend.createTaskComment(
+            p.taskId ?? "",
+            (await parse(request, CreateTaskCommentInput)).body,
+          ),
+        201,
+      ),
+    ),
+    http.patch(
+      API_ROUTES.taskComment,
+      handle(async (request, p) =>
+        backend.updateTaskComment(
+          p.commentId ?? "",
+          (await parse(request, UpdateTaskCommentInput)).body,
+        ),
+      ),
+    ),
+    http.delete(
+      API_ROUTES.taskComment,
+      handle((_, p) => {
+        backend.deleteTaskComment(p.commentId ?? "");
+      }),
+    ),
+    http.get(
+      API_ROUTES.credentials,
+      handle(() => backend.credentials()),
+    ),
+    http.patch(
+      API_ROUTES.runnerCredential,
+      handle(async (request, p) => {
+        const input = await parse(request, UpdateRunnerCredentialInput);
+        backend.updateRunnerCredential(
+          p.runnerId ?? "",
+          p.credential ?? "",
+          input.maxConcurrentRuns,
+        );
+      }),
+    ),
+    http.get(
+      API_ROUTES.teamRunnerQueue,
+      handle(() => backend.teamRunnerQueue()),
+    ),
+    http.get(
+      API_ROUTES.runners,
+      handle(() => backend.runners()),
+    ),
+    http.post(
+      API_ROUTES.pairingTokens,
+      handle(
+        async (request) =>
+          backend.createPairingToken((await parse(request, CreatePairingTokenInput)).kind),
+        201,
+      ),
+    ),
+    http.post(
+      API_ROUTES.members,
+      handle(async (request) => backend.addMember(await parse(request, AddMemberInput)), 201),
+    ),
+    http.patch(
+      API_ROUTES.member,
+      handle(async (request, p) =>
+        backend.updateMember(p.memberId ?? "", (await parse(request, UpdateMemberInput)).role),
+      ),
+    ),
+    http.delete(
+      API_ROUTES.member,
+      handle((_, p) => {
+        backend.removeMember(p.memberId ?? "");
+      }),
+    ),
+    http.get(
+      API_ROUTES.projectRoles,
+      handle((_, p) => backend.projectRoles(p.projectId ?? "")),
+    ),
+    http.put(
+      API_ROUTES.projectRole,
+      handle(async (request, p) =>
+        backend.setProjectRole(
+          p.projectId ?? "",
+          p.memberId ?? "",
+          (await parse(request, SetProjectRoleInput)).role,
+        ),
+      ),
+    ),
+    http.delete(
+      API_ROUTES.projectRole,
+      handle((_, p) => {
+        backend.deleteProjectRole(p.projectId ?? "", p.memberId ?? "");
+      }),
+    ),
     http.get(
       API_ROUTES.members,
       handle(() => backend.members()),

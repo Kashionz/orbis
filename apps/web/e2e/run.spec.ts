@@ -60,6 +60,8 @@ test.describe("Run 即時檢視", () => {
   test("重新整理後從 seq 重播，畫面完全一樣", async ({ page }) => {
     await dispatch(page, "ORB-2");
     await permission(page).getByRole("button", { name: "允許" }).click();
+    // 回合結束後還有 Verification；等它結束、進入 Review Gate 後 Event 才不再增加
+    await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
     await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
 
     const snapshot = () =>
@@ -157,7 +159,7 @@ test.describe("別人在自己電腦上派工的 Run", () => {
 test.describe("Desktop 的開啟本機工具", () => {
   test("一般瀏覽器中沒有 bridge，不顯示", async ({ page }) => {
     await page.goto("/tasks/ORB-3");
-    await page.getByRole("link", { name: /^run-/ }).click();
+    await page.getByRole("link", { name: "開啟 Run 頁" }).click();
     await expect(page.getByTestId("timeline")).toContainText("Worktree 已就緒");
     await expect(page.getByRole("button", { name: "用編輯器開啟 Worktree" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "在終端機開啟" })).toHaveCount(0);
@@ -183,7 +185,7 @@ test.describe("Desktop 的開啟本機工具", () => {
       });
     }, DESKTOP_BRIDGE_KEY);
     await page.goto("/tasks/ORB-3");
-    await page.getByRole("link", { name: /^run-/ }).click();
+    await page.getByRole("link", { name: "開啟 Run 頁" }).click();
 
     await page.getByRole("button", { name: "用編輯器開啟 Worktree" }).click();
     await page.getByRole("button", { name: "在終端機開啟" }).click();

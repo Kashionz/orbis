@@ -30,7 +30,10 @@ for (const role of ROLES) {
       await expect(page.locator(".ac-list > li")).toHaveCount(2);
       const count = canEdit(role) ? 1 : 0;
       await expect(page.getByRole("button", { name: "編輯標題" })).toHaveCount(count);
-      await expect(page.getByRole("button", { name: "編輯描述" })).toHaveCount(count);
+      await expect(page.getByRole("textbox", { name: "描述" })).toHaveAttribute(
+        "contenteditable",
+        String(canEdit(role)),
+      );
       await expect(page.getByRole("button", { name: "新增 Acceptance Criterion" })).toHaveCount(
         count,
       );
@@ -52,7 +55,7 @@ for (const role of ROLES) {
       } else {
         await expect(page.getByText("目前沒有等待你處理的項目。")).toBeVisible();
         await page.goto("/tasks/ORB-3");
-        await page.getByRole("link", { name: /^run-/ }).click();
+        await page.getByRole("link", { name: "開啟 Run 頁" }).click();
       }
 
       const request = page.locator(".event-permission");
@@ -69,7 +72,7 @@ for (const role of ROLES) {
 
     test("Diff review：留言、退回、核准", async ({ page }) => {
       await page.goto("/tasks/ORB-4");
-      await page.getByRole("link", { name: /^run-/ }).click();
+      await page.getByRole("link", { name: "開啟 Run 頁" }).click();
       await page.getByRole("link", { name: "Diff review" }).click();
       await expect(page.getByTestId("diff-editor")).toBeVisible();
       const count = canEdit(role) ? 1 : 0;

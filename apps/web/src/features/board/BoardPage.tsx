@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tansta
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import {
+  draftTasksQuery,
   membersQuery,
   projectsQuery,
   queryKeys,
@@ -175,6 +176,7 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
         <Link to="/projects/$projectId/settings" params={{ projectId: project.id }}>
           Project 設定
         </Link>
+        <DraftTasksLink projectId={project.id} />
         {teamPermissions.can("project.manage") && (
           <button type="button" onClick={() => setCreatingProject(true)}>
             新增 Project
@@ -307,5 +309,21 @@ function TaskCard({
       <DoneReasonBadge task={task} />
       {assignee && <div className="task-assignee">@{assignee.githubLogin}</div>}
     </article>
+  );
+}
+
+/** Agent 提出、等待確認的 Draft Task（ARCHITECTURE §9）。 */
+function DraftTasksLink({ projectId }: { projectId: string }) {
+  const { data: drafts = [] } = useQuery(draftTasksQuery(projectId));
+  return (
+    <Link to="/projects/$projectId/draft-tasks" params={{ projectId }}>
+      Draft Task
+      {drafts.length > 0 && (
+        <span className="count-badge" data-testid="draft-task-count">
+          {drafts.length}
+          <span className="visually-hidden"> 個等待確認</span>
+        </span>
+      )}
+    </Link>
   );
 }

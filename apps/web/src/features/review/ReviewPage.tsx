@@ -12,7 +12,9 @@ import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tansta
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import {
+  acceptanceCriteriaQuery,
   blobTextQuery,
+  blobUrl,
   cancelRun,
   decideGate,
   projectsQuery,
@@ -23,9 +25,20 @@ import {
   taskQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { formatTime } from "../../lib/format";
 import { DIFF_CHANGE_LABELS } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
+import { MentionMarkdown } from "../mention/MentionMarkdown";
+import { MentionTextarea } from "../mention/MentionTextarea";
+import {
+  clearPreviewDrafts,
+  loadPreviewDrafts,
+  savePreviewDrafts,
+  subscribePreviewDrafts,
+} from "../preview/preview-drafts";
+import { ConsultRunLinks } from "../task/TaskComments";
 import { DiffEditor } from "./DiffEditor";
+import { ReviewCriteria, uncheckedManualCriteria } from "./ReviewCriteria";
 import { loadDraft, type ReviewDraft, saveDraft, sortComments } from "./review-drafts";
 
 type Side = ReviewCommentInput["side"];
@@ -42,7 +55,13 @@ export function ReviewPage({ runId }: { runId: string }) {
   // 這個 Run 還在等待決定的 Review Gate；沒有時只能檢視
   const gate =
     gates.find((g) => g.runId === run.id && g.kind === "review" && g.decision === null) ?? null;
-  return <Review run={run} diff={diff} task={task} project={project} gate={gate} />;
+  // 這個 Run 之前退回的 Review Gate（留言中 @agent 建立的 consult Run 顯示在這裡）
+  const previous = gates.filter(
+    (g) => g.runId === run.id && g.kind === "review" && g.decision === "rejected",
+  );
+  return (
+    <Review run={run} diff={diff} task={task} project={project} gate={gate} previous={previous} />
+  );
 }
 
 /**
@@ -68,18 +87,26 @@ function Review({
   task,
   project,
   gate,
+  previous,
 }: {
   run: Run;
   diff: ReviewDiff;
   task: Task;
   project: Project;
   gate: Gate | null;
+  previous: readonly Gate[];
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const permissions = usePermissions(project, task);
   const [selectedPath, setSelectedPath] = useState(diff.files[0]?.path ?? null);
   const [draft, setDraftState] = useState<ReviewDraft>(() => loadDraft(run.id));
+  // Preview 分頁寫的留言草稿（E 軌的 preview-drafts），退回時一起送出
+  const [previewDrafts, setPreviewDrafts] = useState(() => loadPreviewDrafts(run.id));
+  useEffect(
+    () => subscribePreviewDrafts(run.id, () => setPreviewDrafts(loadPreviewDrafts(run.id))),
+    [run.id],
+  );
   const [target, setTarget] = useState<CommentTarget | null>(null);
   const [body, setBody] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -88,6 +115,8 @@ function Review({
   const canReject = awaitingReview && permissions.can("gate.reject");
   const canApprove = awaitingReview && permissions.can("gate.approve");
   const canComment = canReject;
+  const { data: criteria = [] } = useQuery(acceptanceCriteriaQuery(task.id));
+  const unchecked = uncheckedManualCriteria(criteria);
 
   function setDraft(next: ReviewDraft) {
     setDraftState(next);
@@ -118,11 +147,13 @@ function Review({
               action: "reject",
               comment: draft.summary.trim() === "" ? null : draft.summary.trim(),
               reviewComments: sortComments(draft.comments),
+              previewComments: previewDrafts,
             },
       );
     },
     onSuccess: async () => {
       setDraft({ comments: [], summary: "" });
+      clearPreviewDrafts(run.id);
       await afterDecision();
     },
   });
@@ -156,7 +187,8 @@ function Review({
   const original = useTextBody(file && !file.binary ? file.old : null);
   const modified = useTextBody(file && !file.binary ? file.new : null);
   const contentError = original.error ?? modified.error;
-  const canSendRejection = draft.comments.length > 0 || draft.summary.trim() !== "";
+  const canSendRejection =
+    draft.comments.length > 0 || previewDrafts.length > 0 || draft.summary.trim() !== "";
 
   return (
     <main className="review-page">
@@ -226,6 +258,7 @@ function Review({
 
           {file && !file.binary && canComment && (
             <CommentForm
+              projectId={project.id}
               target={target}
               body={body}
               bodyRef={bodyRef}
@@ -245,7 +278,7 @@ function Review({
                   <span className="hint">
                     {comment.side === "new" ? "修改後" : "修改前"}第 {comment.line} 行
                   </span>
-                  <p>{comment.body}</p>
+                  <MentionMarkdown text={comment.body} />
                   {canComment && (
                     <button
                       type="button"
@@ -261,6 +294,56 @@ function Review({
           )}
         </section>
       </div>
+
+      {previewDrafts.length > 0 && (
+        <section className="review-preview-drafts" aria-labelledby="preview-drafts-heading">
+          <h2 id="preview-drafts-heading">Preview 留言（{previewDrafts.length}）</h2>
+          <p className="hint">在 Run 頁的 Preview 分頁寫的留言，退回時和行內留言一起送給 Agent。</p>
+          <ul className="comment-list">
+            {previewDrafts.map((comment, index) => (
+              <li
+                key={comment.screenshotBlobId ?? `${comment.url}|${comment.body}`}
+                className="review-comment"
+              >
+                <span className="hint">
+                  {comment.url}
+                  {comment.selector && (
+                    <>
+                      {" "}
+                      <code>{comment.selector}</code>
+                    </>
+                  )}
+                </span>
+                <p>{comment.body}</p>
+                {comment.screenshotBlobId && (
+                  <img
+                    className="preview-draft-shot"
+                    src={blobUrl(comment.screenshotBlobId)}
+                    alt="Preview 留言的截圖"
+                  />
+                )}
+                {canComment && (
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() =>
+                      savePreviewDrafts(
+                        run.id,
+                        previewDrafts.filter((_, i) => i !== index),
+                      )
+                    }
+                  >
+                    刪除 Preview 留言
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <ReviewCriteria taskId={task.id} runId={run.id} canCheck={canApprove} />
+      {previous.length > 0 && <PreviousReviews gates={previous} />}
 
       {(canReject || canApprove) && (
         <footer className="review-actions">
@@ -283,18 +366,23 @@ function Review({
                 disabled={!canSendRejection || decision.isPending}
                 onClick={() => decision.mutate("reject")}
               >
-                退回並附上留言（{draft.comments.length}）
+                退回並附上留言（{draft.comments.length + previewDrafts.length}）
               </button>
             )}
             {canApprove && (
               <button
                 type="button"
                 className="primary"
-                disabled={decision.isPending}
+                disabled={decision.isPending || unchecked.length > 0}
                 onClick={() => decision.mutate("approve")}
               >
                 核准並開 PR
               </button>
+            )}
+            {canApprove && unchecked.length > 0 && (
+              <span className="hint" role="note">
+                還有 {unchecked.length} 條 manual 條件沒有打勾，全部打勾後才能核准
+              </span>
             )}
             {permissions.can("run.control") && (
               <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
@@ -336,7 +424,37 @@ function FileButton({
   );
 }
 
+/** 之前退回時的整體說明與行內留言；留言中的 @agent 建立的 consult Run 連結在這裡。 */
+function PreviousReviews({ gates }: { gates: readonly Gate[] }) {
+  return (
+    <section className="previous-reviews" aria-labelledby="previous-reviews-heading">
+      <h2 id="previous-reviews-heading">之前的退回</h2>
+      <ol>
+        {gates.map((gate) => (
+          <li key={gate.id}>
+            <span className="hint">{gate.decidedAt ? formatTime(gate.decidedAt) : ""}</span>
+            {gate.comment && <MentionMarkdown text={gate.comment} />}
+            <ul className="comment-list">
+              {gate.reviewComments.map((comment) => (
+                <li key={comment.id} className="review-comment">
+                  <span className="hint">
+                    <code>{comment.path}</code> {comment.side === "new" ? "修改後" : "修改前"}第{" "}
+                    {comment.line} 行
+                  </span>
+                  <MentionMarkdown text={comment.body} />
+                  <ConsultRunLinks runIds={comment.consultRunIds} />
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 interface CommentFormProps {
+  projectId: string;
   target: CommentTarget | null;
   body: string;
   bodyRef: RefObject<HTMLTextAreaElement | null>;
@@ -347,6 +465,7 @@ interface CommentFormProps {
 
 /** 新增行內留言：點 diff 的行號，或直接輸入行號。 */
 function CommentForm({
+  projectId,
   target,
   body,
   bodyRef,
@@ -391,17 +510,18 @@ function CommentForm({
           行
         </label>
       </div>
-      <textarea
-        ref={bodyRef}
-        aria-label="留言內容"
+      <MentionTextarea
+        projectId={projectId}
+        textareaRef={bodyRef}
+        label="留言內容"
         rows={3}
         placeholder={
           target
-            ? `對${side === "new" ? "修改後" : "修改前"}第 ${target.line} 行留言`
+            ? `對${side === "new" ? "修改後" : "修改前"}第 ${target.line} 行留言（可以 @ 提及）`
             : "先選擇一行"
         }
         value={body}
-        onChange={(event) => onBodyChange(event.target.value)}
+        onChange={onBodyChange}
       />
       <div className="form-actions">
         <button type="submit" className="primary" disabled={!target || body.trim() === ""}>

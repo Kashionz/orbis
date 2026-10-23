@@ -1,9 +1,10 @@
 import { NAMES } from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
-import { needsYouQuery } from "../../api/resources";
+import { needsYouQuery, notificationsUnreadCountQuery } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { ROLE_LABELS } from "../../lib/labels";
+import { useNotificationStream } from "../notifications/use-notification-stream";
 import { meQueryOptions } from "./api";
 import { logout } from "./logout";
 
@@ -22,6 +23,12 @@ export function AuthedLayout() {
               看板
             </Link>
             <NeedsYouLink />
+            <NotificationsLink />
+            {me.member.role !== "viewer" && (
+              <Link to="/admin" activeProps={{ "aria-current": "page" }}>
+                管理
+              </Link>
+            )}
           </nav>
         )}
         <span className="spacer" />
@@ -52,6 +59,24 @@ function NeedsYouLink() {
         <span className="count-badge" data-testid="needs-you-count">
           {count}
           <span className="visually-hidden"> 個項目</span>
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/** 通知中心的入口與未讀數；`notification` 推送常駐監聽，收到時即時更新。 */
+function NotificationsLink() {
+  useNotificationStream();
+  const { data } = useQuery(notificationsUnreadCountQuery);
+  const count = data?.count ?? 0;
+  return (
+    <Link to="/notifications" activeProps={{ "aria-current": "page" }}>
+      通知
+      {count > 0 && (
+        <span className="count-badge" data-testid="notification-count">
+          {count}
+          <span className="visually-hidden"> 則未讀</span>
         </span>
       )}
     </Link>

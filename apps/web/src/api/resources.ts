@@ -2,29 +2,59 @@
 
 import {
   AcceptanceCriterion,
+  type AddMemberInput,
+  type AnswerChildQuestionInput,
   API_ROUTES,
   apiPath,
+  ConfirmDraftTasksResponse,
   type CreateAcceptanceCriterionInput,
   type CreateProjectInput,
   type CreateRepoInput,
+  type CreateRepoSpecInput,
   type CreateRunInput,
   type CreateTaskInput,
+  CredentialListResponse,
   DispatchOptions,
+  DraftTask,
+  DraftTaskListResponse,
   Gate,
   type GateDecisionInput,
+  type MarkNotificationsReadInput,
   Member,
+  MentionCandidates,
+  MentionListResponse,
   NeedsYouListResponse,
+  NotificationListResponse,
+  NotificationPreferences,
+  NotificationUnreadCount,
+  PairingTokenCreated,
   type PermissionResponseInput,
   Project,
+  ProjectMemberRole,
   Repo,
+  RepoSpec,
+  type RepoSpecCommitInput,
+  RepoSpecCommitResponse,
+  RepoSpecListResponse,
   ReviewDiff,
+  type Role,
   Run,
   RunEvent,
+  Runner,
+  type RunnerKind,
   Task,
+  TaskComment,
+  TaskCommentListResponse,
+  TaskNoteListResponse,
   type TaskStatus,
+  TeamRunnerQueueResponse,
   type UpdateAcceptanceCriterionInput,
+  type UpdateDraftTaskInput,
   type UpdateProjectInput,
+  type UpdateRunnerCredentialInput,
   type UpdateTaskInput,
+  type VerificationDecisionInput,
+  VerificationListResponse,
 } from "@orbis/api-contract";
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
@@ -48,6 +78,21 @@ export const queryKeys = {
   members: ["members"] as const,
   dispatchOptions: (projectId: string) => ["projects", projectId, "dispatch-options"] as const,
   needsYou: ["needs-you"] as const,
+  verifications: (runId: string) => ["runs", runId, "verifications"] as const,
+  draftTasks: (projectId: string) => ["projects", projectId, "draft-tasks"] as const,
+  mentionCandidates: (projectId: string) => ["projects", projectId, "mention-candidates"] as const,
+  projectRoles: (projectId: string) => ["projects", projectId, "roles"] as const,
+  taskComments: (taskId: string) => ["tasks", taskId, "comments"] as const,
+  taskNotes: (taskId: string) => ["tasks", taskId, "notes"] as const,
+  taskMentions: (taskId: string) => ["tasks", taskId, "mentions"] as const,
+  notifications: ["notifications", "list"] as const,
+  notificationsUnreadCount: ["notifications", "unread-count"] as const,
+  notificationPreferences: ["notification-preferences"] as const,
+  credentials: ["credentials"] as const,
+  teamRunnerQueue: ["team-runner-queue"] as const,
+  runners: ["runners"] as const,
+  repoSpecs: (repoId: string) => ["repos", repoId, "specs"] as const,
+  repoSpec: (repoSpecId: string) => ["repo-specs", repoSpecId] as const,
 };
 
 export const projectsQuery = queryOptions({
@@ -265,4 +310,322 @@ export function logoutRequest(): Promise<void> {
 
 export function cancelRun(runId: string): Promise<Run> {
   return apiRequest(apiPath(API_ROUTES.runCancel, { runId }), Run, { method: "POST" });
+}
+
+/** 一筆 Run 的 Event（例如 Plan Gate 送審的 `plan_proposed`，以 `Gate.planSeq` 取得）。 */
+export const runEventQuery = (runId: string, seq: number) =>
+  queryOptions({
+    queryKey: ["runs", runId, "events", seq] as const,
+    queryFn: async ({ signal }) => {
+      const query = new URLSearchParams({ afterSeq: String(seq - 1), limit: "1" });
+      const events = await apiRequest(
+        `${apiPath(API_ROUTES.runEvents, { runId })}?${query}`,
+        z.array(RunEvent),
+        { signal },
+      );
+      const found = events.find((e) => e.seq === seq);
+      if (!found) throw new Error(`找不到 Run 的第 ${seq} 筆 Event`);
+      return found;
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+// ---------- Verification 與 `manual` 打勾（ARCHITECTURE §5.1） ----------
+
+export const verificationsQuery = (runId: string) =>
+  queryOptions({
+    queryKey: queryKeys.verifications(runId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.runVerifications, { runId }), VerificationListResponse, {
+        signal,
+      }),
+  });
+
+export function decideVerification(runId: string, input: VerificationDecisionInput): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.runVerificationDecision, { runId }), {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function checkAcceptanceCriterion(
+  criterionId: string,
+  checked: boolean,
+): Promise<AcceptanceCriterion> {
+  return apiRequest(
+    apiPath(API_ROUTES.acceptanceCriterionCheck, { criterionId }),
+    AcceptanceCriterion,
+    { method: "POST", body: { checked } },
+  );
+}
+
+// ---------- Repo 與 Repo Spec（ARCHITECTURE §11、§12.1） ----------
+
+export function refreshRepoInstallation(repoId: string): Promise<Repo> {
+  return apiRequest(apiPath(API_ROUTES.repoRefreshInstallation, { repoId }), Repo, {
+    method: "POST",
+  });
+}
+
+export function deleteRepo(repoId: string): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.repo, { repoId }), { method: "DELETE" });
+}
+
+export const repoSpecsQuery = (repoId: string) =>
+  queryOptions({
+    queryKey: queryKeys.repoSpecs(repoId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.repoSpecs, { repoId }), RepoSpecListResponse, { signal }),
+  });
+
+export const repoSpecQuery = (repoSpecId: string) =>
+  queryOptions({
+    queryKey: queryKeys.repoSpec(repoSpecId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.repoSpec, { repoSpecId }), RepoSpec, { signal }),
+  });
+
+export function createRepoSpec(repoId: string, input: CreateRepoSpecInput): Promise<RepoSpec> {
+  return apiRequest(apiPath(API_ROUTES.repoSpecs, { repoId }), RepoSpec, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function commitRepoSpec(
+  repoSpecId: string,
+  input: RepoSpecCommitInput,
+): Promise<RepoSpecCommitResponse> {
+  return apiRequest(apiPath(API_ROUTES.repoSpecCommit, { repoSpecId }), RepoSpecCommitResponse, {
+    method: "POST",
+    body: input,
+  });
+}
+
+// ---------- Draft Task 與 Child Run 的問題（ARCHITECTURE §9） ----------
+
+export const draftTasksQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: queryKeys.draftTasks(projectId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.projectDraftTasks, { projectId }), DraftTaskListResponse, {
+        signal,
+      }),
+    refetchInterval: POLL_INTERVAL_MS,
+  });
+
+export function updateDraftTask(draftTaskId: string, input: UpdateDraftTaskInput) {
+  return apiRequest(apiPath(API_ROUTES.draftTask, { draftTaskId }), DraftTask, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export function confirmDraftTask(draftTaskId: string): Promise<Task> {
+  return apiRequest(apiPath(API_ROUTES.draftTaskConfirm, { draftTaskId }), Task, {
+    method: "POST",
+  });
+}
+
+export function dismissDraftTask(draftTaskId: string): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.draftTaskDismiss, { draftTaskId }), { method: "POST" });
+}
+
+export function confirmDraftTasks(projectId: string, draftTaskIds: string[]) {
+  return apiRequest(
+    apiPath(API_ROUTES.projectDraftTasksConfirm, { projectId }),
+    ConfirmDraftTasksResponse,
+    { method: "POST", body: { draftTaskIds } },
+  );
+}
+
+export function dismissDraftTasks(projectId: string, draftTaskIds: string[]): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.projectDraftTasksDismiss, { projectId }), {
+    method: "POST",
+    body: { draftTaskIds },
+  });
+}
+
+export function answerChildQuestion(
+  questionId: string,
+  input: AnswerChildQuestionInput,
+): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.childQuestionAnswer, { questionId }), {
+    method: "POST",
+    body: input,
+  });
+}
+
+// ---------- 留言、Task note 與 @mention（ARCHITECTURE §12.3） ----------
+
+export const taskCommentsQuery = (taskId: string) =>
+  queryOptions({
+    queryKey: queryKeys.taskComments(taskId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.taskComments, { taskId }), TaskCommentListResponse, {
+        signal,
+      }),
+    refetchInterval: POLL_INTERVAL_MS,
+  });
+
+export function createTaskComment(taskId: string, body: string): Promise<TaskComment> {
+  return apiRequest(apiPath(API_ROUTES.taskComments, { taskId }), TaskComment, {
+    method: "POST",
+    body: { body },
+  });
+}
+
+export function updateTaskComment(commentId: string, body: string): Promise<TaskComment> {
+  return apiRequest(apiPath(API_ROUTES.taskComment, { commentId }), TaskComment, {
+    method: "PATCH",
+    body: { body },
+  });
+}
+
+export function deleteTaskComment(commentId: string): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.taskComment, { commentId }), { method: "DELETE" });
+}
+
+export const taskNotesQuery = (taskId: string) =>
+  queryOptions({
+    queryKey: queryKeys.taskNotes(taskId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.taskNotes, { taskId }), TaskNoteListResponse, { signal }),
+  });
+
+export const taskMentionsQuery = (taskId: string) =>
+  queryOptions({
+    queryKey: queryKeys.taskMentions(taskId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.taskMentions, { taskId }), MentionListResponse, { signal }),
+    refetchInterval: POLL_INTERVAL_MS,
+  });
+
+export const mentionCandidatesQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: queryKeys.mentionCandidates(projectId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.projectMentionCandidates, { projectId }), MentionCandidates, {
+        signal,
+      }),
+    staleTime: 60_000,
+  });
+
+// ---------- 通知（ARCHITECTURE §12.3） ----------
+
+/** 通知列表的一頁（新的在前）。`before` 是上一頁回傳的 `nextBefore`。 */
+export function fetchNotifications(
+  unreadOnly: boolean,
+  before: string | null,
+  signal?: AbortSignal,
+): Promise<NotificationListResponse> {
+  const query = new URLSearchParams({ limit: "50" });
+  if (unreadOnly) query.set("unreadOnly", "true");
+  if (before) query.set("before", before);
+  return apiRequest(`${API_ROUTES.notifications}?${query}`, NotificationListResponse, { signal });
+}
+
+export const notificationsUnreadCountQuery = queryOptions({
+  queryKey: queryKeys.notificationsUnreadCount,
+  queryFn: ({ signal }) =>
+    apiRequest(API_ROUTES.notificationsUnreadCount, NotificationUnreadCount, { signal }),
+});
+
+export function markNotificationsRead(input: MarkNotificationsReadInput): Promise<void> {
+  return apiSend(API_ROUTES.notificationsRead, { method: "POST", body: input });
+}
+
+export const notificationPreferencesQuery = queryOptions({
+  queryKey: queryKeys.notificationPreferences,
+  queryFn: ({ signal }) =>
+    apiRequest(API_ROUTES.notificationPreferences, NotificationPreferences, { signal }),
+});
+
+export function updateNotificationPreferences(
+  input: NotificationPreferences,
+): Promise<NotificationPreferences> {
+  return apiRequest(API_ROUTES.notificationPreferences, NotificationPreferences, {
+    method: "PUT",
+    body: input,
+  });
+}
+
+// ---------- Credential、佇列與 Runner（ARCHITECTURE §6.1、§7） ----------
+
+export const credentialsQuery = queryOptions({
+  queryKey: queryKeys.credentials,
+  queryFn: ({ signal }) => apiRequest(API_ROUTES.credentials, CredentialListResponse, { signal }),
+  refetchInterval: POLL_INTERVAL_MS,
+});
+
+export function updateRunnerCredential(
+  runnerId: string,
+  credential: string,
+  input: UpdateRunnerCredentialInput,
+): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.runnerCredential, { runnerId, credential }), {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export const teamRunnerQueueQuery = queryOptions({
+  queryKey: queryKeys.teamRunnerQueue,
+  queryFn: ({ signal }) =>
+    apiRequest(API_ROUTES.teamRunnerQueue, TeamRunnerQueueResponse, { signal }),
+  refetchInterval: POLL_INTERVAL_MS,
+});
+
+export const runnersQuery = queryOptions({
+  queryKey: queryKeys.runners,
+  queryFn: ({ signal }) => apiRequest(API_ROUTES.runners, z.array(Runner), { signal }),
+  refetchInterval: POLL_INTERVAL_MS,
+});
+
+export function createPairingToken(kind: RunnerKind): Promise<PairingTokenCreated> {
+  return apiRequest(API_ROUTES.pairingTokens, PairingTokenCreated, {
+    method: "POST",
+    body: { kind },
+  });
+}
+
+// ---------- 成員與 Role（ARCHITECTURE §12.2） ----------
+
+export function addMember(input: AddMemberInput): Promise<Member> {
+  return apiRequest(API_ROUTES.members, Member, { method: "POST", body: input });
+}
+
+export function updateMemberRole(memberId: string, role: Role): Promise<Member> {
+  return apiRequest(apiPath(API_ROUTES.member, { memberId }), Member, {
+    method: "PATCH",
+    body: { role },
+  });
+}
+
+export function removeMember(memberId: string): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.member, { memberId }), { method: "DELETE" });
+}
+
+export const projectRolesQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: queryKeys.projectRoles(projectId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.projectRoles, { projectId }), z.array(ProjectMemberRole), {
+        signal,
+      }),
+  });
+
+export function setProjectRole(
+  projectId: string,
+  memberId: string,
+  role: ProjectMemberRole["role"],
+): Promise<ProjectMemberRole> {
+  return apiRequest(apiPath(API_ROUTES.projectRole, { projectId, memberId }), ProjectMemberRole, {
+    method: "PUT",
+    body: { role },
+  });
+}
+
+export function deleteProjectRole(projectId: string, memberId: string): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.projectRole, { projectId, memberId }), { method: "DELETE" });
 }
