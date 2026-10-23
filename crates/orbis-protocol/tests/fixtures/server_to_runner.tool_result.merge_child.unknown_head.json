@@ -1,0 +1,13 @@
+{
+  "type": "tool_result",
+  "call_id": "0192f3a0-0000-7000-8000-000000000106",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "result": {
+    "outcome": "ok",
+    "output": {
+      "tool": "merge_child",
+      "branch": "orbis/ORB-12-login-fix--c1",
+      "head_commit": null
+    }
+  }
+}

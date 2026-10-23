@@ -209,6 +209,7 @@ ALTER TABLE "runs" ADD COLUMN "credential" text;--> statement-breakpoint
 ALTER TABLE "runs" ADD COLUMN "consult_of_run_id" uuid;--> statement-breakpoint
 ALTER TABLE "runs" ADD COLUMN "resumes_run_id" uuid;--> statement-breakpoint
 ALTER TABLE "runs" ADD COLUMN "agent_session_id" text;--> statement-breakpoint
+ALTER TABLE "runs" ADD COLUMN "prompt" jsonb;--> statement-breakpoint
 ALTER TABLE "acceptance_criteria" ADD COLUMN "result_summary" text;--> statement-breakpoint
 ALTER TABLE "draft_tasks" ADD COLUMN "batch_id" uuid DEFAULT gen_random_uuid() NOT NULL;--> statement-breakpoint
 ALTER TABLE "draft_tasks" ADD COLUMN "position" integer DEFAULT 1 NOT NULL;--> statement-breakpoint

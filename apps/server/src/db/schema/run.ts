@@ -79,6 +79,12 @@ export const runs = pgTable(
     }),
     /** Runner 以 `agent_session` Event 回報的 ACP session id，Feedback Loop 的新 Run 以此 resume。 */
     agentSessionId: text("agent_session_id"),
+    /**
+     * 第一個 prompt（協定的 `ContentBlock[]`）；null 表示由 Task 組出。Child Run（`delegate` 的 prompt）、
+     * @agent 的 consult Run、Feedback Loop 的 Run 的 prompt 不是 Task，存在這裡，排隊、改派、
+     * Server 重新啟動後派工都拿得到。
+     */
+    prompt: jsonb("prompt"),
     startedAt: timestamptz("started_at"),
     finishedAt: timestamptz("finished_at"),
     createdAt: createdAt(),

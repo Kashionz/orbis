@@ -15,6 +15,7 @@ branch: string | null, } | { "tool": "get_run" } & ChildRunSummary | { "tool": "
  */
 branch: string, 
 /**
- * 子分支目前的 HEAD。
+ * 子分支目前的 HEAD；Server 不知道時為 `null`，Runner 在本機讀分支的 HEAD
+ * （Child Run 一定和父 Run 在同一台 Runner）。
  */
-head_commit: string, } | { "tool": "ask_parent", answer: string, } | { "tool": "answer_child" } | { "tool": "propose_tasks", draft_task_ids: Array<string>, } | { "tool": "update_task_note", note_id: string, };
+head_commit: string | null, } | { "tool": "ask_parent", answer: string, } | { "tool": "answer_child" } | { "tool": "propose_tasks", draft_task_ids: Array<string>, } | { "tool": "update_task_note", note_id: string, };

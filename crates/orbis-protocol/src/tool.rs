@@ -154,8 +154,9 @@ pub enum OrbisToolOutput {
     MergeChild {
         /// 要 merge 的子分支。
         branch: String,
-        /// 子分支目前的 HEAD。
-        head_commit: String,
+        /// 子分支目前的 HEAD；Server 不知道時為 `null`，Runner 在本機讀分支的 HEAD
+        /// （Child Run 一定和父 Run 在同一台 Runner）。
+        head_commit: Option<String>,
     },
     AskParent {
         answer: String,
