@@ -11,6 +11,12 @@ export {
   loadGitHubAppConfig,
 } from "./config";
 export { appBotLogin } from "./context";
+export { type FlushOutcome, LOOSE_COMMENT_DELAY_MS } from "./feedback/dispatch";
+export {
+  FAILING_CONCLUSIONS,
+  type FeedbackEventOutcome,
+  type FeedbackIgnoreReason,
+} from "./feedback/trigger";
 export {
   createGitHubIntegration,
   type GitHubIntegration,

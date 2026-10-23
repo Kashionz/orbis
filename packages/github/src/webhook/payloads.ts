@@ -26,8 +26,14 @@ export type IssuesPayload = z.infer<typeof IssuesPayload>;
 
 export const IssueCommentPayload = z.object({
   action: z.string(),
-  comment: z.object({ id: z.number() }),
-  issue: z.object({ number: z.number() }),
+  comment: z.object({
+    id: z.number(),
+    body: z.string().nullable().optional(),
+    user: Sender.optional(),
+    html_url: z.string().optional(),
+  }),
+  /** PR 的對話串也是 Issue 的留言，這時 `issue.pull_request` 有值。 */
+  issue: z.object({ number: z.number(), pull_request: z.unknown().optional() }),
   repository: Repository,
   sender: Sender,
 });
@@ -46,6 +52,54 @@ export const PullRequestPayload = z.object({
   sender: Sender,
 });
 export type PullRequestPayload = z.infer<typeof PullRequestPayload>;
+
+export const PullRequestReviewPayload = z.object({
+  action: z.string(),
+  review: z.object({
+    id: z.number(),
+    user: Sender,
+    body: z.string().nullable(),
+    /** `commented`、`changes_requested`、`approved`、`dismissed`。 */
+    state: z.string(),
+    html_url: z.string(),
+  }),
+  pull_request: z.object({ number: z.number(), html_url: z.string() }),
+  repository: Repository,
+  sender: Sender,
+});
+export type PullRequestReviewPayload = z.infer<typeof PullRequestReviewPayload>;
+
+/** check suite／check run 關聯的 PR（只有同一個 repo 的分支才會列出）。 */
+const CheckPullRequests = z.array(z.object({ number: z.number() }));
+
+export const CheckSuitePayload = z.object({
+  action: z.string(),
+  check_suite: z.object({
+    id: z.number(),
+    head_sha: z.string(),
+    status: z.string().nullable(),
+    conclusion: z.string().nullable(),
+    pull_requests: CheckPullRequests,
+  }),
+  repository: Repository,
+  sender: Sender,
+});
+export type CheckSuitePayload = z.infer<typeof CheckSuitePayload>;
+
+export const CheckRunPayload = z.object({
+  action: z.string(),
+  check_run: z.object({
+    id: z.number(),
+    name: z.string(),
+    head_sha: z.string(),
+    status: z.string(),
+    conclusion: z.string().nullable(),
+    pull_requests: CheckPullRequests,
+  }),
+  repository: Repository,
+  sender: Sender,
+});
+export type CheckRunPayload = z.infer<typeof CheckRunPayload>;
 
 export const InstallationPayload = z.object({
   action: z.string(),

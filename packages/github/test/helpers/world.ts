@@ -3,11 +3,17 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { GitHubIssue, GitHubUserRef } from "../../src/client/types";
+import type {
+  GitHubCheckRun,
+  GitHubIssue,
+  GitHubReviewComment,
+  GitHubUserRef,
+} from "../../src/client/types";
 import { createGitHubIntegration, type GitHubIntegration } from "../../src/integration";
 import type { MemberRecord, TaskRecord } from "../../src/ports";
 import {
   FakeDomainService,
+  FakeFeedbackRuns,
   FakeGitHub,
   type FakeRepo,
   InMemoryGitHubStore,
@@ -21,6 +27,8 @@ export const WEBHOOK_SECRET = "test-webhook-secret";
 export const APP_SLUG = "acme-pm";
 export const PROJECT_ID = "project-1";
 export const REPO_ID = "repo-1";
+/** 以 onBranchPushed 開出的 PR 的 head commit。 */
+export const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567";
 
 const FIXTURE_DIR = fileURLToPath(new URL("../fixtures/webhooks/", import.meta.url));
 
@@ -78,11 +86,45 @@ export interface World {
     options: { merged: boolean; sender: GitHubUserRef },
   ): unknown;
   userRef(member: MemberRecord): GitHubUserRef;
+
+  // ── Feedback Loop ──
+  feedbackRuns: FakeFeedbackRuns;
+  /** Project 的 bot 白名單。 */
+  botAllowlist: string[];
+  /** 以 App 開出一個 PR（Review Gate 核准後 push 完成）。 */
+  openPullRequest(overrides?: Partial<TaskRecord>): Promise<{ task: TaskRecord; number: number }>;
+  /** 以錄製的 `pull_request_review.submitted` 為底；行內留言放進 FakeGitHub。 */
+  reviewPayload(
+    number: number,
+    options: {
+      author: GitHubUserRef;
+      state?: string;
+      body?: string | null;
+      comments?: Partial<GitHubReviewComment>[];
+    },
+  ): Record<string, unknown>;
+  /** 以錄製的 `issue_comment.created`（PR 上的留言）為底。 */
+  prCommentPayload(number: number, options: { author: GitHubUserRef; body: string }): unknown;
+  /** 以錄製的 `check_suite.completed` 為底。 */
+  checkSuitePayload(number: number, options?: { sha?: string; conclusion?: string }): unknown;
+  /** 以錄製的 `check_run.completed` 為底。 */
+  checkRunPayload(
+    number: number,
+    run: Pick<GitHubCheckRun, "id" | "name" | "conclusion">,
+    options?: { sha?: string },
+  ): unknown;
+  /** 設定 commit 的 CI 狀態：一個 GitHub Actions 的 suite，加上沒有 check run 的部署服務 suite。 */
+  setChecks(
+    sha: string,
+    runs: Partial<GitHubCheckRun>[],
+    options?: { suiteStatus?: string; extraSuites?: { status: string; runs: number }[] },
+  ): void;
 }
 
 let deliveryCounter = 0;
+let idCounter = 50_000;
 
-export function createWorld(): World {
+export function createWorld(options: { feedback?: boolean } = {}): World {
   const clock = new TestClock();
   const bot: GitHubUserRef = { id: 9_000_001, login: `${APP_SLUG}[bot]`, type: "Bot" };
   const github = new FakeGitHub(clock, bot);
@@ -127,7 +169,19 @@ export function createWorld(): World {
   const store = new InMemoryGitHubStore();
   const notifier = new RecordingNotifier();
   const logger = new MemoryLogger();
+  const feedbackRuns = new FakeFeedbackRuns();
+  const botAllowlist: string[] = [];
   const integration = createGitHubIntegration({
+    ...(options.feedback === false
+      ? {}
+      : {
+          feedback: {
+            store,
+            runs: feedbackRuns,
+            botAllowlist: async (projectId: string) =>
+              projectId === PROJECT_ID ? [...botAllowlist] : [],
+          },
+        }),
     config: { appId: 1, privateKey: "unused", webhookSecret: WEBHOOK_SECRET, slug: APP_SLUG },
     client: github,
     domain,
@@ -144,7 +198,158 @@ export function createWorld(): World {
     type: "User",
   });
 
+  // biome-ignore lint/suspicious/noExplicitAny: fixture 是任意 JSON
+  const sandboxRepository = (payload: Record<string, any>) => ({
+    ...payload.repository,
+    id: repo.id,
+    name: repo.name,
+    owner: { ...payload.repository.owner, login: repo.owner },
+  });
+
   return {
+    feedbackRuns,
+    botAllowlist,
+
+    async openPullRequest(overrides = {}) {
+      const task = domain.addTask({
+        projectId: PROJECT_ID,
+        repoId: REPO_ID,
+        title: "修正 README 的錯字",
+        description: "README 第 3 行拼錯了。",
+        createdByMemberId: alice.id,
+        status: "pr_open",
+        assigneeMemberId: alice.id,
+        ...overrides,
+      });
+      const result = await integration.onBranchPushed({
+        taskId: task.id,
+        runId: "run-1",
+        branch: `feature/${task.key}`,
+        commitSha: HEAD_SHA,
+      });
+      if (!result.ok) throw new Error(result.message);
+      return { task, number: result.number };
+    },
+
+    reviewPayload(number, opts) {
+      const payload = fixture("pull_request_review.submitted.commented");
+      const reviewId = ++idCounter;
+      const author = userObject(payload.review.user, opts.author);
+      payload.review = {
+        ...payload.review,
+        id: reviewId,
+        user: author,
+        body: opts.body === undefined ? "" : opts.body,
+        state: opts.state ?? "commented",
+        html_url: `${repo.htmlUrl}/pull/${number}#pullrequestreview-${reviewId}`,
+      };
+      payload.pull_request = {
+        ...payload.pull_request,
+        number,
+        html_url: `${repo.htmlUrl}/pull/${number}`,
+      };
+      payload.repository = sandboxRepository(payload);
+      payload.sender = author;
+      github.reviewComments.set(
+        reviewId,
+        (opts.comments ?? []).map((c) => {
+          const id = c.id ?? ++idCounter;
+          return {
+            id,
+            reviewId,
+            user: opts.author,
+            body: "請修正",
+            path: "src/calculator.html",
+            line: 7,
+            startLine: null,
+            side: "RIGHT" as const,
+            diffHunk:
+              "@@ -3,7 +3,8 @@\n <head>\n-  <title>計算機</title>\n+  <title>計算機（D2 測試）</title>",
+            htmlUrl: `${repo.htmlUrl}/pull/${number}#discussion_r${id}`,
+            ...c,
+          };
+        }),
+      );
+      return payload;
+    },
+
+    prCommentPayload(number, opts) {
+      const payload = fixture("issue_comment.created.pr");
+      const id = ++idCounter;
+      const author = userObject(payload.comment.user, opts.author);
+      payload.issue = { ...payload.issue, number };
+      payload.comment = {
+        ...payload.comment,
+        id,
+        body: opts.body,
+        user: author,
+        html_url: `${repo.htmlUrl}/pull/${number}#issuecomment-${id}`,
+      };
+      payload.repository = sandboxRepository(payload);
+      payload.sender = author;
+      return payload;
+    },
+
+    checkSuitePayload(number, opts = {}) {
+      const payload = fixture("check_suite.completed.failure");
+      payload.check_suite = {
+        ...payload.check_suite,
+        head_sha: opts.sha ?? HEAD_SHA,
+        conclusion: opts.conclusion ?? "failure",
+        pull_requests: [{ ...payload.check_suite.pull_requests[0], number }],
+      };
+      payload.repository = sandboxRepository(payload);
+      return payload;
+    },
+
+    checkRunPayload(number, run, opts = {}) {
+      const payload = fixture("check_run.completed.failure");
+      payload.check_run = {
+        ...payload.check_run,
+        id: run.id,
+        name: run.name,
+        conclusion: run.conclusion,
+        head_sha: opts.sha ?? HEAD_SHA,
+        pull_requests: [{ ...payload.check_run.pull_requests[0], number }],
+      };
+      payload.repository = sandboxRepository(payload);
+      return payload;
+    },
+
+    setChecks(sha, runs, opts = {}) {
+      github.checkSuites.set(sha, [
+        {
+          id: 1,
+          appSlug: "github-actions",
+          status: opts.suiteStatus ?? "completed",
+          conclusion: runs.some((r) => r.conclusion === "failure") ? "failure" : "success",
+          latestCheckRunsCount: runs.length,
+        },
+        // 安裝了但沒有在跑 check 的 App：一直是 queued、沒有 check run
+        { id: 2, appSlug: "vercel", status: "queued", conclusion: null, latestCheckRunsCount: 0 },
+        ...(opts.extraSuites ?? []).map((extra, i) => ({
+          id: 10 + i,
+          appSlug: `ci-${i}`,
+          status: extra.status,
+          conclusion: null,
+          latestCheckRunsCount: extra.runs,
+        })),
+      ]);
+      github.checkRuns.set(
+        sha,
+        runs.map((r, i) => ({
+          id: r.id ?? 9000 + i,
+          name: r.name ?? `job-${i}`,
+          status: r.status ?? "completed",
+          conclusion: r.conclusion ?? "success",
+          appSlug: r.appSlug ?? "github-actions",
+          htmlUrl: r.htmlUrl ?? `${repo.htmlUrl}/actions/runs/1/job/${r.id ?? 9000 + i}`,
+          outputTitle: r.outputTitle ?? null,
+          outputSummary: r.outputSummary ?? null,
+        })),
+      );
+    },
+
     clock,
     github,
     domain,

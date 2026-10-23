@@ -6,9 +6,12 @@ import { createAppJwtSigner } from "../auth/app-jwt";
 import { type InstallationToken, InstallationTokenCache } from "../auth/installation-tokens";
 import {
   GitHubApiError,
+  type GitHubCheckRun,
+  type GitHubCheckSuite,
   type GitHubClient,
   type GitHubIssue,
   type GitHubPullRequest,
+  type GitHubReviewComment,
   type RepoRef,
   type RepoRole,
   type TokenScope,
@@ -65,6 +68,50 @@ const PullRequestResponse = z.object({
   base: z.object({ ref: z.string() }),
 });
 
+const ReviewCommentResponse = z.object({
+  id: z.number(),
+  pull_request_review_id: z.number().nullable().optional(),
+  user: UserRef,
+  body: z.string(),
+  path: z.string(),
+  line: z.number().nullable().optional(),
+  start_line: z.number().nullable().optional(),
+  side: z.enum(["LEFT", "RIGHT"]).nullable().optional().catch(null),
+  diff_hunk: z.string(),
+  html_url: z.string(),
+});
+
+const AppRef = z.object({ slug: z.string() }).nullable().optional();
+
+const CheckSuitesResponse = z.object({
+  check_suites: z.array(
+    z.object({
+      id: z.number(),
+      app: AppRef,
+      status: z.string().nullable(),
+      conclusion: z.string().nullable(),
+      latest_check_runs_count: z.number().optional(),
+    }),
+  ),
+});
+
+const CheckRunsResponse = z.object({
+  check_runs: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      status: z.string(),
+      conclusion: z.string().nullable(),
+      app: AppRef,
+      html_url: z.string().nullable(),
+      output: z
+        .object({ title: z.string().nullable(), summary: z.string().nullable() })
+        .partial()
+        .optional(),
+    }),
+  ),
+});
+
 const PermissionResponse = z.object({
   permission: z.string(),
   role_name: z.string().optional(),
@@ -108,6 +155,21 @@ function toPullRequest(raw: z.infer<typeof PullRequestResponse>): GitHubPullRequ
     headRef: raw.head.ref,
     headSha: raw.head.sha,
     baseRef: raw.base.ref,
+  };
+}
+
+function toReviewComment(raw: z.infer<typeof ReviewCommentResponse>): GitHubReviewComment {
+  return {
+    id: raw.id,
+    reviewId: raw.pull_request_review_id ?? null,
+    user: { id: raw.user.id, login: raw.user.login, type: raw.user.type },
+    body: raw.body,
+    path: raw.path,
+    line: raw.line ?? null,
+    startLine: raw.start_line ?? null,
+    side: raw.side ?? null,
+    diffHunk: raw.diff_hunk,
+    htmlUrl: raw.html_url,
   };
 }
 
@@ -394,6 +456,69 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
           }),
         ),
       );
+    },
+
+    async listReviewComments(installationId, repo, pullNumber, reviewId) {
+      const comments: GitHubReviewComment[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/pulls/${pullNumber}/reviews/${reviewId}/comments?per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request(
+          "GET",
+          url,
+          inst(installationId),
+          z.array(ReviewCommentResponse),
+        );
+        if (!result) break;
+        comments.push(...result.data.map(toReviewComment));
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return comments;
+    },
+
+    async listCheckSuites(installationId, repo, sha) {
+      const suites: GitHubCheckSuite[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/commits/${encodeURIComponent(sha)}/check-suites?per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request("GET", url, inst(installationId), CheckSuitesResponse);
+        if (!result) break;
+        suites.push(
+          ...result.data.check_suites.map((s) => ({
+            id: s.id,
+            appSlug: s.app?.slug ?? "",
+            status: s.status ?? "queued",
+            conclusion: s.conclusion,
+            latestCheckRunsCount: s.latest_check_runs_count ?? 0,
+          })),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return suites;
+    },
+
+    async listCheckRuns(installationId, repo, sha) {
+      const runs: GitHubCheckRun[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/commits/${encodeURIComponent(sha)}/check-runs?filter=latest&per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request("GET", url, inst(installationId), CheckRunsResponse);
+        if (!result) break;
+        runs.push(
+          ...result.data.check_runs.map((r) => ({
+            id: r.id,
+            name: r.name,
+            status: r.status,
+            conclusion: r.conclusion,
+            appSlug: r.app?.slug ?? "",
+            htmlUrl: r.html_url ?? "",
+            outputTitle: r.output?.title ?? null,
+            outputSummary: r.output?.summary ?? null,
+          })),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return runs;
     },
   };
 }

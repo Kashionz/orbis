@@ -80,6 +80,49 @@ export interface PullRequestInput {
   base: string;
 }
 
+/** PR 的行內留言（review comment）。 */
+export interface GitHubReviewComment {
+  id: number;
+  reviewId: number | null;
+  user: GitHubUserRef;
+  body: string;
+  path: string;
+  /** 留言所在的行（新版本或舊版本，依 `side`）；留言所在的行已經不在 diff 中時是 null。 */
+  line: number | null;
+  /** 多行留言的起始行；單行留言是 null。 */
+  startLine: number | null;
+  side: "LEFT" | "RIGHT" | null;
+  /** 留言位置附近的 diff 片段。 */
+  diffHunk: string;
+  htmlUrl: string;
+}
+
+/** check suite 的狀態（`GET /commits/{ref}/check-suites`）。 */
+export interface GitHubCheckSuite {
+  id: number;
+  /** 建立這個 suite 的 App，例如 `github-actions`。 */
+  appSlug: string;
+  status: string;
+  conclusion: string | null;
+  /**
+   * suite 中的 check run 數。安裝了 App 但沒有在跑 check 的（例如部署服務）會留下一個一直是 `queued`、
+   * 沒有 check run 的 suite。
+   */
+  latestCheckRunsCount: number;
+}
+
+export interface GitHubCheckRun {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  appSlug: string;
+  htmlUrl: string;
+  /** output 的 title、summary；GitHub Actions 的 check run 通常是 null（錯誤只在 job log 中）。 */
+  outputTitle: string | null;
+  outputSummary: string | null;
+}
+
 export interface TokenScope {
   repositoryIds: number[];
   permissions: Record<string, "read" | "write">;
@@ -151,6 +194,18 @@ export interface GitHubClient {
     repo: RepoRef,
     input: PullRequestInput,
   ): Promise<GitHubPullRequest>;
+
+  /** 一份 review 中的行內留言。 */
+  listReviewComments(
+    installationId: number,
+    repo: RepoRef,
+    pullNumber: number,
+    reviewId: number,
+  ): Promise<GitHubReviewComment[]>;
+  /** 這個 commit 的所有 check suite。 */
+  listCheckSuites(installationId: number, repo: RepoRef, sha: string): Promise<GitHubCheckSuite[]>;
+  /** 這個 commit 最新一輪的 check run（重新執行過的只取最新的）。 */
+  listCheckRuns(installationId: number, repo: RepoRef, sha: string): Promise<GitHubCheckRun[]>;
 }
 
 export class GitHubApiError extends Error {

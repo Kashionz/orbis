@@ -5,6 +5,9 @@ import type { TaskStatus } from "@orbis/api-contract";
 import type {
   AcceptanceCriterionRecord,
   DomainService,
+  FeedbackFixRequest,
+  FeedbackFixResult,
+  FeedbackRunPort,
   GitHubNotificationKind,
   Logger,
   MemberRecord,
@@ -251,6 +254,30 @@ export class RecordingNotifier implements Notifier {
   readonly sent: RecordedNotification[] = [];
   async notify(notification: RecordedNotification) {
     this.sent.push(clone(notification));
+  }
+}
+
+/**
+ * FeedbackRunPort 的 fake：記錄每次要求，依序開出 `fix-run-1`、`fix-run-2`……；
+ * `failNext` 讓下一次要求失敗。
+ */
+export class FakeFeedbackRuns implements FeedbackRunPort {
+  readonly requests: FeedbackFixRequest[] = [];
+  #next = 1;
+  #failures: Extract<FeedbackFixResult, { ok: false }>[] = [];
+
+  failNext(
+    reason: Extract<FeedbackFixResult, { ok: false }>["reason"] = "run_not_resumable",
+    message = "Runner 離線",
+  ): void {
+    this.#failures.push({ ok: false, reason, message });
+  }
+
+  async requestFix(request: FeedbackFixRequest): Promise<FeedbackFixResult> {
+    this.requests.push(clone(request));
+    const failure = this.#failures.shift();
+    if (failure) return failure;
+    return { ok: true, runId: `fix-run-${this.#next++}` };
   }
 }
 

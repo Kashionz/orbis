@@ -4,6 +4,7 @@ export { TestClock } from "./clock";
 export {
   type DomainClock,
   FakeDomainService,
+  FakeFeedbackRuns,
   MemoryLogger,
   type RecordedNotification,
   type RecordedTransition,

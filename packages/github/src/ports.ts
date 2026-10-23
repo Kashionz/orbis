@@ -250,6 +250,34 @@ export interface GitHubStore {
   savePullRequestLink(link: PullRequestLink): Promise<void>;
 }
 
+/**
+ * Feedback Loop 的持久化資料（由 Server 以 Drizzle 實作，要通過 `describeFeedbackStoreContract`）。
+ * 同一個 PR 的讀寫由這個套件序列化（單一 Server 程序內）。
+ */
+export interface FeedbackStore {
+  getFeedbackBatch(
+    githubRepoId: number,
+    prNumber: number,
+    source: FeedbackSource,
+  ): Promise<FeedbackBatch | null>;
+  /** 以 (githubRepoId, prNumber, source) 新增或覆蓋。 */
+  saveFeedbackBatch(batch: FeedbackBatch): Promise<void>;
+  deleteFeedbackBatch(
+    githubRepoId: number,
+    prNumber: number,
+    source: FeedbackSource,
+  ): Promise<void>;
+  /** `dueAt` 不晚於 `now` 的批次，依 `dueAt` 排序。 */
+  listDueFeedbackBatches(now: Date): Promise<FeedbackBatch[]>;
+
+  /** 以 id 新增或覆蓋。 */
+  saveFeedbackFix(fix: FeedbackFix): Promise<void>;
+  /** 這個 PR 的所有自動修正紀錄，依建立時間排序。 */
+  listFeedbackFixes(githubRepoId: number, prNumber: number): Promise<FeedbackFix[]>;
+  /** 由這個 Run 執行的修正。 */
+  findFeedbackFixByRun(runId: string): Promise<FeedbackFix | null>;
+}
+
 /** 同一個 Repo 中，這個 Issue 已經對應到別的 Task。 */
 export class IssueAlreadyLinkedError extends Error {
   override name = "IssueAlreadyLinkedError";
@@ -259,6 +287,136 @@ export class IssueAlreadyLinkedError extends Error {
   ) {
     super(`Repo ${repoId} 的 Issue #${issueNumber} 已經對應到別的 Task`);
   }
+}
+
+// ── Feedback Loop（ARCHITECTURE §5.2）──────────────────────────────
+
+/** Feedback Loop 的觸發來源，各自計算自動修正的次數。 */
+export type FeedbackSource = "review" | "ci";
+
+/** 一則會送回 Agent 的 review 回饋。 */
+export interface ReviewFeedbackItem {
+  /** `review`：review 本身的內容；`review_comment`：行內留言；`pr_comment`：PR 對話串的留言。 */
+  kind: "review" | "review_comment" | "pr_comment";
+  /** review id 或留言 id（依 `kind`）。 */
+  id: number;
+  /** 所屬的 review；PR 對話串的留言是 null。 */
+  reviewId: number | null;
+  /** 留言者的 GitHub login。 */
+  author: string;
+  body: string;
+  url: string;
+  /** 以下只有行內留言才有。 */
+  path: string | null;
+  line: number | null;
+  startLine: number | null;
+  diffHunk: string | null;
+}
+
+/** 一個失敗的 CI check。 */
+export interface CiFeedbackItem {
+  checkRunId: number;
+  name: string;
+  conclusion: string;
+  /** 建立這個 check 的 App，例如 `github-actions`（決定怎麼讀 log）。 */
+  appSlug: string;
+  url: string;
+  outputTitle: string | null;
+  outputSummary: string | null;
+}
+
+interface FeedbackBatchBase {
+  githubRepoId: number;
+  prNumber: number;
+  /** 可以送出的時間：review 送出時是當下；零散的留言是最後一則之後 2 分鐘。 */
+  dueAt: Date;
+}
+
+/**
+ * 等著送回 Agent 的一批回饋。每個 PR 每種來源最多一批，新的回饋併進同一批。
+ * 前一次自動修正還沒完成時，到期的批次也先留著，修正完成後再送。
+ */
+export type FeedbackBatch =
+  | (FeedbackBatchBase & { source: "review"; items: ReviewFeedbackItem[] })
+  | (FeedbackBatchBase & {
+      source: "ci";
+      /** 這批 check 所屬的 commit；不是 PR 目前的 head 時整批作廢。 */
+      headSha: string;
+      items: CiFeedbackItem[];
+    });
+
+/**
+ * 一次自動修正的紀錄。
+ * - `sent`：已經交給 Server 開新的 Run 修正，等待 push。同一個 PR 同時只有一筆 `sent`。
+ * - `pushed`：修正已經 push。
+ * - `failed`：沒有開成 Run，或 Run 沒有 push 就結束。
+ */
+export type FeedbackFixStatus = "sent" | "pushed" | "failed";
+
+export interface FeedbackFix {
+  id: string;
+  taskId: string;
+  githubRepoId: number;
+  prNumber: number;
+  source: FeedbackSource;
+  /** 要接續 session 的 Run（PR 目前對應的 Run）。 */
+  previousRunId: string | null;
+  /** 執行這次修正的新 Run；沒有開成時是 null。 */
+  runId: string | null;
+  /** 觸發這次修正的回饋。CI 的批次同時記錄 commit，用來避免同一個 check 重複觸發。 */
+  trigger: FeedbackBatch;
+  status: FeedbackFixStatus;
+  /** 修正 push 出去的 commit（`pushed` 時）。 */
+  commitSha: string | null;
+  /** 失敗的原因（`failed` 時）。 */
+  message: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** 請 Server 開新的 Run 修正 PR 上的回饋（ARCHITECTURE §5.2）。 */
+export interface FeedbackFixRequest {
+  taskId: string;
+  /** 要接續 session 的 Run：開出 PR 或上一次修正的 Run。 */
+  previousRunId: string;
+  source: FeedbackSource;
+  /** 修正 prompt（markdown）。 */
+  prompt: string;
+  pullRequestUrl: string;
+}
+
+export type FeedbackFixResult =
+  | { ok: true; runId: string }
+  | {
+      ok: false;
+      /**
+       * `run_not_found`：要接續的 Run 不存在。
+       * `run_not_resumable`：沒有 Runner 能接續（例如 Runner 離線、Worktree 已清除）。
+       * `invalid_state`：Task 不在 PR Open（例如有人正在處理）。
+       */
+      reason: "run_not_found" | "run_not_resumable" | "invalid_state";
+      message: string;
+    };
+
+/**
+ * Server（B 軌）提供：開一個新的 Run（origin 為 `feedback_loop`，連到 `previousRunId`，同一個 Runner、
+ * 分支與 Worktree，resume 原本的 session）並送出修正 prompt。Task 轉回 Running，修正經過 Verifying，
+ * 通過後直接 push、不經過 Review Gate。push 完成後 Server 照常呼叫 `onBranchPushed`；
+ * Run 沒有 push 就結束時呼叫 `onFeedbackRunEnded`。
+ */
+export interface FeedbackRunPort {
+  requestFix(request: FeedbackFixRequest): Promise<FeedbackFixResult>;
+}
+
+/** Feedback Loop 需要 Server 提供的依賴。沒有提供時 Feedback Loop 停用（相關 webhook 一律略過）。 */
+export interface FeedbackDependencies {
+  store: FeedbackStore;
+  runs: FeedbackRunPort;
+  /**
+   * Project 設定的 bot 白名單（GitHub login，例如 `coderabbitai[bot]`）。只有白名單中的 bot 留言會觸發
+   * Feedback Loop（ARCHITECTURE §5.2）；比對不分大小寫。
+   */
+  botAllowlist(projectId: string): Promise<string[]>;
 }
 
 /** 結構化 log，與 pino 相容。 */

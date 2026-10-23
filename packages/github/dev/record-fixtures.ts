@@ -1,7 +1,11 @@
 // 從 GitHub App 最近的 webhook delivery 錄製真實 payload，存成 test/fixtures/webhooks/<event>.<action>.json。
 // 每種 event／action 取最新的一筆。手動驗證走過一輪之後執行：
 //
-//   pnpm --filter @orbis/github fixtures:record
+//   pnpm --filter @orbis/github fixtures:record [--only <event>,<event>...]
+//
+// `--only` 只錄指定的事件（不覆蓋其他事件既有的 fixture）。同一種 event／action 依 payload 再分變體，
+// 檔名多一段：PR 上的留言（`issue_comment.created.pr`）、review 的狀態
+// （`pull_request_review.submitted.commented`）、CI 的結論（`check_suite.completed.failure`）。
 
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -51,14 +55,43 @@ const Deliveries = z.array(
 );
 const Delivery = z.object({ request: z.object({ payload: z.record(z.string(), z.unknown()) }) });
 
+const onlyIndex = process.argv.indexOf("--only");
+const only = onlyIndex >= 0 ? new Set((process.argv[onlyIndex + 1] ?? "").split(",")) : null;
+
+/** 同一種 event／action 的變體；沒有變體時回傳 null。 */
+function variant(event: string, payload: Record<string, unknown>): string | null {
+  // biome-ignore lint/suspicious/noExplicitAny: 只讀幾個已知欄位
+  const p = payload as any;
+  switch (event) {
+    case "issue_comment":
+      return p.issue?.pull_request ? "pr" : null;
+    case "pull_request_review":
+      return typeof p.review?.state === "string" ? p.review.state : null;
+    case "check_suite":
+      return p.check_suite?.conclusion ?? p.check_suite?.status ?? null;
+    case "check_run":
+      return p.check_run?.conclusion ?? p.check_run?.status ?? null;
+    default:
+      return null;
+  }
+}
+
 const deliveries = Deliveries.parse(await getDeliveries("/app/hook/deliveries?per_page=100"));
 const seen = new Set<string>();
 for (const delivery of deliveries) {
-  if (delivery.event !== "ping" && !WEBHOOK_HANDLERS[delivery.event]) continue;
-  const name = delivery.action ? `${delivery.event}.${delivery.action}` : delivery.event;
+  if (
+    only
+      ? !only.has(delivery.event)
+      : delivery.event !== "ping" && !WEBHOOK_HANDLERS[delivery.event]
+  ) {
+    continue;
+  }
+  const base = delivery.action ? `${delivery.event}.${delivery.action}` : delivery.event;
+  const detail = Delivery.parse(await get(`/app/hook/deliveries/${delivery.id}`));
+  const suffix = variant(delivery.event, detail.request.payload);
+  const name = suffix ? `${base}.${suffix}` : base;
   if (seen.has(name)) continue; // 列表由新到舊，只取最新的一筆
   seen.add(name);
-  const detail = Delivery.parse(await get(`/app/hook/deliveries/${delivery.id}`));
   writeFileSync(`${OUT_DIR}${name}.json`, `${JSON.stringify(detail.request.payload, null, 2)}\n`);
   console.log(`已錄製 ${name}（delivery ${delivery.id}）`);
 }

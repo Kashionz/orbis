@@ -4,15 +4,24 @@
 
 import type { z } from "zod";
 import type { IntegrationContext } from "../context";
+import {
+  handleCheckRunEvent,
+  handleCheckSuiteEvent,
+  handlePullRequestCommentEvent,
+  handlePullRequestReviewEvent,
+} from "../feedback/trigger";
 import { handleIssuesEvent, handleSummaryCommentDeleted } from "../issues/sync";
 import { handlePullRequestEvent } from "../pull-requests";
 import { handleInstallationEvent, handleInstallationRepositoriesEvent } from "../repos";
 import {
+  CheckRunPayload,
+  CheckSuitePayload,
   InstallationPayload,
   InstallationRepositoriesPayload,
   IssueCommentPayload,
   IssuesPayload,
   PullRequestPayload,
+  PullRequestReviewPayload,
 } from "./payloads";
 import { verifyWebhookSignature } from "./verify";
 
@@ -32,12 +41,16 @@ function handler<T>(
 }
 
 /**
- * D1 處理的 webhook 事件。App manifest 訂閱的事件見 app-manifest.json；
- * `pull_request_review`、`check_suite` 等由 D2（Feedback Loop）處理。
+ * 處理的 webhook 事件。App manifest 訂閱的事件見 manifest.ts。`pull_request_review_comment` 不處理：
+ * 它在所屬的 review 之後才送到，review 送出時已經讀過留言（feedback/trigger.ts）。
  */
 export const WEBHOOK_HANDLERS: Record<string, EventHandler<unknown>> = {
   issues: handler(IssuesPayload, handleIssuesEvent),
   issue_comment: handler(IssueCommentPayload, async (ctx, payload) => {
+    // PR 的對話串也是 Issue 的留言：新的留言是 Feedback Loop 的回饋。
+    if (payload.issue.pull_request !== undefined && payload.action === "created") {
+      return handlePullRequestCommentEvent(ctx, payload);
+    }
     if (payload.action !== "deleted") return { kind: "ignored" };
     return {
       recreated: await handleSummaryCommentDeleted(
@@ -49,6 +62,9 @@ export const WEBHOOK_HANDLERS: Record<string, EventHandler<unknown>> = {
     };
   }),
   pull_request: handler(PullRequestPayload, handlePullRequestEvent),
+  pull_request_review: handler(PullRequestReviewPayload, handlePullRequestReviewEvent),
+  check_suite: handler(CheckSuitePayload, handleCheckSuiteEvent),
+  check_run: handler(CheckRunPayload, handleCheckRunEvent),
   installation: handler(InstallationPayload, handleInstallationEvent),
   installation_repositories: handler(
     InstallationRepositoriesPayload,

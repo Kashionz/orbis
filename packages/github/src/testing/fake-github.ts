@@ -4,10 +4,13 @@
 import type { InstallationToken } from "../auth/installation-tokens";
 import {
   GitHubApiError,
+  type GitHubCheckRun,
+  type GitHubCheckSuite,
   type GitHubClient,
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepository,
+  type GitHubReviewComment,
   type GitHubUserRef,
   type IssuePatch,
   type RepoRef,
@@ -45,6 +48,11 @@ export class FakeGitHub implements GitHubClient {
   readonly forgotten: number[] = [];
   /** 各帳號對 repo 的角色；沒有設定的是 `none`。 */
   readonly roles = new Map<string, RepoRole>();
+  /** review 的行內留言，以 review id 為 key。 */
+  readonly reviewComments = new Map<number, GitHubReviewComment[]>();
+  /** 各 commit 的 check suite 與 check run，以 SHA 為 key。 */
+  readonly checkSuites = new Map<string, GitHubCheckSuite[]>();
+  readonly checkRuns = new Map<string, GitHubCheckRun[]>();
   #nextId = 1000;
   #failures: { method: keyof GitHubClient; error: Error }[] = [];
 
@@ -273,7 +281,10 @@ export class FakeGitHub implements GitHubClient {
   ) {
     this.#record("createIssueComment", [installationId, ref, issueNumber, body]);
     const repo = this.#repo(ref, installationId);
-    this.issue(repo.id, issueNumber);
+    // PR 也可以留言（PR 的對話串就是 Issue 的留言）
+    if (!this.pulls.get(repo.id)?.some((p) => p.number === issueNumber)) {
+      this.issue(repo.id, issueNumber);
+    }
     const comment = { id: this.#nextId++, issueNumber, body, author: this.bot.login };
     this.comments.get(repo.id)?.push(comment);
     return { id: comment.id };
@@ -318,6 +329,29 @@ export class FakeGitHub implements GitHubClient {
     this.#tick();
     this.pulls.get(repo.id)?.push(pull);
     return clone(pull);
+  }
+
+  async listReviewComments(
+    installationId: number,
+    ref: RepoRef,
+    pullNumber: number,
+    reviewId: number,
+  ) {
+    this.#record("listReviewComments", [installationId, ref, pullNumber, reviewId]);
+    this.#repo(ref, installationId);
+    return clone(this.reviewComments.get(reviewId) ?? []);
+  }
+
+  async listCheckSuites(installationId: number, ref: RepoRef, sha: string) {
+    this.#record("listCheckSuites", [installationId, ref, sha]);
+    this.#repo(ref, installationId);
+    return clone(this.checkSuites.get(sha) ?? []);
+  }
+
+  async listCheckRuns(installationId: number, ref: RepoRef, sha: string) {
+    this.#record("listCheckRuns", [installationId, ref, sha]);
+    this.#repo(ref, installationId);
+    return clone(this.checkRuns.get(sha) ?? []);
   }
 
   // ── 模擬有人在 GitHub 上操作 ──────────────────────────────────
