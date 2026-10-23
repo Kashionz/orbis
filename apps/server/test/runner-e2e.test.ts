@@ -3,6 +3,9 @@
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { NAMES } from "@orbis/api-contract";
 import { eq, sql } from "drizzle-orm";
@@ -50,6 +53,8 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
   let server: RunningServer;
   let runner: ChildProcess | undefined;
   let runnerStderr = "";
+  /** Runner 的本機目錄（Runner token、狀態），放在暫存目錄，不寫進真實的家目錄。 */
+  let runnerHome = "";
   const logs: LogLine[] = [];
 
   beforeAll(async () => {
@@ -60,6 +65,7 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
     });
     expect(existsSync(runnerBinary)).toBe(true);
 
+    runnerHome = await mkdtemp(path.join(tmpdir(), `${NAMES.productSlug}-e2e-home-`));
     database = await createTestDatabase();
     await database.db.execute(sql`truncate table teams cascade`);
     await database.db.insert(teams).values({ name: "Core" });
@@ -82,16 +88,25 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
   }, 600_000);
 
   afterAll(async () => {
-    runner?.kill();
+    if (runner && runner.exitCode === null) {
+      const exited = new Promise((resolve) => runner?.once("exit", resolve));
+      runner.kill();
+      await exited;
+    }
     await server?.close();
     await database?.drop();
+    if (runnerHome) await rm(runnerHome, { recursive: true, force: true });
   });
 
   it("Runner 完成 Pairing、回報 AgentAvailability，並持續送 Heartbeat", async () => {
     // 參數以陣列傳給 spawn，不經過 shell；不繼承本機 .env 的 Runner 設定，避免干擾。
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
-    );
+    // Runner 的本機目錄指向暫存目錄（Runner token 等狀態不寫進真實的家目錄）。
+    const env = {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
+      ),
+      [NAMES.runnerEnv.home]: runnerHome,
+    };
     runner = spawn(
       runnerBinary,
       [
@@ -128,10 +143,8 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
     expect(heartbeat?.msg).toContain(RUNNER_NAME);
     expect(heartbeat?.runnerId).toEqual(expect.any(String));
 
-    // Runner 在第一次 Heartbeat 之前送出 AgentAvailability（00 階段 Server 記 debug log 後忽略）
-    const availabilityIndex = logs.findIndex((l) =>
-      JSON.stringify(l).includes("agent_availability"),
-    );
+    // Runner 在第一次 Heartbeat 之前送出 AgentAvailability，Server 記錄下來
+    const availabilityIndex = logs.findIndex((l) => l.event === "agent_availability");
     const firstHeartbeatIndex = logs.indexOf(heartbeat as LogLine);
     expect(availabilityIndex).toBeGreaterThanOrEqual(0);
     expect(availabilityIndex).toBeLessThan(firstHeartbeatIndex);

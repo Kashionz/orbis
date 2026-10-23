@@ -38,6 +38,9 @@ importers:
       '@orbis/api-contract':
         specifier: workspace:*
         version: link:../../packages/api-contract
+      '@orbis/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@orbis/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

@@ -263,16 +263,16 @@ describe.skipIf(dbSkipReason !== null)("Runner WebSocket 端點", () => {
     expect(runner?.lastHeartbeatAt?.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
   });
 
-  it("其他 frame 型別記 debug log 後忽略，不會斷線", async () => {
+  it("不認得的 frame 型別記 debug log 後忽略，不會斷線", async () => {
     const client = await connect();
     const ack = await pair(client);
-    client.send({ type: "agent_availability", agents: [] });
+    client.send({ type: "frame_from_the_future", value: 1 });
     client.ws.send("not json");
     client.send(heartbeat());
 
     await waitFor(() => logs.find((l) => l.event === "runner_heartbeat"));
     expect(
-      logs.find((l) => l.frameType === "agent_availability" && l.runnerId === ack.runner_id),
+      logs.find((l) => l.frameType === "frame_from_the_future" && l.runnerId === ack.runner_id),
     ).toMatchObject({ level: 20 });
     expect(client.ws.readyState).toBe(WebSocket.OPEN);
   });

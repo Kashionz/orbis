@@ -1,18 +1,26 @@
 // Server 設定，全部從環境變數讀取。變數名稱一律用 envVar() 組出來。
 // 注意 NAMES.env.port 是注入 Worktree 的 Preview port，Server 不能用它，所以 Server 用 SERVER_PORT。
 
+import { fileURLToPath } from "node:url";
 import { envVar } from "@orbis/api-contract";
 import { z } from "zod";
 
 export const DEFAULT_SERVER_PORT = 4000;
 export const DEFAULT_PUBLIC_URL = "http://localhost:5173";
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
+/** blob 的預設存放位置：apps/server/data/blobs（已列入 apps/server/.gitignore）。 */
+export const DEFAULT_BLOB_DIR = fileURLToPath(new URL("../data/blobs", import.meta.url));
 
 export interface Config {
   databaseUrl: string;
   port: number;
   /** Web 的 origin，OAuth 的 redirect_uri 與登入後導回的位置都以它為準。 */
   publicUrl: string;
+  /**
+   * Server 的公開網址（Runner 連 `<apiOrigin>/runner`），由 `/api/health` 回傳給 Desktop。
+   * 未設定時為 `http://localhost:<port>`。
+   */
+  apiOrigin: string;
   github: { clientId: string; clientSecret: string };
   /** 第一次登入時建立 Team 並成為 Owner 的 GitHub login；未設定時不會自動建立 Team。 */
   /**
@@ -23,6 +31,8 @@ export interface Config {
   /** 開發用的 Pairing token stub；未設定時拒絕所有 Pairing。 */
   devPairingToken: string | null;
   runnerHeartbeatIntervalMs: number;
+  /** blob（大型 Event 內容、截圖）在本機檔案系統的存放目錄。 */
+  blobDir: string;
   logLevel: string;
   /** 以易讀格式輸出 log（開發用）。 */
   prettyLogs: boolean;
@@ -60,11 +70,13 @@ export const CONFIG_ENV = {
   databaseUrl: envVar("DATABASE_URL"),
   port: envVar("SERVER_PORT"),
   publicUrl: envVar("PUBLIC_URL"),
+  apiOrigin: envVar("API_ORIGIN"),
   githubClientId: envVar("GITHUB_CLIENT_ID"),
   githubClientSecret: envVar("GITHUB_CLIENT_SECRET"),
   bootstrapOwnerGithubUserId: envVar("BOOTSTRAP_OWNER"),
   devPairingToken: envVar("DEV_PAIRING_TOKEN"),
   runnerHeartbeatIntervalMs: envVar("RUNNER_HEARTBEAT_INTERVAL_MS"),
+  blobDir: envVar("BLOB_DIR"),
   logLevel: envVar("LOG_LEVEL"),
   logPretty: envVar("LOG_PRETTY"),
 } as const;
@@ -78,6 +90,9 @@ const EnvSchema = z.object({
   port: port(DEFAULT_SERVER_PORT),
   publicUrl: optionalString.pipe(
     z.url({ protocol: /^https?$/, error: "必須是 http(s) 網址" }).default(DEFAULT_PUBLIC_URL),
+  ),
+  apiOrigin: optionalString.pipe(
+    z.url({ protocol: /^https?$/, error: "必須是 http(s) 網址" }).optional(),
   ),
   githubClientId: required,
   githubClientSecret: required,
@@ -98,6 +113,7 @@ const EnvSchema = z.object({
       .min(1000, "至少 1000")
       .default(DEFAULT_HEARTBEAT_INTERVAL_MS),
   ),
+  blobDir: optionalString,
   logLevel: optionalString.pipe(z.enum(LOG_LEVELS).default("info")),
   logPretty: optionalString.pipe(z.enum(["0", "1"]).optional()),
 } satisfies Record<EnvKey, z.ZodType>);
@@ -121,10 +137,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     databaseUrl: e.databaseUrl,
     port: e.port,
     publicUrl: e.publicUrl.replace(/\/+$/, ""),
+    apiOrigin: new URL(e.apiOrigin ?? `http://localhost:${e.port}`).origin,
     github: { clientId: e.githubClientId, clientSecret: e.githubClientSecret },
     bootstrapOwnerGithubUserId: e.bootstrapOwnerGithubUserId ?? null,
     devPairingToken: e.devPairingToken ?? null,
     runnerHeartbeatIntervalMs: e.runnerHeartbeatIntervalMs,
+    blobDir: e.blobDir ?? DEFAULT_BLOB_DIR,
     logLevel: e.logLevel,
     prettyLogs: e.logPretty === undefined ? env.NODE_ENV !== "production" : e.logPretty === "1",
   };

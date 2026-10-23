@@ -1,6 +1,6 @@
-// GitHub OAuth 登入路由（掛在 /api/auth）。
+// GitHub OAuth 登入路由（路徑取自 API_ROUTES 的 auth*）。
 
-import { NAMES } from "@orbis/api-contract";
+import { API_ROUTES, NAMES } from "@orbis/api-contract";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { CookieOptions } from "hono/utils/cookie";
@@ -27,29 +27,40 @@ export interface AuthRouteDeps {
   /** Web 的 origin；redirect_uri 經由 Vite proxy 回到 Server。 */
   publicUrl: string;
   bootstrapOwnerGithubUserId: number | null;
+  /**
+   * 登出時結束 session：先撤銷它配對的 Local Runner 再刪除（auth/session-cleanup.ts 的 endSession）。
+   * 未提供時只刪除 session。
+   */
+  endSession?: (sessionToken: string) => Promise<void>;
 }
 
 export function createAuthRoutes(deps: AuthRouteDeps): Hono {
   const { db, logger, githubOAuth, publicUrl } = deps;
-  const redirectUri = `${publicUrl}/api/auth/github/callback`;
+  const endSession = deps.endSession ?? ((token: string) => deleteSession(db, token));
+  const redirectUri = `${publicUrl}${API_ROUTES.authGithubCallback}`;
+  // state cookie 只送給登入與 callback 兩個路徑。
+  const stateCookiePath = API_ROUTES.authGithubLogin.slice(
+    0,
+    API_ROUTES.authGithubLogin.lastIndexOf("/"),
+  );
   const secure = publicUrl.startsWith("https:");
   const baseCookie: CookieOptions = { httpOnly: true, secure, sameSite: "Lax" };
 
   const app = new Hono();
 
-  app.get("/github/login", (c) => {
+  app.get(API_ROUTES.authGithubLogin, (c) => {
     const state = randomToken();
     setCookie(c, OAUTH_STATE_COOKIE, state, {
       ...baseCookie,
-      path: "/api/auth/github",
+      path: stateCookiePath,
       maxAge: OAUTH_STATE_TTL_SECONDS,
     });
     return c.redirect(githubOAuth.authorizeUrl({ redirectUri, state }));
   });
 
-  app.get("/github/callback", async (c) => {
+  app.get(API_ROUTES.authGithubCallback, async (c) => {
     const expectedState = getCookie(c, OAUTH_STATE_COOKIE);
-    deleteCookie(c, OAUTH_STATE_COOKIE, { ...baseCookie, path: "/api/auth/github" });
+    deleteCookie(c, OAUTH_STATE_COOKIE, { ...baseCookie, path: stateCookiePath });
     const state = c.req.query("state");
     const code = c.req.query("code");
     if (!expectedState || !state || !constantTimeEqual(state, expectedState)) {
@@ -90,7 +101,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
     return c.redirect(`${publicUrl}/`);
   });
 
-  app.get("/me", async (c) => {
+  app.get(API_ROUTES.authMe, async (c) => {
     const token = getCookie(c, SESSION_COOKIE);
     const session = token ? await findSession(db, token) : null;
     if (!session) {
@@ -99,9 +110,9 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
     return c.json(await buildMeResponse(db, session));
   });
 
-  app.post("/logout", async (c) => {
+  app.post(API_ROUTES.authLogout, async (c) => {
     const token = getCookie(c, SESSION_COOKIE);
-    if (token) await deleteSession(db, token);
+    if (token) await endSession(token);
     deleteCookie(c, SESSION_COOKIE, { ...baseCookie, path: "/" });
     return c.body(null, 204);
   });
