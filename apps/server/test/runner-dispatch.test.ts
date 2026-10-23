@@ -14,6 +14,7 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  acceptanceCriteria,
   dispatches,
   projects,
   runnerPairingTokens,
@@ -245,6 +246,27 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       expect(other.pending("dispatch_offer")).toHaveLength(0);
       expect(team_.pending("dispatch_offer")).toHaveLength(0);
       expect((await runRow(run.id))?.status).toBe("dispatched");
+    });
+
+    it("prompt 的 Acceptance Criterion：有指令時附上指令，command 類型沒有指令時不顯示「指令：」", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      const task = await readyTask();
+      await database.db.insert(acceptanceCriteria).values({
+        taskId: task.id,
+        position: 1,
+        kind: "command",
+        description: "沿用 verify",
+        command: null,
+      });
+      const run = (await dispatch(task.id)).body;
+      await h.ctx.services.dispatcher.kick();
+      const offer = await mine.next("dispatch_offer");
+      expect(offer.run_id).toBe(run.id);
+      const text = (offer.prompt[0] as { text: string }).text;
+      const lines = text.split("\n");
+      expect(lines).toContain("- [command] 測試通過（指令：`pnpm test`）");
+      expect(lines).toContain("- [command] 沿用 verify");
+      expect(lines.filter((l) => l.includes("指令："))).toHaveLength(1);
     });
 
     it("Local Runner 離線時 Run 留在佇列，不轉給 Team Runner；上線後才派", async () => {
