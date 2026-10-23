@@ -58,6 +58,8 @@ const toMemberRecord = (row: typeof members.$inferSelect): MemberRecord => ({
   githubLogin: row.githubLogin,
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class GitHubDomainService implements DomainService {
   constructor(
     private readonly db: Database,
@@ -106,8 +108,11 @@ export class GitHubDomainService implements DomainService {
    * 與找不到（或不在這個 Team）的 Member 只留顯示名稱，避免 GitHub 通知到同名的其他帳號。
    */
   private async issueBody(description: string, projectId: string): Promise<string> {
+    // 契約的 Member ID 只要求非空字串；不是 UUID 的不查（資料庫的欄位是 uuid，查了會出錯）。
     const memberIds = parseMentions(description).flatMap((m) =>
-      m.target.type === "member" ? [m.target.memberId] : [],
+      m.target.type === "member" && UUID.test(m.target.memberId)
+        ? [m.target.memberId.toLowerCase()]
+        : [],
     );
     if (memberIds.length === 0) return description;
     const rows = await this.db
@@ -117,7 +122,8 @@ export class GitHubDomainService implements DomainService {
       .where(and(eq(projects.id, projectId), inArray(members.id, memberIds)));
     const logins = new Map(rows.map((r) => [r.id, r.login]));
     return replaceMentions(description, (m) => {
-      const login = m.target.type === "member" ? logins.get(m.target.memberId) : undefined;
+      const login =
+        m.target.type === "member" ? logins.get(m.target.memberId.toLowerCase()) : undefined;
       return login ? `@${login}` : m.label;
     });
   }

@@ -22,11 +22,11 @@ describe.skipIf(dbSkipReason !== null)("同步到 GitHub Issue 時的 mention", 
     const { project, repo } = await seedProject(database.db, team.teamId);
     const member = team.members.member;
     const task = await seedReadyTask(database.db, project, repo.id, {
-      description: `請 @[小明](member:${member.id}) 看，@[claude](agent:claude-code) 與 @[外人](member:${other.members.owner.id})`,
+      description: `請 @[小明](member:${member.id.toUpperCase()}) 看，@[claude](agent:claude-code)、@[外人](member:${other.members.owner.id}) 與 @[壞的](member:not-a-uuid)`,
     });
     const ctx = createTestContext(database.db);
     const domain = new GitHubDomainService(database.db, ctx.services.lifecycle);
     const record = await domain.getTask(task.id);
-    expect(record?.description).toBe(`請 @user${member.githubUserId} 看，claude 與 外人`);
+    expect(record?.description).toBe(`請 @user${member.githubUserId} 看，claude、外人 與 壞的`);
   });
 });

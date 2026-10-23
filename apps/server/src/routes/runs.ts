@@ -30,6 +30,7 @@ import {
 } from "../db/schema";
 import { inTransaction } from "../db/tx";
 import { isTerminalRunStatus } from "../domain/run-status";
+import { planGateEnabled } from "../domain/task-lifecycle";
 import { isInFlight } from "../domain/task-state-machine";
 import { toRun, toRunEvent } from "../http/dto";
 import { ApiError, conflict, notFound, readId, readJson, readQuery } from "../http/errors";
@@ -87,7 +88,9 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
         .where(and(eq(taskDependencies.taskId, scope.task.id), ne(tasks.status, "done")));
       if ((blocking?.n ?? 0) > 0) throw conflict("相依的 Task 還沒完成，不能派工");
 
-      const task = await s.lifecycle.startRun(uow, scope.task.id);
+      const task = await s.lifecycle.startRun(uow, scope.task.id, {
+        planGate: planGateEnabled(scope.task, scope.project),
+      });
       const [created] = await tx
         .insert(runs)
         .values({

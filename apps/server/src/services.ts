@@ -10,7 +10,7 @@ import { type CollabStore, PostgresCollabStore } from "./collab/store";
 import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_PUBLIC_URL } from "./config";
 import type { Database } from "./db/client";
 import { DomainEvents } from "./domain/events";
-import { type LifecycleHooks, TaskLifecycleService } from "./domain/task-lifecycle";
+import { TaskLifecycleService } from "./domain/task-lifecycle";
 import { createGitHubApp, type GitHubAppOptions } from "./github/app";
 import {
   createGitHubUserLookup,
@@ -67,7 +67,6 @@ export interface ServicesOptions {
   };
   /** Web 的 origin（GitHub Issue 中的 Task 連結），預設 DEFAULT_PUBLIC_URL。 */
   publicUrl?: string;
-  lifecycleHooks?: LifecycleHooks;
   heartbeatIntervalMs?: number;
   offerTimeoutMs?: number;
   rejectCooldownMs?: number;
@@ -87,7 +86,7 @@ export function createServices(options: ServicesOptions): Services {
   const clock = options.clock ?? systemClock;
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const events = new DomainEvents(logger);
-  const lifecycle = new TaskLifecycleService(events, options.lifecycleHooks);
+  const lifecycle = new TaskLifecycleService(events);
   const githubApp = options.github?.app
     ? createGitHubApp(options.github.app, {
         db,
