@@ -58,6 +58,10 @@ _Avoid_: QA、Validation
 某個 Agent 為某個 Task 做的一次執行，擁有自己的 Worktree、分支與 ACP session。
 _Avoid_: Job、Session、Execution
 
+**主 Run**：
+推動 Task 生命週期的 Run：人派工的 Run，以及 Feedback Loop 接續的 Run。Child Run、判定 Verification 與 @agent 的 `consult` Run 都不會改變 Task 的狀態。
+_Avoid_: Root run、Main job
+
 **Child Run**：
 由另一個 Run 透過 Delegation 產生的 Run。
 _Avoid_: Sub-agent、Subtask
@@ -139,8 +143,24 @@ _Avoid_: Share link、Tunnel URL、Public URL
 _Avoid_: Visual comment、Annotation、Screenshot feedback
 
 **Needs You**：
-等待某位 Member 處理的項目清單：權限請求、待核准的 Gate、停下來的 Run。
+等待某位 Member 處理的項目清單：權限請求、待核准的 Gate、停下來的 Run、Child Run 等待人回答的問題。
 _Avoid_: Inbox、Pending queue
+
+**通知**：
+送給某位 Member 的一則事件消息（Gate 等待核准、被 @mention 等），經由 Channel 送出：App 內的通知中心與桌面推送。每個人可以依事件類型關閉，或設定勿擾時段（只壓住桌面推送）。
+_Avoid_: Alert、Notice
+
+**Channel**：
+通知的發送管道。Phase 1 是 `in_app`（通知中心）與 `desktop`（Electron 的桌面推送）。
+_Avoid_: Transport、Notifier
+
+**Task 留言**：
+人在 Task 上留下的 markdown 留言，可以 @mention；@agent 的 `consult` Run 結束後，Agent 的回覆也貼成一則留言。
+_Avoid_: Comment thread、Reply
+
+**Task note**：
+Agent（`update_task_note`）或 Feedback Loop 在 Task 上留下的進度或決策紀錄，帶來源 Run，只能由系統寫入。
+_Avoid_: Log、Journal
 
 **Event**：
 Run 過程中由 Runner 正規化後送到 Server 的一筆紀錄，例如訊息、tool call、diff、權限請求。
