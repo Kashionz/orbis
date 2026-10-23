@@ -32,7 +32,10 @@ export interface ServerApi {
   createLocalPairingToken(): Promise<PairingTokenCreated>;
   /** 等待自己處理的 Needs You 項目。看不懂的項目（例如新的 kind）略過。 */
   listNeedsYou(): Promise<NeedsYouItem[]>;
-  /** 撤銷 Runner（`DELETE /api/runners/:id`）。Server 已經沒有這台 Runner（404）時視為成功。 */
+  /**
+   * 撤銷 Runner（`DELETE /api/runners/:id`）。Server 已經沒有這台 Runner（404）或已經撤銷過（409）時
+   * 視為成功：目的已經達成。
+   */
   revokeRunner(runnerId: string): Promise<void>;
 }
 
@@ -84,7 +87,7 @@ export function createServerApi(serverUrl: string, fetchFn: typeof fetch): Serve
     async revokeRunner(runnerId) {
       const path = apiPath(API_ROUTES.runner, { runnerId });
       const response = await send(path, { method: "DELETE" });
-      if (!response.ok && response.status !== 404) {
+      if (!response.ok && response.status !== 404 && response.status !== 409) {
         throw new Error(`DELETE ${path} 失敗：HTTP ${response.status}`);
       }
     },

@@ -279,11 +279,14 @@ let trayModel: TrayModel = buildTrayModel({
 });
 
 function renderTray(): void {
+  const previousLabel = trayModel.statusLabel;
   trayModel = buildTrayModel({
     runner: deriveRunnerView(sessionController.snapshot(), supervisor.snapshot()),
     needsYouCount,
     claimingPaused: config.get().claimingPaused,
   });
+  // 狀態變化也寫進 Runner log，排查「為什麼沒有連上」時可以對照時間點
+  if (trayModel.statusLabel !== previousLabel) runnerLog.note(`系統匣：${trayModel.statusLabel}`);
   tray?.render(trayModel);
 }
 
