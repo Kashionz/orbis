@@ -24,6 +24,9 @@ pub struct ConnectConfig {
     /// 第一次連線用的 Pairing token。本機已保存這個 Server 的 Runner token 時忽略。
     pub pairing_token: Option<String>,
     pub runner: RunnerInfo,
+    /// 保存的 Runner token 被 Server 拒絕（例如已被撤銷）時，是否改用 Pairing token 重新 Pairing。
+    /// sidecar 模式為 `false`：直接以需要重新 Pairing 的結束碼結束，由 Desktop 重新取得 Pairing token。
+    pub repair_with_pairing_token: bool,
 }
 
 /// 命令列上提供的值；沒有提供的項目從環境變數或設定檔讀取。
@@ -71,6 +74,7 @@ impl ConnectConfig {
             url,
             http_base,
             pairing_token,
+            repair_with_pairing_token: true,
             runner: RunnerInfo {
                 name,
                 runner_version: env!("CARGO_PKG_VERSION").to_owned(),

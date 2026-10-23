@@ -21,6 +21,7 @@ use orbis_protocol::names;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub use crate::contract::ENV_RUNNER_STATE_DIR;
 use crate::contract::{RUNNER_CONFIG_FILE, RUNNER_STATE_DIR};
 
 /// 覆寫本機目錄的環境變數後綴（完整名稱由 [`names::env_var`] 組出）。
@@ -33,6 +34,7 @@ pub const DEFAULT_PORT_RANGE: (u16, u16) = (41000, 41999);
 #[derive(Debug)]
 pub struct RunnerHome {
     root: PathBuf,
+    state_dir: PathBuf,
     user_home: PathBuf,
     settings: Settings,
     lock: Mutex<()>,
@@ -41,13 +43,21 @@ pub struct RunnerHome {
 impl RunnerHome {
     /// 開啟（必要時建立）本機目錄並讀取設定檔。`root` 為 `None` 時用 `~/<CONFIG_DIR>`。
     pub fn open(root: Option<PathBuf>) -> anyhow::Result<Self> {
+        Self::open_with(root, None)
+    }
+
+    /// 同 [`open`](Self::open)，`state_dir` 另外指定狀態目錄（[`ENV_RUNNER_STATE_DIR`]）；
+    /// 設定檔仍從 `root` 讀取。
+    pub fn open_with(root: Option<PathBuf>, state_dir: Option<PathBuf>) -> anyhow::Result<Self> {
         let user_home = user_home_dir().context("找不到家目錄")?;
         let root = root.unwrap_or_else(|| user_home.join(names::CONFIG_DIR));
-        std::fs::create_dir_all(root.join(RUNNER_STATE_DIR))
-            .with_context(|| format!("無法建立 {}", root.display()))?;
+        let state_dir = state_dir.unwrap_or_else(|| root.join(RUNNER_STATE_DIR));
+        std::fs::create_dir_all(&state_dir)
+            .with_context(|| format!("無法建立 {}", state_dir.display()))?;
         let settings = Settings::load(&root.join(RUNNER_CONFIG_FILE))?;
         Ok(Self {
             root,
+            state_dir,
             user_home,
             settings,
             lock: Mutex::new(()),
@@ -63,7 +73,7 @@ impl RunnerHome {
     }
 
     pub fn state_dir(&self) -> PathBuf {
-        self.root.join(RUNNER_STATE_DIR)
+        self.state_dir.clone()
     }
 
     pub fn spool_dir(&self) -> PathBuf {

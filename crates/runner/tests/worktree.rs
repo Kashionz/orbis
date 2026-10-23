@@ -551,6 +551,11 @@ async fn review_用的_diff_帶完整新舊內容() {
     git(&wt.path, &["add", "-A"]);
     git(&wt.path, &["commit", "-m", "部分修改"]);
     std::fs::write(wt.path.join("later.txt"), "還沒 commit\n").unwrap();
+    std::fs::write(
+        wt.path.join("logo.png"),
+        [0x89, b'P', b'N', b'G', 0, 0, 0xff],
+    )
+    .unwrap();
     // 只在本機使用的檔案（copy 進來的）不列入 diff。
     std::fs::write(wt.path.join("local.env"), "SECRET=1\n").unwrap();
 
@@ -588,6 +593,13 @@ async fn review_用的_diff_帶完整新舊內容() {
 
     let untracked = find("later.txt");
     assert_eq!(untracked.change, FileChange::Added);
+    assert!(!untracked.binary);
+
+    // 二進位檔案：binary 為 true，新舊內容都是 null。
+    let image = find("logo.png");
+    assert_eq!(image.change, FileChange::Added);
+    assert!(image.binary);
+    assert!(image.old.is_none() && image.new.is_none());
 
     let deleted = find("gone.txt");
     assert_eq!(deleted.change, FileChange::Deleted);

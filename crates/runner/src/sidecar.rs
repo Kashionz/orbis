@@ -10,19 +10,24 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
-use crate::contract::{SidecarCommand, SidecarState, SidecarStatus};
+use crate::contract::{
+    SIDECAR_EXIT_NEEDS_PAIRING, SidecarCommand, SidecarOutput, SidecarState, SidecarStatus,
+};
 use crate::supervisor::Supervisor;
 
 /// Runner 的結束碼（E1 依此決定要不要重新啟動）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ExitCode {
     /// 正常結束（收到 shutdown、stdin EOF 或中斷訊號）。
     Normal = 0,
     /// 其他錯誤（E1 可以重新啟動）。
     Error = 1,
-    /// Server 拒絕 Pairing token／Runner token，或沒有可用的身分：需要重新 Pairing，不要直接重啟。
-    NeedsPairing = 2,
+    /// Server 拒絕 Pairing token／Runner token（含連線中 Runner token 被撤銷），或沒有可用的身分：
+    /// 需要重新 Pairing，不要直接重啟。
+    NeedsPairing = SIDECAR_EXIT_NEEDS_PAIRING,
     /// 協定版本不相容：需要更新 Runner，不要直接重啟。
+    // TODO(contract): 契約目前只定義 0 與 78，這個值已在契約 review 時提出。
     VersionMismatch = 3,
 }
 
@@ -44,7 +49,7 @@ pub async fn report_status(
             claiming_paused: snap.claiming_paused,
         };
         if last.as_ref() != Some(&status) {
-            if let Ok(mut line) = serde_json::to_string(&status) {
+            if let Ok(mut line) = serde_json::to_string(&SidecarOutput::Status(status.clone())) {
                 line.push('\n');
                 if stdout.write_all(line.as_bytes()).await.is_err() || stdout.flush().await.is_err()
                 {

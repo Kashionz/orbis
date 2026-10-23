@@ -9,8 +9,12 @@ use crate::contract::{FileChange, RunDiff, RunDiffFile};
 use crate::git::{Git, GitError};
 use crate::secrets::Redactor;
 
-/// 二進位檔案的替代文字。
-const BINARY_PLACEHOLDER: &str = "[二進位檔案]";
+/// 一邊（修改前或修改後）的內容。
+enum Content {
+    Text(TextBody),
+    /// 二進位檔案：`binary` 為 `true`，新舊內容一律為 `null`。
+    Binary,
+}
 
 /// 計算 Worktree 相對於 `base_commit` 的 diff。
 ///
@@ -87,21 +91,29 @@ pub async fn run_diff(
             FileChange::Added => None,
             _ => Some(match git.show_file(base_commit, old_source).await? {
                 Some(text) => body(&text, redactor),
-                None => TextBody::Inline {
+                None => Content::Text(TextBody::Inline {
                     text: String::new(),
-                },
+                }),
             }),
         };
         let new = match change {
             FileChange::Deleted => None,
             _ => Some(read_worktree_file(worktree, &path, redactor)),
         };
+        let binary = [&old, &new]
+            .into_iter()
+            .any(|side| matches!(side, Some(Content::Binary)));
+        let text = |side: Option<Content>| match side {
+            Some(Content::Text(body)) if !binary => Some(body),
+            _ => None,
+        };
         files.push(RunDiffFile {
             path,
             old_path,
             change,
-            old,
-            new,
+            binary,
+            old: text(old),
+            new: text(new),
         });
     }
     Ok(RunDiff {
@@ -112,7 +124,7 @@ pub async fn run_diff(
 
 /// 讀 Worktree 中檔案的新內容，不跟著連結讀到 Worktree 以外：
 /// symlink 回報連結目標（和 git 記錄的內容一樣），解開後落在 Worktree 外的路徑不讀。
-fn read_worktree_file(worktree: &Path, path: &str, redactor: &Redactor) -> TextBody {
+fn read_worktree_file(worktree: &Path, path: &str, redactor: &Redactor) -> Content {
     let full = worktree.join(path);
     if let Ok(meta) = std::fs::symlink_metadata(&full)
         && meta.file_type().is_symlink()
@@ -120,41 +132,37 @@ fn read_worktree_file(worktree: &Path, path: &str, redactor: &Redactor) -> TextB
         let target = std::fs::read_link(&full)
             .map(|t| t.to_string_lossy().into_owned())
             .unwrap_or_default();
-        return TextBody::Inline {
+        return Content::Text(TextBody::Inline {
             text: redactor.redact(&target),
-        };
+        });
     }
     if !crate::paths::is_within(
         &crate::paths::resolve_existing(&full),
         &crate::paths::canonical(worktree),
     ) {
-        return TextBody::Inline {
+        return Content::Text(TextBody::Inline {
             text: OUTSIDE_PLACEHOLDER.into(),
-        };
+        });
     }
     match std::fs::read(&full) {
         Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(text) if !text.contains('\0') => body(&text, redactor),
-            _ => TextBody::Inline {
-                text: BINARY_PLACEHOLDER.into(),
-            },
+            Ok(text) => body(&text, redactor),
+            Err(_) => Content::Binary,
         },
-        Err(_) => TextBody::Inline {
+        Err(_) => Content::Text(TextBody::Inline {
             text: String::new(),
-        },
+        }),
     }
 }
 
 /// 經由連結指向 Worktree 以外的檔案的替代文字。
 const OUTSIDE_PLACEHOLDER: &str = "[指向 Worktree 以外的連結，不讀取內容]";
 
-fn body(text: &str, redactor: &Redactor) -> TextBody {
+fn body(text: &str, redactor: &Redactor) -> Content {
     if text.contains('\0') {
-        return TextBody::Inline {
-            text: BINARY_PLACEHOLDER.into(),
-        };
+        return Content::Binary;
     }
-    TextBody::Inline {
+    Content::Text(TextBody::Inline {
         text: redactor.redact(text),
-    }
+    })
 }

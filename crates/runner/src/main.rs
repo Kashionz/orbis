@@ -8,7 +8,7 @@ use orbis_protocol::names;
 use orbis_runner::config::{ConfigArgs, ConnectConfig, ENV_LOG};
 use orbis_runner::connection::{NeedsPairing, Rejected};
 use orbis_runner::contract::SidecarState;
-use orbis_runner::home::{ENV_HOME, RunnerHome};
+use orbis_runner::home::{ENV_HOME, ENV_RUNNER_STATE_DIR, RunnerHome};
 use orbis_runner::sidecar::{self, ExitCode};
 use orbis_runner::supervisor::Supervisor;
 use tokio::sync::watch;
@@ -38,7 +38,7 @@ struct Cli {
     name: Option<String>,
 
     /// 本機目錄（設定檔 runner.toml 與狀態目錄），預設是家目錄下的設定目錄。
-    /// 未指定時讀取環境變數 <前綴>HOME。
+    /// 未指定時讀取環境變數 <前綴>HOME。環境變數 <前綴>RUNNER_STATE_DIR 只覆寫狀態目錄。
     #[arg(long, value_name = "DIR")]
     home: Option<PathBuf>,
 
@@ -68,7 +68,9 @@ async fn main() -> std::process::ExitCode {
             exit_code(&e)
         }
     };
-    std::process::ExitCode::from(code as u8)
+    // 直接結束：sidecar 讀 stdin 的阻塞執行緒會讓 runtime 一直等下去（例如 Runner token 被撤銷時
+    // 要以結束碼離開，但 Desktop 還沒關 stdin）。Run 的程序樹已在 `run` 中結束。
+    std::process::exit(code as i32)
 }
 
 fn exit_code(e: &anyhow::Error) -> ExitCode {
@@ -87,13 +89,21 @@ fn exit_code(e: &anyhow::Error) -> ExitCode {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    let home_dir = cli.home.or_else(|| {
-        std::env::var_os(names::env_var(ENV_HOME))
+    let env_path = |suffix: &str| {
+        std::env::var_os(names::env_var(suffix))
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
-    });
-    let home = Arc::new(RunnerHome::open(home_dir)?);
-    info!(home = %home.root().display(), "Runner 本機目錄");
+    };
+    let home_dir = cli.home.or_else(|| env_path(ENV_HOME));
+    let home = Arc::new(RunnerHome::open_with(
+        home_dir,
+        env_path(ENV_RUNNER_STATE_DIR),
+    )?);
+    info!(
+        home = %home.root().display(),
+        state_dir = %home.state_dir().display(),
+        "Runner 本機目錄"
+    );
     let config = ConnectConfig::resolve(
         ConfigArgs {
             server: cli.server,
@@ -103,6 +113,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         home.settings(),
         |name| std::env::var(name).ok(),
     )?;
+    let config = ConnectConfig {
+        repair_with_pairing_token: !cli.sidecar,
+        ..config
+    };
     let (supervisor, frames) = Supervisor::new(home)?;
     let (shutdown_tx, shutdown) = watch::channel(false);
     let (state_tx, state) = watch::channel((SidecarState::Connecting, None));

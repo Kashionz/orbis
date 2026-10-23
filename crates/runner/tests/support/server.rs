@@ -127,12 +127,23 @@ async fn handle_put(stream: TcpStream, blobs: Blobs) {
     }
     let mut body = vec![0u8; length];
     reader.read_exact(&mut body).await.unwrap();
-    let id = path
+    let (id, query) = path
         .strip_prefix(&format!("{RUNNER_BLOB_PATH}/"))
-        .and_then(|rest| rest.split('?').next())
-        .unwrap_or_default()
-        .to_owned();
-    let status = if authorized && !id.is_empty() {
+        .map(|rest| rest.split_once('?').unwrap_or((rest, "")))
+        .unwrap_or_default();
+    let id = id.to_owned();
+    // 契約：`?run_id=<run_id>&sha256=<sha256>`，Server 驗證 SHA-256；大小即 body 長度。
+    let param = |key: &str| {
+        query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(&format!("{key}=")))
+            .unwrap_or_default()
+    };
+    let verified = !param("run_id").is_empty()
+        && param("sha256") == orbis_runner::repo_config::sha256_hex(&body);
+    let status = if !verified {
+        "400 Bad Request"
+    } else if authorized && !id.is_empty() {
         blobs.lock().unwrap().insert(id, body);
         "200 OK"
     } else {

@@ -12,6 +12,8 @@ use orbis_protocol::enums::DelegationMode;
 use orbis_protocol::frame::ServerToRunner;
 use orbis_protocol::{PROTOCOL_VERSION, names};
 use orbis_runner::config::{ENV_PAIRING_TOKEN, ENV_SERVER_URL};
+use orbis_runner::contract::{SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_FLAG};
+use orbis_runner::home::ENV_RUNNER_STATE_DIR;
 use support::server::{
     FakeServer, RunnerOptions, fake_agent_toml, offer, send_offer, spawn_runner, write_runner_toml,
 };
@@ -154,9 +156,9 @@ async fn reconnects_after_the_server_closes_the_connection() {
     assert_eq!(hello["type"], "hello");
 }
 
-/// Pairing token 被拒絕：印出原因並以結束碼 2（需要重新 Pairing）結束。
+/// Pairing token 被拒絕：印出原因並以「需要重新 Pairing」的結束碼結束。
 #[tokio::test]
-async fn exits_with_code_2_when_pairing_is_rejected() {
+async fn exits_with_needs_pairing_code_when_pairing_is_rejected() {
     let mut server = FakeServer::start().await;
     let home = temp_dir("orbis home");
     let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
@@ -166,7 +168,12 @@ async fn exits_with_code_2_when_pairing_is_rejected() {
         .await;
     conn.ws.close(None).await.ok();
     let status = runner.wait_exit().await;
-    assert_eq!(status.code(), Some(2), "stderr：{}", runner.stderr());
+    assert_eq!(
+        status.code(),
+        Some(SIDECAR_EXIT_NEEDS_PAIRING.into()),
+        "stderr：{}",
+        runner.stderr()
+    );
     assert!(
         runner.stderr().contains("invalid_pairing_token"),
         "{}",
@@ -187,9 +194,9 @@ async fn exits_with_code_3_on_version_mismatch() {
     assert_eq!(status.code(), Some(3), "stderr：{}", runner.stderr());
 }
 
-/// 沒有保存的 Runner token、也沒有 Pairing token：結束碼 2，訊息說明要設定的環境變數。
+/// 沒有保存的 Runner token、也沒有 Pairing token：需要重新 Pairing，訊息說明要設定的環境變數。
 #[tokio::test]
-async fn exits_with_code_2_without_any_identity() {
+async fn exits_with_needs_pairing_code_without_any_identity() {
     let server = FakeServer::start().await;
     let home = temp_dir("orbis home");
     let base = server.base_url();
@@ -197,7 +204,7 @@ async fn exits_with_code_2_without_any_identity() {
     opts.pairing_token = None;
     let mut runner = spawn_runner(opts);
     let status = runner.wait_exit().await;
-    assert_eq!(status.code(), Some(2));
+    assert_eq!(status.code(), Some(SIDECAR_EXIT_NEEDS_PAIRING.into()));
     assert!(
         runner.stderr().contains(&names::env_var(ENV_PAIRING_TOKEN)),
         "{}",
@@ -350,7 +357,7 @@ async fn sidecar_reports_status_and_follows_commands() {
     let home = temp_dir("orbis home");
     let base = server.base_url();
     let mut opts = RunnerOptions::new(&base, home.path());
-    opts.extra_args = vec!["--sidecar".into()];
+    opts.extra_args = vec![SIDECAR_FLAG.into()];
     opts.stdin_piped = true;
     opts.stdout_piped = true;
     let mut runner = spawn_runner(opts);
@@ -367,6 +374,7 @@ async fn sidecar_reports_status_and_follows_commands() {
     };
 
     let first = next_status().await;
+    assert_eq!(first["type"], "status", "{first}");
     assert_eq!(first["state"], "connecting", "{first}");
     let mut conn = server.accept().await;
     conn.handshake(Vec::new(), Some("rt_1")).await;
@@ -383,7 +391,7 @@ async fn sidecar_reports_status_and_follows_commands() {
     assert_eq!(connected["claiming_paused"], false);
 
     stdin
-        .write_all(b"{\"command\":\"pause_claiming\"}\n")
+        .write_all(b"{\"type\":\"pause_claiming\"}\n")
         .await
         .unwrap();
     let paused = loop {
@@ -416,4 +424,69 @@ async fn sidecar_reports_status_and_follows_commands() {
     drop(stdin);
     let status = runner.wait_exit().await;
     assert_eq!(status.code(), Some(0), "stderr：{}", runner.stderr());
+}
+
+/// sidecar：保存的 Runner token 被撤銷（invalid_runner_token）時不改用 Pairing token，
+/// 直接以「需要重新 Pairing」的結束碼結束，由 Desktop 重新取得 Pairing token。
+#[tokio::test]
+async fn sidecar_exits_for_re_pairing_when_runner_token_is_revoked() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_old")).await;
+    conn.recv().await;
+    runner.child.kill().await.unwrap();
+    drop(conn);
+
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.extra_args = vec![SIDECAR_FLAG.into()];
+    opts.stdin_piped = true;
+    let mut runner = spawn_runner(opts);
+    let _stdin = runner.child.stdin.take();
+    let mut conn = server.accept().await;
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["kind"], "runner_token");
+    conn.send(&reject(HelloRejectReason::InvalidRunnerToken))
+        .await;
+    conn.ws.close(None).await.ok();
+    let status = runner.wait_exit().await;
+    assert_eq!(
+        status.code(),
+        Some(SIDECAR_EXIT_NEEDS_PAIRING.into()),
+        "stderr：{}",
+        runner.stderr()
+    );
+}
+
+/// `<前綴>RUNNER_STATE_DIR` 只覆寫狀態目錄：Runner token 存到那裡，設定檔仍從本機目錄讀取。
+#[tokio::test]
+async fn state_dir_variable_moves_only_the_state() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let state = temp_dir("desktop state");
+    // 名稱只寫在本機目錄的設定檔中。
+    write_runner_toml(home.path(), "name = \"從設定檔來的名稱\"\n");
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.env = vec![(
+        names::env_var(ENV_RUNNER_STATE_DIR),
+        state.path().to_string_lossy().into_owned(),
+    )];
+    let _runner = spawn_runner(opts);
+    let mut conn = server.accept().await;
+    let hello = conn.handshake(Vec::new(), Some("rt_1")).await;
+    assert_eq!(hello["runner"]["name"], "從設定檔來的名稱", "{hello}");
+    conn.recv().await;
+    let saved = std::fs::read_to_string(state.path().join("credentials.json")).unwrap();
+    assert!(saved.contains("rt_1"), "{saved}");
+    assert!(
+        !home
+            .path()
+            .join(orbis_runner::contract::RUNNER_STATE_DIR)
+            .join("credentials.json")
+            .exists(),
+        "狀態不應寫到本機目錄"
+    );
 }

@@ -14,9 +14,22 @@ pub const RUNNER_CONFIG_FILE: &str = "runner.toml";
 /// `~/<CONFIG_DIR>/` 下 Runner 的狀態目錄（Runner token、port 分配、信任紀錄、Event 暫存）。
 pub const RUNNER_STATE_DIR: &str = "runner";
 
+// TODO(contract): 移到 `orbis_protocol::names::ENV_RUNNER_STATE_DIR`。
+/// 只覆寫狀態目錄的環境變數後綴（完整名稱由 `names::env_var` 組出）；
+/// `RUNNER_CONFIG_FILE` 仍從 `~/<CONFIG_DIR>/`（或 `<前綴>HOME`）讀取。Desktop 代管的 Runner 用它。
+pub const ENV_RUNNER_STATE_DIR: &str = "RUNNER_STATE_DIR";
+
 // TODO(contract): 移到 `orbis_protocol`，與 `RUNNER_WS_PATH` 並列。
-/// blob 上傳的 HTTP 路徑前綴：`PUT <server><RUNNER_BLOB_PATH>/<blob_id>`。
+/// blob 上傳的 HTTP 路徑前綴：`PUT <server><RUNNER_BLOB_PATH>/<blob_id>?run_id=<run_id>&sha256=<sha256>`。
 pub const RUNNER_BLOB_PATH: &str = "/api/runner/blobs";
+
+// TODO(contract): 改用 `orbis_protocol::sidecar::SIDECAR_FLAG`。
+/// 啟用 sidecar 模式的命令列旗標。
+pub const SIDECAR_FLAG: &str = "--sidecar";
+
+// TODO(contract): 改用 `orbis_protocol::sidecar::SIDECAR_EXIT_NEEDS_PAIRING`。
+/// sidecar：Runner token 無效或已被撤銷、需要重新 Pairing 時的結束碼（BSD 的 `EX_CONFIG`）。
+pub const SIDECAR_EXIT_NEEDS_PAIRING: u8 = 78;
 
 /// Heartbeat（含暫停領取的旗標）。
 // TODO(contract): 併入 `orbis_protocol::connection::Heartbeat` 的 `accepting_dispatches`。
@@ -45,6 +58,8 @@ pub struct RunDiffFile {
     /// `renamed` 時的舊路徑，其他為 `null`。
     pub old_path: Option<String>,
     pub change: FileChange,
+    /// 二進位檔案。為 `true` 時 `old` 與 `new` 一律為 `null`。
+    pub binary: bool,
     /// 修改前的內容；新增的檔案為 `null`。
     pub old: Option<TextBody>,
     /// 修改後的內容；刪除的檔案為 `null`。
@@ -131,8 +146,16 @@ pub struct EventFrame {
     pub kind: OutgoingKind,
 }
 
-/// sidecar 模式的狀態（stdout 每行一個 JSON）。
-// TODO(contract): 移到協定，讓 E1 從 `packages/protocol` 取得型別。
+/// sidecar 模式寫到 stdout 的一行，以 `type` 區分種類。
+// TODO(contract): 改用 `orbis_protocol::sidecar::SidecarOutput`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SidecarOutput {
+    Status(SidecarStatus),
+}
+
+/// sidecar 模式的狀態。
+// TODO(contract): 改用 `orbis_protocol::sidecar::SidecarStatus`。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SidecarStatus {
     pub state: SidecarState,
@@ -149,10 +172,10 @@ pub enum SidecarState {
     Offline,
 }
 
-/// sidecar 模式的指令（stdin 每行一個 JSON）。
-// TODO(contract): 移到協定。
+/// sidecar 模式的指令（stdin 每行一個 JSON），以 `type` 區分種類。
+// TODO(contract): 改用 `orbis_protocol::sidecar::SidecarCommand`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "command", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum SidecarCommand {
     PauseClaiming,
     ResumeClaiming,
@@ -179,6 +202,7 @@ mod tests {
                         path: "a.txt".into(),
                         old_path: None,
                         change: FileChange::Added,
+                        binary: false,
                         old: None,
                         new: Some(TextBody::Inline { text: "x".into() }),
                     }],
@@ -218,8 +242,27 @@ mod tests {
 
     #[test]
     fn sidecar_commands_parse_from_json_lines() {
-        let command: SidecarCommand =
-            serde_json::from_str(r#"{"command":"pause_claiming"}"#).unwrap();
+        let command: SidecarCommand = serde_json::from_str(r#"{"type":"pause_claiming"}"#).unwrap();
         assert_eq!(command, SidecarCommand::PauseClaiming);
+    }
+
+    #[test]
+    fn sidecar_status_line_is_tagged_with_type() {
+        let line = SidecarOutput::Status(SidecarStatus {
+            state: SidecarState::Connected,
+            runner_id: Some("r1".into()),
+            active_runs: 1,
+            claiming_paused: false,
+        });
+        assert_eq!(
+            serde_json::to_value(&line).unwrap(),
+            serde_json::json!({
+                "type": "status",
+                "state": "connected",
+                "runner_id": "r1",
+                "active_runs": 1,
+                "claiming_paused": false,
+            })
+        );
     }
 }

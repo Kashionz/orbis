@@ -152,6 +152,7 @@ pub async fn run(
                 if let Some(rejected) = e.downcast_ref::<Rejected>() {
                     // 保存的 Runner token 失效、但還有 Pairing token：清掉 token 改用 Pairing 重試一次。
                     if rejected.0.reason == HelloRejectReason::InvalidRunnerToken
+                        && config.repair_with_pairing_token
                         && config.pairing_token.is_some()
                         && supervisor.home().runner_token(&config.url)?.is_some()
                     {
@@ -352,17 +353,16 @@ impl BlobUploader {
 
     async fn upload(
         &self,
+        run_id: &str,
         blob: &orbis_protocol::event::BlobRef,
         bytes: Vec<u8>,
     ) -> anyhow::Result<()> {
-        // TODO(contract)：驗證用的 sha256／size 怎麼帶（目前用 query string）以契約 PR 為準。
-        let url = format!(
-            "{}/{}?sha256={}&size={}",
-            self.base, blob.blob_id, blob.sha256, blob.size
-        );
+        // 大小由 Server 依 body 長度驗證。
+        let url = format!("{}/{}", self.base, blob.blob_id);
         let response = self
             .client
             .put(&url)
+            .query(&[("run_id", run_id), ("sha256", blob.sha256.as_str())])
             .bearer_auth(&self.token)
             .header(reqwest::header::CONTENT_TYPE, &blob.media_type)
             .body(bytes)
@@ -434,7 +434,9 @@ impl Session {
                 continue;
             }
             let bytes = outbox.blob_bytes(&blob.blob_id)?;
-            self.uploader.upload(blob, bytes).await?;
+            self.uploader
+                .upload(item.frame.run_id.as_str(), blob, bytes)
+                .await?;
             outbox.mark_uploaded(&blob.blob_id);
         }
         self.conn.send_typed("event", &item.frame).await?;
