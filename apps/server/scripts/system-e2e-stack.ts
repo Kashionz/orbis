@@ -510,8 +510,10 @@ async function main(): Promise<void> {
   logger.info("e2e stack 已就緒；按 Ctrl+C（或送 SIGTERM、關閉 stdin）結束");
 }
 
-process.once("SIGINT", () => void shutdown("SIGINT"));
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
+// 用 on 而不是 once：Testcontainers 用到的 signal-exit 在「只剩它自己的 listener」時會重新送出訊號，
+// once 的 listener 執行後就被移除，程序會在清理完成之前被預設行為終止。重複的訊號由 shutdown() 忽略。
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
 // stdin 是 pipe 時（例如由測試或 CI 的程序管理），關閉 stdin 也代表結束。
 // 是終端機、/dev/null（NUL）或一般檔案時不看 stdin：背景執行時 stdin 常是 /dev/null，會立刻讀到結尾。
 // 不用 isFIFO() 判斷：Windows 的 pipe 在 Node 中 isFIFO() 是 false。
