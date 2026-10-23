@@ -19,6 +19,7 @@ import {
 } from "./github/integration";
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
+import { createPreviewService, type PreviewService } from "./preview";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
 import { EventIngest } from "./runs/event-ingest";
@@ -45,6 +46,8 @@ export interface Services {
   blobCleanup: BlobCleanup;
   sessionCleanup: SessionCleanup;
   heartbeatIntervalMs: number;
+  /** Preview 網址的換票與登入保護（E 軌，src/preview/）。 */
+  preview: PreviewService;
 }
 
 export interface ServicesOptions {
@@ -67,6 +70,8 @@ export interface ServicesOptions {
   /** 未提供時存在 blobDir（預設 DEFAULT_BLOB_DIR）。 */
   blobStore?: BlobStore;
   blobDir?: string;
+  /** Preview 網域（CONFIG_ENV.previewDomain）；未提供時不提供 Preview 網址。 */
+  previewDomain?: string | null;
 }
 
 export function createServices(options: ServicesOptions): Services {
@@ -125,5 +130,11 @@ export function createServices(options: ServicesOptions): Services {
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     sessionCleanup,
     heartbeatIntervalMs,
+    preview: createPreviewService({
+      db,
+      clock,
+      domain: options.previewDomain,
+      publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
+    }),
   };
 }

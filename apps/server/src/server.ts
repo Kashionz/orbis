@@ -8,6 +8,8 @@ import type { GitHubOAuth } from "./auth/github-oauth";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
+import { createPreviewHost } from "./preview/host";
+import { PreviewRelayService } from "./preview/relay";
 import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
 import { createServices, type Services, type ServicesOptions } from "./services";
 import { attachWebEndpoint, type WebEndpoint } from "./web/ws";
@@ -22,7 +24,7 @@ export interface ServerDeps {
     | "devPairingToken"
     | "runnerHeartbeatIntervalMs"
   > &
-    Partial<Pick<Config, "blobDir" | "apiOrigin">>;
+    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
@@ -56,11 +58,37 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       heartbeatIntervalMs: deps.config.runnerHeartbeatIntervalMs,
       blobDir: deps.config.blobDir,
       publicUrl: deps.config.publicUrl,
+      previewDomain: deps.config.previewDomain,
       ...(deps.github && { github: deps.github }),
     });
   const app = createApp({ ...deps, services });
-  const server = createAdaptorServer({ fetch: app.fetch }) as Server;
+  // Preview 網址（`<run-id>.<Preview 網域>`）的請求依 Host 分流給 E 軌的 src/preview/，其他照常交給 API
+  const previewRelay = new PreviewRelayService({
+    db: deps.db,
+    hub: services.hub,
+    logger: deps.logger,
+    scheme: services.preview.domain?.scheme ?? "http",
+  });
+  const previewHost = createPreviewHost({
+    domain: services.preview.domain,
+    publicUrl: services.preview.publicUrl,
+    auth: services.preview.auth,
+    relay: previewRelay,
+  });
+  const server = createAdaptorServer({
+    fetch: (request: Request, env: unknown) => {
+      const runId = previewHost.runIdFor(request.headers.get("host") ?? undefined);
+      return runId ? previewHost.fetch(runId, request) : app.fetch(request, env);
+    },
+  }) as Server;
   const router = new UpgradeRouter(server);
+  router.registerHost(
+    (host) => previewHost.runIdFor(host) !== null,
+    (request, socket, head) => {
+      const runId = previewHost.runIdFor(request.headers.host);
+      if (runId) void previewHost.upgrade(runId, request, socket, head);
+    },
+  );
   const runnerEndpoint = attachRunnerEndpoint(router, {
     db: deps.db,
     logger: deps.logger,
@@ -72,6 +100,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     devPairingToken: deps.config.devPairingToken,
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
+    preview: previewRelay,
   });
   const webEndpoint = attachWebEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,

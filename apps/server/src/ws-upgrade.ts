@@ -1,5 +1,5 @@
 // 依路徑分派 HTTP upgrade 到各個 WebSocket 端點（Runner 的 `/runner`、Web 的即時推送）。
-// 沒有登記的路徑直接關閉連線。
+// 依 Host 登記的處理（Preview 網址）優先於路徑。沒有登記的路徑直接關閉連線。
 
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
@@ -8,7 +8,16 @@ export type UpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Bu
 
 export class UpgradeRouter {
   private readonly handlers = new Map<string, UpgradeHandler>();
+  private readonly hostHandlers: {
+    match: (host: string | undefined) => boolean;
+    handler: UpgradeHandler;
+  }[] = [];
   private readonly onUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const byHost = this.hostHandlers.find((h) => h.match(request.headers.host));
+    if (byHost) {
+      byHost.handler(request, socket, head);
+      return;
+    }
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     const handler = this.handlers.get(path);
     if (!handler) {
@@ -24,6 +33,11 @@ export class UpgradeRouter {
 
   register(path: string, handler: UpgradeHandler): void {
     this.handlers.set(path, handler);
+  }
+
+  /** 依 Host 分派（Preview 網址），優先於路徑。 */
+  registerHost(match: (host: string | undefined) => boolean, handler: UpgradeHandler): void {
+    this.hostHandlers.push({ match, handler });
   }
 
   close(): void {

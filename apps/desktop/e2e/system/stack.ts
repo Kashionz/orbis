@@ -115,14 +115,17 @@ export interface StartedStack {
 }
 
 /**
- * 以 `--runner-config-out <runnerHome>` 啟動 `e2e:stack`，等它印出 ready 行。
+ * 啟動 `e2e:stack`，等它印出 ready 行。有 `runnerHome` 時以 `--runner-config-out <runnerHome>` 啟動
+ * （不啟動 Runner，由 Desktop 的 sidecar 自己 Pairing）；沒有時 stack 自己啟動 Runner。
  * 有 repo 根目錄的 `.env` 時讀取（例如本機的 `<前綴>DATABASE_URL`）；沒有資料庫設定時 stack 以
  * Testcontainers 啟動 Postgres。
  */
 export async function startStack(options: {
   serverPort: number;
   webOrigin: string;
-  runnerHome: string;
+  runnerHome?: string;
+  /** 額外的環境變數（例如 Preview 網域）。 */
+  env?: Record<string, string>;
 }): Promise<StartedStack> {
   const log = logTo("stack.log");
   const child = spawn(
@@ -132,8 +135,7 @@ export async function startStack(options: {
       "--import",
       "tsx",
       "scripts/system-e2e-stack.ts",
-      "--runner-config-out",
-      options.runnerHome,
+      ...(options.runnerHome ? ["--runner-config-out", options.runnerHome] : []),
     ],
     {
       cwd: serverDir,
@@ -141,6 +143,7 @@ export async function startStack(options: {
         ...process.env,
         [envVar("SERVER_PORT")]: String(options.serverPort),
         [envVar("PUBLIC_URL")]: options.webOrigin,
+        ...options.env,
       },
       stdio: ["pipe", "pipe", "pipe"],
       detached: DETACHED,

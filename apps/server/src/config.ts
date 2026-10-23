@@ -4,6 +4,7 @@
 import { fileURLToPath } from "node:url";
 import { envVar } from "@orbis/api-contract";
 import { z } from "zod";
+import { previewDomainProblem } from "./preview/domain";
 
 export const DEFAULT_SERVER_PORT = 4000;
 export const DEFAULT_PUBLIC_URL = "http://localhost:5173";
@@ -33,6 +34,11 @@ export interface Config {
   runnerHeartbeatIntervalMs: number;
   /** blob（大型 Event 內容、截圖）在本機檔案系統的存放目錄。 */
   blobDir: string;
+  /**
+   * Preview 網域（ARCHITECTURE §13），例如 `preview.example.com`：Run 的 Preview 網址是
+   * `<run-id>.<Preview 網域>`。未設定時不提供 Preview 網址。
+   */
+  previewDomain: string | null;
   logLevel: string;
   /** 以易讀格式輸出 log（開發用）。 */
   prettyLogs: boolean;
@@ -77,6 +83,7 @@ export const CONFIG_ENV = {
   devPairingToken: envVar("DEV_PAIRING_TOKEN"),
   runnerHeartbeatIntervalMs: envVar("RUNNER_HEARTBEAT_INTERVAL_MS"),
   blobDir: envVar("BLOB_DIR"),
+  previewDomain: envVar("PREVIEW_DOMAIN"),
   logLevel: envVar("LOG_LEVEL"),
   logPretty: envVar("LOG_PRETTY"),
 } as const;
@@ -114,6 +121,10 @@ const EnvSchema = z.object({
       .default(DEFAULT_HEARTBEAT_INTERVAL_MS),
   ),
   blobDir: optionalString,
+  previewDomain: optionalString.superRefine((value, ctx) => {
+    const problem = value === undefined ? null : previewDomainProblem(value);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  }),
   logLevel: optionalString.pipe(z.enum(LOG_LEVELS).default("info")),
   logPretty: optionalString.pipe(z.enum(["0", "1"]).optional()),
 } satisfies Record<EnvKey, z.ZodType>);
@@ -143,6 +154,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     devPairingToken: e.devPairingToken ?? null,
     runnerHeartbeatIntervalMs: e.runnerHeartbeatIntervalMs,
     blobDir: e.blobDir ?? DEFAULT_BLOB_DIR,
+    previewDomain: e.previewDomain ?? null,
     logLevel: e.logLevel,
     prettyLogs: e.logPretty === undefined ? env.NODE_ENV !== "production" : e.logPretty === "1",
   };

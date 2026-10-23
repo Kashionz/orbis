@@ -5,4 +5,4 @@
 ## Consequences
 
 - Server 要承擔 Preview 的頻寬，大型資源也會經過 Runner 的上傳頻寬。
-- 路徑式網址（`/preview/<run-id>/`）會讓使用絕對路徑載入資源的 app 壞掉。要在路徑式與子網域式之間做選擇，見 ARCHITECTURE §19 的待決事項。
+- 路徑式網址（`/preview/<run-id>/`）會讓使用絕對路徑載入資源的 app 壞掉。因此採用子網域式（`https://<run-id>.<Preview 網域>/`），代價是部署時需要 wildcard DNS 與 wildcard 憑證，見 ARCHITECTURE §13。

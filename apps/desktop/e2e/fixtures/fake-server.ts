@@ -12,6 +12,7 @@ import {
   type NeedsYouItem,
   type PairingTokenCreated,
 } from "@orbis/api-contract";
+import { NAMES } from "@orbis/api-contract/names";
 import {
   type Hello,
   PROTOCOL_VERSION,
@@ -21,6 +22,11 @@ import {
 } from "@orbis/protocol";
 import { WebSocketServer } from "ws";
 import { SESSION_COOKIE } from "../../src/main/names";
+import {
+  type PreviewState,
+  previewAuthorizePath,
+  previewStatePath,
+} from "../../src/main/preview/target";
 
 export interface FakeServerState {
   /** 目前有效的 session（cookie 值）。 */
@@ -34,6 +40,16 @@ export interface FakeServerState {
   revokedRunners: string[];
   /** 收到的所有 Runner frame 的 type，依序。 */
   runnerFrames: string[];
+  /** 各 Run 的 Preview 狀態（`GET /api/runs/:runId/preview`）。 */
+  previews: Record<string, PreviewState>;
+  /** authorize 換票的請求（Run ID）。 */
+  previewAuthorizations: string[];
+  /** 上傳的 Preview 截圖（blob ID → 內容）。 */
+  screenshots: Map<string, Buffer>;
+  /** Review Gate 的決定（Gate ID 與 request body）。 */
+  gateDecisions: { gateId: string; body: unknown }[];
+  /** 額外提供的靜態檔案（路徑 → 內容），例如打包好的測試頁。 */
+  files: Record<string, { contentType: string; body: string | Buffer }>;
 }
 
 export interface FakeServer {
@@ -49,6 +65,9 @@ export const FAKE_ME: Omit<MeResponse, "member"> & { member: NonNullable<MeRespo
   avatarUrl: null,
   member: { id: "member-1", teamId: "team-1", teamName: "Team", role: "owner" },
 };
+
+/** Preview 網址換票的 callback 路徑（ARCHITECTURE §13）。 */
+export const PREVIEW_CALLBACK_PATH = `/__${NAMES.productSlug}/callback`;
 
 function sessionOf(req: IncomingMessage): string | null {
   const cookies = req.headers.cookie?.split(";").map((c) => c.trim()) ?? [];
@@ -90,6 +109,11 @@ export async function startFakeServer(): Promise<FakeServer> {
     needsYouRequests: 0,
     revokedRunners: [],
     runnerFrames: [],
+    previews: {},
+    previewAuthorizations: [],
+    screenshots: new Map(),
+    gateDecisions: [],
+    files: {},
   };
 
   const server = createServer(async (req, res) => {
@@ -145,7 +169,48 @@ export async function startFakeServer(): Promise<FakeServer> {
       state.needsYouRequests += 1;
       return signedIn ? json(res, 200, state.needsYou) : json(res, 401, { error: "unauthorized" });
     }
+    for (const [runId, preview] of Object.entries(state.previews)) {
+      if (url.pathname === previewStatePath(runId)) {
+        return signedIn ? json(res, 200, preview) : json(res, 401, { error: "unauthorized" });
+      }
+      if (url.pathname === previewAuthorizePath(runId)) {
+        // 換票：確認 session 後轉回 Preview 網址的 callback（ticket 的驗證由 Preview 端負責）
+        if (!signedIn || !preview.shareUrl) return json(res, 401, { error: "unauthorized" });
+        state.previewAuthorizations.push(runId);
+        const callback = new URL(PREVIEW_CALLBACK_PATH, preview.shareUrl);
+        callback.searchParams.set("ticket", `ticket-${state.previewAuthorizations.length}`);
+        callback.searchParams.set("return", url.searchParams.get("return") ?? "/");
+        res.writeHead(302, { location: callback.href });
+        return res.end();
+      }
+    }
+    const screenshotMatch = /^\/api\/runs\/([^/]+)\/preview\/screenshots$/.exec(url.pathname);
+    if (screenshotMatch && req.method === "POST") {
+      if (!signedIn) return json(res, 401, { error: "unauthorized" });
+      // multipart 交給 Web 標準的 Response 解析
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const form = await new Response(Buffer.concat(chunks), {
+        headers: { "content-type": req.headers["content-type"] ?? "" },
+      }).formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) return json(res, 400, { error: "invalid_input" });
+      const blobId = randomUUID();
+      state.screenshots.set(blobId, Buffer.from(await file.arrayBuffer()));
+      return json(res, 201, { blobId });
+    }
+    const gateMatch = /^\/api\/gates\/([^/]+)\/decision$/.exec(url.pathname);
+    if (gateMatch && req.method === "POST") {
+      if (!signedIn) return json(res, 401, { error: "unauthorized" });
+      state.gateDecisions.push({ gateId: gateMatch[1] ?? "", body: await readBody(req) });
+      return json(res, 200, {});
+    }
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "not_found" });
+    const file = state.files[url.pathname];
+    if (file) {
+      res.writeHead(200, { "content-type": file.contentType });
+      return res.end(file.body);
+    }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(page(url.pathname));
   });

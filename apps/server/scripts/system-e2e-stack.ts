@@ -79,6 +79,8 @@ export const E2E_STACK_ENV = {
   runnerBin: envVar("E2E_RUNNER_BIN"),
   fakeAgentBin: envVar("E2E_FAKE_AGENT_BIN"),
   agentScript: envVar("E2E_AGENT_SCRIPT"),
+  /** Preview 網域（E 軌的 Preview e2e 用，例如 `preview.localhost:<port>`）；未設定時不提供 Preview 網址。 */
+  previewDomain: envVar("PREVIEW_DOMAIN"),
 } as const;
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -407,6 +409,7 @@ async function main(): Promise<void> {
     heartbeatIntervalMs,
     blobDir: path.join(tempDir, "blobs"),
     publicUrl,
+    previewDomain: env("previewDomain") ?? null,
     github: {
       app: {
         // private key 不會用到：所有 GitHub API 都由 FakeGitHub 回應。
@@ -424,6 +427,7 @@ async function main(): Promise<void> {
       bootstrapOwnerGithubUserId: null,
       devPairingToken: null,
       runnerHeartbeatIntervalMs: heartbeatIntervalMs,
+      previewDomain: env("previewDomain") ?? null,
     },
     db: database.db,
     logger,

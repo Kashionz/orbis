@@ -15,11 +15,12 @@ import {
   Menu,
   type MenuItemConstructorOptions,
   Notification,
+  net,
   session,
   shell,
   type WebContents,
 } from "electron";
-import { BRIDGE_IPC, type DesktopActionResult } from "../bridge";
+import { BRIDGE_IPC, type DesktopActionResult, type PreviewShowResult } from "../bridge";
 import { type SaveResult, SETTINGS_IPC, type SettingsState } from "../settings-api";
 import { ConfigStore } from "./config-store";
 import {
@@ -45,6 +46,13 @@ import {
   type NotificationContent,
   needsYouNotification,
 } from "./notifications/needs-you";
+import { PreviewView } from "./preview/preview-view";
+import {
+  fetchPreviewState,
+  parsePreviewBounds,
+  parseRunId,
+  resolvePreviewTarget,
+} from "./preview/target";
 import { checkServerHealth, normalizeServerUrl, resolveRunnerServerUrl } from "./server-url";
 import { createServerApi, type ServerApi, UnauthorizedError } from "./session/server-api";
 import { SessionController } from "./session/session-controller";
@@ -76,6 +84,8 @@ const runnerStateDir = join(userData, "runner");
 const runnerLog = new RotatingLogFile(join(userData, "logs", "runner.log"));
 
 let mainWindow: BrowserWindow | null = null;
+/** 主視窗中的 Preview 內嵌瀏覽器（跟著主視窗建立與移除）。 */
+let previewView: PreviewView | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let tray: DesktopTray | null = null;
 let quitting = false;
@@ -89,6 +99,7 @@ const testState = {
   notificationClicks: [] as (() => void)[],
   launches: [] as LaunchSpec[],
   openedPaths: [] as string[],
+  externalUrls: [] as string[],
 };
 
 function serverUrl(): string | null {
@@ -239,6 +250,8 @@ sessionController.onChange((state) => {
   } else {
     poller.stop();
     needsYouCount = 0;
+    // 登出後不再顯示任何 Run 的 Preview
+    previewView?.destroy();
   }
   renderTray();
 });
@@ -377,11 +390,53 @@ function ensureMainWindow(url: string): BrowserWindow {
     window.hide();
   });
   window.on("closed", () => {
-    if (mainWindow === window) mainWindow = null;
+    if (mainWindow === window) {
+      mainWindow = null;
+      previewView = null;
+    }
+  });
+  // Web UI 換頁或重新載入時，之前的 Preview 不再有對應的分頁
+  window.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) previewView?.hide();
   });
   mainWindow = window;
+  previewView = new PreviewView({
+    window,
+    serverOrigin,
+    zoomFactor: () => (window.isDestroyed() ? 1 : window.webContents.getZoomFactor()),
+    onNavState: (state) => {
+      if (!window.isDestroyed()) window.webContents.send(BRIDGE_IPC.previewNavState, state);
+    },
+    authorize: authorizePreview,
+    ...(testHooksEnabled && {
+      openExternal: (target: string) => testState.externalUrls.push(target),
+    }),
+  });
   void window.loadURL(url);
   return window;
+}
+
+/**
+ * Preview 網址的換票（§13）：帶著 Web UI 的 session cookie 請求 authorize，不跟隨轉址，
+ * 回傳它轉往的網址（Preview 網址的 callback）。內嵌瀏覽器本身沒有 Web UI 的 session。
+ */
+function authorizePreview(url: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const request = net.request({
+      url,
+      session: session.defaultSession,
+      useSessionCookies: true,
+      redirect: "manual",
+    });
+    request.on("redirect", (_status, _method, redirectUrl) => {
+      request.abort();
+      resolve(redirectUrl);
+    });
+    // 沒有轉址（例如已登出回 401）：不開啟
+    request.on("response", () => resolve(null));
+    request.on("error", () => resolve(null));
+    request.end();
+  });
 }
 
 function showMainWindow(): void {
@@ -534,7 +589,7 @@ async function openWorktree(
 }
 
 function registerIpc(): void {
-  const denied: DesktopActionResult = { ok: false, message: "不允許的呼叫來源" };
+  const denied = { ok: false as const, message: "不允許的呼叫來源" };
   ipcMain.handle(BRIDGE_IPC.getVersion, (event) => {
     if (!fromMainWindow(event)) throw new Error(denied.message);
     return app.getVersion();
@@ -549,6 +604,7 @@ function registerIpc(): void {
     if (!fromMainWindow(event)) throw new Error(denied.message);
     return sessionController.prepareLogout();
   });
+  registerPreviewIpc(denied);
 
   ipcMain.handle(SETTINGS_IPC.getState, (event): SettingsState => {
     if (!fromSettingsWindow(event)) throw new Error(denied.message);
@@ -588,6 +644,50 @@ function registerIpc(): void {
     }
     return { ok: true };
   });
+}
+
+/** Preview 的內嵌瀏覽器（ARCHITECTURE §13）。開哪個網址由 main 自己向 Server 查詢後決定。 */
+function registerPreviewIpc(denied: DesktopActionResult & { ok: false }): void {
+  const view = (event: IpcMainInvokeEvent) => (fromMainWindow(event) ? previewView : null);
+  ipcMain.handle(
+    BRIDGE_IPC.previewShow,
+    async (event, runIdInput: unknown, boundsInput: unknown): Promise<PreviewShowResult> => {
+      const preview = view(event);
+      if (!preview) return denied;
+      const runId = parseRunId(runIdInput);
+      const bounds = parsePreviewBounds(boundsInput);
+      const url = serverUrl();
+      if (!runId || !bounds || !url) return { ok: false, message: "參數不正確" };
+      const state = await fetchPreviewState(url, sessionFetch, runId);
+      if ("error" in state) {
+        preview.hide();
+        return { ok: false, message: state.error };
+      }
+      const target = resolvePreviewTarget({ runId, state, localRunnerId: config.get().runnerId });
+      if (target.mode === "unavailable") {
+        preview.hide();
+        return { ok: false, message: target.message };
+      }
+      await preview.show(target, bounds);
+      return { ok: true, mode: target.mode, url: target.url };
+    },
+  );
+  ipcMain.handle(BRIDGE_IPC.previewSetBounds, (event, boundsInput: unknown) => {
+    const bounds = parsePreviewBounds(boundsInput);
+    if (bounds) view(event)?.setBounds(bounds);
+  });
+  ipcMain.handle(BRIDGE_IPC.previewHide, (event) => view(event)?.hide());
+  ipcMain.handle(BRIDGE_IPC.previewReload, (event) => view(event)?.reload());
+  ipcMain.handle(BRIDGE_IPC.previewGoBack, (event) => view(event)?.goBack());
+  ipcMain.handle(BRIDGE_IPC.previewGoForward, (event) => view(event)?.goForward());
+  ipcMain.handle(BRIDGE_IPC.previewOpenDevTools, (event) => view(event)?.openDevTools());
+  ipcMain.handle(BRIDGE_IPC.previewNavigate, (event, input: unknown): DesktopActionResult => {
+    const preview = view(event);
+    if (!preview) return denied;
+    if (typeof input !== "string") return { ok: false, message: "不支援這個網址" };
+    return preview.navigate(input);
+  });
+  ipcMain.handle(BRIDGE_IPC.previewPickElement, (event) => view(event)?.pickElement() ?? null);
 }
 
 /** 換到另一個 Server：前一個 Server 的登入狀態與 Runner 都不再有效。 */
@@ -647,6 +747,8 @@ async function start(): Promise<void> {
       clickNotification: (index) => testState.notificationClicks[index]?.(),
       launches: testState.launches,
       openedPaths: testState.openedPaths,
+      externalUrls: testState.externalUrls,
+      previewWebContentsId: () => previewView?.webContents?.id ?? null,
       trayAction: onTrayAction,
       tray: () => trayModel,
       sidecar: () => supervisor.snapshot(),

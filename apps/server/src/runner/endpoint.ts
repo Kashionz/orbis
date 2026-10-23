@@ -42,6 +42,16 @@ const CLOSE_POLICY_VIOLATION = 1008;
 /** 同一個 Runner 從別處重新連上時，關閉舊連線用的 close code。 */
 const CLOSE_REPLACED = 4000;
 
+/**
+ * Preview 轉送的訊息（E 軌，src/preview/relay.ts）：binary 訊息與 `preview_*` frame 不排進依序處理的
+ * queue（Event 的 DB 寫入不會拖慢 Preview），收到就交給它。
+ */
+export interface RunnerPreviewChannel {
+  /** 處理 Preview 的訊息；不是 Preview 的訊息回傳 false。 */
+  onMessage(runnerId: string, link: RunnerLink, data: RawData, isBinary: boolean): boolean;
+  onDisconnect(runnerId: string, link: RunnerLink): void;
+}
+
 export interface RunnerEndpointOptions {
   db: Database;
   logger: Logger;
@@ -54,6 +64,7 @@ export interface RunnerEndpointOptions {
   heartbeatIntervalMs: number;
   /** 連線後等待 Hello 的時間。 */
   helloTimeoutMs?: number;
+  preview?: RunnerPreviewChannel;
 }
 
 export interface RunnerEndpoint {
@@ -104,6 +115,9 @@ class RunnerConnection implements RunnerLink {
     }, this.options.helloTimeoutMs ?? DEFAULT_HELLO_TIMEOUT_MS);
 
     this.ws.on("message", (data, isBinary) => {
+      if (this.runner && this.options.preview?.onMessage(this.runner.id, this, data, isBinary)) {
+        return;
+      }
       this.queue = this.queue
         .then(() => this.onMessage(data, isBinary))
         .catch((error: unknown) => {
@@ -126,6 +140,12 @@ class RunnerConnection implements RunnerLink {
 
   close(code: number, reason: string): void {
     this.ws.close(code, reason);
+  }
+
+  sendRaw(data: string | Uint8Array): boolean {
+    if (this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(data);
+    return true;
   }
 
   // ---- frame 處理 ----
@@ -327,6 +347,7 @@ class RunnerConnection implements RunnerLink {
     if (this.runner) {
       const wasCurrent = this.options.hub.isOnline(this.runner.id);
       this.options.hub.unregister(this.runner.id, this);
+      this.options.preview?.onDisconnect(this.runner.id, this);
       if (wasCurrent && !this.options.hub.isOnline(this.runner.id)) {
         this.log.info(
           { runnerId: this.runner.id, runnerName: this.runner.name, code },

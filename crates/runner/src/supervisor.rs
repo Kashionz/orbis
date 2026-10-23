@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use orbis_protocol::availability::{AgentAvailability, AgentInfo, CredentialInfo};
 use orbis_protocol::connection::Heartbeat;
 use orbis_protocol::control::{
-    RunControl, RunControlOutcome, RunControlRejectReason, RunControlResult,
+    RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason, RunControlResult,
 };
 use orbis_protocol::dispatch::{
     DispatchAccept, DispatchOffer, DispatchReject, DispatchRejectReason,
@@ -23,6 +23,7 @@ use crate::agent::{self, Profiles};
 use crate::connection::now;
 use crate::home::RunnerHome;
 use crate::outbox::Outbox;
+use crate::preview::PreviewRegistry;
 use crate::run::{self, RunContext, RunHandle, RunInput};
 use crate::worktree::WorktreeManager;
 
@@ -40,6 +41,7 @@ pub struct Supervisor {
     profiles: Profiles,
     runs: Mutex<HashMap<RunId, RunHandle>>,
     frames: mpsc::UnboundedSender<RunnerToServer>,
+    previews: Arc<PreviewRegistry>,
     paused: watch::Sender<bool>,
     snapshot: watch::Sender<Snapshot>,
     detected: tokio::sync::Mutex<Option<Vec<(String, agent::Detected)>>>,
@@ -64,6 +66,7 @@ impl Supervisor {
             profiles,
             runs: Mutex::new(HashMap::new()),
             frames,
+            previews: PreviewRegistry::new(),
             paused: watch::Sender::new(false),
             snapshot: watch::Sender::new(Snapshot {
                 active_runs: 0,
@@ -81,6 +84,11 @@ impl Supervisor {
 
     pub fn home(&self) -> &Arc<RunnerHome> {
         &self.home
+    }
+
+    /// 正在執行的 Preview（Preview 的 relay 使用）。
+    pub fn previews(&self) -> &Arc<PreviewRegistry> {
+        &self.previews
     }
 
     /// 上次 Runner 結束時還在進行的 Run：Agent 已經不在了，補上失敗的 Event 讓 Server 知道。
@@ -244,6 +252,7 @@ impl Supervisor {
                         worktrees: self.worktrees.clone(),
                         outbox: self.outbox.clone(),
                         frames: self.frames.clone(),
+                        previews: self.previews.clone(),
                     },
                 );
                 lock(&self.runs).insert(handle.run_id.clone(), handle);
@@ -346,6 +355,27 @@ impl Supervisor {
                     control.dispatch_id
                 ),
             );
+        }
+        // 重新啟動 Preview（§13）在 Run 的任何狀態都可以做，不經過 Run 的狀態機
+        if matches!(control.action, RunControlAction::RestartPreview) {
+            if !handle.is_active() {
+                return reject(RunControlRejectReason::InvalidState, "Run 已經結束".into());
+            }
+            if !self.previews.restart(&control.run_id) {
+                return reject(
+                    RunControlRejectReason::InvalidState,
+                    "這個 Run 沒有設定 Preview".into(),
+                );
+            }
+            let _ = self
+                .frames
+                .send(RunnerToServer::RunControlResult(RunControlResult {
+                    control_id: control.control_id.clone(),
+                    run_id: control.run_id.clone(),
+                    dispatch_id: control.dispatch_id.clone(),
+                    outcome: RunControlOutcome::Applied,
+                }));
+            return;
         }
         if handle.tx.send(RunInput::Control(control.clone())).is_err() {
             reject(RunControlRejectReason::InvalidState, "Run 已經結束".into());
