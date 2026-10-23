@@ -44,6 +44,12 @@ export interface FakeServerState {
   previews: Record<string, PreviewState>;
   /** authorize 換票的請求（Run ID）。 */
   previewAuthorizations: string[];
+  /** 上傳的 Preview 截圖（blob ID → 內容）。 */
+  screenshots: Map<string, Buffer>;
+  /** Review Gate 的決定（Gate ID 與 request body）。 */
+  gateDecisions: { gateId: string; body: unknown }[];
+  /** 額外提供的靜態檔案（路徑 → 內容），例如打包好的測試頁。 */
+  files: Record<string, { contentType: string; body: string | Buffer }>;
 }
 
 export interface FakeServer {
@@ -105,6 +111,9 @@ export async function startFakeServer(): Promise<FakeServer> {
     runnerFrames: [],
     previews: {},
     previewAuthorizations: [],
+    screenshots: new Map(),
+    gateDecisions: [],
+    files: {},
   };
 
   const server = createServer(async (req, res) => {
@@ -175,7 +184,33 @@ export async function startFakeServer(): Promise<FakeServer> {
         return res.end();
       }
     }
+    const screenshotMatch = /^\/api\/runs\/([^/]+)\/preview\/screenshots$/.exec(url.pathname);
+    if (screenshotMatch && req.method === "POST") {
+      if (!signedIn) return json(res, 401, { error: "unauthorized" });
+      // multipart 交給 Web 標準的 Response 解析
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const form = await new Response(Buffer.concat(chunks), {
+        headers: { "content-type": req.headers["content-type"] ?? "" },
+      }).formData();
+      const file = form.get("file");
+      if (!(file instanceof File)) return json(res, 400, { error: "invalid_input" });
+      const blobId = randomUUID();
+      state.screenshots.set(blobId, Buffer.from(await file.arrayBuffer()));
+      return json(res, 201, { blobId });
+    }
+    const gateMatch = /^\/api\/gates\/([^/]+)\/decision$/.exec(url.pathname);
+    if (gateMatch && req.method === "POST") {
+      if (!signedIn) return json(res, 401, { error: "unauthorized" });
+      state.gateDecisions.push({ gateId: gateMatch[1] ?? "", body: await readBody(req) });
+      return json(res, 200, {});
+    }
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "not_found" });
+    const file = state.files[url.pathname];
+    if (file) {
+      res.writeHead(200, { "content-type": file.contentType });
+      return res.end(file.body);
+    }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(page(url.pathname));
   });

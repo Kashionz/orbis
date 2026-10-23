@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { type PreviewState, stoppedMessage, unavailableMessage } from "./preview-api";
-import { clearPreviewDrafts, loadPreviewDrafts, savePreviewDrafts } from "./preview-drafts";
+import {
+  clearPreviewDrafts,
+  loadPreviewDrafts,
+  savePreviewDrafts,
+  subscribePreviewDrafts,
+} from "./preview-drafts";
 import { cropToElement } from "./screenshot";
 
 describe("cropToElement", () => {
@@ -89,5 +94,17 @@ describe("Preview 留言的草稿", () => {
     expect(loadPreviewDrafts("run-2")).toEqual([]);
     clearPreviewDrafts("run-1");
     expect(loadPreviewDrafts("run-1")).toEqual([]);
+  });
+
+  it("儲存與清除時通知訂閱者", () => {
+    let calls = 0;
+    const unsubscribe = subscribePreviewDrafts("run-3", () => calls++);
+    savePreviewDrafts("run-3", [draft]);
+    clearPreviewDrafts("run-3");
+    savePreviewDrafts("run-4", [draft]);
+    expect(calls).toBe(2);
+    unsubscribe();
+    clearPreviewDrafts("run-3");
+    expect(calls).toBe(2);
   });
 });

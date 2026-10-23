@@ -2,8 +2,6 @@
 // Desktop 依 Run 決定開 localhost（自己的 Local Runner）或 Preview 網址（別人的 Run），
 // 在 Preview 上選取元素時回傳 selector、URL 與截圖。
 
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { type ElectronApplication, expect, type Page, test } from "@playwright/test";
 import {
   DESKTOP_BRIDGE_KEY,
@@ -12,64 +10,20 @@ import {
   type PreviewShowResult,
 } from "../src/bridge";
 import { OVERLAY_ID } from "../src/main/preview/picker";
-import { previewAuthorizePath } from "../src/main/preview/target";
 import { type Desktop, launchDesktop, waitUntil } from "./fixtures/desktop";
-import { type FakeServer, PREVIEW_CALLBACK_PATH, startFakeServer } from "./fixtures/fake-server";
+import { type FakeServer, startFakeServer } from "./fixtures/fake-server";
+import { type DevServer, startDevServer } from "./fixtures/preview";
 
 const RUN = "0192f0c4-7a1b-7c3d-8e9f-0a1b2c3d4e5f";
 const BOUNDS: PreviewBounds = { x: 0, y: 80, width: 900, height: 600 };
-const PREVIEW_COOKIE = "preview_session";
 
 let server: FakeServer;
-let devServer: { url: string; port: number; close(): Promise<void> };
+let devServer: DevServer;
 let desktop: Desktop | undefined;
-
-/**
- * 代替 dev server 的頁面。以 `<run-id>.preview.localhost` 開啟時扮演 Preview 網址：沒有 preview cookie
- * 就轉到 Web UI 的 authorize 換票，callback 設定 cookie 後導回原本的路徑。
- */
-async function startDevServer(webUrl: string): Promise<typeof devServer> {
-  const http: Server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const shared = (req.headers.host ?? "").startsWith(`${RUN}.`);
-    if (shared && url.pathname === PREVIEW_CALLBACK_PATH) {
-      res.writeHead(302, {
-        location: url.searchParams.get("return") ?? "/",
-        "set-cookie": `${PREVIEW_COOKIE}=ok; Path=/; HttpOnly; SameSite=Lax`,
-      });
-      return res.end();
-    }
-    if (shared && !(req.headers.cookie ?? "").includes(`${PREVIEW_COOKIE}=ok`)) {
-      const authorize = new URL(previewAuthorizePath(RUN), webUrl);
-      authorize.searchParams.set("return", url.pathname);
-      res.writeHead(302, { location: authorize.href });
-      return res.end();
-    }
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(`<!doctype html><html><head><meta charset="utf-8"><title>預覽 ${url.pathname}</title>
-<style>body{margin:0;font:16px sans-serif} li{padding:12px} button{margin:12px;padding:12px 24px}</style>
-</head><body>
-<h1 id="title">${url.pathname}</h1>
-<ul><li>第一項</li><li class="target">第二項</li><li>第三項</li></ul>
-<button data-testid="save" onclick="window.clicked = (window.clicked || 0) + 1">儲存</button>
-<a id="external" href="https://example.com/">外部連結</a>
-</body></html>`);
-  });
-  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
-  const { port } = http.address() as AddressInfo;
-  return {
-    url: `http://localhost:${port}`,
-    port,
-    close: async () => {
-      http.closeAllConnections();
-      await new Promise<void>((resolve) => http.close(() => resolve()));
-    },
-  };
-}
 
 test.beforeEach(async () => {
   server = await startFakeServer();
-  devServer = await startDevServer(server.url);
+  devServer = await startDevServer(server.url, RUN);
 });
 
 test.afterEach(async () => {

@@ -17,7 +17,12 @@ import {
   unavailableMessage,
   uploadScreenshot,
 } from "./preview-api";
-import { loadPreviewDrafts, type PreviewCommentDraft, savePreviewDrafts } from "./preview-drafts";
+import {
+  loadPreviewDrafts,
+  type PreviewCommentDraft,
+  savePreviewDrafts,
+  subscribePreviewDrafts,
+} from "./preview-drafts";
 import { canCaptureTab, captureElement, imageFromClipboard } from "./screenshot";
 import "./preview.css";
 
@@ -44,6 +49,11 @@ export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProp
   const { data: state, error } = useQuery(query);
   const [capture, setCapture] = useState<PreviewCapture | null>(null);
   const [drafts, setDrafts] = useState(() => loadPreviewDrafts(runId));
+  // Review 頁退回後會清掉草稿：跟著更新
+  useEffect(
+    () => subscribePreviewDrafts(runId, () => setDrafts(loadPreviewDrafts(runId))),
+    [runId],
+  );
   const restart = useMutation({
     mutationFn: () => restartPreview(runId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: query.queryKey }),
@@ -70,10 +80,7 @@ export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProp
   }
 
   const onCapture = canComment ? setCapture : undefined;
-  const update = (next: PreviewCommentDraft[]) => {
-    savePreviewDrafts(runId, next);
-    setDrafts(next);
-  };
+  const update = (next: PreviewCommentDraft[]) => savePreviewDrafts(runId, next);
   return (
     <div className="preview-tab">
       {restartButton && <div className="preview-toolbar">{restartButton}</div>}

@@ -2,8 +2,8 @@
 // 存在 sessionStorage（key `preview-draft:<runId>`），重新整理頁面不會遺失；無法寫入時只存在記憶體中。
 // 截圖在加入草稿時就上傳，草稿只存 blob ID。
 //
-// C 軌的 Review 頁面：以 loadPreviewDrafts() 列出草稿，退回時放進 GateDecisionInput.previewComments，
-// 送出成功後呼叫 clearPreviewDrafts()。
+// C 軌的 Review 頁面：以 loadPreviewDrafts() 列出草稿（subscribePreviewDrafts() 可以得知變更），
+// 退回時放進 GateDecisionInput.previewComments，送出成功後呼叫 clearPreviewDrafts()。
 
 import { PreviewCommentInput } from "@orbis/api-contract";
 import { z } from "zod";
@@ -16,6 +16,18 @@ const Drafts = z.array(PreviewCommentInput);
 const storageKey = (runId: string) => `preview-draft:${runId}`;
 /** sessionStorage 無法使用時的備援。 */
 const memory = new Map<string, PreviewCommentDraft[]>();
+/** 同一個頁面中訂閱草稿變更的元件（Preview 分頁、Review 頁）。 */
+const listeners = new Map<string, Set<() => void>>();
+
+/** 訂閱某個 Run 的草稿變更；回傳取消訂閱的函式。 */
+export function subscribePreviewDrafts(runId: string, listener: () => void): () => void {
+  const set = listeners.get(runId) ?? new Set();
+  set.add(listener);
+  listeners.set(runId, set);
+  return () => {
+    set.delete(listener);
+  };
+}
 
 export function loadPreviewDrafts(runId: string): PreviewCommentDraft[] {
   try {
@@ -36,6 +48,7 @@ export function savePreviewDrafts(runId: string, drafts: readonly PreviewComment
   } catch {
     // 無法寫入時草稿只存在記憶體中
   }
+  for (const listener of listeners.get(runId) ?? []) listener();
 }
 
 export function clearPreviewDrafts(runId: string): void {
