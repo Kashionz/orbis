@@ -558,6 +558,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 - **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS、Linux 三平台都跑。
 - **Server**：用 Testcontainers 啟動真實的 Postgres 來測試。
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
+- **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上三平台都跑；完整系統的 M1 e2e 在 PR 上只跑 Linux，push 到 `main` 時三平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
 - **真實 Agent 煙霧測試**：Claude Code、Codex、Gemini、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
 
 ---
