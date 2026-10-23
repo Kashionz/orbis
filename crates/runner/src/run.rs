@@ -1444,17 +1444,37 @@ fn files_under(worktree: &std::path::Path, dir: &str) -> Vec<String> {
     out
 }
 
-/// 受保護設定的目前內容（不存在時為 `None`）。symlink／junction 不跟著讀，內容是
-/// 「連結到哪裡」：新增或改指向的連結一定和基準不同（指向目錄的連結也一樣，安全審查的發現）。
+/// 受保護設定的目前內容（不存在時為 `None`）。
+///
+/// symlink／junction 的內容是「連結到哪裡」加上連結目標的內容（指向目錄時是其中每個檔案的
+/// 路徑與內容）：新增或改指向的連結一定和基準不同，已接受的連結之後目標被改也會被發現
+/// （安全審查的發現）。
 fn read_protected(path: &std::path::Path) -> Option<Vec<u8>> {
+    /// 指向目錄的連結最多看這麼多個檔案，超過的部分以檔案數表示。
+    const MAX_LINKED_FILES: usize = 256;
     let meta = std::fs::symlink_metadata(path).ok()?;
-    if meta.file_type().is_symlink() {
-        let target = std::fs::read_link(path)
-            .map(|t| t.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        return Some(format!("symlink -> {target}").into_bytes());
+    if !meta.file_type().is_symlink() {
+        return std::fs::read(path).ok();
     }
-    std::fs::read(path).ok()
+    let target = std::fs::read_link(path)
+        .map(|t| t.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut out = format!("symlink -> {target}\n").into_bytes();
+    if path.is_dir() {
+        let mut files = files_under(path, ".");
+        files.sort();
+        out.extend(format!("{} files\n", files.len()).into_bytes());
+        for file in files.iter().take(MAX_LINKED_FILES) {
+            out.extend(file.as_bytes());
+            out.push(0);
+            // 不再遞迴進入其中的連結（連結可能形成循環）。
+            out.extend(std::fs::read(path.join(file)).unwrap_or_default());
+            out.push(0);
+        }
+    } else if let Ok(content) = std::fs::read(path) {
+        out.extend(content);
+    }
+    Some(out)
 }
 
 /// 什麼時候檢查 Agent 的設定檔。
@@ -1557,7 +1577,11 @@ mod tests {
         files.sort();
         assert_eq!(files, [".gemini/extensions", ".gemini/settings.json"]);
         let link = read_protected(&wt.join(".gemini/extensions")).unwrap();
-        assert!(String::from_utf8(link).unwrap().starts_with("symlink -> "));
+        assert!(String::from_utf8_lossy(&link).starts_with("symlink -> "));
+        // 已接受的連結之後目標的內容改了，也要看得出來。
+        std::fs::write(elsewhere.join("ext.json"), "{}").unwrap();
+        let changed = read_protected(&wt.join(".gemini/extensions")).unwrap();
+        assert_ne!(link, changed);
         restore_protected_file(&wt, ".gemini/extensions", None).unwrap();
         assert!(std::fs::symlink_metadata(wt.join(".gemini/extensions")).is_err());
         assert!(elsewhere.exists(), "只移除連結本身");
