@@ -1,5 +1,7 @@
 // Server URL：使用者在第一次啟動時輸入的 Web UI origin。
 
+import { API_ROUTES, HealthResponse } from "@orbis/api-contract";
+
 export type ServerUrlResult = { ok: true; url: string } | { ok: false; message: string };
 
 /**
@@ -40,8 +42,8 @@ export type HealthCheckResult =
   | { ok: false; message: string };
 
 /**
- * 確認網址上確實是 Server：`GET /api/health` 回 `{ ok: true }`，同時讀出 `apiOrigin`。
- * TODO(contract): 回應格式以 contract/web-api 的 HealthResponse 為準，合併後改用 @orbis/api-contract
+ * 確認網址上確實是 Server：`GET /api/health` 回 `{ ok: true }`，同時讀出 `apiOrigin`（HealthResponse）。
+ * 還沒回報 apiOrigin 的舊版 Server 也接受，由呼叫端退回使用 Web UI 的 origin。
  */
 export async function checkServerHealth(
   serverUrl: string,
@@ -49,26 +51,27 @@ export async function checkServerHealth(
   timeoutMs = 5_000,
 ): Promise<HealthCheckResult> {
   try {
-    const response = await fetchFn(`${serverUrl}/api/health`, {
+    const response = await fetchFn(`${serverUrl}${API_ROUTES.health}`, {
       signal: AbortSignal.timeout(timeoutMs),
       headers: { accept: "application/json" },
     });
     if (!response.ok) return { ok: false, message: `Server 回應 HTTP ${response.status}` };
-    const body = (await response.json().catch(() => null)) as {
-      ok?: unknown;
-      apiOrigin?: unknown;
-    } | null;
-    if (body?.ok !== true) return { ok: false, message: "這個網址看起來不是 Server" };
-    return { ok: true, apiOrigin: parseApiOrigin(body.apiOrigin) };
+    const body: unknown = await response.json().catch(() => null);
+    const health = HealthResponse.safeParse(body);
+    if (health.success) return { ok: true, apiOrigin: parseApiOrigin(health.data.apiOrigin) };
+    if ((body as { ok?: unknown } | null)?.ok !== true) {
+      return { ok: false, message: "這個網址看起來不是 Server" };
+    }
+    return { ok: true, apiOrigin: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `無法連線到 Server：${message}` };
   }
 }
 
-/** `apiOrigin` 一定要明確寫出 http:// 或 https://，不替它補 scheme。 */
-function parseApiOrigin(value: unknown): string | null {
-  if (typeof value !== "string" || !/^https?:\/\//i.test(value.trim())) return null;
+/** `apiOrigin` 一定要明確寫出 http:// 或 https://，不替它補 scheme；帶有路徑時視為沒有。 */
+function parseApiOrigin(value: string): string | null {
+  if (!/^https?:\/\//i.test(value.trim())) return null;
   const normalized = normalizeServerUrl(value);
   return normalized.ok ? normalized.url : null;
 }

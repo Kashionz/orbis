@@ -1,4 +1,4 @@
-import type { MeResponse } from "@orbis/api-contract";
+import type { MeResponse, PairingTokenCreated } from "@orbis/api-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ServerApi } from "./server-api";
 import { type RunnerControl, SessionController } from "./session-controller";
@@ -9,6 +9,13 @@ const member = (id: string): MeResponse => ({
   name: null,
   avatarUrl: null,
   member: { id, teamId: "t1", teamName: "Team", role: "member" },
+});
+
+const pairingToken = (token: string): PairingTokenCreated => ({
+  id: `id_${token}`,
+  kind: "local",
+  token,
+  expiresAt: "2026-10-23T00:10:00.000Z",
 });
 
 function setup() {
@@ -30,7 +37,7 @@ function setup() {
     createLocalPairingToken: async () => {
       if (pairingError) throw pairingError;
       tokens += 1;
-      return { token: `pt_${tokens}`, expiresAt: null };
+      return pairingToken(`pt_${tokens}`);
     },
     listNeedsYou: async () => [],
     revokeRunner: async (id) => {
@@ -205,7 +212,7 @@ describe("SessionController", () => {
     const strict = new SessionController({
       api: {
         me: async () => member("m1"),
-        createLocalPairingToken: async () => ({ token: "pt_x", expiresAt: null }),
+        createLocalPairingToken: async () => pairingToken("pt_x"),
         listNeedsYou: async () => [],
         revokeRunner: async () => {},
       },

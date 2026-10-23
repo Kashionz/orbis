@@ -19,16 +19,16 @@ export const DESKTOP_ENV = {
   userDataDir: envVar("DESKTOP_USER_DATA_DIR"),
   /** 覆寫 sidecar 的啟動指令，JSON 字串陣列，例如 `["node", "fake-sidecar.mjs"]`（測試與開發用）。 */
   runnerCommand: envVar("DESKTOP_RUNNER_COMMAND"),
-  /** Runner 要連線的 Server 網址，未設定時與 Web UI 的 Server URL 相同（開發時 Vite 還沒轉送 /runner 用）。 */
+  /** 覆寫 Runner 要連線的 Server 網址；未設定時用 `/api/health` 回報的 API origin（開發與測試用）。 */
   runnerServerUrl: envVar("RUNNER_SERVER_URL"),
   /** 啟用測試用的 hook：記錄通知與本機工具的啟動，而不真的執行。只給 Playwright 使用。 */
   testHooks: envVar("DESKTOP_TEST_HOOKS"),
 } as const;
 
-/** 傳給 Runner sidecar 的環境變數，與 crates/runner/src/config.rs 一致。 */
+/** 傳給 Runner sidecar 的環境變數（協定的 names.runner_env）。 */
 export const RUNNER_ENV = {
-  serverUrl: envVar("SERVER_URL"),
-  pairingToken: envVar("PAIRING_TOKEN"),
-  // TODO(contract): 名稱以 A1 的 PR 與 contract/protocol 為準
-  stateDir: envVar("RUNNER_STATE_DIR"),
+  serverUrl: NAMES.runnerEnv.serverUrl,
+  pairingToken: NAMES.runnerEnv.pairingToken,
+  /** 只覆寫狀態目錄；Runner 的設定檔仍從家目錄讀取。 */
+  stateDir: NAMES.runnerEnv.stateDir,
 } as const;

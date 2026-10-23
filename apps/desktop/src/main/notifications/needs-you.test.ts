@@ -15,6 +15,7 @@ const permission: NeedsYouItem = {
   kind: "permission_request",
   permissionRequestId: "p1",
   toolCallId: null,
+  purpose: "tool",
   title: "執行 pnpm test",
   options: [{ optionId: "allow", name: "允許", kind: "allow_once" }],
 };

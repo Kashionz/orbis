@@ -1,6 +1,6 @@
-import type { NeedsYouItem } from "@orbis/api-contract";
+import { API_ROUTES, type NeedsYouItem } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
-import { API_PATHS, createServerApi, UnauthorizedError } from "./server-api";
+import { createServerApi, UnauthorizedError } from "./server-api";
 
 type Handler = (url: string, init: RequestInit) => Response;
 
@@ -32,21 +32,28 @@ describe("createServerApi", () => {
   it("me() 在 401 時回傳 null，其他錯誤丟出", async () => {
     const unauthorized = fakeFetch(() => json(401, { error: "unauthorized" }));
     expect(await createServerApi("http://s", unauthorized.fetchFn).me()).toBeNull();
-    expect(unauthorized.requests[0]?.url).toBe(`http://s${API_PATHS.me}`);
+    expect(unauthorized.requests[0]?.url).toBe(`http://s${API_ROUTES.authMe}`);
 
     const broken = fakeFetch(() => json(500, {}));
     await expect(createServerApi("http://s", broken.fetchFn).me()).rejects.toThrow("HTTP 500");
   });
 
-  it("createLocalPairingToken() 以 POST 送出 kind: local", async () => {
-    const { fetchFn, requests } = fakeFetch(() => json(201, { token: "pt_abc", expiresAt: null }));
-    expect(await createServerApi("http://s", fetchFn).createLocalPairingToken()).toEqual({
+  it("createLocalPairingToken() 以 POST 送出 kind: local，回應照 PairingTokenCreated 解析", async () => {
+    const created = {
+      id: "ptk_1",
+      kind: "local",
       token: "pt_abc",
-      expiresAt: null,
-    });
-    expect(requests[0]?.url).toBe(`http://s${API_PATHS.pairingTokens}`);
+      expiresAt: "2026-10-23T00:10:00.000Z",
+    };
+    const { fetchFn, requests } = fakeFetch(() => json(201, created));
+    expect(await createServerApi("http://s", fetchFn).createLocalPairingToken()).toEqual(created);
+    expect(requests[0]?.url).toBe(`http://s${API_ROUTES.pairingTokens}`);
     expect(requests[0]?.init.method).toBe("POST");
     expect(JSON.parse(String(requests[0]?.init.body))).toEqual({ kind: "local" });
+    const malformed = fakeFetch(() => json(201, { token: "pt_abc" }));
+    await expect(
+      createServerApi("http://s", malformed.fetchFn).createLocalPairingToken(),
+    ).rejects.toThrow();
   });
 
   it("createLocalPairingToken() 在 401 時丟出 UnauthorizedError", async () => {
@@ -56,11 +63,12 @@ describe("createServerApi", () => {
     );
   });
 
-  it("listNeedsYou() 接受陣列或 { items }，看不懂的項目略過", async () => {
-    const asArray = fakeFetch(() => json(200, [gate, { kind: "future_kind", id: "x" }]));
-    expect(await createServerApi("http://s", asArray.fetchFn).listNeedsYou()).toEqual([gate]);
-    const asObject = fakeFetch(() => json(200, { items: [gate] }));
-    expect(await createServerApi("http://s", asObject.fetchFn).listNeedsYou()).toEqual([gate]);
+  it("listNeedsYou() 逐項解析 NeedsYouListResponse，看不懂的項目略過", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      json(200, [gate, { kind: "future_kind", id: "x" }]),
+    );
+    expect(await createServerApi("http://s", fetchFn).listNeedsYou()).toEqual([gate]);
+    expect(requests[0]?.url).toBe(`http://s${API_ROUTES.needsYou}`);
   });
 
   it("revokeRunner() 以 DELETE 撤銷；Server 已經沒有這台 Runner（404）也算成功", async () => {

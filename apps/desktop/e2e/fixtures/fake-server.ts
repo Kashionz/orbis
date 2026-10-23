@@ -1,11 +1,17 @@
 // e2e 用的 fake Server：提供 Desktop 需要的 API、一個代替 Web UI 的簡單頁面，以及 Runner 的 WebSocket 端點。
-// 協定 frame 用 @orbis/protocol 的型別；API 的路徑與 Desktop 一致（server-api.ts 的 API_PATHS）。
+// 協定 frame 用 @orbis/protocol 的型別；API 的路徑與回應用 @orbis/api-contract 的定義。
 // 一律聽 port 0。
 
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { MeResponse, NeedsYouItem } from "@orbis/api-contract";
+import {
+  API_ROUTES,
+  type HealthResponse,
+  type MeResponse,
+  type NeedsYouItem,
+  type PairingTokenCreated,
+} from "@orbis/api-contract";
 import {
   type Hello,
   PROTOCOL_VERSION,
@@ -15,7 +21,6 @@ import {
 } from "@orbis/protocol";
 import { WebSocketServer } from "ws";
 import { SESSION_COOKIE } from "../../src/main/names";
-import { API_PATHS } from "../../src/main/session/server-api";
 
 export interface FakeServerState {
   /** 目前有效的 session（cookie 值）。 */
@@ -25,6 +30,8 @@ export interface FakeServerState {
   hellos: Hello[];
   needsYou: NeedsYouItem[];
   needsYouRequests: number;
+  /** `DELETE /api/runners/:id` 收到的 Runner ID。 */
+  revokedRunners: string[];
   /** 收到的所有 Runner frame 的 type，依序。 */
   runnerFrames: string[];
 }
@@ -81,6 +88,7 @@ export async function startFakeServer(): Promise<FakeServer> {
     hellos: [],
     needsYou: [],
     needsYouRequests: 0,
+    revokedRunners: [],
     runnerFrames: [],
   };
 
@@ -89,7 +97,10 @@ export async function startFakeServer(): Promise<FakeServer> {
     const session = sessionOf(req);
     const signedIn = session !== null && state.sessions.has(session);
 
-    if (url.pathname === "/api/health") return json(res, 200, { ok: true });
+    if (url.pathname === API_ROUTES.health) {
+      const health: HealthResponse = { ok: true, apiOrigin: `http://${req.headers.host}` };
+      return json(res, 200, health);
+    }
     if (url.pathname === "/test/login") {
       const token = randomUUID();
       state.sessions.add(token);
@@ -107,17 +118,30 @@ export async function startFakeServer(): Promise<FakeServer> {
       });
       return res.end();
     }
-    if (url.pathname === API_PATHS.me) {
+    if (url.pathname === API_ROUTES.authMe) {
       return signedIn ? json(res, 200, FAKE_ME) : json(res, 401, { error: "unauthorized" });
     }
-    if (url.pathname === API_PATHS.pairingTokens && req.method === "POST") {
+    if (url.pathname === API_ROUTES.pairingTokens && req.method === "POST") {
       state.pairingRequests.push({ hadSession: signedIn, body: await readBody(req) });
       if (!signedIn) return json(res, 401, { error: "unauthorized" });
       const token = `pt_e2e_${state.issuedPairingTokens.length + 1}`;
       state.issuedPairingTokens.push(token);
-      return json(res, 201, { token, expiresAt: null });
+      const created: PairingTokenCreated = {
+        id: randomUUID(),
+        kind: "local",
+        token,
+        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      };
+      return json(res, 201, created);
     }
-    if (url.pathname === API_PATHS.needsYou) {
+    const runnerPrefix = `${API_ROUTES.runners}/`;
+    if (url.pathname.startsWith(runnerPrefix) && req.method === "DELETE") {
+      if (!signedIn) return json(res, 401, { error: "unauthorized" });
+      state.revokedRunners.push(decodeURIComponent(url.pathname.slice(runnerPrefix.length)));
+      res.writeHead(204);
+      return res.end();
+    }
+    if (url.pathname === API_ROUTES.needsYou) {
       state.needsYouRequests += 1;
       return signedIn ? json(res, 200, state.needsYou) : json(res, 401, { error: "unauthorized" });
     }
