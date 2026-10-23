@@ -107,6 +107,11 @@ export interface DomainService {
   /** 同一個 GitHub repo 可能登記在多個 Project。 */
   listReposByGithubRepoId(githubRepoId: number): Promise<RepoRecord[]>;
   listReposByInstallationId(installationId: number): Promise<RepoRecord[]>;
+  /**
+   * 以 owner/name 找 Repo（不分大小寫）。用於 App 安裝之前登記、還不知道 GitHub repo id 的 Repo：
+   * 安裝事件以名稱比對，再補上 repo id 與 installation。
+   */
+  listReposByFullName(owner: string, name: string): Promise<RepoRecord[]>;
   /** 更新 Repo 的 GitHub 資訊（安裝狀態、repo id、default branch）。 */
   updateRepoGitHubInfo(
     repoId: string,

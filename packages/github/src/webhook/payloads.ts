@@ -10,7 +10,8 @@ const Repository = z.object({
   owner: z.object({ login: z.string() }),
 });
 const Installation = z.object({ id: z.number() });
-const RepoId = z.object({ id: z.number() });
+/** installation 事件中的 repo：只有 id 與名稱。 */
+const InstalledRepo = z.object({ id: z.number(), full_name: z.string() });
 
 export const IssuesPayload = z.object({
   action: z.string(),
@@ -49,7 +50,7 @@ export type PullRequestPayload = z.infer<typeof PullRequestPayload>;
 export const InstallationPayload = z.object({
   action: z.string(),
   installation: Installation,
-  repositories: z.array(RepoId).optional(),
+  repositories: z.array(InstalledRepo).optional(),
   sender: Sender,
 });
 export type InstallationPayload = z.infer<typeof InstallationPayload>;
@@ -57,10 +58,11 @@ export type InstallationPayload = z.infer<typeof InstallationPayload>;
 export const InstallationRepositoriesPayload = z.object({
   action: z.string(),
   installation: Installation,
-  repositories_added: z.array(RepoId),
-  repositories_removed: z.array(RepoId),
+  repositories_added: z.array(InstalledRepo),
+  repositories_removed: z.array(InstalledRepo),
   sender: Sender,
 });
 export type InstallationRepositoriesPayload = z.infer<typeof InstallationRepositoriesPayload>;
 
 export type WebhookSender = z.infer<typeof Sender>;
+export type InstalledRepo = z.infer<typeof InstalledRepo>;

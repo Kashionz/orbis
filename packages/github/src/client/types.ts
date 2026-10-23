@@ -102,6 +102,8 @@ export interface GitHubClient {
   installationToken(installationId: number): Promise<string>;
   /** 丟掉某個 installation 的 token 快取。 */
   forgetInstallation(installationId: number): void;
+  /** 這個 installation 能存取的 repo（`GET /installation/repositories`）。 */
+  listInstallationRepositories(installationId: number): Promise<{ id: number; fullName: string }[]>;
   /**
    * 使用者對 repo 的角色（`GET /repos/{owner}/{repo}/collaborators/{username}/permission` 的 `role_name`）。
    * 不是 collaborator 時回傳 `none`。查詢用 login，但回應的 user id 必須等於 `user.id`，否則也回傳 `none`

@@ -138,6 +138,13 @@ export class FakeDomainService implements DomainService {
     return [...this.repos.values()].filter((r) => r.installationId === installationId).map(clone);
   }
 
+  async listReposByFullName(owner: string, name: string) {
+    const key = `${owner}/${name}`.toLowerCase();
+    return [...this.repos.values()]
+      .filter((r) => `${r.owner}/${r.name}`.toLowerCase() === key)
+      .map(clone);
+  }
+
   async updateRepoGitHubInfo(
     repoId: string,
     info: { installationId?: number | null; githubRepoId?: number; defaultBranch?: string },

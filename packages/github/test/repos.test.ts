@@ -1,7 +1,7 @@
 // Repo 登記（App 安裝檢查、default branch）與 installation webhook。
 
 import { describe, expect, it } from "vitest";
-import { createWorld, fixture, REPO_ID } from "./helpers/world";
+import { createWorld, fixture, PROJECT_ID, REPO_ID } from "./helpers/world";
 
 describe("Repo 登記", () => {
   it("App 已安裝：回傳 installation、repo id 與 default branch（大小寫以 GitHub 為準）", async () => {
@@ -101,16 +101,84 @@ describe("installation webhook", () => {
     expect(w.domain.repos.get(REPO_ID)?.installationId).toBeNull();
   });
 
-  it("created／unsuspend：已登記的 Repo 補上 installation", async () => {
-    for (const action of ["created", "unsuspend"]) {
+  it("created：payload 列出的 repo 補上 installation", async () => {
+    const w = createWorld();
+    await w.domain.updateRepoGitHubInfo(REPO_ID, { installationId: null });
+    const payload = fixture("installation.created");
+    payload.installation.id = 555;
+    payload.repositories = [
+      { ...payload.repositories[0], id: w.repo.id, full_name: `${w.repo.owner}/${w.repo.name}` },
+    ];
+    await w.deliver("installation", payload);
+    expect(w.domain.repos.get(REPO_ID)?.installationId).toBe(555);
+  });
+
+  it("unsuspend：payload 沒有列出 repo 時，向 GitHub 查詢 installation 能存取的 repo", async () => {
+    const w = createWorld();
+    await w.domain.updateRepoGitHubInfo(REPO_ID, { installationId: null });
+    const payload = fixture("installation.unsuspend");
+    expect(payload.repositories ?? []).toEqual([]);
+    payload.installation.id = w.repo.installationId;
+    await w.deliver("installation", payload);
+    expect(w.github.callsTo("listInstallationRepositories")).toHaveLength(1);
+    expect(w.domain.repos.get(REPO_ID)?.installationId).toBe(w.repo.installationId);
+  });
+
+  describe("App 安裝之前登記、還不知道 repo id 的 Repo", () => {
+    /** 在 Project 中登記一個尚未安裝 App 的 repo（只有名稱），之後 GitHub 上安裝 App。 */
+    function unboundRepo() {
       const w = createWorld();
-      await w.domain.updateRepoGitHubInfo(REPO_ID, { installationId: null });
-      const payload = fixture(`installation.${action}`);
-      payload.installation.id = 555;
-      payload.repositories = [{ ...(payload.repositories?.[0] ?? {}), id: w.repo.id }];
-      await w.deliver("installation", payload);
-      expect(w.domain.repos.get(REPO_ID)?.installationId, action).toBe(555);
+      const github = w.github.addRepo({
+        id: 4242,
+        owner: "Acme",
+        name: "Later",
+        defaultBranch: "trunk",
+        installationId: 9_000,
+      });
+      w.domain.addRepo({
+        id: "repo-later",
+        projectId: PROJECT_ID,
+        owner: "acme",
+        name: "later",
+        githubRepoId: null,
+        defaultBranch: null,
+        installationId: null,
+      });
+      const added = fixture("installation_repositories.added");
+      added.installation.id = 9_000;
+      added.repositories_added = [{ id: github.id, full_name: "Acme/Later" }];
+      return { w, added };
     }
+
+    it("安裝 App 的人是 Project Member 且有寫入權限：以名稱綁定，補上 repo id 與 default branch", async () => {
+      const { w, added } = unboundRepo();
+      added.sender = { ...added.sender, ...w.userRef(w.alice) };
+      await w.deliver("installation_repositories", added);
+      expect(w.domain.repos.get("repo-later")).toMatchObject({
+        installationId: 9_000,
+        githubRepoId: 4242,
+        defaultBranch: "trunk",
+      });
+    });
+
+    it("安裝 App 的人不是 Project Member：不綁定（避免別的 Team 先登記同名 repo）", async () => {
+      const { w, added } = unboundRepo();
+      w.github.roles.set(w.outsider.login, "admin");
+      added.sender = { ...added.sender, ...w.outsider };
+      await w.deliver("installation_repositories", added);
+      expect(w.domain.repos.get("repo-later")).toMatchObject({
+        installationId: null,
+        githubRepoId: null,
+      });
+    });
+
+    it("安裝 App 的人是 Member 但對 repo 沒有寫入權限：不綁定", async () => {
+      const { w, added } = unboundRepo();
+      w.github.roles.delete(w.alice.githubLogin);
+      added.sender = { ...added.sender, ...w.userRef(w.alice) };
+      await w.deliver("installation_repositories", added);
+      expect(w.domain.repos.get("repo-later")?.installationId).toBeNull();
+    });
   });
 
   it("installation_repositories：新增與移除 repo", async () => {

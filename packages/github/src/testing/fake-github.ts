@@ -178,6 +178,13 @@ export class FakeGitHub implements GitHubClient {
     this.forgotten.push(installationId);
   }
 
+  async listInstallationRepositories(installationId: number) {
+    this.#record("listInstallationRepositories", [installationId]);
+    return this.repos
+      .filter((r) => r.installationId === installationId)
+      .map((r) => ({ id: r.id, fullName: `${r.owner}/${r.name}` }));
+  }
+
   async getCollaboratorRole(
     installationId: number,
     ref: RepoRef,

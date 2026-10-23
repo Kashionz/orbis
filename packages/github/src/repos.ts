@@ -3,7 +3,12 @@
 import type { InstallationToken } from "./auth/installation-tokens";
 import { WRITE_ROLES } from "./client/types";
 import { connectedRepo, type IntegrationContext } from "./context";
-import type { InstallationPayload, InstallationRepositoriesPayload } from "./webhook/payloads";
+import type {
+  InstallationPayload,
+  InstallationRepositoriesPayload,
+  InstalledRepo,
+  WebhookSender,
+} from "./webhook/payloads";
 
 export type RepoInspection =
   | {
@@ -83,25 +88,84 @@ export async function getInstallationTokenForRepo(
 }
 
 /**
- * 設定這些 repo 的 installation。`onlyFrom` 有值時，只改目前屬於該 installation 的 Repo
- * （移除時不要清掉已經改由另一個 installation 管理的 Repo）。
+ * 移除這些 repo 的 installation。只改目前屬於該 installation 的 Repo
+ * （不要清掉已經改由另一個 installation 管理的 Repo）。
  */
-async function setInstallation(
+async function clearInstallation(
   ctx: IntegrationContext,
-  githubRepoIds: readonly number[],
-  installationId: number | null,
-  onlyFrom?: number,
+  repos: readonly InstalledRepo[],
+  installationId: number,
 ): Promise<string[]> {
   const updated: string[] = [];
-  for (const githubRepoId of githubRepoIds) {
-    for (const repo of await ctx.domain.listReposByGithubRepoId(githubRepoId)) {
-      if (repo.installationId === installationId) continue;
-      if (onlyFrom !== undefined && repo.installationId !== onlyFrom) continue;
-      await ctx.domain.updateRepoGitHubInfo(repo.id, { installationId });
+  for (const { id } of repos) {
+    for (const repo of await ctx.domain.listReposByGithubRepoId(id)) {
+      if (repo.installationId !== installationId) continue;
+      await ctx.domain.updateRepoGitHubInfo(repo.id, { installationId: null });
       updated.push(repo.id);
     }
   }
   return updated;
+}
+
+/**
+ * App 安裝到這些 repo：已知 repo id 的 Repo 直接更新 installation。
+ *
+ * App 安裝之前登記的 Repo 還不知道 repo id（private repo 沒安裝 App 讀不到），以 owner/name 比對。
+ * 名稱比對有被冒用的風險（別的 Team 先登記同名的 repo，等 repo 的主人安裝 App），所以只在
+ * 安裝 App 的人是該 Project 的 Member、而且對 repo 有寫入權限時才綁定，並以 GitHub 的資料補上
+ * repo id 與 default branch。
+ */
+async function setInstallation(
+  ctx: IntegrationContext,
+  repos: readonly InstalledRepo[],
+  installationId: number,
+  installer: WebhookSender,
+): Promise<string[]> {
+  const updated: string[] = [];
+  for (const installed of repos) {
+    for (const repo of await ctx.domain.listReposByGithubRepoId(installed.id)) {
+      if (repo.installationId === installationId) continue;
+      await ctx.domain.updateRepoGitHubInfo(repo.id, { installationId });
+      updated.push(repo.id);
+    }
+    const [owner = "", name = ""] = installed.full_name.split("/");
+    const unbound = (await ctx.domain.listReposByFullName(owner, name)).filter(
+      (repo) => repo.githubRepoId === null,
+    );
+    if (unbound.length === 0) continue;
+    if (!(await installerCanWrite(ctx, installationId, { owner, name }, installer))) continue;
+    const github = await ctx.client.getRepo(installationId, { owner, name });
+    if (!github || github.id !== installed.id) continue;
+    for (const repo of unbound) {
+      if (!(await ctx.domain.findMemberByGithubUserId(repo.projectId, installer.id))) {
+        ctx.logger.warn(
+          { repoId: repo.id, repo: installed.full_name, installer: installer.login },
+          "安裝 App 的人不是這個 Project 的 Member，不以名稱綁定 Repo",
+        );
+        continue;
+      }
+      await ctx.domain.updateRepoGitHubInfo(repo.id, {
+        installationId,
+        githubRepoId: github.id,
+        defaultBranch: github.defaultBranch,
+      });
+      updated.push(repo.id);
+    }
+  }
+  return updated;
+}
+
+async function installerCanWrite(
+  ctx: IntegrationContext,
+  installationId: number,
+  repo: { owner: string; name: string },
+  installer: WebhookSender,
+): Promise<boolean> {
+  const role = await ctx.client.getCollaboratorRole(installationId, repo, {
+    login: installer.login,
+    id: installer.id,
+  });
+  return WRITE_ROLES.has(role);
 }
 
 export interface InstallationOutcome {
@@ -117,14 +181,18 @@ export async function handleInstallationEvent(
   const installationId = payload.installation.id;
   switch (payload.action) {
     case "created":
-    case "unsuspend":
+    case "unsuspend": {
+      // unsuspend（以及安裝到全部 repo 時的 created）的 payload 不一定列出 repo，這時向 GitHub 查詢。
+      const repos = payload.repositories?.length
+        ? payload.repositories
+        : (await ctx.client.listInstallationRepositories(installationId)).map((r) => ({
+            id: r.id,
+            full_name: r.fullName,
+          }));
       return {
-        updatedRepoIds: await setInstallation(
-          ctx,
-          (payload.repositories ?? []).map((r) => r.id),
-          installationId,
-        ),
+        updatedRepoIds: await setInstallation(ctx, repos, installationId, payload.sender),
       };
+    }
     case "deleted":
     case "suspend": {
       ctx.client.forgetInstallation(installationId);
@@ -150,13 +218,13 @@ export async function handleInstallationRepositoriesEvent(
 ): Promise<InstallationOutcome> {
   const added = await setInstallation(
     ctx,
-    payload.repositories_added.map((r) => r.id),
+    payload.repositories_added,
     payload.installation.id,
+    payload.sender,
   );
-  const removed = await setInstallation(
+  const removed = await clearInstallation(
     ctx,
-    payload.repositories_removed.map((r) => r.id),
-    null,
+    payload.repositories_removed,
     payload.installation.id,
   );
   return { updatedRepoIds: [...added, ...removed] };

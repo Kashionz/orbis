@@ -50,6 +50,10 @@ const RepoResponse = z.object({
   html_url: z.string(),
 });
 
+const InstallationRepositoriesResponse = z.object({
+  repositories: z.array(z.object({ id: z.number(), full_name: z.string() })),
+});
+
 const PullRequestResponse = z.object({
   id: z.number(),
   number: z.number(),
@@ -245,6 +249,23 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
 
     forgetInstallation(installationId) {
       tokens.invalidate(installationId);
+    },
+
+    async listInstallationRepositories(installationId) {
+      const repos: { id: number; fullName: string }[] = [];
+      let url: string | null = "/installation/repositories?per_page=100";
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request(
+          "GET",
+          url,
+          inst(installationId),
+          InstallationRepositoriesResponse,
+        );
+        if (!result) break;
+        repos.push(...result.data.repositories.map((r) => ({ id: r.id, fullName: r.full_name })));
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return repos;
     },
 
     async getCollaboratorRole(installationId, repo, user) {
