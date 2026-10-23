@@ -13,6 +13,7 @@ import type { Logger } from "./logger";
 import { createPreviewRoutes } from "./preview/routes";
 import { createAuthRoutes } from "./routes/auth";
 import { createCommentRoutes } from "./routes/comments";
+import { createCredentialRoutes } from "./routes/credentials";
 import { createDraftRoutes } from "./routes/drafts";
 import { createGitHubRoutes, createGitHubWebhookRoute } from "./routes/github";
 import { createNotificationRoutes } from "./routes/notifications";
@@ -81,6 +82,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", createRunnerRoutes(services));
   app.route("/", createDraftRoutes(services));
   app.route("/", createCommentRoutes(services));
+  app.route("/", createCredentialRoutes(services));
   app.route("/", createRepoSpecRoutes(services));
   app.route("/", createNotificationRoutes(services));
 

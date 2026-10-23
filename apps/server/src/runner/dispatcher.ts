@@ -13,7 +13,7 @@
 //
 // 並行上限的完整控管留給 B2。
 
-import { NAMES } from "@orbis/api-contract";
+import { NAMES, type QueueWaitingReason } from "@orbis/api-contract";
 import type {
   ContentBlock,
   DispatchAccept,
@@ -31,6 +31,7 @@ import {
   projects,
   repoSpecs,
   repos,
+  runnerCredentials,
   runners,
   runs,
   tasks,
@@ -41,6 +42,12 @@ import { planGateEnabled } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
 import { childSequence, runDepth } from "../runs/children";
 import type { EventStore } from "../runs/event-store";
+import {
+  CREDENTIAL_OCCUPYING_STATUSES,
+  type CredentialLoad,
+  credentialCapacity,
+  effectiveMaxConcurrency,
+} from "./capacity";
 import type { RunnerHub } from "./hub";
 
 export const DEFAULT_OFFER_TIMEOUT_MS = 30_000;
@@ -61,6 +68,41 @@ export interface DispatcherOptions {
 }
 
 type RunRow = typeof runs.$inferSelect;
+
+/** 派工的結果：派給哪台 Runner、用哪組 Credential，或還在佇列的原因。 */
+export type Placement =
+  | { runnerId: string; credential: string | null }
+  | { reason: QueueWaitingReason };
+
+/** 一組 Credential 目前的負載：佔用名額的 Run、有效上限與 rate limit。 */
+export async function credentialLoad(
+  db: Executor,
+  runnerId: string,
+  credential: string,
+  reported: number,
+): Promise<CredentialLoad> {
+  const [settings] = await db
+    .select()
+    .from(runnerCredentials)
+    .where(
+      and(eq(runnerCredentials.runnerId, runnerId), eq(runnerCredentials.credential, credential)),
+    );
+  const [{ active } = { active: 0 }] = await db
+    .select({ active: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.runnerId, runnerId),
+        eq(runs.credential, credential),
+        inArray(runs.status, [...CREDENTIAL_OCCUPYING_STATUSES]),
+      ),
+    );
+  return {
+    maxConcurrency: effectiveMaxConcurrency(settings?.maxConcurrentRunsOverride, reported),
+    active,
+    rateLimitedUntil: settings?.rateLimitedUntil ?? null,
+  };
+}
 
 export class Dispatcher {
   private readonly db: Database;
@@ -188,7 +230,7 @@ export class Dispatcher {
   private async requeue(db: Executor, runId: string): Promise<void> {
     await db
       .update(runs)
-      .set({ status: "queued", runnerId: null })
+      .set({ status: "queued", runnerId: null, credential: null })
       .where(and(eq(runs.id, runId), inArray(runs.status, NON_TERMINAL_RUN_STATUSES)));
   }
 
@@ -200,19 +242,25 @@ export class Dispatcher {
       .orderBy(asc(runs.createdAt), asc(runs.id))
       .limit(100);
     for (const run of queued) {
-      const runnerId = await this.pickRunner(run, now);
-      if (runnerId) await this.offer(run, runnerId, now);
+      const placement = await this.placement(run, now);
+      if ("runnerId" in placement) {
+        await this.offer(run, placement.runnerId, placement.credential, now);
+      }
     }
   }
 
-  private async pickRunner(run: RunRow, now: Date): Promise<string | null> {
-    if (run.target === "local" && !run.requestedByMemberId) return null;
+  /**
+   * 這個 Run 現在能派給哪台 Runner、用哪組 Credential；不能派時回傳原因（Team Runner 佇列的顯示也用它）。
+   * Credential 的有效並行上限＝Admin 的覆寫 ?? Runner 回報；撞到 rate limit 時到恢復前不派（ARCHITECTURE §7）。
+   */
+  async placement(run: RunRow, now: Date): Promise<Placement> {
+    if (run.target === "local" && !run.requestedByMemberId) return { reason: "no_runner" };
     const [owner] = await this.db
       .select({ teamId: projects.teamId })
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(tasks.id, run.taskId));
-    if (!owner) return null;
+    if (!owner) return { reason: "no_runner" };
     // Child Run、讀別的 Run Worktree 的 consult Run、Feedback Loop 接續的 Run 只能派給那個 Run 所在的
     // Runner（要用同一個 Worktree）。那個 Run 不在任何 Runner 上時留在佇列。
     const pinned = run.parentRunId ?? run.consultOfRunId ?? run.resumesRunId;
@@ -222,44 +270,71 @@ export class Dispatcher {
         .select({ runnerId: runs.runnerId })
         .from(runs)
         .where(eq(runs.id, pinned));
-      if (!source?.runnerId) return null;
+      if (!source?.runnerId) return { reason: "no_runner" };
       pinnedRunnerId = source.runnerId;
     }
+    const eligible = and(
+      eq(runners.teamId, owner.teamId),
+      isNull(runners.revokedAt),
+      eq(runners.kind, run.target),
+      pinnedRunnerId ? eq(runners.id, pinnedRunnerId) : undefined,
+      run.target === "local" && run.requestedByMemberId
+        ? eq(runners.memberId, run.requestedByMemberId)
+        : undefined,
+    );
     const candidates = await this.db
-      .select({ id: runners.id })
+      .select({
+        id: runners.id,
+        credential: agentAvailabilities.credential,
+        reported: agentAvailabilities.maxConcurrency,
+      })
       .from(runners)
       .innerJoin(agentAvailabilities, eq(agentAvailabilities.runnerId, runners.id))
       .where(
         and(
-          eq(runners.teamId, owner.teamId),
-          isNull(runners.revokedAt),
-          eq(runners.kind, run.target),
-          pinnedRunnerId ? eq(runners.id, pinnedRunnerId) : undefined,
-          run.target === "local" && run.requestedByMemberId
-            ? eq(runners.memberId, run.requestedByMemberId)
-            : undefined,
+          eligible,
           eq(agentAvailabilities.agent, run.agent),
           eq(agentAvailabilities.available, true),
         ),
       )
-      .orderBy(asc(runners.createdAt), asc(runners.id));
+      .orderBy(asc(runners.createdAt), asc(runners.id), asc(agentAvailabilities.credential));
+    if (candidates.length === 0) {
+      const [any] = await this.db.select({ id: runners.id }).from(runners).where(eligible).limit(1);
+      return { reason: any ? "agent_unavailable" : "no_runner" };
+    }
+    let blocked: "concurrency_limit" | "rate_limited" | null = null;
+    let reachable = false;
     for (const candidate of candidates) {
       if (!this.options.hub.isOnline(candidate.id)) continue;
       if (!this.options.hub.isAcceptingDispatches(candidate.id)) continue;
       const cooldown = this.cooldowns.get(`${run.id}:${candidate.id}`);
       if (cooldown !== undefined && cooldown > now.getTime()) continue;
-      return candidate.id;
+      reachable = true;
+      // 沒有 Credential 的 Agent 不受 Server 的並行上限限制（Runner 自己仍會檢查）。
+      if (candidate.credential === "") return { runnerId: candidate.id, credential: null };
+      const capacity = credentialCapacity(
+        await credentialLoad(this.db, candidate.id, candidate.credential, candidate.reported),
+        now,
+      );
+      if (capacity.ok) return { runnerId: candidate.id, credential: candidate.credential };
+      if (blocked !== "rate_limited") blocked = capacity.reason;
     }
-    return null;
+    if (!reachable) return { reason: "no_runner" };
+    return { reason: blocked ?? "concurrency_limit" };
   }
 
   /** 建立 Dispatch 並送出 Offer。 */
-  private async offer(run: RunRow, runnerId: string, now: Date): Promise<void> {
+  private async offer(
+    run: RunRow,
+    runnerId: string,
+    credential: string | null,
+    now: Date,
+  ): Promise<void> {
     const expiresAt = new Date(now.getTime() + this.offerTimeoutMs);
     const dispatch = await this.db.transaction(async (tx) => {
       const [claimed] = await tx
         .update(runs)
-        .set({ status: "dispatched", runnerId })
+        .set({ status: "dispatched", runnerId, credential })
         .where(and(eq(runs.id, run.id), eq(runs.status, "queued")))
         .returning({ id: runs.id });
       if (!claimed) return null;
@@ -271,7 +346,7 @@ export class Dispatcher {
     });
     if (!dispatch) return;
 
-    const offer = await this.buildOffer(run, dispatch.id, expiresAt);
+    const offer = await this.buildOffer({ ...run, runnerId, credential }, dispatch.id, expiresAt);
     const sent = this.options.hub.send(runnerId, { type: "dispatch_offer", ...offer });
     this.log.info(
       { runId: run.id, runnerId, dispatchId: dispatch.id, sent },
@@ -342,6 +417,7 @@ export class Dispatcher {
         command: c.kind === "command" ? c.command : null,
       })),
       origin: run.origin,
+      ...(run.credential && { credential: run.credential }),
     };
   }
 

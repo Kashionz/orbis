@@ -24,6 +24,7 @@ import {
   needsYouItems,
   runControls,
   runEvents,
+  runnerCredentials,
   runs,
   taskComments,
   tasks,
@@ -119,6 +120,14 @@ const VerificationCompletedBody = z.object({
 });
 
 const AgentSessionBody = z.object({ session_id: z.string().min(1) });
+
+const RateLimitedBody = z.object({
+  resets_at: z.iso.datetime({ offset: true }).nullable(),
+  message: z.string(),
+});
+
+/** rate limit 沒有恢復時間時，Credential 暫停派工多久。 */
+export const DEFAULT_RATE_LIMIT_PAUSE_MS = 5 * 60_000;
 
 export type IngestResult =
   | { ok: true; ack: EventAck; inserted: boolean }
@@ -318,6 +327,28 @@ export class EventIngest {
         const body = parse(StatusChangedBody);
         if (!body) return;
         await this.onStatusChanged(uow, runId, body.status, body.gate, body.message);
+        return;
+      }
+      case "rate_limited": {
+        const body = parse(RateLimitedBody);
+        if (!body) return;
+        const context = await this.runContext(uow, runId);
+        if (!context?.run.runnerId || !context.run.credential) return;
+        // 這組 Credential 到恢復前不派新的 Run（ARCHITECTURE §7）；Agent 沒有提供恢復時間時先暫停一段時間。
+        const until = body.resets_at
+          ? new Date(body.resets_at)
+          : new Date(this.clock.now().getTime() + DEFAULT_RATE_LIMIT_PAUSE_MS);
+        await tx
+          .insert(runnerCredentials)
+          .values({
+            runnerId: context.run.runnerId,
+            credential: context.run.credential,
+            rateLimitedUntil: until,
+          })
+          .onConflictDoUpdate({
+            target: [runnerCredentials.runnerId, runnerCredentials.credential],
+            set: { rateLimitedUntil: until, updatedAt: this.clock.now() },
+          });
         return;
       }
       case "agent_session": {
