@@ -121,13 +121,15 @@ export class VerificationService {
       .select()
       .from(verifications)
       .where(and(eq(verifications.id, body.verification_id), eq(verifications.runId, run.id)));
-    if (!verification) {
+    // 只接受進行中的這一輪；結束後才到的結果不改變已經做出的決定。
+    if (verification?.status !== "running") {
       this.deps.logger.warn(
         { runId: run.id, body },
-        "verification_result 對應不到這個 Run 的 Verification",
+        "verification_result 對應不到這個 Run 進行中的 Verification",
       );
       return;
     }
+    // Runner 只能回報 Server 要求檢查的類型；manual 條件只能由人在 Review Gate 打勾。
     const [criterion] = await tx
       .select({ id: acceptanceCriteria.id })
       .from(acceptanceCriteria)
@@ -135,6 +137,7 @@ export class VerificationService {
         and(
           eq(acceptanceCriteria.id, body.criterion_id),
           eq(acceptanceCriteria.taskId, verification.taskId),
+          ne(acceptanceCriteria.kind, "manual"),
         ),
       );
     if (!criterion) return;

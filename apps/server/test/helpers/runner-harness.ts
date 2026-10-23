@@ -146,7 +146,10 @@ export class MockRunner {
     runId: string,
     outcomes: Record<string, "passed" | "failed" | "error"> = {},
   ) {
-    const frame = await this.next("run_control", (f) => f.run_id === runId && f.action === "verify");
+    const frame = await this.next(
+      "run_control",
+      (f) => f.run_id === runId && f.action === "verify",
+    );
     if (frame.action !== "verify") throw new Error("unreachable");
     this.send({
       type: "run_control_result",

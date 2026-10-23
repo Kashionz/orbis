@@ -19,7 +19,7 @@ import {
   type ReviewCommentInput,
 } from "@orbis/api-contract";
 import type { BlobRef, ContentBlock, PermissionPurpose, RunControlAction } from "@orbis/protocol";
-import { and, asc, count, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { z } from "zod";
 import { authorize, authorizePermissionResponse } from "../authz/capabilities";
@@ -249,7 +249,15 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
             and(
               eq(acceptanceCriteria.taskId, gate.taskId),
               eq(acceptanceCriteria.kind, "manual"),
-              or(isNull(acceptanceCriteria.passed), eq(acceptanceCriteria.passed, false)),
+              // 打勾必須是人在這個 Gate 建立之後做的：條件的類型被改成 manual、或沿用上一版的
+              // 打勾都不算。
+              or(
+                isNull(acceptanceCriteria.passed),
+                eq(acceptanceCriteria.passed, false),
+                isNull(acceptanceCriteria.checkedByMemberId),
+                isNull(acceptanceCriteria.checkedAt),
+                lt(acceptanceCriteria.checkedAt, gate.createdAt),
+              ),
             ),
           );
         if ((unchecked?.n ?? 0) > 0) {
@@ -260,7 +268,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         input.action === "reject" ? input.reviewComments : [];
       const previewComments =
         input.action === "reject"
-          ? await checkPreviewComments(tx, runId, input.previewComments)
+          ? await checkPreviewComments(tx, runId, input.previewComments, s.previewDomain)
           : [];
       const [decided] = await tx
         .update(gates)
@@ -411,18 +419,24 @@ export interface CheckedPreviewComment {
 }
 
 /**
- * 檢查 Preview 留言：網址必須是這個 Run 的 Preview（`<run-id>.preview.<domain>`），
- * 截圖必須是這個 Run 的 blob。
+ * 檢查 Preview 留言：網址必須是這個 Run 的 Preview（http(s)、host 是 `<run-id>.preview.<domain>`；
+ * 有設定 Preview 的網域時整個 host 都要相同），截圖必須是這個 Run 的 blob。
  */
 async function checkPreviewComments(
   tx: Executor,
   runId: string,
   comments: PreviewCommentParsed[],
+  previewDomain: string | null,
 ): Promise<CheckedPreviewComment[]> {
   const checked: CheckedPreviewComment[] = [];
+  const prefix = `${runId.toLowerCase()}.preview.`;
   for (const comment of comments) {
-    const [label, zone] = new URL(comment.url).hostname.toLowerCase().split(".");
-    if (label !== runId.toLowerCase() || zone !== "preview") {
+    const url = new URL(comment.url);
+    const host = url.hostname.toLowerCase();
+    const sameRun = previewDomain
+      ? host === `${prefix}${previewDomain.toLowerCase()}`
+      : host.startsWith(prefix) && host.length > prefix.length;
+    if (!sameRun || (url.protocol !== "https:" && url.protocol !== "http:")) {
       throw new ApiError(422, "invalid_input", "Preview 留言的網址不是這個 Run 的 Preview");
     }
     let screenshot: BlobRef | null = null;

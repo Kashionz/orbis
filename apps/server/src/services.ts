@@ -51,6 +51,8 @@ export interface Services {
   sessionCleanup: SessionCleanup;
   verification: VerificationService;
   notify: Notify;
+  /** Preview 子網域的網域（`<run-id>.preview.<domain>` 的 domain）；未設定時只檢查前綴。 */
+  previewDomain: string | null;
   /** 共同編輯的文件（載入、寫回、與資料庫內容同步）。 */
   collab: CollabHub;
   heartbeatIntervalMs: number;
@@ -151,6 +153,7 @@ export function createServices(options: ServicesOptions): Services {
     runControls,
     verification,
     notify,
+    previewDomain: options.previewDomain ?? null,
     blobStore,
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     sessionCleanup,
