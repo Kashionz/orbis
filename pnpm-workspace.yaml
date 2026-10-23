@@ -6,3 +6,4 @@ packages:
 onlyBuiltDependencies:
   - "@biomejs/biome"
   - esbuild
+  - electron

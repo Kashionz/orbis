@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @orbis/server --filter @orbis/web dev",
+    "dev:desktop": "pnpm --filter @orbis/desktop dev",
     "dev:runner": "node scripts/dev-runner.mjs",
     "lint": "biome check . && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && node scripts/check-names.mjs && node scripts/check-architecture-paths.mjs",
     "format": "biome check --write . && cargo fmt --all",
