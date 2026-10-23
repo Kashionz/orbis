@@ -79,7 +79,7 @@ describe("Delegation 的防護規則", () => {
   });
 });
 
-describe.skipIf(dbSkipReason !== null)("Child Run（Orbis MCP 工具）", () => {
+describe.skipIf(dbSkipReason !== null)("Child Run（MCP 工具）", () => {
   let database: TestDatabase;
   let flow: Flow;
   let parent: StartedRun;

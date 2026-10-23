@@ -271,10 +271,11 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
     );
     expect(created.status).toBe(201);
     const taskId = created.body.id;
-    await api("POST", apiPath(API_ROUTES.taskAcceptanceCriteria, { taskId }), {
-      kind: "manual",
-      description: "m1.txt 存在",
-    });
+    const criterion = await api<{ id: string }>(
+      "POST",
+      apiPath(API_ROUTES.taskAcceptanceCriteria, { taskId }),
+      { kind: "manual", description: "m1.txt 存在" },
+    );
     expect(
       (await api("POST", apiPath(API_ROUTES.taskTransition, { taskId }), { status: "ready" }))
         .status,
@@ -313,9 +314,17 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
     const second = await until("第二次 Review Gate", async () =>
       (await gates()).body.find((g) => g.decision === null && g.id !== first.id),
     );
-    await api("POST", apiPath(API_ROUTES.gateDecision, { gateId: second.id }), {
+    // manual 條件全部打勾後才能核准 Review Gate。
+    const checked = await api(
+      "POST",
+      apiPath(API_ROUTES.acceptanceCriterionCheck, { criterionId: criterion.body.id }),
+      { checked: true },
+    );
+    expect(checked.status).toBe(200);
+    const approved = await api("POST", apiPath(API_ROUTES.gateDecision, { gateId: second.id }), {
       action: "approve",
     });
+    expect(approved.status).toBe(200);
     const finished = await until("Run 結束", async () => {
       const current = (await api<Run>("GET", apiPath(API_ROUTES.run, { runId: run.body.id }))).body;
       return current.status === "completed" || current.status === "failed" ? current : undefined;
