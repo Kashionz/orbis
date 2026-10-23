@@ -558,7 +558,10 @@ impl Run {
         Ok(resumed)
     }
 
-    /// 結束 Agent 再重新啟動，盡量接續同一個 session。回傳接下來要送的 prompt。
+    /// 結束 Agent、把設定檔還原成已接受的內容，再重新啟動 Agent，盡量接續同一個 session。
+    /// 回傳接下來要送的 prompt。
+    ///
+    /// 一定要先結束整個程序樹再還原：否則 Agent 可能在還原之後、結束之前又改一次。
     async fn restart_agent(&mut self) -> Result<Vec<acp::ContentBlock>, Stop> {
         let previous = self.session.take().map(|session| {
             let id = session.session_id().to_owned();
@@ -571,7 +574,9 @@ impl Run {
             }
             None => None,
         };
-        tracing::info!(run_id = %self.run_id(), ?resume, "重新啟動 Agent");
+        let changed = self.changed_agent_settings();
+        self.restore_agent_settings(&changed)?;
+        tracing::info!(run_id = %self.run_id(), ?resume, "還原設定檔後重新啟動 Agent");
         if self.start_agent(resume).await? {
             return Ok(vec![acp::ContentBlock::from(
                 SETTINGS_RESUME_PROMPT.to_owned(),
@@ -725,7 +730,7 @@ impl Run {
     /// - 送出 prompt 前（含啟動 session 前）：允許才繼續，拒絕就停止 Run。
     /// - session 中途被改（issue #52）：接受變更，或把檔案還原成已接受的內容，兩者都繼續 Run。
     ///
-    /// 回傳 `true` 表示檔案被還原了（呼叫端要重新啟動 Agent）。
+    /// 回傳 `true` 表示人選擇還原（呼叫端要停掉 Agent、還原檔案再重新啟動，見 [`Self::restart_agent`]）。
     async fn check_agent_settings(&mut self, when: SettingsCheck) -> Result<bool, Stop> {
         let changed = self.changed_agent_settings();
         if changed.is_empty() {
@@ -787,7 +792,8 @@ impl Run {
                 RunErrorCode::AgentError,
                 format!("Agent 設定檔的變更（{list}）沒有被允許"),
             )),
-            SettingsCheck::MidSession => self.restore_agent_settings(&changed).map(|()| true),
+            // 先不還原：Agent 還在執行，可能再改一次。由呼叫端停掉 Agent 之後再還原。
+            SettingsCheck::MidSession => Ok(true),
         }
     }
 
@@ -823,8 +829,8 @@ impl Run {
                     prompt = vec![acp::ContentBlock::from(RESUME_PROMPT.to_owned())];
                 }
                 TurnEnd::SettingsChanged => {
-                    let restored = self.check_agent_settings(SettingsCheck::MidSession).await?;
-                    prompt = if restored {
+                    let restore = self.check_agent_settings(SettingsCheck::MidSession).await?;
+                    prompt = if restore {
                         // Agent 可能已經把新的設定載入記憶體（例如 Claude Code 的「永遠允許」同時
                         // 更新 session 中的規則），只還原檔案不夠：重新啟動 Agent 讓它重新讀取。
                         self.restart_agent().await?
