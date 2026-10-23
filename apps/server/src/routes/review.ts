@@ -397,7 +397,8 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
       .update(acceptanceCriteria)
       .set({
         passed: input.checked ? true : null,
-        checkedAt: input.checked ? s.clock.now() : null,
+        // 用資料庫的時間，才能和 Gate 的建立時間（資料庫的預設值）比較。
+        checkedAt: input.checked ? sql`now()` : null,
         checkedByMemberId: input.checked ? actor.memberId : null,
         checkedByRunId: null,
       })

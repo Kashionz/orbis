@@ -364,7 +364,7 @@ export class EventIngest {
 
     if (status === "awaiting_gate" && gate === "review" && primary) {
       // Agent 結束回合：開始 Verification（Verification 結束後 Runner 再送一次，那時不做事）。
-      await this.deps.verification.onTurnEnded(uow, run, task);
+      await this.deps.verification.onTurnEnded(uow, run, task, run.status);
       return;
     }
     if (status === "awaiting_gate" && gate === "plan" && primary) {

@@ -66,8 +66,18 @@ export class VerificationService {
     },
   ) {}
 
-  /** 主 Run 的 Agent 結束回合。Task 在 Running 時開始一輪 Verification；其他狀態不做事。 */
-  async onTurnEnded(uow: UnitOfWork, run: RunRow, task: TaskRow): Promise<void> {
+  /**
+   * 主 Run 回報 `awaiting_gate(review)`。只有 Agent 真的結束了一個回合（Run 之前在執行中）、
+   * 而且 Task 在 Running 時才開始一輪 Verification。Verification 結束後 Runner 會再送一次
+   * `awaiting_gate(review)`（Run 之前是 verifying），那時不算新的回合。
+   */
+  async onTurnEnded(
+    uow: UnitOfWork,
+    run: RunRow,
+    task: TaskRow,
+    previousStatus: RunRow["status"],
+  ): Promise<void> {
+    if (previousStatus === "verifying" || previousStatus === "awaiting_gate") return;
     if (task.status !== "running") return;
     const verifying = await this.deps.lifecycle.transition(uow, task.id, "verifying", "run");
     await this.start(uow, run, verifying);
