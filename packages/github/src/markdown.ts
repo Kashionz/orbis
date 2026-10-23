@@ -51,11 +51,13 @@ export function renderSummaryComment(input: {
   notice?: string;
 }): string {
   const { task } = input;
+  // 關閉原因只在 Done 時有意義（離開 Done 時 Server 會清空，這裡不依賴它）
+  const notPlanned = task.status === "done" && task.doneReason === "not_planned";
   const lines = [
     SUMMARY_MARKER,
     `### ${NAMES.productName} · [${task.key}](${input.taskUrl})`,
     "",
-    `**狀態**：${TASK_STATUS_LABELS[task.status]}${task.doneReason === "not_planned" ? "（不處理）" : ""}`,
+    `**狀態**：${TASK_STATUS_LABELS[task.status]}${notPlanned ? "（不處理）" : ""}`,
   ];
   if (input.latestRun) {
     lines.push(`**最近的 Run**：${input.latestRun.agent} · ${input.latestRun.status}`);

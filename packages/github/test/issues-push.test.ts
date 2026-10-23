@@ -112,6 +112,15 @@ describe("Task 同步到 GitHub Issue", () => {
     });
   });
 
+  it("不是 Done 時，殘留的關閉原因不會顯示在摘要留言", async () => {
+    const w = createWorld();
+    const task = w.addTask({ status: "backlog", doneReason: "not_planned" });
+    const { issueNumber } = (await w.integration.onTaskChanged(task.id)) as { issueNumber: number };
+    const body = w.github.commentsOn(w.repo.id, issueNumber)[0]?.body ?? "";
+    expect(body).toContain("**狀態**：Backlog");
+    expect(body).not.toContain("不處理");
+  });
+
   it("Project 關閉「自動建立 Issue」時不建立 Issue，已對應的 Issue 照常同步", async () => {
     const w = createWorld();
     const linked = w.addTask();
