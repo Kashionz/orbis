@@ -726,13 +726,21 @@ impl Run {
         };
         let wt_path = self.wt().path.clone();
         for path in paths {
-            let current = read_protected(&wt_path.join(&path));
-            self.settings_baseline.insert(path, current);
+            match read_protected(&wt_path.join(&path)) {
+                Some(Protected::File(content)) => {
+                    self.settings_baseline.insert(path, Some(content));
+                }
+                None => {
+                    self.settings_baseline.insert(path, None);
+                }
+                // 連結不接受，之後的比對會問人。
+                Some(Protected::Link) => {}
+            }
         }
     }
 
-    /// 和已接受的內容不同的受保護設定檔：（相對路徑, 目前內容），依路徑排序。
-    fn changed_agent_settings(&self) -> Vec<(String, Option<Vec<u8>>)> {
+    /// 和已接受的內容不同的受保護設定檔：（相對路徑, 目前狀態），依路徑排序。連結一律算變更。
+    fn changed_agent_settings(&self) -> Vec<(String, Option<Protected>)> {
         let Some(wt) = self.worktree.as_ref() else {
             return Vec::new();
         };
@@ -749,7 +757,12 @@ impl Run {
             .filter_map(|path| {
                 let current = read_protected(&wt.path.join(&path));
                 let accepted = self.settings_baseline.get(&path).cloned().flatten();
-                (current != accepted).then_some((path, current))
+                let same = match &current {
+                    None => accepted.is_none(),
+                    Some(Protected::File(content)) => accepted.as_ref() == Some(content),
+                    Some(Protected::Link) => false,
+                };
+                (!same).then_some((path, current))
             })
             .collect()
     }
@@ -771,10 +784,24 @@ impl Run {
             .map(|(p, _)| p.as_str())
             .collect::<Vec<_>>()
             .join("、");
-        let (title, options) = match when {
+        // 設定中有連結時不能接受（不跟著連結讀，無法確認內容），只能還原或停止。
+        let links = changed
+            .iter()
+            .filter(|(_, current)| matches!(current, Some(Protected::Link)))
+            .map(|(p, _)| p.as_str())
+            .collect::<Vec<_>>();
+        let link_note = if links.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "其中 {} 是連結（symlink／junction）；Agent 的設定不接受連結，只能還原或停止。",
+                links.join("、")
+            )
+        };
+        let (title, mut options) = match when {
             SettingsCheck::BeforePrompt => (
                 format!(
-                    "Worktree 中 Agent 的設定檔 {list} 和 base commit 不同，可能讓 Agent 繞過 Permission Policy。允許後才繼續。"
+                    "Worktree 中 Agent 的設定檔 {list} 和 base commit 不同，可能讓 Agent 繞過 Permission Policy。允許後才繼續。{link_note}"
                 ),
                 vec![
                     option("allow_once", "允許並繼續", PermissionOptionKind::AllowOnce),
@@ -787,7 +814,7 @@ impl Run {
             ),
             SettingsCheck::MidSession => (
                 format!(
-                    "Agent 在執行中修改了自己的設定檔 {list}，可能讓之後的操作不再經過 Permission Policy。已中止這個回合，請決定要接受變更還是還原。"
+                    "Agent 在執行中修改了自己的設定檔 {list}，可能讓之後的操作不再經過 Permission Policy。已中止這個回合，請決定要接受變更還是還原。{link_note}"
                 ),
                 vec![
                     option(
@@ -803,6 +830,9 @@ impl Run {
                 ],
             ),
         };
+        if !links.is_empty() {
+            options.retain(|o| o.kind != PermissionOptionKind::AllowOnce);
+        }
         let chosen = self
             .ask_human(
                 PermissionPurpose::AgentSettingsChanged,
@@ -813,7 +843,12 @@ impl Run {
             .await?;
         if chosen == "allow_once" {
             for (path, current) in changed {
-                self.settings_baseline.insert(path, current);
+                let accepted = match current {
+                    Some(Protected::File(content)) => Some(content),
+                    None => None,
+                    Some(Protected::Link) => unreachable!("有連結時不提供接受的選項"),
+                };
+                self.settings_baseline.insert(path, accepted);
             }
             return Ok(false);
         }
@@ -831,7 +866,7 @@ impl Run {
     ///
     /// 不跟著連結寫：設定檔本身是 symlink 時先移除連結；所在目錄（例如 `.claude`）解開
     /// symlink／junction 後不在 Worktree 內時拒絕還原，避免寫到 Worktree 外。
-    fn restore_agent_settings(&self, changed: &[(String, Option<Vec<u8>>)]) -> Result<(), Stop> {
+    fn restore_agent_settings(&self, changed: &[(String, Option<Protected>)]) -> Result<(), Stop> {
         let wt_path = self.wt().path.clone();
         for (path, _) in changed {
             let accepted = self.settings_baseline.get(path).cloned().flatten();
@@ -1444,37 +1479,22 @@ fn files_under(worktree: &std::path::Path, dir: &str) -> Vec<String> {
     out
 }
 
-/// 受保護設定的目前內容（不存在時為 `None`）。
-///
-/// symlink／junction 的內容是「連結到哪裡」加上連結目標的內容（指向目錄時是其中每個檔案的
-/// 路徑與內容）：新增或改指向的連結一定和基準不同，已接受的連結之後目標被改也會被發現
-/// （安全審查的發現）。
-fn read_protected(path: &std::path::Path) -> Option<Vec<u8>> {
-    /// 指向目錄的連結最多看這麼多個檔案，超過的部分以檔案數表示。
-    const MAX_LINKED_FILES: usize = 256;
+/// 受保護設定的目前狀態。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Protected {
+    File(Vec<u8>),
+    /// symlink／junction。Agent 的設定中不接受連結：不跟著讀（目標可能在 Worktree 外、
+    /// 可能很大或形成循環），一律視為變更，只能還原或停止 Run（安全審查的發現）。
+    Link,
+}
+
+/// 受保護設定的目前狀態；不存在時為 `None`。不跟著連結。
+fn read_protected(path: &std::path::Path) -> Option<Protected> {
     let meta = std::fs::symlink_metadata(path).ok()?;
-    if !meta.file_type().is_symlink() {
-        return std::fs::read(path).ok();
+    if meta.file_type().is_symlink() {
+        return Some(Protected::Link);
     }
-    let target = std::fs::read_link(path)
-        .map(|t| t.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let mut out = format!("symlink -> {target}\n").into_bytes();
-    if path.is_dir() {
-        let mut files = files_under(path, ".");
-        files.sort();
-        out.extend(format!("{} files\n", files.len()).into_bytes());
-        for file in files.iter().take(MAX_LINKED_FILES) {
-            out.extend(file.as_bytes());
-            out.push(0);
-            // 不再遞迴進入其中的連結（連結可能形成循環）。
-            out.extend(std::fs::read(path.join(file)).unwrap_or_default());
-            out.push(0);
-        }
-    } else if let Ok(content) = std::fs::read(path) {
-        out.extend(content);
-    }
-    Some(out)
+    std::fs::read(path).ok().map(Protected::File)
 }
 
 /// 什麼時候檢查 Agent 的設定檔。
@@ -1563,7 +1583,7 @@ mod tests {
     }
 
     /// 受保護目錄中的連結（例如 `.gemini/extensions` 換成指向別處的 junction）也算一個項目，
-    /// 新增的連結和「不存在」的基準不同。
+    /// 而且不跟著讀；還原時只移除連結本身。
     #[test]
     fn 受保護目錄中的連結算作變更() {
         let dir = tempfile::tempdir().unwrap();
@@ -1576,12 +1596,15 @@ mod tests {
         let mut files = files_under(&wt, ".gemini");
         files.sort();
         assert_eq!(files, [".gemini/extensions", ".gemini/settings.json"]);
-        let link = read_protected(&wt.join(".gemini/extensions")).unwrap();
-        assert!(String::from_utf8_lossy(&link).starts_with("symlink -> "));
-        // 已接受的連結之後目標的內容改了，也要看得出來。
-        std::fs::write(elsewhere.join("ext.json"), "{}").unwrap();
-        let changed = read_protected(&wt.join(".gemini/extensions")).unwrap();
-        assert_ne!(link, changed);
+        assert_eq!(
+            read_protected(&wt.join(".gemini/extensions")),
+            Some(Protected::Link),
+            "不跟著連結讀"
+        );
+        assert_eq!(
+            read_protected(&wt.join(".gemini/settings.json")),
+            Some(Protected::File(b"{}".to_vec()))
+        );
         restore_protected_file(&wt, ".gemini/extensions", None).unwrap();
         assert!(std::fs::symlink_metadata(wt.join(".gemini/extensions")).is_err());
         assert!(elsewhere.exists(), "只移除連結本身");

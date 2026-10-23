@@ -364,7 +364,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
 - **使用者全域的 Agent 設定**：Claude Code 在 Run 中預設只載入 Repo 的 project／local 設定，不載入使用者全域的 `~/.claude/settings.json`（Runner 在 `session/new` 傳 claude-agent-acp 的 `settingSources`）。使用者自己的 allow 規則、plugin 與它帶的 MCP、hooks 都不會出現在 Run 中；登入不受影響。需要時可以在 runner.toml 的 `[agents.claude-code]` 設 `user_settings = true` 打開，AgentAvailability 的落差說明會跟著改變。其他 Agent 的使用者全域設定見 §7 的 Agent Profile。
 - **已知落差**：Agent 自己的設定中允許的工具不會詢問 Runner，例如 Claude Code 的 `.claude/settings.json`。
   - Phase 1 接受這個落差。各 Agent Profile 在 AgentAvailability 中回報落差，派工對話框顯示警告。
-  - 受保護的 Agent 設定由各 Agent Profile 列出：Claude Code 的 `.claude/settings.json`、`.claude/settings.local.json` 與 `.mcp.json`，Codex 的 `.codex/`、Gemini CLI 的 `.gemini/`、Grok Build 的 `.grok/`（整個目錄）。
+  - 受保護的 Agent 設定由各 Agent Profile 列出：Claude Code 的 `.claude/settings.json`、`.claude/settings.local.json` 與 `.mcp.json`，Codex 的 `.codex/`、Gemini CLI 的 `.gemini/`、Grok Build 的 `.grok/`（整個目錄）。這些位置不接受連結（symlink／junction）：Runner 不跟著連結讀，出現連結時只能還原或停止 Run。
   - `auto` 下，寫入這些設定一律問人。
   - 每次啟動 session 前，Runner 比對 Worktree 中這些設定與 base commit。有差異就停下來加入 Needs You，人允許後才啟動。
   - Agent Profile 指定的 session mode（例如 Claude Code 的 `default`、Codex 的 `read-only`）不存在於 Agent 回報的模式清單時，Agent 不啟動（避免停在會自動核准的模式）。
