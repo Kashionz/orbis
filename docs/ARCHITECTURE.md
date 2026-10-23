@@ -601,7 +601,12 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
   - Runner 要連的 API origin 取自 `GET /api/health` 回報的 `apiOrigin`；回應沒有這個欄位時，退回 Web UI 的 origin。Desktop 在取得 Pairing token 時決定這個網址，sidecar 重新啟動也沿用同一個網址。
 - **安全設定**：
   - 主視窗啟用 `contextIsolation` 與 `sandbox`，不啟用 `nodeIntegration`。
-  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree、登出前的 `beforeLogout()`。main 程序只接受來自 Server origin 主 frame 的呼叫。
+  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree、登出前的 `beforeLogout()`、Preview 的內嵌瀏覽器。main 程序只接受來自 Server origin 主 frame 的呼叫。
+- **Preview 的內嵌瀏覽器**（§13）：
+  - Web UI 的 Preview 分頁經由 bridge 要求顯示某個 Run 的 Preview，並回報分頁的位置；Desktop 以 WebContentsView 疊在主視窗上。網址列、上一頁、重新整理、DevTools 由 Web UI 顯示，透過 bridge 操作。
+  - 開哪個網址由 main 程序自己向 Server 查詢 Run 的 Preview 狀態後決定，Web UI 只給 Run ID：這台 Desktop 的 Local Runner 跑的 Run 開 `localhost:<port>`（只接受 loopback 與 Server 記錄的 port），其他 Run 開 Preview 網址。
+  - 內嵌瀏覽器沒有 preload、啟用 sandbox，導覽只留在這個 Preview 的 origin 與換票用的 authorize，其他 http(s) 連結用外部瀏覽器開啟。和主視窗共用 session，換票時才帶得到 Web UI 的 session cookie。
+  - 選取元素：在 isolated world 注入 overlay（頁面的 script 碰不到），滑鼠下的元素以外框標示，點擊選取、Esc 取消；選取期間攔下點擊。selector 依序用 id、`data-testid`、`tag:nth-of-type()` 路徑，取最短的唯一 selector。選取後保留外框截下 Preview 的畫面，回傳 selector、URL 與截圖給 Web UI 的留言框。
   - 導覽只允許 Server origin 與 GitHub OAuth 的登入頁，其他 http(s) 連結用外部瀏覽器開啟，不開新視窗。
 - **登入與 Pairing**：
   - main 程序監看 Server 的 session cookie，有變化時以 `/api/auth/me` 確認登入狀態。

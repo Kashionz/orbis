@@ -15,6 +15,10 @@ export interface DesktopTestHooks {
   clickNotification(index: number): void;
   launches: LaunchSpec[];
   openedPaths: string[];
+  /** Preview 內嵌瀏覽器交給外部瀏覽器開啟的網址。 */
+  externalUrls: string[];
+  /** Preview 內嵌瀏覽器的 webContents ID；還沒開啟時是 null。 */
+  previewWebContentsId(): number | null;
   trayAction(id: TrayMenuId): void;
   tray(): TrayModel;
   sidecar(): SupervisorSnapshot;

@@ -12,6 +12,7 @@ import {
   type NeedsYouItem,
   type PairingTokenCreated,
 } from "@orbis/api-contract";
+import { NAMES } from "@orbis/api-contract/names";
 import {
   type Hello,
   PROTOCOL_VERSION,
@@ -21,6 +22,11 @@ import {
 } from "@orbis/protocol";
 import { WebSocketServer } from "ws";
 import { SESSION_COOKIE } from "../../src/main/names";
+import {
+  type PreviewState,
+  previewAuthorizePath,
+  previewStatePath,
+} from "../../src/main/preview/target";
 
 export interface FakeServerState {
   /** 目前有效的 session（cookie 值）。 */
@@ -34,6 +40,10 @@ export interface FakeServerState {
   revokedRunners: string[];
   /** 收到的所有 Runner frame 的 type，依序。 */
   runnerFrames: string[];
+  /** 各 Run 的 Preview 狀態（`GET /api/runs/:runId/preview`）。 */
+  previews: Record<string, PreviewState>;
+  /** authorize 換票的請求（Run ID）。 */
+  previewAuthorizations: string[];
 }
 
 export interface FakeServer {
@@ -49,6 +59,9 @@ export const FAKE_ME: Omit<MeResponse, "member"> & { member: NonNullable<MeRespo
   avatarUrl: null,
   member: { id: "member-1", teamId: "team-1", teamName: "Team", role: "owner" },
 };
+
+/** Preview 網址換票的 callback 路徑（ARCHITECTURE §13）。 */
+export const PREVIEW_CALLBACK_PATH = `/__${NAMES.productSlug}/callback`;
 
 function sessionOf(req: IncomingMessage): string | null {
   const cookies = req.headers.cookie?.split(";").map((c) => c.trim()) ?? [];
@@ -90,6 +103,8 @@ export async function startFakeServer(): Promise<FakeServer> {
     needsYouRequests: 0,
     revokedRunners: [],
     runnerFrames: [],
+    previews: {},
+    previewAuthorizations: [],
   };
 
   const server = createServer(async (req, res) => {
@@ -144,6 +159,21 @@ export async function startFakeServer(): Promise<FakeServer> {
     if (url.pathname === API_ROUTES.needsYou) {
       state.needsYouRequests += 1;
       return signedIn ? json(res, 200, state.needsYou) : json(res, 401, { error: "unauthorized" });
+    }
+    for (const [runId, preview] of Object.entries(state.previews)) {
+      if (url.pathname === previewStatePath(runId)) {
+        return signedIn ? json(res, 200, preview) : json(res, 401, { error: "unauthorized" });
+      }
+      if (url.pathname === previewAuthorizePath(runId)) {
+        // 換票：確認 session 後轉回 Preview 網址的 callback（ticket 的驗證由 Preview 端負責）
+        if (!signedIn || !preview.shareUrl) return json(res, 401, { error: "unauthorized" });
+        state.previewAuthorizations.push(runId);
+        const callback = new URL(PREVIEW_CALLBACK_PATH, preview.shareUrl);
+        callback.searchParams.set("ticket", `ticket-${state.previewAuthorizations.length}`);
+        callback.searchParams.set("return", url.searchParams.get("return") ?? "/");
+        res.writeHead(302, { location: callback.href });
+        return res.end();
+      }
     }
     if (url.pathname.startsWith("/api/")) return json(res, 404, { error: "not_found" });
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
