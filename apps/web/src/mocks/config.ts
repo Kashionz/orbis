@@ -20,6 +20,8 @@ export interface MockConfig {
   policy?: Partial<ProjectPolicy>;
   /** Server 拒絕所有寫入（403），模擬 UI 判斷與 Server 不一致的情況。 */
   forbidWrites?: boolean;
+  /** `none`＝剛建立的 Team，還沒有任何 Project。 */
+  projects?: "default" | "none";
   /** 派工對話框的情境：`none`＝沒有任何 Runner 完成 Pairing。 */
   runners?: "default" | "none";
   /** 另外建立一個等待「設定的信任核准」的 Run。 */

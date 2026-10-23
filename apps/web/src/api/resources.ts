@@ -5,6 +5,8 @@ import {
   API_ROUTES,
   apiPath,
   type CreateAcceptanceCriterionInput,
+  type CreateProjectInput,
+  type CreateRepoInput,
   type CreateRunInput,
   type CreateTaskInput,
   DispatchOptions,
@@ -21,6 +23,7 @@ import {
   Task,
   type TaskStatus,
   type UpdateAcceptanceCriterionInput,
+  type UpdateProjectInput,
   type UpdateTaskInput,
 } from "@orbis/api-contract";
 import { queryOptions } from "@tanstack/react-query";
@@ -32,6 +35,7 @@ export const POLL_INTERVAL_MS = 5_000;
 
 export const queryKeys = {
   projects: ["projects"] as const,
+  project: (projectId: string) => ["projects", projectId] as const,
   repos: (projectId: string) => ["projects", projectId, "repos"] as const,
   tasks: (projectId: string) => ["projects", projectId, "tasks"] as const,
   task: (taskId: string) => ["tasks", taskId] as const,
@@ -50,6 +54,13 @@ export const projectsQuery = queryOptions({
   queryKey: queryKeys.projects,
   queryFn: ({ signal }) => apiRequest(API_ROUTES.projects, z.array(Project), { signal }),
 });
+
+export const projectQuery = (projectId: string) =>
+  queryOptions({
+    queryKey: queryKeys.project(projectId),
+    queryFn: ({ signal }) =>
+      apiRequest(apiPath(API_ROUTES.project, { projectId }), Project, { signal }),
+  });
 
 export const reposQuery = (projectId: string) =>
   queryOptions({
@@ -159,6 +170,24 @@ export const blobTextQuery = (blobId: string) =>
     queryFn: ({ signal }) => apiText(blobUrl(blobId), { signal }),
     staleTime: Number.POSITIVE_INFINITY,
   });
+
+export function createProject(input: CreateProjectInput): Promise<Project> {
+  return apiRequest(API_ROUTES.projects, Project, { method: "POST", body: input });
+}
+
+export function updateProject(projectId: string, input: UpdateProjectInput): Promise<Project> {
+  return apiRequest(apiPath(API_ROUTES.project, { projectId }), Project, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export function createRepo(projectId: string, input: CreateRepoInput): Promise<Repo> {
+  return apiRequest(apiPath(API_ROUTES.projectRepos, { projectId }), Repo, {
+    method: "POST",
+    body: input,
+  });
+}
 
 export function createTask(projectId: string, input: CreateTaskInput): Promise<Task> {
   return apiRequest(apiPath(API_ROUTES.projectTasks, { projectId }), Task, {

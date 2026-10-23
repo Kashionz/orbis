@@ -1,6 +1,6 @@
 import type { Project } from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { createTask, queryKeys, reposQuery } from "../../api/resources";
 import { Dialog } from "../../components/Dialog";
@@ -24,7 +24,7 @@ export function CreateTaskDialog({ project, open, onClose }: CreateTaskDialogPro
 function CreateTaskForm({ project, onClose }: Omit<CreateTaskDialogProps, "open">) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: repos = [] } = useQuery(reposQuery(project.id));
+  const { data: repos = [], isSuccess: reposLoaded } = useQuery(reposQuery(project.id));
   const [title, setTitle] = useState("");
   const [repoId, setRepoId] = useState("");
   const [description, setDescription] = useState("");
@@ -66,6 +66,15 @@ function CreateTaskForm({ project, onClose }: Omit<CreateTaskDialogProps, "open"
           ))}
         </select>
       </label>
+      {reposLoaded && repos.length === 0 && (
+        <p className="warning">
+          這個 Project 還沒有登記 Repo，請先到{" "}
+          <Link to="/projects/$projectId/settings" params={{ projectId: project.id }}>
+            Project 設定
+          </Link>
+          登記。
+        </p>
+      )}
       <label className="field">
         描述（markdown）
         <textarea

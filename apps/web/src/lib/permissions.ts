@@ -15,6 +15,8 @@ import type { PermissionPurpose } from "@orbis/protocol";
 export type Action =
   /** 管理成員、Team Runner、Credential 的並行上限。 */
   | "team.manage"
+  /** 建立 Project、修改 Project 的名稱與描述、登記 Repo。 */
+  | "project.manage"
   /** 修改 Project 的預設 Permission Policy、核准 config 的信任。 */
   | "policy.manage"
   /** 建立與編輯 Task（含 Acceptance Criterion、depends_on、指派、看板拖曳）。 */
@@ -52,6 +54,7 @@ export function can(action: Action, ctx: PermissionContext): boolean {
     case "view":
       return true;
     case "team.manage":
+    case "project.manage":
     case "policy.manage":
       return ADMINS.includes(role);
     case "task.edit":
