@@ -407,27 +407,44 @@ fn redirect_target(word: &str) -> Option<&str> {
     Some(rest.trim_start_matches('&'))
 }
 
-/// 每一段指令執行時的目前目錄：從 Worktree 開始，遇到 `cd <目錄>` 就換過去（之後的相對路徑
-/// 以那裡為基準）。沒有參數的 `cd` 是家目錄，以 Worktree 外的路徑表示。
+/// 每一段指令執行時「可能的」目前目錄：從 Worktree 開始，每遇到一個 `cd <目錄>` 就把可能到達的
+/// 目錄加進去（之後的相對路徑以它們為基準）。沒有參數的 `cd` 是家目錄，以 Worktree 外的路徑表示。
 ///
-/// 只追蹤單純的 `cd <目錄>`；`cd -`、帶選項或多個參數時目錄視為未知（`None`），之後的相對路徑
-/// 一律問人。管線中的 `cd` 實際上在子 shell 執行、不會改變目錄，所以判斷時 Worktree 與這裡的
-/// 目錄兩個基準都要檢查（[`outside_path`]）。
-fn segment_cwds(segments: &[Vec<String>], worktree: &Path) -> Vec<Option<PathBuf>> {
-    let mut cwd = Some(worktree.to_path_buf());
+/// 保留到過的所有目錄而不是只留最後一個：`cd` 可能失敗、在管線中（子 shell，不改變目錄）或是
+/// 條件執行，實際的目錄可能是其中任何一個，判斷時每一個都要在 Worktree 內（[`outside_path`]）。
+/// 只追蹤單純的 `cd <目錄>`；`cd -`、帶選項或多個參數、或可能的目錄太多時視為未知（`None`），
+/// 之後的相對路徑一律問人。
+fn segment_cwds(segments: &[Vec<String>], worktree: &Path) -> Vec<Option<Vec<PathBuf>>> {
+    const MAX_DIRS: usize = 8;
+    let mut dirs = Some(vec![worktree.to_path_buf()]);
     segments
         .iter()
         .map(|segment| {
-            let current = cwd.clone();
-            if segment.first().map(String::as_str) == Some("cd") {
-                cwd = match &segment[1..] {
-                    [] => path_like("~", worktree),
+            let current = dirs.clone();
+            if segment.first().map(String::as_str) == Some("cd")
+                && let Some(known) = dirs.as_mut()
+            {
+                let reached: Option<Vec<PathBuf>> = match &segment[1..] {
+                    [] => path_like("~", worktree).map(|home| vec![home]),
                     [dir] if !dir.starts_with('-') => match path_like(dir, worktree) {
-                        Some(abs) if absolute_word(dir) => Some(abs),
-                        _ => current.as_ref().map(|base| base.join(dir)),
+                        Some(abs) if absolute_word(dir) => Some(vec![abs]),
+                        _ => Some(known.iter().map(|base| base.join(dir)).collect()),
                     },
                     _ => None,
                 };
+                match reached {
+                    Some(reached) => {
+                        for dir in reached {
+                            if !known.contains(&dir) {
+                                known.push(dir);
+                            }
+                        }
+                        if known.len() > MAX_DIRS {
+                            dirs = None;
+                        }
+                    }
+                    None => dirs = None,
+                }
             }
             current
         })
@@ -444,22 +461,13 @@ fn absolute_word(word: &str) -> bool {
     windows_abs || word.starts_with('/') || word.starts_with("\\\\") || word.starts_with('~')
 }
 
-/// 判斷相對路徑時的基準：Worktree，加上追蹤到的目前目錄（不同時）。
-fn path_bases<'a>(worktree: &'a Path, cwd: Option<&'a Path>) -> Vec<&'a Path> {
-    let mut bases = vec![worktree];
-    if let Some(cwd) = cwd.filter(|c| *c != worktree) {
-        bases.push(cwd);
-    }
-    bases
-}
-
 /// 指令中指向 Worktree 外的詞，回傳那個詞（issue #61）。
 ///
 /// 每個詞都當成可能的路徑檢查：重新導向取目標、`--key=value` 取值、短參數 `-X<值>` 取 `X` 之後的值。
 /// 絕對路徑、`~` 開頭與含 `..` 的詞直接判斷；其他相對路徑以這段指令的目前目錄（`cwd`，見
 /// [`segment_cwds`]）為基準，用會解開 symlink／junction 的 [`inside`] 判斷（Worktree 內指向外面的
 /// 連結視為在外面）。
-fn outside_path(segment: &[String], worktree: &Path, cwd: Option<&Path>) -> Option<String> {
+fn outside_path(segment: &[String], worktree: &Path, cwd: Option<&[PathBuf]>) -> Option<String> {
     segment.iter().find_map(|word| {
         let candidate = redirect_target(word).unwrap_or(word);
         let candidate = match candidate.split_once('=') {
@@ -476,12 +484,12 @@ fn outside_path(segment: &[String], worktree: &Path, cwd: Option<&Path>) -> Opti
             return (!inside(&path, worktree)).then(|| word.clone());
         }
         relative_path(candidate, worktree)?;
-        if cwd.is_none() {
+        let Some(bases) = cwd else {
             // 目前目錄未知（`cd -` 等）：相對路徑無法判斷。
             return Some(word.clone());
-        }
-        path_bases(worktree, cwd)
-            .into_iter()
+        };
+        bases
+            .iter()
             .any(|base| {
                 let path = path_like(candidate, base).unwrap_or_else(|| base.join(candidate));
                 !inside(&path, worktree)
@@ -852,7 +860,7 @@ fn deletes_outside(segment: &[String], worktree: &Path) -> Option<PathBuf> {
 
 /// `cd`／`pwd` 到 Worktree 內的目錄：本身沒有副作用，不要求列在 allow_commands 中。
 /// `cwd` 是這段指令的目前目錄（相對路徑的基準）。
-fn is_harmless_navigation(segment: &[String], worktree: &Path, cwd: Option<&Path>) -> bool {
+fn is_harmless_navigation(segment: &[String], worktree: &Path, cwd: Option<&[PathBuf]>) -> bool {
     match segment.first().map(String::as_str) {
         Some("pwd") => segment.len() == 1,
         Some("cd") => match segment.get(1) {
@@ -1171,7 +1179,10 @@ mod tests {
             "~-",
         ] {
             let segment = vec!["cat".to_owned(), word.to_owned()];
-            assert!(outside_path(&segment, &wt, Some(&wt)).is_some(), "{word}");
+            assert!(
+                outside_path(&segment, &wt, Some(std::slice::from_ref(&wt))).is_some(),
+                "{word}"
+            );
         }
         // allow_commands 放行了 cat，讀別人的家目錄仍然要問人
         let allow = vec!["cat *".to_owned()];
@@ -1396,6 +1407,13 @@ mod tests {
             "ask"
         );
         assert_eq!(kind(&decide_allow_all("cd sub | cat link/key", &wt)), "ask");
+        // 第二個 cd 可能失敗：留在 sub 時 sub/link 不存在，但仍要檢查到過的每個目錄。
+        std::fs::create_dir_all(wt.join("sub").join("deeper")).unwrap();
+        link_dir(&secret, &wt.join("sub").join("link"));
+        assert_eq!(
+            kind(&decide_allow_all("cd sub && cd deeper; cat link/key", &wt)),
+            "ask"
+        );
         // `cd -` 之後的目錄未知：相對路徑一律問人。
         assert_eq!(kind(&decide_allow_all("cd - && cat README.md", &wt)), "ask");
     }
