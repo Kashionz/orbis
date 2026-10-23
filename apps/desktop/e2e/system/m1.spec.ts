@@ -114,10 +114,10 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   if (!desktop) throw new Error("Desktop 沒有啟動");
   const d = desktop;
   const page = await d.mainWindow();
-  // 和 Web 的完整系統 e2e 相同的 viewport（1280×720）；視窗太小時看板的拖曳目標會在畫面外
-  await d.app.evaluate(({ BrowserWindow }) => {
-    for (const window of BrowserWindow.getAllWindows()) window.setContentSize(1280, 720);
-  });
+  // 和 Web 的完整系統 e2e 相同的 viewport（1280×720），看板的 Ready 與 Running 欄要同時在畫面內才拖得過去。
+  // 用模擬的 viewport，不調整視窗：CI 的螢幕比較小時，作業系統會把視窗限制在螢幕大小內
+  await page.setViewportSize({ width: 1280, height: 720 });
+  expect(await page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([1280, 720]);
 
   // ---- 登入：把 stack 的 session cookie 設到 Electron session 的 Web origin 上
   await d.app.evaluate(
