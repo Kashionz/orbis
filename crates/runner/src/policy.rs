@@ -383,7 +383,7 @@ fn outside_path(segment: &[String], worktree: &Path) -> Option<String> {
     })
 }
 
-/// 詞看起來像路徑時解析成路徑：絕對路徑、`~` 開頭，或含 `..` 的相對路徑。
+/// 詞看起來像路徑時解析成路徑：絕對路徑、`~` 開頭（含 `~user`），或含 `..` 的相對路徑。
 fn path_like(word: &str, worktree: &Path) -> Option<PathBuf> {
     if word.is_empty() || word.starts_with('-') || word.contains("://") {
         return None;
@@ -401,8 +401,9 @@ fn path_like(word: &str, worktree: &Path) -> Option<PathBuf> {
             .map_or_else(|| PathBuf::from(word), PathBuf::from);
         return Some(path);
     }
-    if word == "~" || word.starts_with("~/") || word.starts_with("~\\") {
-        // 家目錄一定在 Worktree 外；用不存在的絕對路徑表示即可。
+    if word.starts_with('~') {
+        // `~`、`~/x` 是家目錄，`~user/x` 是別人的家目錄，`~+`／`~-` 是 $PWD／$OLDPWD：
+        // 一律當成 Worktree 外；用不存在的絕對路徑表示即可。
         return Some(PathBuf::from(if cfg!(windows) { r"C:\~" } else { "/~" }));
     }
     if word.split(['/', '\\']).any(|part| part == "..") {
@@ -842,6 +843,35 @@ mod tests {
         ] {
             assert!(analyze(tricky).unanalyzable.is_some(), "{tricky}");
         }
+    }
+
+    #[test]
+    fn 波浪號開頭的路徑一律在_worktree_外() {
+        let wt = worktree();
+        for word in [
+            "~",
+            "~/.ssh/id_rsa",
+            r"~\.ssh\id_rsa",
+            "~other/.ssh/id_rsa",
+            "~+/x",
+            "~-",
+        ] {
+            let segment = vec!["cat".to_owned(), word.to_owned()];
+            assert!(outside_path(&segment, &wt).is_some(), "{word}");
+        }
+        // allow_commands 放行了 cat，讀別人的家目錄仍然要問人
+        let allow = vec!["cat *".to_owned()];
+        let decision = decide(
+            &cmd("cat ~other/.ssh/id_rsa"),
+            &PolicyContext {
+                policy: PermissionPolicy::Auto,
+                worktree: &wt,
+                allow_commands: &allow,
+                default_branch: "main",
+                protected_paths: &[],
+            },
+        );
+        assert_eq!(kind(&decision), "ask");
     }
 
     #[test]
