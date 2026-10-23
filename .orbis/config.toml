@@ -11,6 +11,9 @@ wait_for_setup = true
 commands = ["pnpm lint", "pnpm typecheck"]
 
 [permissions]
+# Runner 會辨識會執行其他程式或寫檔的參數（例如 rg --pre、git diff --output、git commit -F），
+# 命中時即使符合這裡的規則也一律問人（ARCHITECTURE §8）。這份清單不是沙箱：pnpm、cargo test
+# 本來就會執行 Agent 寫的程式碼。
 allow_commands = [
   "pnpm *",
   "cargo fmt *",
@@ -20,6 +23,15 @@ allow_commands = [
   "git status",
   "git diff *",
   "git log *",
+  "git ls-files *",
+  "git add *",
+  "git commit -m *",
+  "grep *",
+  "cat *",
+  "ls *",
+  "head *",
+  "tail *",
+  "wc *",
 ]
 
 [git]

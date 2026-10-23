@@ -337,6 +337,12 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
 | `auto`（預設） | 在 Worktree 內讀寫檔案、`allow_commands` 中的指令 | 白名單以外的指令、存取 Worktree 以外的路徑、`git push --force`、安裝全域套件 | 同上 |
 | `yolo` | 全部 | — | 寫入主分支 |
 
+- **指令的判斷**（`auto`）：
+  - 複合指令每一段都要符合規則；出現指令替換、變數展開、glob、子 shell 等字面分析無法掌握的語法時一律問人。
+  - 每個引數都當成可能的路徑檢查（含 `--key=值` 與短參數直接接值的 `-f<值>`），用會解開 symlink／junction 的方式判斷是否在 Worktree 內；Worktree 內指向外面的連結視為在外面。
+  - 會執行其他程式、寫檔或改寫 commit 的參數，即使符合 `allow_commands` 也一律問人，例如 `rg --pre`、`git grep -O`、`git diff/log/show --output`、`git -c`、`git commit -F/--template/--author/--amend`、`find -exec/-delete`、`pnpm exec/dlx`、`npx`、`xargs`。
+  - **`allow_commands` 不是沙箱**：允許 `pnpm test`、`cargo test` 這類指令，本來就會執行 Agent 寫的程式碼（測試、package.json 的 script、build script）。白名單只減少詢問，不能限制 Agent 能做的事。
+- **轉給人的選項**：選項名稱一律用 Orbis 的文字（依 kind）。Agent 自己的「永遠允許／永遠拒絕」會寫進 Agent 的設定檔、讓之後的請求不再經過 Runner，有對應的「這次」選項時不轉給人。
 - **問人時**：請求加入 Needs You，並發出桌面通知；等待期間 Run 暫停。
 - **誰的 Needs You 清單會出現**：
   - 權限請求依「誰有權回覆」即時決定（見下方「誰可以回覆」）。Team 內所有未回覆、而且本人有權回覆的請求，都會出現在本人的清單。
@@ -357,6 +363,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
   - Phase 1 接受這個落差。各 Agent Profile 在 AgentAvailability 中回報落差，派工對話框顯示警告。
   - `auto` 下，寫入 `.claude/settings.json`、`.claude/settings.local.json` 一律問人。
   - 每次啟動 session 前，Runner 比對 Worktree 中這兩個檔案與 base commit。有差異就停下來加入 Needs You，人允許後才啟動。
+  - session 進行中，每個 tool call 結束與每個權限請求進來時也比對一次（經權限請求允許、明確寫入這些檔案的 tool call 除外）。發現 Agent 自己改了設定檔時，中止這個回合並問人：接受變更就繼續；選擇還原時，Runner 先結束 Agent 的程序樹、把檔案還原成已接受的內容，再重新啟動 Agent（Agent 可能已把新規則載入記憶體），以 `session/resume` 或 `session/load` 接續原本的 session，不支援時開新的 session 並附上原本的 prompt。
   - 完全攔截（由 Runner 代為執行檔案與指令操作）留到之後再做。
 
 ---
