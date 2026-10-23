@@ -9,6 +9,7 @@ import {
   type PreviewBounds,
   type PreviewShowResult,
 } from "../src/bridge";
+import { SESSION_COOKIE } from "../src/main/names";
 import { OVERLAY_ID } from "../src/main/preview/picker";
 import { type Desktop, launchDesktop, waitUntil } from "./fixtures/desktop";
 import { type FakeServer, startFakeServer } from "./fixtures/fake-server";
@@ -179,6 +180,23 @@ test("自己的 Local Runner 跑的 Run 直接開 localhost，選取元素時回
     return { sandbox: p.sandbox, contextIsolation: p.contextIsolation, preload: p.preload };
   }, id);
   expect(prefs).toEqual({ sandbox: true, contextIsolation: true, preload: undefined });
+  // 內嵌瀏覽器用獨立的 session：cookie 不分 port，Web UI 的 session cookie 不能送到 dev server
+  const isolation = await app.evaluate(
+    async ({ webContents, session }, [wcId, url, name]) => {
+      const contents = webContents.fromId(wcId as number);
+      if (!contents) throw new Error("沒有 Preview 的 webContents");
+      return {
+        sameSession: contents.session === session.defaultSession,
+        leaked: (await contents.session.cookies.get({ url: url as string, name: name as string }))
+          .length,
+        signedIn: (
+          await session.defaultSession.cookies.get({ url: url as string, name: name as string })
+        ).length,
+      };
+    },
+    [id, server.url, SESSION_COOKIE] as const,
+  );
+  expect(isolation).toEqual({ sameSession: false, leaked: 0, signedIn: 1 });
 
   await startPicking(main, app);
   await clickInPreview(app, "li.target");

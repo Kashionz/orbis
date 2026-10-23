@@ -98,12 +98,19 @@ function parseShareUrl(value: string | null, runId: string): URL | null {
   }
 }
 
-export type PreviewNavigationDecision = "allow" | "external" | "deny";
+/**
+ * - `allow`：留在內嵌瀏覽器。
+ * - `authorize`：Preview 網址換票時轉到 Web UI 的 authorize（只限這個 Run）。內嵌瀏覽器用獨立的 session，
+ *   沒有 Web UI 的 session cookie，所以不在內嵌瀏覽器中開，由 main 程序帶著 session 取得換票後的網址。
+ * - `external`：用外部瀏覽器開啟。
+ * - `deny`：擋下。
+ */
+export type PreviewNavigationDecision = "allow" | "authorize" | "external" | "deny";
 
 /**
  * 內嵌瀏覽器可以前往哪些網址：
  * - 這個 Preview 的 origin。
- * - Preview 網址換票時經過的 Web UI authorize（只限這個 Run）。
+ * - Preview 網址換票時經過的 Web UI authorize（只限這個 Run，交給 main 程序處理）。
  * - 其他 http(s) 用外部瀏覽器開啟，其他 scheme 擋下。
  */
 export function decidePreviewNavigation(
@@ -124,7 +131,7 @@ export function decidePreviewNavigation(
     url.origin === serverOrigin &&
     url.pathname === previewAuthorizePath(preview.runId)
   ) {
-    return "allow";
+    return "authorize";
   }
   if (url.protocol === "https:" || url.protocol === "http:") return "external";
   return "deny";

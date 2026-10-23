@@ -2,10 +2,12 @@
 // DevTools 與元素選取（ARCHITECTURE §13、§16.1）。
 // - 位置由 Web UI 決定（Preview 分頁的區塊），以 setBounds 疊在主視窗的 Web UI 上。
 // - 沒有 preload、啟用 sandbox；導覽限制在這個 Preview 的 origin（target.ts）。
-// - 和主視窗共用預設的 session：開 Preview 網址時要帶 Web UI 的 session 經過 authorize 換票。
-//   Web UI 的 cookie 是 host-only，Preview 的頁面讀不到。
+// - 使用獨立的 session（partition），沒有 Web UI 的 session cookie：cookie 不分 port，Web UI 在
+//   `localhost:5173` 時，同一個 session 的 cookie 會送到 `localhost:<port>` 的 dev server（Agent 寫的程式）。
+//   Preview 網址換票時，由 main 程序帶著 Web UI 的 session 取得 authorize 轉回的網址，再在這裡開啟。
 
-import { type BaseWindow, shell, WebContentsView } from "electron";
+import { NAMES } from "@orbis/api-contract/names";
+import { type BaseWindow, session, shell, WebContentsView } from "electron";
 import type { PreviewBounds, PreviewNavState, PreviewPick } from "../../bridge";
 import { parseRawPick, removeOverlayScript, startPickingScript } from "./picker";
 import { createRateLimiter, decidePreviewNavigation, type PreviewTarget } from "./target";
@@ -18,6 +20,9 @@ type OpenTarget = Extract<PreviewTarget, { origins: string[] }>;
  */
 const PAGE_EXTERNAL_OPEN_INTERVAL_MS = 3000;
 
+/** 內嵌瀏覽器的 session（不保存到磁碟；Preview 網址的 cookie 在 App 結束後重新換票）。 */
+export const PREVIEW_PARTITION = `${NAMES.productSlug}-preview`;
+
 /** 元素選取用的 isolated world ID（Electron 要求 >= 1000 以免和內建的衝突）。 */
 const PICKER_WORLD_ID = 1999;
 
@@ -29,6 +34,8 @@ export interface PreviewViewOptions {
   zoomFactor: () => number;
   /** 狀態改變時通知 Web UI。 */
   onNavState: (state: PreviewNavState) => void;
+  /** 帶著 Web UI 的 session 請求 authorize，回傳它轉往的網址（換票後的 callback）；失敗時回傳 null。 */
+  authorize: (url: string) => Promise<string | null>;
   openExternal?: (url: string) => void;
 }
 
@@ -136,8 +143,14 @@ export class PreviewView {
 
   private ensureView(): WebContentsView {
     if (this.view) return this.view;
+    const previewSession = session.fromPartition(PREVIEW_PARTITION);
+    // Preview 的頁面不能要求任何權限（相機、通知、剪貼簿…）
+    previewSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+      callback(false),
+    );
     const view = new WebContentsView({
       webPreferences: {
+        session: previewSession,
         contextIsolation: true,
         sandbox: true,
         nodeIntegration: false,
@@ -166,6 +179,7 @@ export class PreviewView {
       if (decision === "allow") return;
       event.preventDefault();
       if (decision === "external") this.openExternalFromPage(url);
+      if (decision === "authorize") void this.authorize(contents, url);
     };
     // 只限制主 frame；頁面內的 iframe 不限制
     contents.on("will-frame-navigate", (details) => {
@@ -184,6 +198,16 @@ export class PreviewView {
       else if (decision === "external") this.openExternalFromPage(url);
       return { action: "deny" };
     });
+  }
+
+  /** 換票：main 程序帶著 Web UI 的 session 請求 authorize，再在內嵌瀏覽器中開 callback。 */
+  private async authorize(contents: Electron.WebContents, url: string): Promise<void> {
+    const target = this.target;
+    const callback = await this.options.authorize(url);
+    if (!callback || this.target !== target || !target || contents.isDestroyed()) return;
+    // callback 必須是這個 Preview 的網址
+    if (decidePreviewNavigation(callback, target, this.options.serverOrigin()) !== "allow") return;
+    await contents.loadURL(callback).catch(() => {});
   }
 
   private openExternalFromPage(url: string): void {

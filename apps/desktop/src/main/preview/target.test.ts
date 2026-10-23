@@ -122,10 +122,10 @@ describe("decidePreviewNavigation", () => {
     expect(decidePreviewNavigation("http://127.0.0.1:41234/x", local, SERVER)).toBe("allow");
   });
 
-  it("換票時經過這個 Run 的 authorize", () => {
+  it("換票時經過這個 Run 的 authorize（交給 main 程序）", () => {
     expect(
       decidePreviewNavigation(`${SERVER}/api/preview/${RUN}/authorize?return=%2F`, share, SERVER),
-    ).toBe("allow");
+    ).toBe("authorize");
     // 其他 Run 的 authorize、Web UI 的其他頁面都不在內嵌瀏覽器中開
     expect(decidePreviewNavigation(`${SERVER}/api/preview/other/authorize`, share, SERVER)).toBe(
       "external",

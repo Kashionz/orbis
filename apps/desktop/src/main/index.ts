@@ -15,6 +15,7 @@ import {
   Menu,
   type MenuItemConstructorOptions,
   Notification,
+  net,
   session,
   shell,
   type WebContents,
@@ -406,12 +407,36 @@ function ensureMainWindow(url: string): BrowserWindow {
     onNavState: (state) => {
       if (!window.isDestroyed()) window.webContents.send(BRIDGE_IPC.previewNavState, state);
     },
+    authorize: authorizePreview,
     ...(testHooksEnabled && {
       openExternal: (target: string) => testState.externalUrls.push(target),
     }),
   });
   void window.loadURL(url);
   return window;
+}
+
+/**
+ * Preview 網址的換票（§13）：帶著 Web UI 的 session cookie 請求 authorize，不跟隨轉址，
+ * 回傳它轉往的網址（Preview 網址的 callback）。內嵌瀏覽器本身沒有 Web UI 的 session。
+ */
+function authorizePreview(url: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const request = net.request({
+      url,
+      session: session.defaultSession,
+      useSessionCookies: true,
+      redirect: "manual",
+    });
+    request.on("redirect", (_status, _method, redirectUrl) => {
+      request.abort();
+      resolve(redirectUrl);
+    });
+    // 沒有轉址（例如已登出回 401）：不開啟
+    request.on("response", () => resolve(null));
+    request.on("error", () => resolve(null));
+    request.end();
+  });
 }
 
 function showMainWindow(): void {
