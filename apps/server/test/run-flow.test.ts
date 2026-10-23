@@ -608,6 +608,36 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       ]);
     });
 
+    it("別台 Runner 或過期 Dispatch 回報的 RunControl 結果被忽略（不能偽造 push 觸發開 PR）", async () => {
+      const started = await startedRun();
+      const gate = await openReviewGate(started);
+      await as("member").post(`/api/gates/${gate.id}/decision`, { action: "approve" });
+      await control(started.mine, "gate_result");
+      const push = await started.mine.next("run_control", (f) => f.action === "push_branch");
+      const forged = {
+        type: "run_control_result",
+        control_id: push.control_id,
+        run_id: push.run_id,
+        dispatch_id: push.dispatch_id,
+        outcome: "branch_pushed",
+        branch: "attacker",
+        commit_sha: "e".repeat(40),
+      } as const;
+      const other = await h.pairRunner(team.members.admin, "team");
+      other.send(forged);
+      // 同一台 Runner 帶錯的 Dispatch ID 也不算數。
+      started.mine.send({ ...forged, dispatch_id: "0192f3a0-0000-7000-8000-0000000000ff" });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(h.ctx.pullRequests.opened).toEqual([]);
+      expect(await h.ctx.services.runControls.pendingControls()).toMatchObject([
+        { controlId: push.control_id, outcome: null },
+      ]);
+
+      started.mine.send({ ...forged, branch: started.run.branch ?? "" });
+      await waitUntil(() => h.ctx.pullRequests.opened.length > 0);
+      expect(h.ctx.pullRequests.opened[0]).toMatchObject({ branch: started.run.branch });
+    });
+
     it("開 PR 失敗時產生「停下來的 Run」的 Needs You，Task 維持 PR Open", async () => {
       const started = await startedRun();
       const gate = await openReviewGate(started);

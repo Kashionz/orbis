@@ -157,9 +157,23 @@ export class RunControlService {
     }
   }
 
-  /** 處理 Runner 回報的 run_control_result。 */
+  /**
+   * 處理 Runner 回報的 run_control_result。只接受指令目前所屬的 Dispatch、而且由持有它的
+   * Runner 回報的結果；其他（別台 Runner、過期的 Dispatch）一律忽略，避免偽造 push 結果觸發開 PR。
+   */
   async onResult(runnerId: string, result: RunControlResult): Promise<void> {
     const { control_id: _controlId, run_id: _runId, dispatch_id: _dispatchId, ...outcome } = result;
+    const ownDispatch = this.db
+      .select({ id: dispatches.id })
+      .from(dispatches)
+      .where(
+        and(
+          eq(dispatches.id, result.dispatch_id),
+          eq(dispatches.runId, result.run_id),
+          eq(dispatches.runnerId, runnerId),
+          inArray(dispatches.status, ["accepted", "completed"]),
+        ),
+      );
     const [control] = await this.db
       .update(runControls)
       .set({ outcome: result.outcome, outcomePayload: outcome, resolvedAt: this.clock.now() })
@@ -167,6 +181,8 @@ export class RunControlService {
         and(
           eq(runControls.controlId, result.control_id),
           eq(runControls.runId, result.run_id),
+          eq(runControls.dispatchId, result.dispatch_id),
+          inArray(runControls.dispatchId, ownDispatch),
           isNull(runControls.resolvedAt),
         ),
       )
@@ -174,7 +190,7 @@ export class RunControlService {
     if (!control) {
       this.logger.warn(
         { runnerId, controlId: result.control_id },
-        "收到不明或已處理過的 RunControl 結果，忽略",
+        "收到不明、已處理過，或不屬於這台 Runner 目前 Dispatch 的 RunControl 結果，忽略",
       );
       return;
     }

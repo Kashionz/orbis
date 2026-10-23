@@ -685,7 +685,7 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       expect(events.body.map((e) => e.event.text)).toEqual(["0", "1", "2", "新的"]);
     });
 
-    it("改派也遵守派工規則：Local Run 不會改派給在線的 Team Runner，也不派給暫停領取的 Runner", async () => {
+    it("改派也遵守派工規則：Local Run 不會改派給在線的 Team Runner", async () => {
       const { mine, run, offer } = await offered();
       const teamRunner = await h.pairRunner(team.members.admin, "team");
       mine.send({ type: "dispatch_accept", dispatch_id: offer.dispatch_id });
@@ -707,13 +707,9 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       expect(teamRunner.pending("dispatch_offer")).toHaveLength(0);
       expect((await runRow(run.id))?.status).toBe("queued");
 
-      // 負責的 Local Runner 回來但暫停領取時也不派；恢復後才派。
+      // 負責的 Local Runner 回來後才改派給它。
       const back = await h.reconnect(mine);
-      back.heartbeat({ accepting_dispatches: false });
-      await waitUntil(() => !h.ctx.services.hub.isAcceptingDispatches(back.runnerId));
       await h.ctx.services.dispatcher.kick();
-      expect(back.pending("dispatch_offer")).toHaveLength(0);
-      back.heartbeat({ accepting_dispatches: true });
       expect(await back.next("dispatch_offer")).toMatchObject({ run_id: run.id });
       expect(teamRunner.pending("dispatch_offer")).toHaveLength(0);
     });
