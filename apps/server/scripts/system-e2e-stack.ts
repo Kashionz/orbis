@@ -489,6 +489,8 @@ async function main(): Promise<void> {
         taskKeyPrefix: SEED.projectKey,
         defaultPermissionPolicy: "manual",
         autoCreateIssues: false,
+        // M1 劇本沒有 Planning（Fake Agent 不產出 plan），所以關閉 Plan Gate。
+        planGateEnabled: false,
       })
       .returning();
     if (!project) throw new Error("建立 Project 失敗");

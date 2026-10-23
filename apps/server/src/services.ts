@@ -22,11 +22,13 @@ import {
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
 import { createPreviewService, type PreviewService } from "./preview";
+import { NO_NOTIFY, type Notify } from "./notifications/types";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
 import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
 import { RunControlService } from "./runs/run-control";
+import { VerificationService } from "./runs/verification";
 
 export interface Services {
   db: Database;
@@ -47,6 +49,8 @@ export interface Services {
   blobStore: BlobStore;
   blobCleanup: BlobCleanup;
   sessionCleanup: SessionCleanup;
+  verification: VerificationService;
+  notify: Notify;
   /** 共同編輯的文件（載入、寫回、與資料庫內容同步）。 */
   collab: CollabHub;
   heartbeatIntervalMs: number;
@@ -119,6 +123,10 @@ export function createServices(options: ServicesOptions): Services {
   const blobStore =
     options.blobStore ?? new FileSystemBlobStore(options.blobDir ?? DEFAULT_BLOB_DIR);
   const sessionCleanup = new SessionCleanup({ db, clock, hub, dispatcher }, logger);
+  // TODO(B2)：通知系統（S9）完成後換成 NotificationService。
+  const notify = NO_NOTIFY;
+  const runControls = new RunControlService(db, hub, clock, logger, github.pullRequestOpener);
+  const verification = new VerificationService({ lifecycle, runControls, notify, clock, logger });
   return {
     db,
     logger,
@@ -131,8 +139,18 @@ export function createServices(options: ServicesOptions): Services {
     hub,
     eventStore,
     dispatcher,
-    ingest: new EventIngest(db, eventStore, lifecycle, clock, logger),
-    runControls: new RunControlService(db, hub, clock, logger, github.pullRequestOpener),
+    ingest: new EventIngest({
+      db,
+      store: eventStore,
+      lifecycle,
+      verification,
+      notify,
+      clock,
+      logger,
+    }),
+    runControls,
+    verification,
+    notify,
     blobStore,
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     sessionCleanup,

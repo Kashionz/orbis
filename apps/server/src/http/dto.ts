@@ -5,6 +5,7 @@ import type {
   Gate,
   Member,
   NeedsYouItem,
+  PreviewComment,
   Project,
   Repo,
   ReviewComment,
@@ -14,11 +15,12 @@ import type {
   RunUsage,
   Task,
   Team,
+  Verification,
 } from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
-import { asc, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import {
-  type acceptanceCriteria,
+  acceptanceCriteria,
   type gates,
   type members,
   type needsYouItems,
@@ -31,8 +33,11 @@ import {
   taskDependencies,
   type tasks,
   type teams,
+  verificationResults,
+  type verifications,
 } from "../db/schema";
 import type { Executor } from "../db/tx";
+import type { GateSubject } from "../runs/gates";
 
 const iso = (date: Date) => date.toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
@@ -239,7 +244,23 @@ export function toReviewComment(row: ReviewCommentRow): ReviewComment {
   };
 }
 
+/** `kind = preview` 的列（DB 的 check 保證 url 有值）。 */
+export function toPreviewComment(row: ReviewCommentRow): PreviewComment {
+  return {
+    id: row.id,
+    gateId: row.gateId,
+    body: row.body,
+    url: row.url ?? "",
+    selector: row.selector,
+    screenshotBlobId: row.screenshotBlobId,
+    authorMemberId: row.authorMemberId,
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
 export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
+  const subject = (row.subject ?? {}) as GateSubject;
   return {
     id: row.id,
     taskId: row.taskId,
@@ -252,11 +273,11 @@ export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
     reviewComments: comments
       .filter((c) => c.gateId === row.id && c.kind === "diff")
       .map(toReviewComment),
-    // W5–7 契約新增；Preview 留言（`kind = preview`）由 B2／E2 寫入後在這裡轉換。
-    previewComments: [],
-    // W5–7 契約新增；Plan Gate 與送審內容的 seq 由 B2 寫入 gates.subject 後填入。
-    planSeq: null,
-    reviewDiffSeq: null,
+    previewComments: comments
+      .filter((c) => c.gateId === row.id && c.kind === "preview")
+      .map(toPreviewComment),
+    planSeq: row.kind === "plan" ? (subject.planSeq ?? null) : null,
+    reviewDiffSeq: row.kind === "review" ? (subject.reviewDiffSeq ?? null) : null,
     createdAt: iso(row.createdAt),
   };
 }
@@ -319,4 +340,47 @@ export function toNeedsYou(
         question: String(payload.question ?? ""),
       };
   }
+}
+
+type VerificationRow = typeof verifications.$inferSelect;
+
+/** 一次查出多輪 Verification 的結果，組成 API 回應（結果依 Task 中條件的順序）。 */
+export async function toVerifications(
+  db: Executor,
+  rows: VerificationRow[],
+): Promise<Verification[]> {
+  if (rows.length === 0) return [];
+  const results = await db
+    .select({ result: verificationResults, position: acceptanceCriteria.position })
+    .from(verificationResults)
+    .innerJoin(acceptanceCriteria, eq(acceptanceCriteria.id, verificationResults.criterionId))
+    .where(
+      inArray(
+        verificationResults.verificationId,
+        rows.map((r) => r.id),
+      ),
+    )
+    .orderBy(asc(acceptanceCriteria.position));
+  return rows.map((row) => ({
+    id: row.id,
+    runId: row.runId,
+    taskId: row.taskId,
+    attempt: row.attempt,
+    status: row.status,
+    resolution: row.resolution,
+    resolvedByMemberId: row.resolvedByMemberId,
+    comment: row.comment,
+    results: results
+      .filter(({ result }) => result.verificationId === row.id)
+      .map(({ result }) => ({
+        criterionId: result.criterionId,
+        outcome: result.outcome,
+        summary: result.summary,
+        evidence: result.evidence as Verification["results"][number]["evidence"],
+        judgedByRunId: result.judgedByRunId,
+        createdAt: iso(result.createdAt),
+      })),
+    startedAt: iso(row.startedAt),
+    completedAt: isoOrNull(row.completedAt),
+  }));
 }

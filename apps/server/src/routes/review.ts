@@ -2,21 +2,26 @@
 //
 // - Needs You：權限請求依授權即時計算（本人有權回覆的才列出）；Gate 與停下來的 Run 依指派的 Member。
 // - 權限請求：有權回覆的人送出選項後轉成 RunControl `permission_response` 送給 Runner。
-// - Review Gate：核准（Task → PR Open，送 gate_result 與 push_branch；push 完成後由 D 軌開 PR）、
-//   退回（行內留言存進 review_comments 並打包成 prompt，Task → Running，同一個 session 繼續）、
-//   中止（cancel，Task → Ready）。
+// - Plan Gate：核准（Task → Running，送 gate_result，Runner 切換成執行模式）、退回（只收整體說明，
+//   Task → Planning，意見以 prompt 送回）、中止。
+// - Review Gate：核准（manual 條件要全部打勾；Task → PR Open，送 gate_result 與 push_branch；push 完成後
+//   由 D 軌開 PR）、退回（行內留言與 Preview 留言存進 review_comments 並打包成同一個 prompt，Task →
+//   Running，同一個 session 繼續）、中止（cancel，Task → Ready）。
 
 import {
   API_ROUTES,
+  CheckAcceptanceCriterionInput,
   GateDecisionInput,
   type NeedsYouItem,
   type NeedsYouListResponse,
   PermissionResponseInput,
+  type PreviewCommentInput,
   type ReviewCommentInput,
 } from "@orbis/api-contract";
-import type { PermissionPurpose } from "@orbis/protocol";
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import type { BlobRef, ContentBlock, PermissionPurpose, RunControlAction } from "@orbis/protocol";
+import { and, asc, count, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import type { z } from "zod";
 import { authorize, authorizePermissionResponse } from "../authz/capabilities";
 import {
   actorProjectRoles,
@@ -25,9 +30,19 @@ import {
   type RunScope,
   requireProjectCapability,
 } from "../authz/scope";
-import { gates, needsYouItems, projects, reviewComments, runners, runs, tasks } from "../db/schema";
+import {
+  acceptanceCriteria,
+  blobs,
+  gates,
+  needsYouItems,
+  projects,
+  reviewComments,
+  runners,
+  runs,
+  tasks,
+} from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
-import { toGates, toNeedsYou } from "../http/dto";
+import { toAcceptanceCriterion, toGates, toNeedsYou } from "../http/dto";
 import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
 import type { Services } from "../services";
@@ -88,6 +103,8 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
           or(
             eq(needsYouItems.kind, "permission_request"),
             eq(needsYouItems.memberId, actor.memberId),
+            // 不指派給特定的人的 Gate（負責人不能核准自己的 Task），下面依授權過濾。
+            and(eq(needsYouItems.kind, "gate"), isNull(needsYouItems.memberId)),
           ),
         ),
       )
@@ -203,23 +220,48 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     const scope = await loadTaskScope(db, actor, gate.taskId);
     const input = await readJson(c, GateDecisionInput);
     if (input.action === "approve") {
-      // 「不能核准自己的 Task」同時比對目前的與 Gate 建立時的指派對象。
+      // 「不能核准自己的 Task」同時比對目前的與 Gate 建立時的指派對象，所有種類的 Gate 都適用。
       requireProjectCapability(actor, scope, "approve_gate", gate.assigneeMemberIdAtCreation);
     } else if (input.action === "reject") {
       requireProjectCapability(actor, { ...scope, task: undefined }, "approve_gate");
     } else requireProjectCapability(actor, scope, "edit_task");
-    if (gate.kind !== "review") {
-      // TODO(B2, #15)：Plan Gate 的核准與退回。
-      throw conflict("B1 只支援 Review Gate");
-    }
     if (!gate.runId) throw conflict("這個 Gate 沒有對應的 Run");
     const runId = gate.runId;
+    if (gate.kind === "plan" && input.action === "reject") {
+      if (input.reviewComments.length > 0 || input.previewComments.length > 0) {
+        throw new ApiError(422, "invalid_input", "Plan Gate 退回時只接受整體說明");
+      }
+      if (input.comment === null) {
+        throw new ApiError(422, "invalid_input", "Plan Gate 退回時要附上說明");
+      }
+    }
 
     const actedBy = { source: "api", actorMemberId: actor.memberId } as const;
     const updated = await inTransaction(db, async (uow) => {
       const { tx } = uow;
       const now = s.clock.now();
-      const comments: ReviewCommentInput[] = input.action === "reject" ? input.reviewComments : [];
+      if (gate.kind === "review" && input.action === "approve") {
+        // 所有 manual 條件都打勾後才能核准 Review Gate（ARCHITECTURE §5.1）。
+        const [unchecked] = await tx
+          .select({ n: count() })
+          .from(acceptanceCriteria)
+          .where(
+            and(
+              eq(acceptanceCriteria.taskId, gate.taskId),
+              eq(acceptanceCriteria.kind, "manual"),
+              or(isNull(acceptanceCriteria.passed), eq(acceptanceCriteria.passed, false)),
+            ),
+          );
+        if ((unchecked?.n ?? 0) > 0) {
+          throw conflict("還有 manual 類型的 Acceptance Criterion 沒有打勾");
+        }
+      }
+      const diffComments: ReviewCommentInput[] =
+        input.action === "reject" ? input.reviewComments : [];
+      const previewComments =
+        input.action === "reject"
+          ? await checkPreviewComments(tx, runId, input.previewComments)
+          : [];
       const [decided] = await tx
         .update(gates)
         .set({
@@ -239,17 +281,27 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         .where(and(eq(gates.id, gate.id), isNull(gates.decision)))
         .returning();
       if (!decided) throw conflict("這個 Gate 已經有決定了");
-      if (comments.length > 0) {
-        await tx.insert(reviewComments).values(
-          comments.map((comment) => ({
+      if (diffComments.length > 0 || previewComments.length > 0) {
+        await tx.insert(reviewComments).values([
+          ...diffComments.map((comment) => ({
             gateId: gate.id,
+            kind: "diff" as const,
             path: comment.path,
             line: comment.line,
             side: comment.side,
             body: comment.body,
             authorMemberId: actor.memberId,
           })),
-        );
+          ...previewComments.map(({ input: comment }) => ({
+            gateId: gate.id,
+            kind: "preview" as const,
+            url: comment.url,
+            selector: comment.selector,
+            screenshotBlobId: comment.screenshotBlobId,
+            body: comment.body,
+            authorMemberId: actor.memberId,
+          })),
+        ]);
       }
       await tx
         .update(needsYouItems)
@@ -260,38 +312,45 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         })
         .where(and(eq(needsYouItems.gateId, gate.id), isNull(needsYouItems.resolvedAt)));
 
+      const send = (action: RunControlAction) =>
+        s.runControls.send(tx, runId, action, uow, actor.memberId);
       if (input.action === "approve") {
-        await s.lifecycle.transition(uow, gate.taskId, "pr_open", "gate", actedBy);
-        await s.runControls.send(
-          tx,
-          runId,
-          { action: "gate_result", gate: "review", decision: "approved" },
-          uow,
-          actor.memberId,
-        );
-        await s.runControls.send(tx, runId, { action: "push_branch" }, uow, actor.memberId);
+        if (gate.kind === "plan") {
+          await s.lifecycle.transition(uow, gate.taskId, "running", "gate", actedBy);
+          await send({ action: "gate_result", gate: "plan", decision: "approved" });
+        } else {
+          await s.lifecycle.transition(uow, gate.taskId, "pr_open", "gate", actedBy);
+          await send({ action: "gate_result", gate: "review", decision: "approved" });
+          await send({ action: "push_branch" });
+        }
       } else if (input.action === "reject") {
-        await s.lifecycle.transition(uow, gate.taskId, "running", "gate", actedBy);
-        await s.runControls.send(
-          tx,
-          runId,
-          { action: "gate_result", gate: "review", decision: "rejected" },
+        const planGate = gate.kind === "plan";
+        await s.lifecycle.transition(
           uow,
-          actor.memberId,
+          gate.taskId,
+          planGate ? "planning" : "running",
+          "gate",
+          actedBy,
         );
-        await s.runControls.send(
-          tx,
+        await send({ action: "gate_result", gate: gate.kind, decision: "rejected" });
+        await send({
+          action: "prompt",
+          prompt: rejectionPrompt(input.comment, diffComments, previewComments),
+          source: planGate ? "plan_gate" : "review_gate",
+        });
+        await s.notify.notify(uow, {
+          kind: "task_rejected",
+          recipients: [scope.task.assigneeMemberId],
+          taskId: gate.taskId,
           runId,
-          {
-            action: "prompt",
-            prompt: [{ type: "text", text: rejectionPrompt(input.comment, comments) }],
-          },
-          uow,
-          actor.memberId,
-        );
+          gateId: gate.id,
+          actorMemberId: actor.memberId,
+          title: `${scope.task.key} 的${planGate ? " plan " : "修改"}被退回`,
+          body: input.comment,
+        });
       } else {
         await s.lifecycle.transition(uow, gate.taskId, "ready", "run_stopped", actedBy);
-        await s.runControls.send(tx, runId, { action: "cancel" }, uow, actor.memberId);
+        await send({ action: "cancel" });
       }
       return decided;
     });
@@ -299,14 +358,101 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     return c.json(gateView);
   });
 
+  /** 在 Review Gate 為 manual 類型的條件打勾或取消（核准 Review Gate 前要全部打勾）。 */
+  app.post(API_ROUTES.acceptanceCriterionCheck, auth, async (c) => {
+    const actor = c.get("actor");
+    const criterionId = readId(c, "criterionId", "Acceptance Criterion");
+    const [criterion] = await db
+      .select()
+      .from(acceptanceCriteria)
+      .where(eq(acceptanceCriteria.id, criterionId));
+    if (!criterion) throw notFound("Acceptance Criterion");
+    const scope = await loadTaskScope(db, actor, criterion.taskId);
+    const [waiting] = await db
+      .select()
+      .from(gates)
+      .where(
+        and(eq(gates.taskId, criterion.taskId), eq(gates.kind, "review"), isNull(gates.decision)),
+      )
+      .orderBy(desc(gates.createdAt))
+      .limit(1);
+    // 打勾是核准的一部分，權限與核准 Review Gate 相同。
+    requireProjectCapability(actor, scope, "approve_gate", waiting?.assigneeMemberIdAtCreation);
+    if (criterion.kind !== "manual") {
+      throw new ApiError(422, "invalid_input", "只有 manual 類型的條件可以打勾");
+    }
+    if (scope.task.status !== "review_gate" || !waiting) {
+      throw conflict("Task 不在 Review Gate，不能打勾");
+    }
+    const input = await readJson(c, CheckAcceptanceCriterionInput);
+    const [updated] = await db
+      .update(acceptanceCriteria)
+      .set({
+        passed: input.checked ? true : null,
+        checkedAt: input.checked ? s.clock.now() : null,
+        checkedByMemberId: input.checked ? actor.memberId : null,
+        checkedByRunId: null,
+      })
+      .where(eq(acceptanceCriteria.id, criterion.id))
+      .returning();
+    if (!updated) throw notFound("Acceptance Criterion");
+    return c.json(toAcceptanceCriterion(updated));
+  });
+
   return app;
 }
 
-/** Review Gate 退回時送給 Agent 的 prompt：整體說明加上依檔案排序的行內留言。 */
+type PreviewCommentParsed = z.output<typeof PreviewCommentInput>;
+
+/** Preview 留言連同截圖的 BlobRef（退回時以圖片附在 prompt 中）。 */
+export interface CheckedPreviewComment {
+  input: PreviewCommentParsed;
+  screenshot: BlobRef | null;
+}
+
+/**
+ * 檢查 Preview 留言：網址必須是這個 Run 的 Preview（`<run-id>.preview.<domain>`），
+ * 截圖必須是這個 Run 的 blob。
+ */
+async function checkPreviewComments(
+  tx: Executor,
+  runId: string,
+  comments: PreviewCommentParsed[],
+): Promise<CheckedPreviewComment[]> {
+  const checked: CheckedPreviewComment[] = [];
+  for (const comment of comments) {
+    const [label, zone] = new URL(comment.url).hostname.toLowerCase().split(".");
+    if (label !== runId.toLowerCase() || zone !== "preview") {
+      throw new ApiError(422, "invalid_input", "Preview 留言的網址不是這個 Run 的 Preview");
+    }
+    let screenshot: BlobRef | null = null;
+    if (comment.screenshotBlobId) {
+      const [blob] = await tx
+        .select()
+        .from(blobs)
+        .where(and(eq(blobs.id, comment.screenshotBlobId), eq(blobs.runId, runId)));
+      if (!blob) throw new ApiError(422, "invalid_input", "截圖不是這個 Run 的檔案");
+      screenshot = {
+        blob_id: blob.id,
+        sha256: blob.sha256,
+        size: blob.size,
+        media_type: blob.mediaType,
+      };
+    }
+    checked.push({ input: comment, screenshot });
+  }
+  return checked;
+}
+
+/**
+ * Gate 退回時送給 Agent 的 prompt：整體說明、依檔案排序的行內留言，以及 Preview 留言
+ * （網址、selector；截圖以圖片附上，ARCHITECTURE §13）。
+ */
 export function rejectionPrompt(
   comment: string | null,
   reviewComments: ReviewCommentInput[],
-): string {
+  previewComments: CheckedPreviewComment[] = [],
+): ContentBlock[] {
   const lines = ["Review 退回，請依照下列意見修改後再交回。"];
   if (comment && comment.trim() !== "") lines.push("", comment.trim());
   if (reviewComments.length > 0) {
@@ -319,7 +465,20 @@ export function rejectionPrompt(
       lines.push(`- ${c.path}:${c.line}${side}：${c.body}`);
     }
   }
-  return lines.join("\n");
+  let screenshotNumber = 0;
+  if (previewComments.length > 0) {
+    lines.push("", "在 Preview 上的留言：");
+    for (const { input, screenshot } of previewComments) {
+      const where = input.selector ? `${input.url}（${input.selector}）` : input.url;
+      const image = screenshot ? `（截圖 ${++screenshotNumber}）` : "";
+      lines.push(`- ${where}${image}：${input.body}`);
+    }
+  }
+  const blocks: ContentBlock[] = [{ type: "text", text: lines.join("\n") }];
+  for (const { screenshot } of previewComments) {
+    if (screenshot) blocks.push({ type: "image", ...screenshot });
+  }
+  return blocks;
 }
 
 /** 確認 Actor 可以回覆這個 Run 的權限請求；不行時丟出 403。 */

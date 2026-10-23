@@ -36,7 +36,8 @@ import {
   tasks,
 } from "../db/schema";
 import type { Executor } from "../db/tx";
-import { NON_TERMINAL_RUN_STATUSES } from "../domain/run-status";
+import { isPrimaryRun, NON_TERMINAL_RUN_STATUSES } from "../domain/run-status";
+import { planGateEnabled } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
 import type { EventStore } from "../runs/event-store";
 import type { RunnerHub } from "./hub";
@@ -273,12 +274,18 @@ export class Dispatcher {
 
   async buildOffer(run: RunRow, dispatchId: string, expiresAt: Date): Promise<DispatchOffer> {
     const [row] = await this.db
-      .select({ task: tasks, repo: repos })
+      .select({ task: tasks, repo: repos, project: projects })
       .from(tasks)
       .innerJoin(repos, eq(repos.id, tasks.repoId))
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(tasks.id, run.taskId));
     if (!row) throw new Error(`Run ${run.id} 的 Task 或 Repo 不存在`);
-    const { task, repo } = row;
+    const { task, repo, project } = row;
+    const criteria = await this.db
+      .select()
+      .from(acceptanceCriteria)
+      .where(eq(acceptanceCriteria.taskId, task.id))
+      .orderBy(asc(acceptanceCriteria.position));
     const defaultBranch = repo.defaultBranch ?? "main";
     return {
       dispatch_id: dispatchId,
@@ -297,10 +304,18 @@ export class Dispatcher {
       model: run.model,
       permission_policy: run.permissionPolicy,
       prompt: await buildPrompt(this.db, task),
-      // TODO(B2, #15)：Planning 與 Plan Gate 在 B2 實作；B1 一律不進 plan 模式。
-      plan_gate: false,
+      // 只有主 Run 會經過 Planning 與 Plan Gate（ARCHITECTURE §5）。
+      plan_gate: isPrimaryRun(run) && run.origin === "dispatch" && planGateEnabled(task, project),
       delegation: null,
       last_event_seq: await this.options.eventStore.lastContiguousSeq(run.id),
+      acceptance_criteria: criteria.map((c) => ({
+        criterion_id: c.id,
+        kind: c.kind,
+        description: c.description,
+        // command 為 null 時 Runner 沿用 Repo 設定檔的 `[verify].commands`。
+        command: c.kind === "command" ? c.command : null,
+      })),
+      origin: run.origin,
     };
   }
 

@@ -152,7 +152,10 @@ export async function seedTeam(db: Database, name = "Core"): Promise<SeededTeam>
   return { teamId: team.id, members: seeded };
 }
 
-/** 直接在 DB 建立 Project 與 Repo（不經過 API）。 */
+/**
+ * 直接在 DB 建立 Project 與 Repo（不經過 API）。Plan Gate 預設關閉（大部分測試不經過 Planning）；
+ * 測試 Plan Gate 時以 overrides 打開。
+ */
 export async function seedProject(
   db: Database,
   teamId: string,
@@ -160,7 +163,7 @@ export async function seedProject(
 ) {
   const [project] = await db
     .insert(projects)
-    .values({ teamId, name: "Dogfood", taskKeyPrefix: "ORB", ...overrides })
+    .values({ teamId, name: "Dogfood", taskKeyPrefix: "ORB", planGateEnabled: false, ...overrides })
     .returning();
   if (!project) throw new Error("建立 Project 失敗");
   const [repo] = await db
