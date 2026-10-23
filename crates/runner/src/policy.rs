@@ -157,7 +157,8 @@ fn decide_command(command: &str, ctx: &PolicyContext<'_>) -> Decision {
     if let Some(reason) = analysis.unanalyzable {
         return Decision::ask(format!("無法判斷實際執行的內容：{reason}"));
     }
-    for segment in &analysis.segments {
+    let cwds = segment_cwds(&analysis.segments, ctx.worktree);
+    for (segment, cwd) in analysis.segments.iter().zip(&cwds) {
         if segment.iter().any(|word| mentions_protected(word, ctx)) {
             return Decision::ask("指令涉及 Agent 的設定檔（可能讓 Agent 繞過 Permission Policy）");
         }
@@ -170,12 +171,12 @@ fn decide_command(command: &str, ctx: &PolicyContext<'_>) -> Decision {
         if let Some(reason) = dangerous_args(segment) {
             return Decision::ask(reason);
         }
-        if let Some(path) = outside_path(segment, ctx.worktree) {
+        if let Some(path) = outside_path(segment, ctx.worktree, cwd) {
             return Decision::ask(format!("存取 Worktree 以外的路徑：{path}"));
         }
     }
-    for segment in &analysis.segments {
-        if is_harmless_navigation(segment, ctx.worktree) {
+    for (segment, cwd) in analysis.segments.iter().zip(&cwds) {
+        if is_harmless_navigation(segment, ctx.worktree, cwd) {
             continue;
         }
         let text = segment.join(" ");
@@ -406,12 +407,32 @@ fn redirect_target(word: &str) -> Option<&str> {
     Some(rest.trim_start_matches('&'))
 }
 
+/// 每一段指令執行時的目前目錄：從 Worktree 開始，遇到 `cd <目錄>` 就換過去（之後的相對路徑
+/// 以那裡為基準）。沒有參數的 `cd` 是家目錄，以 Worktree 外的路徑表示。
+fn segment_cwds(segments: &[Vec<String>], worktree: &Path) -> Vec<PathBuf> {
+    let mut cwd = worktree.to_path_buf();
+    segments
+        .iter()
+        .map(|segment| {
+            let current = cwd.clone();
+            if segment.first().map(String::as_str) == Some("cd") {
+                cwd = match segment.get(1) {
+                    Some(dir) => path_like(dir, &current).unwrap_or_else(|| current.join(dir)),
+                    None => path_like("~", &current).unwrap_or_default(),
+                };
+            }
+            current
+        })
+        .collect()
+}
+
 /// 指令中指向 Worktree 外的詞，回傳那個詞（issue #61）。
 ///
 /// 每個詞都當成可能的路徑檢查：重新導向取目標、`--key=value` 取值、短參數 `-X<值>` 取 `X` 之後的值。
-/// 絕對路徑、`~` 開頭與含 `..` 的詞直接判斷；其他相對路徑以 Worktree 為基準，用會解開
-/// symlink／junction 的 [`inside`] 判斷（Worktree 內指向外面的連結視為在外面）。
-fn outside_path(segment: &[String], worktree: &Path) -> Option<String> {
+/// 絕對路徑、`~` 開頭與含 `..` 的詞直接判斷；其他相對路徑以這段指令的目前目錄（`cwd`，見
+/// [`segment_cwds`]）為基準，用會解開 symlink／junction 的 [`inside`] 判斷（Worktree 內指向外面的
+/// 連結視為在外面）。
+fn outside_path(segment: &[String], worktree: &Path, cwd: &Path) -> Option<String> {
     segment.iter().find_map(|word| {
         let candidate = redirect_target(word).unwrap_or(word);
         let candidate = match candidate.split_once('=') {
@@ -423,7 +444,7 @@ fn outside_path(segment: &[String], worktree: &Path) -> Option<String> {
                 None => candidate,
             },
         };
-        let path = path_like(candidate, worktree).or_else(|| relative_path(candidate, worktree))?;
+        let path = path_like(candidate, cwd).or_else(|| relative_path(candidate, cwd))?;
         (!inside(&path, worktree)).then(|| word.clone())
     })
 }
@@ -444,12 +465,12 @@ fn short_option_value(word: &str) -> Option<&str> {
     Some(&rest[index..])
 }
 
-/// 不是參數、也不是網址的相對路徑，以 Worktree 為基準解析。
-fn relative_path(word: &str, worktree: &Path) -> Option<PathBuf> {
+/// 不是參數、也不是網址的相對路徑，以 `cwd` 為基準解析。
+fn relative_path(word: &str, cwd: &Path) -> Option<PathBuf> {
     if word.is_empty() || word.contains("://") || is_null_device(word) {
         return None;
     }
-    Some(worktree.join(word))
+    Some(cwd.join(word))
 }
 
 /// 詞看起來像路徑時解析成路徑：絕對路徑、`~` 開頭（含 `~user`），或含 `..` 的相對路徑。
@@ -593,6 +614,13 @@ fn is_global_install(segment: &[String]) -> bool {
 const DANGEROUS_ARGS: &[(&str, Option<&str>, &[&str])] = &[
     // 執行任意程式
     ("rg", None, &["--pre"]),
+    // 跟著 symlink 遞迴讀取（Worktree 內指向外面的連結）
+    ("grep", None, &["-R", "--dereference-recursive"]),
+    ("rg", None, &["-L", "--follow"]),
+    // 從檔案讀出要處理的檔案清單（清單中的路徑無法檢查）
+    ("wc", None, &["--files0-from"]),
+    ("du", None, &["--files0-from"]),
+    ("tar", None, &["-T", "--files-from"]),
     ("git", Some("grep"), &["-O", "--open-files-in-pager"]),
     ("git", Some("rebase"), &["-x", "--exec"]),
     (
@@ -636,7 +664,8 @@ const DANGEROUS_ARGS: &[(&str, Option<&str>, &[&str])] = &[
     ),
 ];
 
-/// 一律問人的子指令（會下載並執行任意套件）：(程式, 子指令)。
+/// 一律問人的子指令（會下載並執行任意套件）：(程式, 子指令)。全域參數可以放在子指令前面
+/// （`pnpm --filter x exec`），所以任何一個引數是這些字就算命中。
 const DANGEROUS_SUBCOMMANDS: &[(&str, &str)] = &[
     ("pnpm", "exec"),
     ("pnpm", "dlx"),
@@ -662,15 +691,19 @@ fn program_name(word: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 參數是否符合規則中的 `flag`。
-fn matches_flag(arg: &str, flag: &str) -> bool {
+/// 接受長參數縮寫的程式（只要不會混淆，`--amen` 就等於 `--amend`）。
+const ABBREVIATES_LONG_OPTIONS: &[&str] = &["git", "tar"];
+
+/// 參數是否符合規則中的 `flag`。`abbreviations` 為 `true` 時，長參數的縮寫（至少 `--` 加一個字元）
+/// 也算符合。
+fn matches_flag(arg: &str, flag: &str, abbreviations: bool) -> bool {
     if arg == flag {
         return true;
     }
     if flag.starts_with("--") {
-        return arg
-            .strip_prefix(flag)
-            .is_some_and(|rest| rest.starts_with('='));
+        let key = arg.split_once('=').map_or(arg, |(key, _)| key);
+        return key == flag
+            || (abbreviations && key.len() >= 3 && key.starts_with("--") && flag.starts_with(key));
     }
     // 單一字母的短參數：`-O<值>` 或合併的 `-nO`（大小寫有別）。
     let Some(letter) = flag.strip_prefix('-').filter(|l| l.chars().count() == 1) else {
@@ -722,11 +755,13 @@ fn dangerous_args(segment: &[String]) -> Option<String> {
             segment.get(1..).unwrap_or_default(),
         )
     };
-    if let Some(sub) = sub
-        && DANGEROUS_SUBCOMMANDS.contains(&(program.as_str(), sub))
+    if let Some(word) = segment[1..]
+        .iter()
+        .find(|w| DANGEROUS_SUBCOMMANDS.contains(&(program.as_str(), w.as_str())))
     {
-        return Some(format!("{program} {sub} 會下載或執行任意程式：{text}"));
+        return Some(format!("{program} {word} 會下載或執行任意程式：{text}"));
     }
+    let abbreviations = ABBREVIATES_LONG_OPTIONS.contains(&program.as_str());
     for (rule_program, rule_sub, flags) in DANGEROUS_ARGS {
         if *rule_program != program || rule_sub.is_some_and(|s| Some(s) != sub) {
             continue;
@@ -734,7 +769,7 @@ fn dangerous_args(segment: &[String]) -> Option<String> {
         if let Some((arg, _)) = args.iter().find_map(|arg| {
             flags
                 .iter()
-                .find(|f| matches_flag(arg, f))
+                .find(|f| matches_flag(arg, f, abbreviations))
                 .map(|f| (arg, f))
         }) {
             return Some(format!(
@@ -764,14 +799,15 @@ fn deletes_outside(segment: &[String], worktree: &Path) -> Option<PathBuf> {
 }
 
 /// `cd`／`pwd` 到 Worktree 內的目錄：本身沒有副作用，不要求列在 allow_commands 中。
-fn is_harmless_navigation(segment: &[String], worktree: &Path) -> bool {
+/// `cwd` 是這段指令的目前目錄（相對路徑的基準）。
+fn is_harmless_navigation(segment: &[String], worktree: &Path, cwd: &Path) -> bool {
     match segment.first().map(String::as_str) {
         Some("pwd") => segment.len() == 1,
         Some("cd") => match segment.get(1) {
             None => false,
             Some(dir) => {
                 segment.len() == 2 && {
-                    let path = PathBuf::from(dir);
+                    let path = path_like(dir, cwd).unwrap_or_else(|| cwd.join(dir));
                     inside(&path, worktree)
                 }
             }
@@ -1084,7 +1120,7 @@ mod tests {
             "~-",
         ] {
             let segment = vec!["cat".to_owned(), word.to_owned()];
-            assert!(outside_path(&segment, &wt).is_some(), "{word}");
+            assert!(outside_path(&segment, &wt, &wt).is_some(), "{word}");
         }
         // allow_commands 放行了 cat，讀別人的家目錄仍然要問人
         let allow = vec!["cat *".to_owned()];
@@ -1179,6 +1215,20 @@ mod tests {
             "git commit --template=t.txt",
             "git commit --author=someone",
             "git commit --amend -m x",
+            // 安全審查：全域參數放在子指令前面、長參數縮寫、跟著連結遞迴、從檔案讀檔案清單
+            "pnpm --filter web exec node -e 1",
+            "pnpm -C sub dlx cowsay",
+            "npm --prefix x exec y",
+            "git commit --amen -m x",
+            "git commit --temp=t.txt",
+            "git diff --out=x",
+            "tar --to-comm=evil -xf a.tar",
+            "grep -R foo .",
+            "grep -rR foo .",
+            "grep --dereference-recursive foo .",
+            "rg -L foo",
+            "rg --follow foo",
+            "wc --files0-from=list.txt",
         ] {
             let decision = decide_allow_all(command, &wt);
             assert_eq!(kind(&decision), "ask", "{command} → {decision:?}");
@@ -1198,6 +1248,8 @@ mod tests {
             "git show HEAD",
             "git commit -m 修正",
             "git commit -am 修正",
+            "git commit --all -m 修正",
+            "grep -r foo src",
             "git add -A",
             "git ls-files",
             "find . -name x",
@@ -1267,5 +1319,20 @@ mod tests {
         assert_eq!(kind(&decide_allow_all("cat link/key", &wt)), "ask");
         assert_eq!(kind(&decide_allow_all("grep -flink/key x", &wt)), "ask");
         assert_eq!(kind(&decide_allow_all("cat README.md", &wt)), "allow");
+        // `cd` 之後的相對路徑以新的目錄為基準（安全審查）。
+        std::fs::create_dir_all(wt.join("sub")).unwrap();
+        link_dir(&secret, &wt.join("sub").join("inner"));
+        assert_eq!(
+            kind(&decide_allow_all("cd sub && cat inner/key", &wt)),
+            "ask"
+        );
+        assert_eq!(
+            kind(&decide_allow_all("cd sub && cat ../README.md", &wt)),
+            "allow"
+        );
+        assert_eq!(
+            kind(&decide_allow_all("cd sub && cd inner && cat key", &wt)),
+            "ask"
+        );
     }
 }
