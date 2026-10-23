@@ -92,6 +92,17 @@ jobs:
       - name: Playwright（Web）
         run: pnpm --filter @orbis/web test:e2e
 
+      # 完整系統的 M1 e2e：真實 Server + Postgres + Local Runner + Fake Agent（apps/server 的 e2e:stack）。
+      # 沒有 DATABASE_URL，stack 以 Testcontainers 啟動 Postgres，所以和其他 DB 測試一樣只在 Linux 跑。
+      - name: Playwright（Web 完整系統 M1）
+        run: |
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            echo "::notice::略過完整系統 e2e：需要 Docker（Testcontainers 的 Postgres），GitHub 的 macOS runner 沒有 Docker，Windows runner 只能跑 Windows container"
+            exit 0
+          fi
+          cargo build -p orbis-runner -p orbis-fake-agent
+          pnpm --filter @orbis/web test:e2e:system
+
       # Desktop 的 e2e 以 Playwright 的 Electron 模式跑，sidecar 用真實的 Runner（test:e2e 會先 cargo build）。
       # Linux runner 沒有顯示器，用 xvfb 提供虛擬的 X server。
       - name: Playwright（Desktop）
@@ -108,6 +119,16 @@ jobs:
         with:
           name: playwright-report-${{ matrix.os }}
           path: apps/web/playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload 完整系統 e2e 的 trace 與 log
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: system-e2e-${{ matrix.os }}
+          path: |
+            apps/web/test-results/system
+            apps/web/test-results/system-logs
           if-no-files-found: ignore
 
       - name: Upload Desktop Playwright report
