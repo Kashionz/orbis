@@ -170,6 +170,16 @@ export function createHandlers(backend: MockBackend) {
         201,
       ),
     ),
+    http.post(
+      API_ROUTES.repoRefreshInstallation,
+      handle((_, p) => backend.refreshRepoInstallation(p.repoId ?? "")),
+    ),
+    http.delete(
+      API_ROUTES.repo,
+      handle((_, p) => {
+        backend.deleteRepo(p.repoId ?? "");
+      }),
+    ),
     http.get(
       API_ROUTES.projectTasks,
       handle((_, p) => backend.tasks(p.projectId ?? "")),

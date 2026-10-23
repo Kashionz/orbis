@@ -2,15 +2,19 @@ import {
   PERMISSION_POLICIES,
   type PermissionPolicy,
   type Project,
+  type Repo,
   type UpdateProjectInput,
 } from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { ApiError } from "../../api/client";
 import {
   createRepo,
+  deleteRepo,
   projectQuery,
   queryKeys,
+  refreshRepoInstallation,
   reposQuery,
   updateProject,
 } from "../../api/resources";
@@ -143,43 +147,100 @@ function ReposSection({ project, canRegister }: { project: Project; canRegister:
             </tr>
           </thead>
           <tbody>
-            {repos.map((repo) => {
-              const installUrl = appInstallUrl(repo);
-              return (
-                <tr key={repo.id} data-repo={`${repo.owner}/${repo.name}`}>
-                  <td>
-                    {repo.owner}/{repo.name}
-                  </td>
-                  <td>
-                    <code>{repo.defaultBranch}</code>
-                  </td>
-                  <td data-installed={String(repo.github.installed)}>
-                    {repo.github.installed ? (
-                      "已安裝"
-                    ) : (
-                      <>
-                        未安裝
-                        {installUrl ? (
-                          <>
-                            {" "}
-                            <a href={installUrl} target="_blank" rel="noreferrer">
-                              安裝 GitHub App
-                            </a>
-                          </>
-                        ) : (
-                          <span className="hint">（Server 沒有設定 GitHub App）</span>
-                        )}
-                      </>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {repos.map((repo) => (
+              <tr key={repo.id} data-repo={`${repo.owner}/${repo.name}`}>
+                <td>
+                  {repo.owner}/{repo.name}
+                </td>
+                <td>
+                  <code>{repo.defaultBranch}</code>
+                </td>
+                <td data-installed={String(repo.github.installed)}>
+                  <RepoInstallation repo={repo} canManage={canRegister} />
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       )}
       {canRegister && <RegisterRepoForm project={project} />}
     </section>
+  );
+}
+
+/**
+ * GitHub App 的安裝狀態。App 在登記 Repo 之後才安裝、Server 又沒收到 installation webhook 時，
+ * 可以手動重新檢查（#56）；GitHub 上同名 repo 的 id 與登記時不同（409 `repo_mismatch`）時，
+ * 只能刪除後重新登記。
+ */
+function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean }) {
+  const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const installUrl = appInstallUrl(repo);
+  const refresh = useMutation({
+    mutationFn: () => refreshRepoInstallation(repo.id),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(queryKeys.repos(repo.projectId), (current: Repo[] | undefined) =>
+        current?.map((r) => (r.id === updated.id ? updated : r)),
+      );
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteRepo(repo.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.repos(repo.projectId) }),
+  });
+  const mismatch = refresh.error instanceof ApiError && refresh.error.code === "repo_mismatch";
+
+  if (repo.github.installed) return <>已安裝</>;
+  return (
+    <div className="repo-installation">
+      未安裝
+      {installUrl ? (
+        <>
+          {" "}
+          <a href={installUrl} target="_blank" rel="noreferrer">
+            安裝 GitHub App
+          </a>
+        </>
+      ) : (
+        <span className="hint">（Server 沒有設定 GitHub App）</span>
+      )}
+      {/* TODO(api): 重新檢查需要的權限待 D2／B2 實作 repoRefreshInstallation 後核對（目前與登記 Repo 相同：Admin 以上） */}
+      {canManage && (
+        <button
+          type="button"
+          className="link-button"
+          disabled={refresh.isPending}
+          onClick={() => refresh.mutate()}
+        >
+          {refresh.isPending ? "檢查中…" : "重新檢查 App 安裝狀態"}
+        </button>
+      )}
+      {refresh.isSuccess && !refresh.data.github.installed && (
+        <p className="hint" role="status">
+          GitHub 上仍然沒有安裝。安裝完成後再按一次。
+        </p>
+      )}
+      {mismatch ? (
+        <div className="notice-inline" role="alert">
+          GitHub 上的 {repo.owner}/{repo.name} 與登記時不是同一個 repo（可能被刪除後重建或改名）。
+          請刪除這個 Repo 後重新登記。
+          {canManage && (
+            <button
+              type="button"
+              className="danger"
+              disabled={remove.isPending}
+              onClick={() => (confirmDelete ? remove.mutate() : setConfirmDelete(true))}
+            >
+              {confirmDelete ? "確定刪除這個 Repo" : "刪除這個 Repo"}
+            </button>
+          )}
+          <ErrorText error={remove.error} />
+        </div>
+      ) : (
+        <ErrorText error={refresh.error} />
+      )}
+    </div>
   );
 }
 

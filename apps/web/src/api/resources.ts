@@ -367,6 +367,10 @@ export function refreshRepoInstallation(repoId: string): Promise<Repo> {
   });
 }
 
+export function deleteRepo(repoId: string): Promise<void> {
+  return apiSend(apiPath(API_ROUTES.repo, { repoId }), { method: "DELETE" });
+}
+
 export const repoSpecsQuery = (repoId: string) =>
   queryOptions({
     queryKey: queryKeys.repoSpecs(repoId),

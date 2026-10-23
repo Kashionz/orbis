@@ -780,6 +780,42 @@ export class MockBackend {
     return repo;
   }
 
+  /** 重新讀取 GitHub App 的安裝狀態（#56）。 */
+  refreshRepoInstallation(repoId: string): Repo {
+    const repo = this.repo(repoId);
+    this.requireProjectAdmin(this.project(repo.projectId));
+    const fullName = `${repo.owner}/${repo.name}`;
+    if (this.config.repoMismatch?.includes(fullName)) {
+      throw new MockError(
+        409,
+        "repo_mismatch",
+        `GitHub 上的 ${fullName} 與登記時不是同一個 repository`,
+      );
+    }
+    const owners = this.config.githubAppOwnersOnRefresh ?? GITHUB_APP_OWNERS;
+    const installed = owners.includes(repo.owner);
+    repo.github = { installed, installUrl: installed ? null : GITHUB_APP_INSTALL_URL };
+    repo.updatedAt = now();
+    this.save();
+    return repo;
+  }
+
+  deleteRepo(repoId: string): void {
+    const repo = this.repo(repoId);
+    this.requireProjectAdmin(this.project(repo.projectId));
+    if (this.state.tasks.some((t) => t.repoId === repoId)) {
+      throw new MockError(409, "conflict", "還有 Task 使用這個 Repo，不能刪除");
+    }
+    this.state.repos = this.state.repos.filter((r) => r.id !== repoId);
+    this.save();
+  }
+
+  private repo(repoId: string): Repo {
+    const repo = this.state.repos.find((r) => r.id === repoId);
+    if (!repo) throw new MockError(404, "not_found", "找不到這個 Repo");
+    return repo;
+  }
+
   createTask(projectId: string, input: CreateTaskInput): Task {
     const project = this.project(projectId);
     const number = this.state.tasks.filter((t) => t.projectId === projectId).length + 1;

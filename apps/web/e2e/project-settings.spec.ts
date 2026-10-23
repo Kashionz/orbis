@@ -157,6 +157,61 @@ test.describe("Project 設定頁", () => {
   });
 });
 
+test.describe("重新檢查 GitHub App 安裝狀態（#56）", () => {
+  test.describe("登記之後才安裝 App", () => {
+    test.use({ mock: { githubAppOwnersOnRefresh: ["acme", "octocat"] } });
+
+    test("未安裝的 Repo 重新檢查後變成已安裝", async ({ page }) => {
+      await page.goto("/projects/project-1/settings");
+      const form = page.getByRole("form", { name: "登記 Repo" });
+      await form.getByLabel("Owner").fill("octocat");
+      await form.getByLabel("Repo 名稱").fill("tools");
+      await form.getByRole("button", { name: "登記" }).click();
+      const tools = repoRow(page, "octocat/tools");
+      await expect(tools).toContainText("未安裝");
+      await expect(repoRow(page, "acme/demo").getByRole("button")).toHaveCount(0);
+
+      await tools.getByRole("button", { name: "重新檢查 App 安裝狀態" }).click();
+      await expect(tools.locator("[data-installed]")).toHaveAttribute("data-installed", "true");
+      await expect(tools).toContainText("已安裝");
+      await page.reload();
+      await expect(repoRow(page, "octocat/tools")).toContainText("已安裝");
+    });
+  });
+
+  test("仍然沒有安裝時提示安裝後再試", async ({ page }) => {
+    await page.goto("/projects/project-1/settings");
+    const form = page.getByRole("form", { name: "登記 Repo" });
+    await form.getByLabel("Owner").fill("octocat");
+    await form.getByLabel("Repo 名稱").fill("tools");
+    await form.getByRole("button", { name: "登記" }).click();
+    const tools = repoRow(page, "octocat/tools");
+    await tools.getByRole("button", { name: "重新檢查 App 安裝狀態" }).click();
+    await expect(tools.getByRole("status")).toHaveText(
+      "GitHub 上仍然沒有安裝。安裝完成後再按一次。",
+    );
+  });
+
+  test.describe("GitHub 上的 repo 已經不是同一個", () => {
+    test.use({ mock: { repoMismatch: ["octocat/tools"] } });
+
+    test("409 repo_mismatch 時提示刪除後重新登記，可以直接刪除", async ({ page }) => {
+      await page.goto("/projects/project-1/settings");
+      const form = page.getByRole("form", { name: "登記 Repo" });
+      await form.getByLabel("Owner").fill("octocat");
+      await form.getByLabel("Repo 名稱").fill("tools");
+      await form.getByRole("button", { name: "登記" }).click();
+      const tools = repoRow(page, "octocat/tools");
+      await tools.getByRole("button", { name: "重新檢查 App 安裝狀態" }).click();
+      const alert = tools.getByRole("alert");
+      await expect(alert).toContainText("請刪除這個 Repo 後重新登記");
+      await alert.getByRole("button", { name: "刪除這個 Repo" }).click();
+      await alert.getByRole("button", { name: "確定刪除這個 Repo" }).click();
+      await expect(repoRow(page, "octocat/tools")).toHaveCount(0);
+    });
+  });
+});
+
 /** Member／Viewer 看不到建立 Project、登記 Repo、修改設定；Repo 列表與政策仍可以查看。 */
 for (const role of ["member", "viewer"] as const satisfies readonly Role[]) {
   test.describe(`Role：${role}`, () => {

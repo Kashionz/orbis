@@ -20,6 +20,7 @@ import { DispatchDialog } from "../dispatch/DispatchDialog";
 import { AcceptanceCriteriaSection } from "./AcceptanceCriteriaSection";
 import { DependsOnField } from "./DependsOnField";
 import { DescriptionEditor } from "./DescriptionEditor";
+import { ReadyPanel } from "./ReadyPanel";
 import { RunHistory } from "./RunHistory";
 
 /** Task 頁（交付 2）：描述、Acceptance Criterion、depends_on、指派對象、Run 歷史。 */
@@ -102,6 +103,7 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
           <RunHistory taskId={task.id} />
         </div>
         <aside className="task-side">
+          <ReadyPanel task={task} canEdit={canEdit} />
           <dl>
             <dt>Repo</dt>
             <dd>{repo ? `${repo.owner}/${repo.name}` : "尚未指定"}</dd>

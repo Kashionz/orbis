@@ -28,6 +28,13 @@ export interface MockConfig {
   configTrust?: boolean;
   /** review diff 中 README.md 修改後的內容放在 blob，並多一個二進位檔案。 */
   blobDiff?: boolean;
+  /**
+   * 「重新檢查 App 安裝狀態」時 GitHub App 已安裝的 owner（模擬登記之後才安裝），
+   * 省略時與登記時相同（只有 `acme`）。
+   */
+  githubAppOwnersOnRefresh?: string[];
+  /** 重新檢查時 GitHub 上同名 repo 的 id 已經不同（`owner/name`），回 409 `repo_mismatch`。 */
+  repoMismatch?: string[];
 }
 
 declare global {
