@@ -10,6 +10,7 @@ import type { Database } from "./db/client";
 import { handleError } from "./http/errors";
 import { requireTrustedOrigin } from "./http/origin-check";
 import type { Logger } from "./logger";
+import { createPreviewRoutes } from "./preview/routes";
 import { createAuthRoutes } from "./routes/auth";
 import { createGitHubRoutes, createGitHubWebhookRoute } from "./routes/github";
 import { createProjectRoutes } from "./routes/projects";
@@ -84,7 +85,9 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", createGitHubWebhookRoute(services.github.app));
   app.route("/", createGitHubRoutes(services));
 
-  // E 軌的 Preview 反向代理（/preview/<run-id>/）之後掛在這裡，實作放在 src/preview/。
+  // E 軌的 Preview：狀態查詢與 Preview 網址的換票（實作在 src/preview/）。Preview 網址本身的請求
+  // 依 Host 在 server.ts 分流，不經過這裡。
+  app.route("/", createPreviewRoutes(services));
 
   return app;
 }

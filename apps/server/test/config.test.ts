@@ -38,6 +38,7 @@ describe("Server 設定", () => {
       devPairingToken: null,
       runnerHeartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
       blobDir: DEFAULT_BLOB_DIR,
+      previewDomain: null,
       logLevel: "info",
       prettyLogs: false,
     });
