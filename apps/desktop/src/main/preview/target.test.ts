@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createRateLimiter,
   decidePreviewNavigation,
   type PreviewState,
   type PreviewTarget,
@@ -161,5 +162,18 @@ describe("Web UI 傳來的參數", () => {
     expect(parseRunId("../x")).toBeNull();
     expect(parseRunId("")).toBeNull();
     expect(parseRunId(1)).toBeNull();
+  });
+});
+
+describe("createRateLimiter", () => {
+  it("間隔內只允許一次", () => {
+    let t = 0;
+    const allow = createRateLimiter(3000, () => t);
+    expect(allow()).toBe(true);
+    t = 2999;
+    expect(allow()).toBe(false);
+    t = 3000;
+    expect(allow()).toBe(true);
+    expect(allow()).toBe(false);
   });
 });

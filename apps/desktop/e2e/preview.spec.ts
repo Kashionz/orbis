@@ -310,6 +310,12 @@ test("別人的 Run 開 Preview 網址，經過 authorize 換票後留在內嵌�
     (urls) => urls.includes("https://example.com/"),
     "外部連結交給外部瀏覽器",
   );
+  // 頁面接著連續叫出外部瀏覽器：間隔內的一律丟棄
+  await inPreview(
+    app,
+    "for (let i = 0; i < 5; i++) window.open('https://example.com/spam' + i); location.href = 'https://example.com/spam'",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
   expect(await desktop.hooks((h) => h.externalUrls)).toEqual([
     "https://example.com/x",
     "https://example.com/",

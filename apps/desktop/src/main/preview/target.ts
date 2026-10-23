@@ -168,6 +168,17 @@ export async function fetchPreviewState(
   return parsed.success ? parsed.data : { error: "Server 回傳的 Preview 狀態格式不正確" };
 }
 
+/** 每 `intervalMs` 最多允許一次；回傳的函式在允許時回傳 true。 */
+export function createRateLimiter(intervalMs: number, now: () => number = Date.now): () => boolean {
+  let last = Number.NEGATIVE_INFINITY;
+  return () => {
+    const t = now();
+    if (t - last < intervalMs) return false;
+    last = t;
+    return true;
+  };
+}
+
 /** 檢查 Web UI 傳來的位置；不合理的值回傳 null。 */
 export function parsePreviewBounds(value: unknown): PreviewBounds | null {
   if (!value || typeof value !== "object") return null;

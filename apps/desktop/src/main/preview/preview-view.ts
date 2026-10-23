@@ -8,9 +8,15 @@
 import { type BaseWindow, shell, WebContentsView } from "electron";
 import type { PreviewBounds, PreviewNavState, PreviewPick } from "../../bridge";
 import { parseRawPick, removeOverlayScript, startPickingScript } from "./picker";
-import { decidePreviewNavigation, type PreviewTarget } from "./target";
+import { createRateLimiter, decidePreviewNavigation, type PreviewTarget } from "./target";
 
 type OpenTarget = Extract<PreviewTarget, { origins: string[] }>;
+
+/**
+ * 頁面自己觸發的外部開啟（連結、window.open、轉址）的最短間隔。Preview 是 Agent 寫的程式，
+ * 不能讓它不斷叫出外部瀏覽器；超過的直接丟棄。網址列（使用者操作）不受限制。
+ */
+const PAGE_EXTERNAL_OPEN_INTERVAL_MS = 3000;
 
 /** 元素選取用的 isolated world ID（Electron 要求 >= 1000 以免和內建的衝突）。 */
 const PICKER_WORLD_ID = 1999;
@@ -29,6 +35,7 @@ export interface PreviewViewOptions {
 export class PreviewView {
   private view: WebContentsView | null = null;
   private target: OpenTarget | null = null;
+  private readonly pageMayOpenExternal = createRateLimiter(PAGE_EXTERNAL_OPEN_INTERVAL_MS);
 
   constructor(private readonly options: PreviewViewOptions) {}
 
@@ -158,7 +165,7 @@ export class PreviewView {
         : "deny";
       if (decision === "allow") return;
       event.preventDefault();
-      if (decision === "external") this.openExternal(url);
+      if (decision === "external") this.openExternalFromPage(url);
     };
     // 只限制主 frame；頁面內的 iframe 不限制
     contents.on("will-frame-navigate", (details) => {
@@ -170,9 +177,17 @@ export class PreviewView {
     contents.on("will-attach-webview", (event) => event.preventDefault());
     // 不開新視窗：同一個 Preview 的網址在內嵌瀏覽器中開，其他交給外部瀏覽器
     contents.setWindowOpenHandler(({ url }) => {
-      this.navigate(url);
+      const decision = this.target
+        ? decidePreviewNavigation(url, this.target, this.options.serverOrigin())
+        : "deny";
+      if (decision === "allow") void contents.loadURL(url).catch(() => {});
+      else if (decision === "external") this.openExternalFromPage(url);
       return { action: "deny" };
     });
+  }
+
+  private openExternalFromPage(url: string): void {
+    if (this.pageMayOpenExternal()) this.openExternal(url);
   }
 
   private openExternal(url: string): void {
