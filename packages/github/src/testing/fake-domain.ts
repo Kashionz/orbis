@@ -13,6 +13,8 @@ import type {
   MemberRecord,
   Notifier,
   RepoRecord,
+  RepoSpecDependencies,
+  RepoSpecRecord,
   RunSummary,
   TaskFieldsPatch,
   TaskRecord,
@@ -278,6 +280,44 @@ export class FakeFeedbackRuns implements FeedbackRunPort {
     const failure = this.#failures.shift();
     if (failure) return failure;
     return { ok: true, runId: `fix-run-${this.#next++}` };
+  }
+}
+
+/** RepoSpecDependencies 中由 Server 提供的部分（Repo Spec 與版本）的 fake。 */
+export class FakeRepoSpecs implements Omit<RepoSpecDependencies, "store"> {
+  readonly specs = new Map<string, RepoSpecRecord>();
+  readonly merges: { repoSpecId: string; commitSha: string; blobSha: string | null }[] = [];
+
+  addSpec(
+    spec: Partial<RepoSpecRecord> & Pick<RepoSpecRecord, "id" | "repoId" | "path">,
+  ): RepoSpecRecord {
+    const full: RepoSpecRecord = {
+      title: null,
+      version: 0,
+      committedSha: null,
+      committedBlobSha: null,
+      ...spec,
+    };
+    this.specs.set(full.id, clone(full));
+    return full;
+  }
+
+  async getRepoSpec(repoSpecId: string) {
+    const spec = this.specs.get(repoSpecId);
+    return spec ? clone(spec) : null;
+  }
+
+  async recordRepoSpecMerged(
+    repoSpecId: string,
+    merged: { commitSha: string; blobSha: string | null; pullRequestUrl: string },
+  ) {
+    const spec = this.specs.get(repoSpecId);
+    if (!spec) throw new Error(`沒有 Repo Spec ${repoSpecId}`);
+    spec.version += 1;
+    spec.committedSha = merged.commitSha;
+    spec.committedBlobSha = merged.blobSha;
+    this.merges.push({ repoSpecId, commitSha: merged.commitSha, blobSha: merged.blobSha });
+    return { version: spec.version };
   }
 }
 

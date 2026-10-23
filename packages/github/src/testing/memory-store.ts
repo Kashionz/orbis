@@ -1,4 +1,4 @@
-// GitHubStore 與 FeedbackStore 的 in-memory 實作：測試與 dev harness 使用。
+// GitHubStore、FeedbackStore、RepoSpecStore 的 in-memory 實作：測試與 dev harness 使用。
 
 import {
   type DeliveryClaim,
@@ -10,6 +10,8 @@ import {
   IssueAlreadyLinkedError,
   type IssueLink,
   type PullRequestLink,
+  type RepoSpecPullRequest,
+  type RepoSpecStore,
 } from "../ports";
 
 interface DeliveryRow {
@@ -20,12 +22,13 @@ interface DeliveryRow {
 
 const clone = <T>(value: T): T => structuredClone(value);
 
-export class InMemoryGitHubStore implements GitHubStore, FeedbackStore {
+export class InMemoryGitHubStore implements GitHubStore, FeedbackStore, RepoSpecStore {
   readonly deliveries = new Map<string, DeliveryRow>();
   readonly issueLinks = new Map<string, IssueLink>();
   readonly pullRequestLinks = new Map<string, PullRequestLink>();
   readonly feedbackBatches = new Map<string, FeedbackBatch>();
   readonly feedbackFixes = new Map<string, FeedbackFix>();
+  readonly repoSpecPullRequests = new Map<string, RepoSpecPullRequest>();
 
   async claimDelivery(input: {
     deliveryId: string;
@@ -125,6 +128,22 @@ export class InMemoryGitHubStore implements GitHubStore, FeedbackStore {
       .filter((f) => f.githubRepoId === githubRepoId && f.prNumber === prNumber)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
       .map(clone);
+  }
+
+  async findRepoSpecPullRequest(githubRepoId: number, number: number) {
+    const pr = this.repoSpecPullRequests.get(`${githubRepoId}#${number}`);
+    return pr ? clone(pr) : null;
+  }
+
+  async findOpenRepoSpecPullRequest(repoSpecId: string) {
+    const pr = [...this.repoSpecPullRequests.values()].find(
+      (p) => p.repoSpecId === repoSpecId && p.state === "open",
+    );
+    return pr ? clone(pr) : null;
+  }
+
+  async saveRepoSpecPullRequest(pr: RepoSpecPullRequest): Promise<void> {
+    this.repoSpecPullRequests.set(`${pr.githubRepoId}#${pr.number}`, clone(pr));
   }
 
   async findFeedbackFixByRun(runId: string): Promise<FeedbackFix | null> {

@@ -206,6 +206,43 @@ export interface GitHubClient {
   listCheckSuites(installationId: number, repo: RepoRef, sha: string): Promise<GitHubCheckSuite[]>;
   /** 這個 commit 最新一輪的 check run（重新執行過的只取最新的）。 */
   listCheckRuns(installationId: number, repo: RepoRef, sha: string): Promise<GitHubCheckRun[]>;
+
+  /** 分支目前指向的 commit；分支不存在時回傳 null。 */
+  getBranchHead(installationId: number, repo: RepoRef, branch: string): Promise<string | null>;
+  /** 從 `sha` 開一個新的分支。 */
+  createBranch(installationId: number, repo: RepoRef, branch: string, sha: string): Promise<void>;
+  /** 檔案在 `ref`（分支或 commit）的內容；不存在時回傳 null。 */
+  getFileContent(
+    installationId: number,
+    repo: RepoRef,
+    path: string,
+    ref: string,
+  ): Promise<GitHubFileContent | null>;
+  /** 在分支上新增或更新一個檔案（一個 commit）。更新時要帶目前的 blob SHA。 */
+  putFile(installationId: number, repo: RepoRef, input: PutFileInput): Promise<PutFileResult>;
+}
+
+export interface GitHubFileContent {
+  /** blob SHA。 */
+  sha: string;
+  /** UTF-8 解碼後的內容。 */
+  content: string;
+}
+
+export interface PutFileInput {
+  /** 以 `/` 分隔的路徑。 */
+  path: string;
+  branch: string;
+  message: string;
+  /** UTF-8 的檔案內容。 */
+  content: string;
+  /** 更新既有檔案時，目前的 blob SHA。 */
+  sha?: string;
+}
+
+export interface PutFileResult {
+  commitSha: string;
+  blobSha: string;
 }
 
 export class GitHubApiError extends Error {

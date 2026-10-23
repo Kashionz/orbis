@@ -9,6 +9,7 @@ import type {
   Logger,
   Notifier,
   RepoRecord,
+  RepoSpecDependencies,
   TaskRecord,
 } from "./ports";
 import type { WebhookSender } from "./webhook/payloads";
@@ -28,6 +29,8 @@ export interface IntegrationContext {
   taskLocks: KeyedMutex;
   /** Feedback Loop 的依賴；Server 沒有提供時為 null（Feedback Loop 停用）。 */
   feedback: FeedbackDependencies | null;
+  /** Repo Spec 提交的依賴；Server 沒有提供時為 null。 */
+  repoSpecs: RepoSpecDependencies | null;
 }
 
 /** 已安裝 App、可以呼叫 API 的 Repo。 */

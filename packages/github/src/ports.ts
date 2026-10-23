@@ -419,6 +419,64 @@ export interface FeedbackDependencies {
   botAllowlist(projectId: string): Promise<string[]>;
 }
 
+// ── Repo Spec 提交到 repo（ARCHITECTURE §12.1）─────────────────────────
+
+/**
+ * Repo 內的 Spec 檔（RepoSpec）中與提交有關的欄位。
+ * TODO(contract): 版本相關欄位（version、committedSha、committedBlobSha）等契約 v2 的 repo_specs 合併後對齊名稱。
+ */
+export interface RepoSpecRecord {
+  id: string;
+  repoId: string;
+  /** Repo 內的相對路徑，以 `/` 分隔。 */
+  path: string;
+  title: string | null;
+  /** 從 Orbis 提交、已經 merge 的次數；還沒提交過是 0。 */
+  version: number;
+  /** 上一次 merge 的 commit；還沒提交過是 null。 */
+  committedSha: string | null;
+  /** 上一次 merge 後檔案的 blob SHA，用來判斷 repo 中的檔案之後有沒有被別人改過。 */
+  committedBlobSha: string | null;
+}
+
+/** 從 Orbis 提交 Repo Spec 開出的 PR。 */
+export interface RepoSpecPullRequest {
+  repoSpecId: string;
+  githubRepoId: number;
+  number: number;
+  url: string;
+  headBranch: string;
+  state: PullRequestState;
+  /** 第一次提交的 Member。 */
+  createdByMemberId: string | null;
+}
+
+/** Spec PR 的對應（由 Server 以 Drizzle 實作，要通過 `describeRepoSpecStoreContract`）。 */
+export interface RepoSpecStore {
+  findRepoSpecPullRequest(
+    githubRepoId: number,
+    number: number,
+  ): Promise<RepoSpecPullRequest | null>;
+  /** 這份 Spec 還開著的 PR；最多一個。 */
+  findOpenRepoSpecPullRequest(repoSpecId: string): Promise<RepoSpecPullRequest | null>;
+  /** 以 (githubRepoId, number) 新增或覆蓋。 */
+  saveRepoSpecPullRequest(pr: RepoSpecPullRequest): Promise<void>;
+}
+
+/** Repo Spec 提交需要 Server 提供的依賴。沒有提供時 `commitRepoSpec` 回傳 `disabled`。 */
+export interface RepoSpecDependencies {
+  store: RepoSpecStore;
+  getRepoSpec(repoSpecId: string): Promise<RepoSpecRecord | null>;
+  /**
+   * Spec PR merge 之後：版本 +1（Server 以原子操作遞增），記錄 merge commit 與檔案的 blob SHA。
+   * 回傳新的版本。
+   */
+  recordRepoSpecMerged(
+    repoSpecId: string,
+    merged: { commitSha: string; blobSha: string | null; pullRequestUrl: string },
+  ): Promise<{ version: number }>;
+}
+
 /** 結構化 log，與 pino 相容。 */
 export interface Logger {
   info(obj: object, msg: string): void;

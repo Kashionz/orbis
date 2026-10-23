@@ -15,6 +15,8 @@ import {
   IssueAlreadyLinkedError,
   type IssueLink,
   type PullRequestLink,
+  type RepoSpecPullRequest,
+  type RepoSpecStore,
 } from "../ports";
 
 const T0 = new Date("2026-10-23T08:00:00.000Z");
@@ -313,6 +315,55 @@ export function describeFeedbackStoreContract(
         await store.saveFeedbackFix(failed);
         expect(await store.listFeedbackFixes(100, 12)).toEqual([failed]);
       });
+    });
+  });
+}
+
+function repoSpecPullRequest(overrides: Partial<RepoSpecPullRequest> = {}): RepoSpecPullRequest {
+  return {
+    repoSpecId: "spec-1",
+    githubRepoId: 100,
+    number: 30,
+    url: "https://github.com/acme/app/pull/30",
+    headBranch: "spec/design-abc123",
+    state: "open",
+    createdByMemberId: "member-1",
+    ...overrides,
+  };
+}
+
+/**
+ * RepoSpecStore 的契約測試。Server 的 Drizzle 實作也要通過：
+ *
+ *   describeRepoSpecStoreContract("DrizzleRepoSpecStore", async () => new DrizzleRepoSpecStore(db));
+ */
+export function describeRepoSpecStoreContract(
+  name: string,
+  makeStore: () => Promise<RepoSpecStore>,
+): void {
+  describe(`RepoSpecStore 契約：${name}`, () => {
+    it("存入後可以用 repo 與 PR 編號查到；以 (repo, 編號) 覆蓋", async () => {
+      const store = await makeStore();
+      await store.saveRepoSpecPullRequest(repoSpecPullRequest());
+      expect(await store.findRepoSpecPullRequest(100, 30)).toEqual(repoSpecPullRequest());
+      expect(await store.findRepoSpecPullRequest(100, 31)).toBeNull();
+      await store.saveRepoSpecPullRequest(repoSpecPullRequest({ state: "merged" }));
+      expect((await store.findRepoSpecPullRequest(100, 30))?.state).toBe("merged");
+    });
+
+    it("只回傳這份 Spec 還開著的 PR", async () => {
+      const store = await makeStore();
+      await store.saveRepoSpecPullRequest(repoSpecPullRequest({ number: 30, state: "merged" }));
+      await store.saveRepoSpecPullRequest(repoSpecPullRequest({ number: 31, state: "closed" }));
+      expect(await store.findOpenRepoSpecPullRequest("spec-1")).toBeNull();
+      await store.saveRepoSpecPullRequest(repoSpecPullRequest({ number: 32 }));
+      await store.saveRepoSpecPullRequest(
+        repoSpecPullRequest({ number: 33, repoSpecId: "spec-2", createdByMemberId: null }),
+      );
+      expect((await store.findOpenRepoSpecPullRequest("spec-1"))?.number).toBe(32);
+      expect(await store.findOpenRepoSpecPullRequest("spec-2")).toEqual(
+        repoSpecPullRequest({ number: 33, repoSpecId: "spec-2", createdByMemberId: null }),
+      );
     });
   });
 }

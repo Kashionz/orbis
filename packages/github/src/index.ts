@@ -25,9 +25,14 @@ export {
 export type { ImportableIssue, ImportResult } from "./issues/import";
 export { RepoNotConnectedError } from "./issues/import";
 export type { IssueEventOutcome, PushOutcome } from "./issues/sync";
-export { PULL_REQUEST_MARKER, SUMMARY_MARKER } from "./markdown";
+export { PULL_REQUEST_MARKER, REPO_SPEC_PULL_REQUEST_MARKER, SUMMARY_MARKER } from "./markdown";
 export * from "./ports";
 export type { BranchPushed, OpenPullRequestResult, PullRequestEventOutcome } from "./pull-requests";
+export type {
+  CommitRepoSpecInput,
+  CommitRepoSpecResult,
+  RepoSpecPullRequestOutcome,
+} from "./repo-specs";
 export { installUrl, type RepoInspection, type RepoInstallationRefresh } from "./repos";
 export { createGitHubWebhookRoutes } from "./routes";
 export {

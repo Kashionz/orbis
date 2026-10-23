@@ -16,6 +16,7 @@ import {
   FakeFeedbackRuns,
   FakeGitHub,
   type FakeRepo,
+  FakeRepoSpecs,
   InMemoryGitHubStore,
   MemoryLogger,
   RecordingNotifier,
@@ -87,6 +88,9 @@ export interface World {
   ): unknown;
   userRef(member: MemberRecord): GitHubUserRef;
 
+  // ── Repo Spec ──
+  repoSpecs: FakeRepoSpecs;
+
   // ── Feedback Loop ──
   feedbackRuns: FakeFeedbackRuns;
   /** Project 的 bot 白名單。 */
@@ -124,7 +128,7 @@ export interface World {
 let deliveryCounter = 0;
 let idCounter = 50_000;
 
-export function createWorld(options: { feedback?: boolean } = {}): World {
+export function createWorld(options: { feedback?: boolean; repoSpecs?: boolean } = {}): World {
   const clock = new TestClock();
   const bot: GitHubUserRef = { id: 9_000_001, login: `${APP_SLUG}[bot]`, type: "Bot" };
   const github = new FakeGitHub(clock, bot);
@@ -170,8 +174,21 @@ export function createWorld(options: { feedback?: boolean } = {}): World {
   const notifier = new RecordingNotifier();
   const logger = new MemoryLogger();
   const feedbackRuns = new FakeFeedbackRuns();
+  const repoSpecs = new FakeRepoSpecs();
   const botAllowlist: string[] = [];
   const integration = createGitHubIntegration({
+    ...(options.repoSpecs === false
+      ? {}
+      : {
+          repoSpecs: {
+            store,
+            getRepoSpec: (id: string) => repoSpecs.getRepoSpec(id),
+            recordRepoSpecMerged: (
+              id: string,
+              merged: { commitSha: string; blobSha: string | null; pullRequestUrl: string },
+            ) => repoSpecs.recordRepoSpecMerged(id, merged),
+          },
+        }),
     ...(options.feedback === false
       ? {}
       : {
@@ -207,6 +224,7 @@ export function createWorld(options: { feedback?: boolean } = {}): World {
   });
 
   return {
+    repoSpecs,
     feedbackRuns,
     botAllowlist,
 

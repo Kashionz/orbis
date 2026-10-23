@@ -21,9 +21,11 @@ import type {
   GitHubStore,
   Logger,
   Notifier,
+  RepoSpecDependencies,
   TaskRecord,
 } from "./ports";
 import { type BranchPushed, type OpenPullRequestResult, openPullRequest } from "./pull-requests";
+import { type CommitRepoSpecInput, type CommitRepoSpecResult, commitRepoSpec } from "./repo-specs";
 import {
   getInstallationTokenForRepo,
   inspectRepo,
@@ -46,6 +48,8 @@ export interface GitHubIntegrationOptions {
    * webhook 一律略過。
    */
   feedback?: FeedbackDependencies;
+  /** Repo Spec 提交（ARCHITECTURE §12.1）的依賴。沒有提供時 `commitRepoSpec` 回傳 `disabled`。 */
+  repoSpecs?: RepoSpecDependencies;
   /** 測試用：替換 GitHub API 的呼叫。 */
   client?: GitHubClient;
   /** 測試用：替換 fetch（client 未指定時才使用）。 */
@@ -96,6 +100,11 @@ export interface GitHubIntegration {
    * 不是 Feedback Loop 的 Run 時回傳 null。
    */
   onFeedbackRunEnded(input: { runId: string }): Promise<FeedbackFix | null>;
+  /**
+   * 把 Repo Spec 的草稿提交到 repo：開分支、commit、以 App 身分開 PR（同一份 Spec 還有開著的 PR 時沿用）。
+   * PR merge 後版本 +1（經由 webhook，呼叫 `RepoSpecDependencies.recordRepoSpecMerged`）。
+   */
+  commitRepoSpec(input: CommitRepoSpecInput): Promise<CommitRepoSpecResult>;
   listImportableIssues(repoId: string): Promise<ImportableIssue[]>;
   importIssues(input: {
     repoId: string;
@@ -123,6 +132,7 @@ export function createGitHubIntegration(options: GitHubIntegrationOptions): GitH
     now: options.now ?? (() => new Date()),
     taskLocks: new KeyedMutex(),
     feedback: options.feedback ?? null,
+    repoSpecs: options.repoSpecs ?? null,
   };
 
   const flush = () =>
@@ -164,6 +174,7 @@ export function createGitHubIntegration(options: GitHubIntegrationOptions): GitH
     },
     onFeedbackRunEnded: async ({ runId }) =>
       (await finishFeedbackFix(ctx, runId, { pushed: false }))?.fix ?? null,
+    commitRepoSpec: (input) => commitRepoSpec(ctx, input),
     listImportableIssues: (repoId) => listImportableIssues(ctx, repoId),
     importIssues: (input) => importIssues(ctx, input),
   };

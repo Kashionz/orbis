@@ -7,6 +7,7 @@ import { finishFeedbackFix } from "./feedback/dispatch";
 import { pushTask } from "./issues/sync";
 import { pullRequestTitle, renderPullRequestBody } from "./markdown";
 import type { PullRequestLink } from "./ports";
+import { handleRepoSpecPullRequestEvent, type RepoSpecPullRequestOutcome } from "./repo-specs";
 import type { PullRequestPayload } from "./webhook/payloads";
 
 export interface BranchPushed {
@@ -118,6 +119,8 @@ export type PullRequestEventOutcome =
   | { kind: "ignored"; reason: "unhandled_action" | "not_linked" | "already_handled" }
   /** PR 有新的 commit：記下目前的 head（Feedback Loop 只採用 head 的 CI 結果）。 */
   | { kind: "synchronized"; headSha: string }
+  /** 提交 Repo Spec 開出的 PR。 */
+  | { kind: "repo_spec"; outcome: RepoSpecPullRequestOutcome }
   | { kind: "merged"; taskId: string; transitioned: boolean }
   | { kind: "closed"; taskId: string; transitioned: boolean }
   | { kind: "reopened"; taskId: string; transitioned: boolean }
@@ -141,6 +144,16 @@ export async function handlePullRequestEvent(
     payload.action !== "synchronize"
   ) {
     return { kind: "ignored", reason: "unhandled_action" };
+  }
+  const specPullRequest = await ctx.repoSpecs?.store.findRepoSpecPullRequest(
+    payload.repository.id,
+    payload.number,
+  );
+  if (specPullRequest) {
+    return {
+      kind: "repo_spec",
+      outcome: await handleRepoSpecPullRequestEvent(ctx, specPullRequest, payload),
+    };
   }
   const link = await ctx.store.findPullRequestLink(payload.repository.id, payload.number);
   if (!link) return { kind: "ignored", reason: "not_linked" };

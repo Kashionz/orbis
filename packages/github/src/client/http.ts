@@ -9,6 +9,7 @@ import {
   type GitHubCheckRun,
   type GitHubCheckSuite,
   type GitHubClient,
+  type GitHubFileContent,
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubReviewComment,
@@ -112,6 +113,18 @@ const CheckRunsResponse = z.object({
   ),
 });
 
+const RefResponse = z.object({ object: z.object({ sha: z.string() }) });
+const ContentResponse = z.object({
+  type: z.string(),
+  sha: z.string(),
+  content: z.string().optional(),
+  encoding: z.string().optional(),
+});
+const PutFileResponse = z.object({
+  content: z.object({ sha: z.string() }),
+  commit: z.object({ sha: z.string() }),
+});
+
 const PermissionResponse = z.object({
   permission: z.string(),
   role_name: z.string().optional(),
@@ -171,6 +184,11 @@ function toReviewComment(raw: z.infer<typeof ReviewCommentResponse>): GitHubRevi
     diffHunk: raw.diff_hunk,
     htmlUrl: raw.html_url,
   };
+}
+
+/** repo 內的路徑（以 `/` 分隔）逐段編碼。 */
+function contentPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 function repoPath(repo: RepoRef): string {
@@ -519,6 +537,64 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
         url = nextPage(result.response.headers.get("link"));
       }
       return runs;
+    },
+
+    async getBranchHead(installationId, repo, branch) {
+      const result = await request(
+        "GET",
+        `${repoPath(repo)}/git/ref/heads/${contentPath(branch)}`,
+        inst(installationId),
+        RefResponse,
+        { allowNotFound: true },
+      );
+      return result ? result.data.object.sha : null;
+    },
+
+    async createBranch(installationId, repo, branch, sha) {
+      await must(
+        request("POST", `${repoPath(repo)}/git/refs`, inst(installationId), RefResponse, {
+          body: { ref: `refs/heads/${branch}`, sha },
+        }),
+      );
+    },
+
+    async getFileContent(installationId, repo, path, ref): Promise<GitHubFileContent | null> {
+      const query = new URLSearchParams({ ref });
+      const result = await request(
+        "GET",
+        `${repoPath(repo)}/contents/${contentPath(path)}?${query}`,
+        inst(installationId),
+        ContentResponse,
+        { allowNotFound: true },
+      );
+      if (!result) return null;
+      const data = result.data;
+      if (data.type !== "file") throw new GitHubApiError(422, `${path} 不是檔案`);
+      const content =
+        data.encoding === "base64"
+          ? Buffer.from((data.content ?? "").replace(/\s/g, ""), "base64").toString("utf8")
+          : (data.content ?? "");
+      return { sha: data.sha, content };
+    },
+
+    async putFile(installationId, repo, input) {
+      const data = await must(
+        request(
+          "PUT",
+          `${repoPath(repo)}/contents/${contentPath(input.path)}`,
+          inst(installationId),
+          PutFileResponse,
+          {
+            body: {
+              message: input.message,
+              content: Buffer.from(input.content, "utf8").toString("base64"),
+              branch: input.branch,
+              ...(input.sha ? { sha: input.sha } : {}),
+            },
+          },
+        ),
+      );
+      return { commitSha: data.commit.sha, blobSha: data.content.sha };
     },
   };
 }
