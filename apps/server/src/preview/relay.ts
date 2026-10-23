@@ -209,9 +209,11 @@ export class PreviewRelayService implements PreviewRelay, RunnerPreviewChannel {
       );
       return;
     }
+    // 用 request.headers（host.ts 已移除 preview cookie），不用 rawHeaders（還帶著原本的 cookie）
     const pairs: [string, string][] = [];
-    for (let i = 0; i + 1 < request.rawHeaders.length; i += 2) {
-      pairs.push([request.rawHeaders[i] ?? "", request.rawHeaders[i + 1] ?? ""]);
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (value === undefined) continue;
+      for (const v of Array.isArray(value) ? value : [value]) pairs.push([name, v]);
     }
     const stream = new WsStream(target.channel, this.allocate(target.channel));
     stream.send({

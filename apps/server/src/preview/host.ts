@@ -62,17 +62,22 @@ function html(status: number, title: string, message: string): Response {
 }
 
 /**
- * 是不是從其他 origin 發出的請求（例如其他 Run 的 Preview 頁面；它們和這個 Preview 網址是 same-site，
- * 會帶著 SameSite=Lax 的 preview cookie）。頁面導覽（使用者點連結、Web UI 的 iframe）不算。
+ * 是不是從其他 origin 發出、不能接受的請求（例如其他 Run 的 Preview 頁面；它們和這個 Preview 網址是
+ * same-site，會帶著 SameSite=Lax 的 preview cookie）。GET／HEAD 的頁面導覽（使用者點連結、Web UI 的
+ * iframe）可以；其他 method 的導覽（例如跨站的表單 POST）必須來自這個 Preview 網址自己。
  */
 export function isCrossOrigin(
+  method: string,
   headers: { get(name: string): string | null },
   previewOrigin: string,
 ): boolean {
-  if (headers.get("sec-fetch-mode") === "navigate") return false;
+  const origin = headers.get("origin");
+  if (headers.get("sec-fetch-mode") === "navigate") {
+    if (method === "GET" || method === "HEAD") return false;
+    return origin !== previewOrigin;
+  }
   const site = headers.get("sec-fetch-site");
   if (site && site !== "same-origin" && site !== "none") return true;
-  const origin = headers.get("origin");
   return origin !== null && origin !== previewOrigin;
 }
 
@@ -127,7 +132,10 @@ export function createPreviewHost(deps: PreviewHostDeps): PreviewHost {
       if (url.pathname.startsWith(PREVIEW_RESERVED_PREFIX)) {
         return html(404, "找不到頁面", "這個路徑保留給 Server 使用。");
       }
-      if (deps.domain && isCrossOrigin(request.headers, previewOrigin(runId, deps.domain))) {
+      if (
+        deps.domain &&
+        isCrossOrigin(request.method, request.headers, previewOrigin(runId, deps.domain))
+      ) {
         return new Response("不接受其他網站發出的請求", { status: 403 });
       }
       if (!(await authorized(runId, request.headers.get("cookie") ?? undefined))) {
@@ -148,7 +156,13 @@ export function createPreviewHost(deps: PreviewHostDeps): PreviewHost {
       const cookie = withoutPreviewCookie(headers.get("cookie"));
       if (cookie) headers.set("cookie", cookie);
       else headers.delete("cookie");
-      return deps.relay.fetch(runId, new Request(request, { headers }));
+      const response = await deps.relay.fetch(runId, new Request(request, { headers }));
+      // 只有 Web UI（Preview 分頁的 iframe）與 Preview 自己可以嵌入，避免其他網站 clickjacking
+      response.headers.append(
+        "content-security-policy",
+        `frame-ancestors 'self' ${new URL(deps.publicUrl).origin}`,
+      );
+      return response;
     },
 
     async upgrade(runId, request, socket, head) {
@@ -159,7 +173,7 @@ export function createPreviewHost(deps: PreviewHostDeps): PreviewHost {
         },
       };
       // WebSocket 不受 CORS 保護：瀏覽器一定會帶 Origin，必須是這個 Preview 網址自己
-      if (deps.domain && isCrossOrigin(headers, previewOrigin(runId, deps.domain))) {
+      if (deps.domain && isCrossOrigin("GET", headers, previewOrigin(runId, deps.domain))) {
         socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         return;
       }

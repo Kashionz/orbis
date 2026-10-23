@@ -529,7 +529,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 超過 64 KiB 的 WebSocket 訊息拆成多段：前面各段是 `ws_fragment`，最後一段是 `ws_text` 或 `ws_binary`，接收端組回一則訊息；單則訊息上限 16 MiB，超過時以 1009 關閉。分段先收在記憶體中，所以收到就補 credit。
   - Runner 把 `Host` 改寫成 `localhost:$ORBIS_PORT`，`X-Forwarded-Host` 一律由原本的 Host 設定；`Origin` 只有和原本的 Host 相同時才改寫成 `http://localhost:$ORBIS_PORT`。dev server 因此視為本機請求：Vite 的 `server.allowedHosts`、Next.js 的 `allowedDevOrigins` 都不必設定。
   - Server 轉送前移除 Orbis 自己的 cookie、請求帶來的 `X-Forwarded-*` 與 `/__<product slug>/` 路徑，加上 `X-Forwarded-Proto`；回應的 `Set-Cookie` 移除 `Domain` 屬性，避免寫到其他 Preview 或 Web UI 的 host。
-  - **只接受同一個 Preview 網址發出的請求**：其他 Run 的 Preview 和這個 Preview 網址是 same-site，會帶著 SameSite=Lax 的 preview cookie。所以除了頁面導覽（`Sec-Fetch-Mode: navigate`，例如點連結、Web UI 的 iframe）之外，`Sec-Fetch-Site` 不是 `same-origin`，或 `Origin` 不是這個 Preview 網址的請求一律回 403。WebSocket 不受 CORS 保護，`Origin` 必須是這個 Preview 網址。
+  - **只接受同一個 Preview 網址發出的請求**：其他 Run 的 Preview 和這個 Preview 網址是 same-site，會帶著 SameSite=Lax 的 preview cookie。所以除了 GET／HEAD 的頁面導覽（`Sec-Fetch-Mode: navigate`，例如點連結、Web UI 的 iframe）之外，`Sec-Fetch-Site` 不是 `same-origin`，或 `Origin` 不是這個 Preview 網址的請求一律回 403；其他 method 的導覽（例如跨站的表單 POST）也必須來自這個 Preview 網址。WebSocket 不受 CORS 保護，`Origin` 必須是這個 Preview 網址。回應加上 `Content-Security-Policy: frame-ancestors`，只有 Web UI 與 Preview 自己可以嵌入。
   - Runner 只轉送給執行中、而且 Preview 正在執行的 Run，每個 Run 最多 256 條 stream。Runner 離線、Run 已結束或 Preview 沒有在執行時，頁面導覽顯示說明頁。
 - **在 Preview 上留言（Preview 留言）**：
   - 在 Electron 內嵌的瀏覽器中點選元素留言，自動附上截圖、CSS selector 與 URL。

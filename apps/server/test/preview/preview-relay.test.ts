@@ -292,6 +292,7 @@ describe.skipIf(dbSkipReason !== null)("Preview 的轉送", () => {
     expect(res.body.toString()).toBe("export default 1;");
     expect(res.headers["content-type"]).toBe("text/javascript");
     expect(res.headers["set-cookie"]).toEqual(["session=abc; Path=/"]);
+    expect(res.headers["content-security-policy"]).toBe(`frame-ancestors 'self' ${PUBLIC_URL}`);
   });
 
   it("大檔案依 credit 分段：Server 交給瀏覽器之後才補 credit", async () => {
@@ -357,6 +358,9 @@ describe.skipIf(dbSkipReason !== null)("Preview 的轉送", () => {
     const headers = new Map(open.headers as [string, string][]);
     expect(headers.get("sec-websocket-protocol")).toBe("vite-hmr");
     expect(headers.get("sec-websocket-key")).toBeUndefined();
+    // preview cookie 不可以轉給 dev server（Agent 寫的程式）
+    expect(headers.get("cookie")).toBeUndefined();
+    expect(JSON.stringify(open.headers)).not.toContain(cookie.split("=")[1]);
     runner.send({
       type: "preview_response",
       stream_id: id,
@@ -405,6 +409,17 @@ describe.skipIf(dbSkipReason !== null)("Preview 的轉送", () => {
       headers: { cookie, "sec-fetch-site": "same-site", "sec-fetch-mode": "cors" },
     });
     expect(crossSite.status).toBe(403);
+    // 跨站的表單 POST（頁面導覽）也不行
+    const formPost = await raw(server.port, host, "/api/save", {
+      method: "POST",
+      headers: {
+        cookie,
+        "sec-fetch-site": "same-site",
+        "sec-fetch-mode": "navigate",
+        origin: `http://other.${PREVIEW_DOMAIN}`,
+      },
+    });
+    expect(formPost.status).toBe(403);
     const navigation = raw(server.port, host, "/", {
       headers: { cookie, "sec-fetch-site": "same-site", "sec-fetch-mode": "navigate" },
     });
