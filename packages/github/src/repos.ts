@@ -1,7 +1,7 @@
 // Repo 登記（Project 新增 Repo 時）與 App 安裝狀態的追蹤。
 
 import type { InstallationToken } from "./auth/installation-tokens";
-import { WRITE_ROLES } from "./client/types";
+import { GitHubApiError, WRITE_ROLES } from "./client/types";
 import { connectedRepo, type IntegrationContext } from "./context";
 import type {
   InstallationPayload,
@@ -90,8 +90,10 @@ export type RepoInstallationRefresh =
  * 重新向 GitHub 查詢已登記 Repo 的 App 安裝狀態（Repo 設定頁的「重新檢查」）。用於漏掉 installation
  * webhook 的情況，例如 App 在登記 Repo 之後才安裝，而本機收不到 webhook。
  *
- * - 和登記 Repo 相同，提出請求的 Member 本人要對 repo 有寫入權限；沒有時回應與「沒有安裝」相同，不改資料。
- * - App 確實沒有安裝（以 App 身分查不到）時，清掉 Repo 的 installation，反映 GitHub 上的狀態。
+ * - 提出請求的 Member 要屬於這個 Repo 的 Project；和登記 Repo 相同，本人還要對 repo 有寫入權限。
+ *   不符合時回應與「沒有安裝」相同，不改資料。
+ * - App 確實沒有安裝（以 App 身分查不到，原本的 installation 也存取不到這個 repo id）時，
+ *   清掉 Repo 的 installation，反映 GitHub 上的狀態。repo 改名造成以名稱查不到時不清。
  * - 已知 repo id 而 GitHub 上同名 repo 的 id 不同時不更新，回 `repo_mismatch`。
  */
 export async function refreshRepoInstallation(
@@ -103,14 +105,22 @@ export async function refreshRepoInstallation(
   if (!record) return { status: "not_found" };
   const notInstalled = (changed: boolean) =>
     ({ status: "not_installed", installUrl: installUrl(ctx.appSlug), changed }) as const;
+  // 路由的 Role 檢查由 Server 負責；這裡另外確認提出者是這個 Project 的 Member，才查詢或寫入。
   const requester = await ctx.domain.getMember(requesterMemberId);
-  if (!requester) return notInstalled(false);
+  const member =
+    requester &&
+    (await ctx.domain.findMemberByGithubUserId(record.projectId, requester.githubUserId));
+  if (!requester || member?.id !== requester.id) return notInstalled(false);
 
   const ref = { owner: record.owner, name: record.name };
   const installation = await ctx.client.findRepoInstallation(ref);
   const github = installation && (await ctx.client.getRepo(installation.installationId, ref));
   if (!installation || !github) {
     if (record.installationId === null) return notInstalled(false);
+    // 以名稱查不到也可能是 repo 改名：以 repo id 確認原本的 installation 真的已經存取不到它，才清掉。
+    if (await installationStillHasRepo(ctx, record.installationId, record.githubRepoId)) {
+      return notInstalled(false);
+    }
     await ctx.domain.updateRepoGitHubInfo(record.id, { installationId: null });
     ctx.logger.warn({ repoId: record.id }, "重新檢查：App 沒有安裝在這個 repo，清掉 installation");
     return notInstalled(true);
@@ -151,6 +161,22 @@ export async function refreshRepoInstallation(
     defaultBranch: github.defaultBranch,
     changed,
   };
+}
+
+/** 這個 installation 是否還能存取這個 repo id。installation 已被刪除或停用時回傳 false。 */
+async function installationStillHasRepo(
+  ctx: IntegrationContext,
+  installationId: number,
+  githubRepoId: number | null,
+): Promise<boolean> {
+  if (githubRepoId === null) return false;
+  try {
+    const repos = await ctx.client.listInstallationRepositories(installationId);
+    return repos.some((repo) => repo.id === githubRepoId);
+  } catch (error) {
+    if (error instanceof GitHubApiError && [401, 403, 404].includes(error.status)) return false;
+    throw error;
+  }
 }
 
 /** 交給 Team Runner push 的 token 的權限：只能讀寫這個 repo 的內容。 */
