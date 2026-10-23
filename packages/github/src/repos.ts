@@ -67,6 +67,92 @@ export async function inspectRepo(
   };
 }
 
+export type RepoInstallationRefresh =
+  | {
+      status: "installed";
+      installationId: number;
+      githubRepoId: number;
+      defaultBranch: string;
+      /** 這次有沒有更新 Repo 的資料。 */
+      changed: boolean;
+    }
+  | {
+      status: "not_installed";
+      /** 讓使用者把 App 安裝到這個 repo 的網址。 */
+      installUrl: string;
+      changed: boolean;
+    }
+  /** GitHub 上同名 repo 的 id 與登記時不同（例如刪掉後重建），不自動改綁，由使用者刪掉重新登記。 */
+  | { status: "repo_mismatch"; githubRepoId: number; registeredGithubRepoId: number }
+  | { status: "not_found" };
+
+/**
+ * 重新向 GitHub 查詢已登記 Repo 的 App 安裝狀態（Repo 設定頁的「重新檢查」）。用於漏掉 installation
+ * webhook 的情況，例如 App 在登記 Repo 之後才安裝，而本機收不到 webhook。
+ *
+ * - 和登記 Repo 相同，提出請求的 Member 本人要對 repo 有寫入權限；沒有時回應與「沒有安裝」相同，不改資料。
+ * - App 確實沒有安裝（以 App 身分查不到）時，清掉 Repo 的 installation，反映 GitHub 上的狀態。
+ * - 已知 repo id 而 GitHub 上同名 repo 的 id 不同時不更新，回 `repo_mismatch`。
+ */
+export async function refreshRepoInstallation(
+  ctx: IntegrationContext,
+  repoId: string,
+  requesterMemberId: string,
+): Promise<RepoInstallationRefresh> {
+  const record = await ctx.domain.getRepo(repoId);
+  if (!record) return { status: "not_found" };
+  const notInstalled = (changed: boolean) =>
+    ({ status: "not_installed", installUrl: installUrl(ctx.appSlug), changed }) as const;
+  const requester = await ctx.domain.getMember(requesterMemberId);
+  if (!requester) return notInstalled(false);
+
+  const ref = { owner: record.owner, name: record.name };
+  const installation = await ctx.client.findRepoInstallation(ref);
+  const github = installation && (await ctx.client.getRepo(installation.installationId, ref));
+  if (!installation || !github) {
+    if (record.installationId === null) return notInstalled(false);
+    await ctx.domain.updateRepoGitHubInfo(record.id, { installationId: null });
+    ctx.logger.warn({ repoId: record.id }, "重新檢查：App 沒有安裝在這個 repo，清掉 installation");
+    return notInstalled(true);
+  }
+  if (record.githubRepoId !== null && record.githubRepoId !== github.id) {
+    ctx.logger.warn(
+      { repoId: record.id, registered: record.githubRepoId, github: github.id },
+      "重新檢查：GitHub 上同名 repo 的 id 與登記時不同，不更新",
+    );
+    return {
+      status: "repo_mismatch",
+      githubRepoId: github.id,
+      registeredGithubRepoId: record.githubRepoId,
+    };
+  }
+  const role = await ctx.client.getCollaboratorRole(
+    installation.installationId,
+    { owner: github.owner, name: github.name },
+    { login: requester.githubLogin, id: requester.githubUserId },
+  );
+  if (!WRITE_ROLES.has(role)) return notInstalled(false);
+
+  const info: { installationId?: number; githubRepoId?: number; defaultBranch?: string } = {};
+  if (record.installationId !== installation.installationId) {
+    info.installationId = installation.installationId;
+  }
+  if (record.githubRepoId === null) info.githubRepoId = github.id;
+  if (record.defaultBranch !== github.defaultBranch) info.defaultBranch = github.defaultBranch;
+  const changed = Object.keys(info).length > 0;
+  if (changed) {
+    await ctx.domain.updateRepoGitHubInfo(record.id, info);
+    ctx.logger.info({ repoId: record.id, ...info }, "重新檢查：已更新 Repo 的安裝狀態");
+  }
+  return {
+    status: "installed",
+    installationId: installation.installationId,
+    githubRepoId: github.id,
+    defaultBranch: github.defaultBranch,
+    changed,
+  };
+}
+
 /** 交給 Team Runner push 的 token 的權限：只能讀寫這個 repo 的內容。 */
 export const RUNNER_TOKEN_PERMISSIONS = { contents: "write" } as const;
 

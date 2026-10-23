@@ -15,7 +15,13 @@ import { type PushOutcome, pushTask } from "./issues/sync";
 import { KeyedMutex } from "./keyed-mutex";
 import type { DomainService, GitHubStore, Logger, Notifier, TaskRecord } from "./ports";
 import { type BranchPushed, type OpenPullRequestResult, openPullRequest } from "./pull-requests";
-import { getInstallationTokenForRepo, inspectRepo, type RepoInspection } from "./repos";
+import {
+  getInstallationTokenForRepo,
+  inspectRepo,
+  type RepoInspection,
+  type RepoInstallationRefresh,
+  refreshRepoInstallation,
+} from "./repos";
 import { handleWebhook, type WebhookRequest, type WebhookResult } from "./webhook/handler";
 
 export interface GitHubIntegrationOptions {
@@ -53,6 +59,14 @@ export interface GitHubIntegration {
    * 有寫入權限，否則回應與「沒有安裝」相同。Server 登記 Repo 時只能使用這裡回傳的 installation 與 repo id。
    */
   inspectRepo(owner: string, name: string, requesterMemberId: string): Promise<RepoInspection>;
+  /**
+   * 重新向 GitHub 查詢已登記 Repo 的 App 安裝狀態（漏掉 installation webhook 時，Repo 設定頁的「重新檢查」）。
+   * 提出請求的 Member 本人必須對 repo 有寫入權限，否則回應與「沒有安裝」相同，不改資料。
+   */
+  refreshRepoInstallation(
+    repoId: string,
+    requesterMemberId: string,
+  ): Promise<RepoInstallationRefresh>;
   /** 給 Team Runner push 用、只限這個 repo 的 installation token。 */
   getInstallationTokenForRepo(repoId: string): Promise<InstallationToken>;
   listImportableIssues(repoId: string): Promise<ImportableIssue[]>;
@@ -98,6 +112,8 @@ export function createGitHubIntegration(options: GitHubIntegrationOptions): GitH
     onBranchPushed: (pushed) => openPullRequest(ctx, pushed),
     inspectRepo: (owner, name, requesterMemberId) =>
       inspectRepo(ctx, owner, name, requesterMemberId),
+    refreshRepoInstallation: (repoId, requesterMemberId) =>
+      refreshRepoInstallation(ctx, repoId, requesterMemberId),
     getInstallationTokenForRepo: (repoId) => getInstallationTokenForRepo(ctx, repoId),
     listImportableIssues: (repoId) => listImportableIssues(ctx, repoId),
     importIssues: (input) => importIssues(ctx, input),
