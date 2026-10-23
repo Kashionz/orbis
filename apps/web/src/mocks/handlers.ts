@@ -9,14 +9,18 @@ import {
   CreateProjectInput,
   CreateRepoInput,
   CreateRunInput,
+  CreateTaskCommentInput,
   CreateTaskInput,
   DraftTaskBatchInput,
   GateDecisionInput,
+  MarkNotificationsReadInput,
+  NotificationPreferences,
   PermissionResponseInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
   UpdateDraftTaskInput,
   UpdateProjectInput,
+  UpdateTaskCommentInput,
   UpdateTaskInput,
   VerificationDecisionInput,
   WEB_WS_MAX_SUBSCRIPTIONS,
@@ -120,7 +124,13 @@ export function createHandlers(backend: MockBackend) {
         });
       }
     });
-    client.addEventListener("close", unlisten);
+    const unlistenNotifications = backend.onNotification((notification) =>
+      send({ type: "notification", notification }),
+    );
+    client.addEventListener("close", () => {
+      unlisten();
+      unlistenNotifications();
+    });
   });
 
   return [
@@ -389,6 +399,75 @@ export function createHandlers(backend: MockBackend) {
       }
     }),
 
+    http.get(
+      API_ROUTES.notifications,
+      handle((request) => {
+        const url = new URL(request.url);
+        return backend.notifications(
+          url.searchParams.get("unreadOnly") === "true",
+          url.searchParams.get("before"),
+          Number(url.searchParams.get("limit") ?? 50),
+        );
+      }),
+    ),
+    http.get(
+      API_ROUTES.notificationsUnreadCount,
+      handle(() => backend.unreadNotificationCount()),
+    ),
+    http.post(
+      API_ROUTES.notificationsRead,
+      handle(async (request) => {
+        backend.markNotificationsRead(await parse(request, MarkNotificationsReadInput));
+      }),
+    ),
+    http.get(
+      API_ROUTES.notificationPreferences,
+      handle(() => backend.notificationPreferences()),
+    ),
+    http.put(
+      API_ROUTES.notificationPreferences,
+      handle(async (request) =>
+        backend.updateNotificationPreferences(await parse(request, NotificationPreferences)),
+      ),
+    ),
+    http.get(
+      API_ROUTES.projectMentionCandidates,
+      handle((_, p) => backend.mentionCandidates(p.projectId ?? "")),
+    ),
+    http.get(
+      API_ROUTES.taskMentions,
+      handle((_, p) => backend.taskMentions(p.taskId ?? "")),
+    ),
+    http.get(
+      API_ROUTES.taskComments,
+      handle((_, p) => backend.taskComments(p.taskId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.taskComments,
+      handle(
+        async (request, p) =>
+          backend.createTaskComment(
+            p.taskId ?? "",
+            (await parse(request, CreateTaskCommentInput)).body,
+          ),
+        201,
+      ),
+    ),
+    http.patch(
+      API_ROUTES.taskComment,
+      handle(async (request, p) =>
+        backend.updateTaskComment(
+          p.commentId ?? "",
+          (await parse(request, UpdateTaskCommentInput)).body,
+        ),
+      ),
+    ),
+    http.delete(
+      API_ROUTES.taskComment,
+      handle((_, p) => {
+        backend.deleteTaskComment(p.commentId ?? "");
+      }),
+    ),
     http.get(
       API_ROUTES.members,
       handle(() => backend.members()),

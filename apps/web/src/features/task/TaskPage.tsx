@@ -22,6 +22,7 @@ import { DependsOnField } from "./DependsOnField";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { ReadyPanel } from "./ReadyPanel";
 import { RunTree } from "./RunTree";
+import { TaskComments } from "./TaskComments";
 
 /** Task 頁（交付 2）：描述、Acceptance Criterion、depends_on、指派對象、Run 歷史。 */
 export function TaskPage({ taskKey }: { taskKey: string }) {
@@ -101,6 +102,12 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
           />
           <AcceptanceCriteriaSection taskId={task.id} canEdit={canEdit} />
           <RunTree taskId={task.id} permissions={permissions} />
+          <TaskComments
+            taskId={task.id}
+            projectId={project.id}
+            memberId={permissions.ctx.memberId}
+            canComment={permissions.can("view")}
+          />
         </div>
         <aside className="task-side">
           <ReadyPanel task={task} canEdit={canEdit} />

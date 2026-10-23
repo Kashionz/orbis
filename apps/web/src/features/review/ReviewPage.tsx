@@ -24,8 +24,12 @@ import {
   taskQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { formatTime } from "../../lib/format";
 import { DIFF_CHANGE_LABELS } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
+import { MentionMarkdown } from "../mention/MentionMarkdown";
+import { MentionTextarea } from "../mention/MentionTextarea";
+import { ConsultRunLinks } from "../task/TaskComments";
 import { DiffEditor } from "./DiffEditor";
 import { ReviewCriteria, uncheckedManualCriteria } from "./ReviewCriteria";
 import { loadDraft, type ReviewDraft, saveDraft, sortComments } from "./review-drafts";
@@ -44,7 +48,13 @@ export function ReviewPage({ runId }: { runId: string }) {
   // 這個 Run 還在等待決定的 Review Gate；沒有時只能檢視
   const gate =
     gates.find((g) => g.runId === run.id && g.kind === "review" && g.decision === null) ?? null;
-  return <Review run={run} diff={diff} task={task} project={project} gate={gate} />;
+  // 這個 Run 之前退回的 Review Gate（留言中 @agent 建立的 consult Run 顯示在這裡）
+  const previous = gates.filter(
+    (g) => g.runId === run.id && g.kind === "review" && g.decision === "rejected",
+  );
+  return (
+    <Review run={run} diff={diff} task={task} project={project} gate={gate} previous={previous} />
+  );
 }
 
 /**
@@ -70,12 +80,14 @@ function Review({
   task,
   project,
   gate,
+  previous,
 }: {
   run: Run;
   diff: ReviewDiff;
   task: Task;
   project: Project;
   gate: Gate | null;
+  previous: readonly Gate[];
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -230,6 +242,7 @@ function Review({
 
           {file && !file.binary && canComment && (
             <CommentForm
+              projectId={project.id}
               target={target}
               body={body}
               bodyRef={bodyRef}
@@ -249,7 +262,7 @@ function Review({
                   <span className="hint">
                     {comment.side === "new" ? "修改後" : "修改前"}第 {comment.line} 行
                   </span>
-                  <p>{comment.body}</p>
+                  <MentionMarkdown text={comment.body} />
                   {canComment && (
                     <button
                       type="button"
@@ -267,6 +280,7 @@ function Review({
       </div>
 
       <ReviewCriteria taskId={task.id} runId={run.id} canCheck={canComment} />
+      {previous.length > 0 && <PreviousReviews gates={previous} />}
 
       {(canReject || canApprove) && (
         <footer className="review-actions">
@@ -347,7 +361,37 @@ function FileButton({
   );
 }
 
+/** 之前退回時的整體說明與行內留言；留言中的 @agent 建立的 consult Run 連結在這裡。 */
+function PreviousReviews({ gates }: { gates: readonly Gate[] }) {
+  return (
+    <section className="previous-reviews" aria-labelledby="previous-reviews-heading">
+      <h2 id="previous-reviews-heading">之前的退回</h2>
+      <ol>
+        {gates.map((gate) => (
+          <li key={gate.id}>
+            <span className="hint">{gate.decidedAt ? formatTime(gate.decidedAt) : ""}</span>
+            {gate.comment && <MentionMarkdown text={gate.comment} />}
+            <ul className="comment-list">
+              {gate.reviewComments.map((comment) => (
+                <li key={comment.id} className="review-comment">
+                  <span className="hint">
+                    <code>{comment.path}</code> {comment.side === "new" ? "修改後" : "修改前"}第{" "}
+                    {comment.line} 行
+                  </span>
+                  <MentionMarkdown text={comment.body} />
+                  <ConsultRunLinks runIds={comment.consultRunIds} />
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 interface CommentFormProps {
+  projectId: string;
   target: CommentTarget | null;
   body: string;
   bodyRef: RefObject<HTMLTextAreaElement | null>;
@@ -358,6 +402,7 @@ interface CommentFormProps {
 
 /** 新增行內留言：點 diff 的行號，或直接輸入行號。 */
 function CommentForm({
+  projectId,
   target,
   body,
   bodyRef,
@@ -402,17 +447,18 @@ function CommentForm({
           行
         </label>
       </div>
-      <textarea
-        ref={bodyRef}
-        aria-label="留言內容"
+      <MentionTextarea
+        projectId={projectId}
+        textareaRef={bodyRef}
+        label="留言內容"
         rows={3}
         placeholder={
           target
-            ? `對${side === "new" ? "修改後" : "修改前"}第 ${target.line} 行留言`
+            ? `對${side === "new" ? "修改後" : "修改前"}第 ${target.line} 行留言（可以 @ 提及）`
             : "先選擇一行"
         }
         value={body}
-        onChange={(event) => onBodyChange(event.target.value)}
+        onChange={onBodyChange}
       />
       <div className="form-actions">
         <button type="submit" className="primary" disabled={!target || body.trim() === ""}>

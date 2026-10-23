@@ -15,14 +15,23 @@ import {
   canTransitionManually,
   type DispatchOptions,
   type DraftTask,
+  formatMentionTargetId,
   formatTaskKey,
   type Gate,
   type GateDecisionInput,
+  type MarkNotificationsReadInput,
   type Member,
+  type Mention,
+  type MentionCandidates,
   type MeResponse,
   NAMES,
   type NeedsYouItem,
+  type Notification,
+  type NotificationKind,
+  type NotificationListResponse,
+  type NotificationPreferences,
   type Project,
+  parseMentions,
   READY_REQUIREMENTS,
   type Repo,
   type ReviewDiff,
@@ -31,6 +40,7 @@ import {
   type RunEvent,
   type RunUsage,
   type Task,
+  type TaskComment,
   type TaskStatus,
   type UpdateAcceptanceCriterionInput,
   type UpdateDraftTaskInput,
@@ -101,6 +111,11 @@ export interface MockState {
   /** 每個 Run 跑過幾輪 Verification（決定 `verificationFailures` 的哪幾輪失敗）。 */
   verificationRounds: Record<string, number>;
   draftTasks: DraftTask[];
+  /** 新的在後。 */
+  notifications: Notification[];
+  notificationPreferences: NotificationPreferences;
+  taskComments: TaskComment[];
+  mentions: Mention[];
 }
 
 /** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
@@ -156,10 +171,18 @@ function now(): string {
 }
 
 type Listener = (runId: string, events: RunEvent[]) => void;
+type NotificationListener = (notification: Notification) => void;
+
+/** @mention 自動完成的 Agent。 */
+const MENTION_AGENTS: MentionCandidates["agents"] = [
+  { agent: "claude-code", label: "claude" },
+  { agent: "codex", label: "codex" },
+];
 
 export class MockBackend {
   private state: MockState;
   private readonly listeners = new Set<Listener>();
+  private readonly notificationListeners = new Set<NotificationListener>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private largeRun: RunEvent[] | null = null;
 
@@ -174,6 +197,10 @@ export class MockBackend {
     this.state.verificationPhase ??= {};
     this.state.verificationRounds ??= {};
     this.state.draftTasks ??= [];
+    this.state.notifications ??= [];
+    this.state.notificationPreferences ??= { disabledKinds: [], quietHours: null };
+    this.state.taskComments ??= [];
+    this.state.mentions ??= [];
     this.save();
   }
 
@@ -193,6 +220,12 @@ export class MockBackend {
   onEvents(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** 新的 App 內通知（WebSocket 的 `notification` 推送）。 */
+  onNotification(listener: NotificationListener): () => void {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
   }
 
   /** 每個模擬中的 Run 前進一步。 */
@@ -350,6 +383,10 @@ export class MockBackend {
       verificationPhase: {},
       verificationRounds: {},
       draftTasks: [],
+      notifications: [],
+      notificationPreferences: { disabledKinds: [], quietHours: null },
+      taskComments: [],
+      mentions: [],
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -410,6 +447,15 @@ export class MockBackend {
     this.settle();
     if (this.config.childRuns) this.seedChildRuns(reviewRun);
     this.seedDraftTasks(reviewRun);
+    this.notify("task_assigned", "你被指派了 ORB-2", {
+      taskId: ready.id,
+      taskKey: ready.key,
+      url: `/tasks/${ready.key}`,
+      actorMemberId: "member-alice",
+    });
+    for (const n of this.state.notifications) {
+      if (n.kind === "task_assigned") n.readAt = SEED_TIME;
+    }
 
     seedTask("升級相依套件", "done", { assigneeMemberId: "member-bob", doneReason: "completed" });
 
@@ -1163,6 +1209,14 @@ export class MockBackend {
     this.state.needsYou = this.state.needsYou.filter(
       (i) => !(i.kind === "gate" && i.runId === runId),
     );
+    for (const comment of gate.reviewComments) {
+      comment.consultRunIds = this.consultForMentions(
+        task,
+        comment.body,
+        "review_comment",
+        comment.id,
+      );
+    }
     const prompt = (source: "plan_gate" | "review_gate", text: string): ScriptStep => ({
       type: "event",
       event: { kind: "prompt_submitted", source, prompt: [{ type: "text", text }] },
@@ -1199,6 +1253,263 @@ export class MockBackend {
     task.updatedAt = now();
     this.save();
     return gate;
+  }
+
+  // ---------- 通知（ARCHITECTURE §12.3） ----------
+
+  /** 依個人設定建立 App 內通知並推送；關閉的事件類型不建立。 */
+  private notify(
+    kind: NotificationKind,
+    title: string,
+    extra: Partial<
+      Pick<
+        Notification,
+        "taskId" | "taskKey" | "runId" | "gateId" | "url" | "body" | "actorMemberId"
+      >
+    >,
+  ): void {
+    if (this.state.notificationPreferences.disabledKinds.includes(kind)) return;
+    const notification: Notification = {
+      id: this.newId("notification"),
+      kind,
+      taskId: null,
+      taskKey: null,
+      runId: null,
+      gateId: null,
+      actorMemberId: null,
+      title,
+      body: null,
+      url: null,
+      readAt: null,
+      createdAt: now(),
+      ...extra,
+    };
+    this.state.notifications.push(notification);
+    for (const listener of this.notificationListeners) listener(notification);
+  }
+
+  notifications(
+    unreadOnly: boolean,
+    before: string | null,
+    limit: number,
+  ): NotificationListResponse {
+    let list = [...this.state.notifications].reverse();
+    if (unreadOnly) list = list.filter((n) => n.readAt === null);
+    if (before) list = list.slice(list.findIndex((n) => n.id === before) + 1);
+    const items = list.slice(0, limit);
+    return { items, nextBefore: list.length > limit ? (items.at(-1)?.id ?? null) : null };
+  }
+
+  unreadNotificationCount(): { count: number } {
+    return { count: this.state.notifications.filter((n) => n.readAt === null).length };
+  }
+
+  markNotificationsRead(input: MarkNotificationsReadInput): void {
+    const time = now();
+    for (const n of this.state.notifications) {
+      if (n.readAt === null && ("all" in input || input.ids.includes(n.id))) n.readAt = time;
+    }
+    this.save();
+  }
+
+  notificationPreferences(): NotificationPreferences {
+    return this.state.notificationPreferences;
+  }
+
+  updateNotificationPreferences(input: NotificationPreferences): NotificationPreferences {
+    this.state.notificationPreferences = input;
+    this.save();
+    return input;
+  }
+
+  // ---------- 留言與 @mention（ARCHITECTURE §12.3） ----------
+
+  mentionCandidates(projectId: string): MentionCandidates {
+    this.project(projectId);
+    return {
+      members: this.members().map((m) => ({
+        memberId: m.id,
+        githubLogin: m.githubLogin,
+        name: m.name,
+        avatarUrl: m.avatarUrl,
+      })),
+      agents: MENTION_AGENTS,
+    };
+  }
+
+  taskComments(taskId: string): TaskComment[] {
+    this.task(taskId);
+    return this.state.taskComments.filter((c) => c.taskId === taskId);
+  }
+
+  taskMentions(taskId: string): Mention[] {
+    this.task(taskId);
+    return this.state.mentions.filter((m) => this.mentionTaskId(m) === taskId);
+  }
+
+  private mentionTaskId(mention: Mention): string | null {
+    if (mention.sourceKind === "task_comment") {
+      return this.state.taskComments.find((c) => c.id === mention.sourceId)?.taskId ?? null;
+    }
+    if (mention.sourceKind === "review_comment") {
+      return (
+        this.state.gates.find((g) => g.reviewComments.some((c) => c.id === mention.sourceId))
+          ?.taskId ?? null
+      );
+    }
+    // 共同編輯文件：sourceId 是文件名稱 `<種類>:<ID>`
+    const [kind, id] = mention.sourceId.split(":");
+    if (kind === "task-description") return id ?? null;
+    if (kind === "acceptance-criterion") {
+      return this.state.acceptanceCriteria.find((c) => c.id === id)?.taskId ?? null;
+    }
+    return null;
+  }
+
+  /** 留言時任何人都可以（Viewer 也能留言，§12.2）。 */
+  createTaskComment(taskId: string, body: string): TaskComment {
+    if (this.config.forbidWrites) throw new MockError(403, "forbidden", "沒有權限");
+    const task = this.task(taskId);
+    const time = now();
+    const comment: TaskComment = {
+      id: this.newId("comment"),
+      taskId,
+      authorMemberId: ME_ID,
+      authorRunId: null,
+      body,
+      consultRunIds: [],
+      createdAt: time,
+      updatedAt: time,
+    };
+    this.state.taskComments.push(comment);
+    comment.consultRunIds = this.consultForMentions(task, body, "task_comment", comment.id);
+    this.save();
+    return comment;
+  }
+
+  updateTaskComment(commentId: string, body: string): TaskComment {
+    const comment = this.ownComment(commentId);
+    const task = this.task(comment.taskId);
+    comment.body = body;
+    comment.updatedAt = now();
+    // 新增的 @mention 才建立 Run
+    comment.consultRunIds = [
+      ...comment.consultRunIds,
+      ...this.consultForMentions(task, body, "task_comment", comment.id),
+    ];
+    this.save();
+    return comment;
+  }
+
+  deleteTaskComment(commentId: string): void {
+    const comment = this.ownComment(commentId);
+    this.state.taskComments = this.state.taskComments.filter((c) => c !== comment);
+    this.save();
+  }
+
+  private ownComment(commentId: string): TaskComment {
+    const comment = this.state.taskComments.find((c) => c.id === commentId);
+    if (!comment) throw new MockError(404, "not_found", "找不到這則留言");
+    if (comment.authorMemberId !== ME_ID) {
+      throw new MockError(403, "forbidden", "只能修改自己的留言");
+    }
+    return comment;
+  }
+
+  /**
+   * 記下文字中新出現的 mention；@agent 建立 `consult` Run（有保留 Worktree 的主 Run 時唯讀讀它），
+   * 回傳建立的 Run。
+   */
+  consultForMentions(
+    task: Task,
+    text: string,
+    sourceKind: Mention["sourceKind"],
+    sourceId: string,
+    nodeIds: string[] = [],
+  ): string[] {
+    const created: string[] = [];
+    const matches = parseMentions(text);
+    const targets =
+      sourceKind === "collab_document"
+        ? matches.map((m, i) => ({
+            target: m.target,
+            nodeId: nodeIds[i] ?? formatMentionTargetId(m.target),
+          }))
+        : matches.map((m) => ({ target: m.target, nodeId: formatMentionTargetId(m.target) }));
+    for (const { target, nodeId } of targets) {
+      const exists = this.state.mentions.some(
+        (m) => m.sourceKind === sourceKind && m.sourceId === sourceId && m.nodeId === nodeId,
+      );
+      if (exists) continue;
+      let consultRunId: string | null = null;
+      if (target.type === "agent") {
+        consultRunId = this.startConsult(task, target.agent).id;
+        created.push(consultRunId);
+      }
+      this.state.mentions.push({
+        id: this.newId("mention"),
+        sourceKind,
+        sourceId,
+        nodeId,
+        target,
+        consultRunId,
+        createdAt: now(),
+      });
+    }
+    return created;
+  }
+
+  private startConsult(task: Task, agent: string): Run {
+    const main = this.state.runs.findLast(
+      (r) => r.taskId === task.id && r.parentRunId === null && r.worktreePath !== null,
+    );
+    const run = this.newRun(task.id, this.newId("run"), {
+      agent,
+      model: null,
+      runnerKind: "local",
+      permissionPolicy: "auto",
+    });
+    Object.assign(run, {
+      origin: "mention",
+      consultOfRunId: main?.id ?? null,
+      runnerId: "runner-local",
+    });
+    this.state.runs.push(run);
+    this.state.events[run.id] = [];
+    const say = (text: string): ScriptStep => ({
+      type: "event",
+      event: { kind: "message_chunk", content: { type: "text", text } },
+    });
+    this.state.simulations[run.id] = {
+      queue: [
+        {
+          type: "event",
+          event: { kind: "status_changed", status: "running", gate: null, message: null },
+        },
+        say("我看了一下這個 Task。"),
+        {
+          type: "event",
+          event: { kind: "status_changed", status: "completed", gate: null, message: null },
+        },
+      ],
+      waiting: null,
+    };
+    return run;
+  }
+
+  /** @agent 的 consult Run 結束後，Agent 的回覆貼回成一則留言（作者是那個 Run）。 */
+  private replyFromConsult(run: Run): void {
+    const time = now();
+    this.state.taskComments.push({
+      id: this.newId("comment"),
+      taskId: run.taskId,
+      authorMemberId: null,
+      authorRunId: run.id,
+      body: `${run.agent} 的回覆：README 可以再補上使用範例。`,
+      consultRunIds: [],
+      createdAt: time,
+      updatedAt: time,
+    });
   }
 
   // ---------- Draft Task（ARCHITECTURE §9；Agent 以 propose_tasks 提出） ----------
@@ -1594,6 +1905,12 @@ export class MockBackend {
       return;
     }
     verification.awaitingDecision = true;
+    this.notify("verification_failed", `${task.key} 的 Verification 連續失敗`, {
+      taskId: task.id,
+      taskKey: task.key,
+      runId: run.id,
+      url: `/runs/${run.id}`,
+    });
     this.state.needsYou.push({
       id: this.newId("needs-you"),
       kind: "stopped_run",
@@ -1634,6 +1951,16 @@ export class MockBackend {
       reviewDiffSeq,
       createdAt: now(),
     });
+    this.notify(
+      "gate_pending",
+      `${task.key} 等待 ${kind === "plan" ? "Plan Gate" : "Review Gate"}`,
+      {
+        taskId: task.id,
+        taskKey: task.key,
+        runId: run.id,
+        url: kind === "plan" ? `/runs/${run.id}` : `/runs/${run.id}/review`,
+      },
+    );
     this.state.needsYou.push({
       id: this.newId("needs-you"),
       kind: "gate",
@@ -1786,9 +2113,10 @@ export class MockBackend {
         return;
       case "status_changed":
         run.status = event.status;
-        // Child Run 的狀態不影響 Task
-        if (run.parentRunId !== null) {
+        // Child Run 與 @agent 的 consult Run 的狀態不影響 Task
+        if (run.parentRunId !== null || run.origin === "mention") {
           if (["completed", "failed", "canceled"].includes(event.status)) run.endedAt = now();
+          if (event.status === "completed" && run.origin === "mention") this.replyFromConsult(run);
           return;
         }
         if (event.status === "running") {

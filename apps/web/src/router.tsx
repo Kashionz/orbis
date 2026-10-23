@@ -14,6 +14,8 @@ import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
 import { DraftTasksPage } from "./features/draft-tasks/DraftTasksPage";
 import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
+import { NotificationSettingsPage } from "./features/notifications/NotificationSettingsPage";
+import { NotificationsPage } from "./features/notifications/NotificationsPage";
 import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
 import { RunPage } from "./features/run/RunPage";
 import { TaskPage } from "./features/task/TaskPage";
@@ -142,6 +144,20 @@ const needsYouRoute = createRoute({
   errorComponent: PageError,
 });
 
+const notificationsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/notifications",
+  component: NotificationsPage,
+  errorComponent: PageError,
+});
+
+const notificationSettingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/settings/notifications",
+  component: NotificationSettingsPage,
+  errorComponent: PageError,
+});
+
 function AuthErrorPage({ error }: ErrorComponentProps) {
   return (
     <main className="notice" role="alert">
@@ -171,6 +187,8 @@ const routeTree = rootRoute.addChildren([
     runRoute,
     reviewRoute,
     needsYouRoute,
+    notificationsRoute,
+    notificationSettingsRoute,
   ]),
 ]);
 
