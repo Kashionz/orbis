@@ -1,5 +1,32 @@
 import { NAMES, TASK_STATUSES } from "@orbis/api-contract";
+import { DESKTOP_BRIDGE_KEY } from "@orbis/desktop/bridge";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
+
+/** 模擬 Desktop 的 bridge：記錄 beforeLogout() 的呼叫，回傳指定的結果。 */
+async function installBridge(page: Page, proceed: boolean): Promise<void> {
+  await page.addInitScript(
+    ({ key, proceed }) => {
+      const calls: string[] = [];
+      Object.assign(window, { __bridgeCalls: calls });
+      Object.assign(window, {
+        [key]: {
+          getVersion: async () => "0.0.0",
+          openWorktreeInEditor: async () => ({ ok: true }),
+          openWorktreeInTerminal: async () => ({ ok: true }),
+          beforeLogout: async () => {
+            calls.push("beforeLogout");
+            return { proceed };
+          },
+        },
+      });
+    },
+    { key: DESKTOP_BRIDGE_KEY, proceed },
+  );
+}
+
+const bridgeCalls = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __bridgeCalls: string[] }).__bridgeCalls);
 
 test.describe("未登入", () => {
   test.use({ mock: { session: "unauthorized" } });
@@ -63,5 +90,33 @@ test.describe("登入狀態取得失敗", () => {
       timeout: 15_000,
     });
     await expect(page).toHaveURL(/\/board$/);
+  });
+});
+
+test.describe("登出", () => {
+  test("一般瀏覽器中直接登出，回到登入頁", async ({ page }) => {
+    await page.goto("/board");
+    await page.getByRole("button", { name: "登出" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    await page.goto("/board");
+    await expect(page).toHaveURL(/\/login$/);
+  });
+
+  test("Desktop 中先呼叫 beforeLogout()，放行後才登出", async ({ page }) => {
+    await installBridge(page, true);
+    await page.goto("/board");
+    await page.getByRole("button", { name: "登出" }).click();
+    await expect(page).toHaveURL(/\/login$/);
+    expect(await bridgeCalls(page)).toEqual(["beforeLogout"]);
+  });
+
+  test("Desktop 中使用者取消（proceed: false）時不登出", async ({ page }) => {
+    await installBridge(page, false);
+    await page.goto("/board");
+    await page.getByRole("button", { name: "登出" }).click();
+    await expect.poll(() => bridgeCalls(page)).toEqual(["beforeLogout"]);
+    await expect(page).toHaveURL(/\/board/);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "登出" })).toBeVisible();
   });
 });
