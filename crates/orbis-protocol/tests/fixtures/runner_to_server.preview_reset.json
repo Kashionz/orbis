@@ -1,0 +1,6 @@
+{
+  "type": "preview_reset",
+  "stream_id": 19,
+  "reason": "too_many_streams",
+  "message": "這個 Run 已經有 256 個 stream。"
+}

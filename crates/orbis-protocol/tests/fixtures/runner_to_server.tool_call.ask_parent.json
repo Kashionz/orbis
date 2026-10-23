@@ -1,0 +1,10 @@
+{
+  "type": "tool_call",
+  "call_id": "0192f3a0-0000-7000-8000-000000000107",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000ab",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d2",
+  "call": {
+    "tool": "ask_parent",
+    "question": "refresh token 要存在 cookie 還是 localStorage？"
+  }
+}

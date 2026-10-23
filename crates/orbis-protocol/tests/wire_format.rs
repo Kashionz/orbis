@@ -9,6 +9,7 @@ use std::path::Path;
 use orbis_protocol::control::{RunControlActionName, RunControlOutcome};
 use orbis_protocol::event::{EventEnvelope, EventKindName};
 use orbis_protocol::frame::{RunnerToServer, ServerToRunner};
+use orbis_protocol::tool::{OrbisToolName, OrbisToolResult};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -106,6 +107,12 @@ fn every_frame_type_has_a_fixture() {
         "dispatch_reject",
         "event",
         "run_control_result",
+        "tool_call",
+        "preview_response",
+        "preview_window",
+        "preview_end",
+        "preview_reset",
+        "preview_ws_close",
     ]
     .into();
     assert_eq!(runner_types, expected);
@@ -120,6 +127,12 @@ fn every_frame_type_has_a_fixture() {
         "dispatch_offer",
         "run_control",
         "event_ack",
+        "tool_result",
+        "preview_open",
+        "preview_window",
+        "preview_end",
+        "preview_reset",
+        "preview_ws_close",
     ]
     .into();
     assert_eq!(server_types, expected);
@@ -199,6 +212,62 @@ fn every_run_control_outcome_has_a_fixture() {
         ["applied", "branch_pushed", "rejected"].into(),
         "每一種 outcome 都要有 fixture"
     );
+}
+
+#[test]
+fn every_orbis_tool_has_call_and_result_fixtures() {
+    let mut calls = BTreeSet::new();
+    for (name, parts, frame) in parsed::<RunnerToServer>("runner_to_server.tool_call.") {
+        let RunnerToServer::ToolCall(call) = frame else {
+            panic!("{name} 不是 tool_call frame");
+        };
+        let tool = call.call.name();
+        assert_eq!(parts[1], tool.as_str(), "{name} 的檔名與 tool 不符");
+        let tag = serde_json::to_value(&call.call).unwrap()["tool"].clone();
+        assert_eq!(
+            tag,
+            tool.as_str(),
+            "{name}：OrbisToolCall::name() 與 serde 的 tag 不一致"
+        );
+        calls.insert(tool.as_str());
+    }
+    let mut outputs = BTreeSet::new();
+    let mut has_error = false;
+    for (name, parts, frame) in parsed::<ServerToRunner>("server_to_runner.tool_result.") {
+        let ServerToRunner::ToolResult(result) = frame else {
+            panic!("{name} 不是 tool_result frame");
+        };
+        match result.result {
+            OrbisToolResult::Ok { output } => {
+                let tool = output.name();
+                assert_eq!(parts[1], tool.as_str(), "{name} 的檔名與 tool 不符");
+                let tag = serde_json::to_value(&output).unwrap()["tool"].clone();
+                assert_eq!(
+                    tag,
+                    tool.as_str(),
+                    "{name}：OrbisToolOutput::name() 與 serde 的 tag 不一致"
+                );
+                outputs.insert(tool.as_str());
+            }
+            OrbisToolResult::Error { .. } => {
+                assert_eq!(parts[1], "error", "{name} 的檔名必須是 tool_result.error");
+                has_error = true;
+            }
+        }
+    }
+    for tool in OrbisToolName::ALL {
+        assert!(
+            calls.contains(tool.as_str()),
+            "工具 {} 沒有 tool_call fixture",
+            tool.as_str()
+        );
+        assert!(
+            outputs.contains(tool.as_str()),
+            "工具 {} 沒有 tool_result fixture",
+            tool.as_str()
+        );
+    }
+    assert!(has_error, "要有 tool_result.error 的 fixture");
 }
 
 /// 存進 `run_events` 的 EventEnvelope 不含 frame 的 `type` 與 `dispatch_id`。

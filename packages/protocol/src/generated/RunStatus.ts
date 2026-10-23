@@ -3,4 +3,4 @@
 /**
  * Run 的狀態。Runner 以 `status_changed` Event 回報，Server 與 UI 沿用同一組值。
  */
-export type RunStatus = "queued" | "dispatched" | "starting" | "running" | "awaiting_permission" | "rate_limited" | "awaiting_gate" | "completed" | "failed" | "canceled";
+export type RunStatus = "queued" | "dispatched" | "starting" | "running" | "verifying" | "awaiting_permission" | "rate_limited" | "awaiting_gate" | "completed" | "failed" | "canceled";

@@ -8,6 +8,10 @@ use crate::connection::{Heartbeat, Hello, HelloAck, HelloRejected};
 use crate::control::{RunControl, RunControlResult};
 use crate::dispatch::{DispatchAccept, DispatchOffer, DispatchReject};
 use crate::event::{EventAck, EventFrame};
+use crate::preview::{
+    PreviewEnd, PreviewOpen, PreviewReset, PreviewResponse, PreviewWindow, PreviewWsClose,
+};
+use crate::tool::{ToolCallFrame, ToolResultFrame};
 
 /// Runner 送給 Server 的 frame。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -20,6 +24,14 @@ pub enum RunnerToServer {
     DispatchReject(DispatchReject),
     Event(EventFrame),
     RunControlResult(RunControlResult),
+    /// Orbis MCP 工具呼叫（協定版本 2），見 [`crate::tool`]。
+    ToolCall(ToolCallFrame),
+    // Preview 通道的控制訊息（協定版本 2），見 [`crate::preview`]。
+    PreviewResponse(PreviewResponse),
+    PreviewWindow(PreviewWindow),
+    PreviewEnd(PreviewEnd),
+    PreviewReset(PreviewReset),
+    PreviewWsClose(PreviewWsClose),
 }
 
 /// Server 送給 Runner 的 frame。
@@ -32,6 +44,14 @@ pub enum ServerToRunner {
     DispatchOffer(Box<DispatchOffer>),
     RunControl(RunControl),
     EventAck(EventAck),
+    /// Orbis MCP 工具呼叫的結果（協定版本 2），見 [`crate::tool`]。
+    ToolResult(ToolResultFrame),
+    // Preview 通道的控制訊息（協定版本 2），見 [`crate::preview`]。
+    PreviewOpen(PreviewOpen),
+    PreviewWindow(PreviewWindow),
+    PreviewEnd(PreviewEnd),
+    PreviewReset(PreviewReset),
+    PreviewWsClose(PreviewWsClose),
 }
 
 impl RunnerToServer {
@@ -45,6 +65,12 @@ impl RunnerToServer {
             Self::DispatchReject(_) => "dispatch_reject",
             Self::Event(_) => "event",
             Self::RunControlResult(_) => "run_control_result",
+            Self::ToolCall(_) => "tool_call",
+            Self::PreviewResponse(_) => "preview_response",
+            Self::PreviewWindow(_) => "preview_window",
+            Self::PreviewEnd(_) => "preview_end",
+            Self::PreviewReset(_) => "preview_reset",
+            Self::PreviewWsClose(_) => "preview_ws_close",
         }
     }
 }
@@ -58,6 +84,12 @@ impl ServerToRunner {
             Self::DispatchOffer(_) => "dispatch_offer",
             Self::RunControl(_) => "run_control",
             Self::EventAck(_) => "event_ack",
+            Self::ToolResult(_) => "tool_result",
+            Self::PreviewOpen(_) => "preview_open",
+            Self::PreviewWindow(_) => "preview_window",
+            Self::PreviewEnd(_) => "preview_end",
+            Self::PreviewReset(_) => "preview_reset",
+            Self::PreviewWsClose(_) => "preview_ws_close",
         }
     }
 }

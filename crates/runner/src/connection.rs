@@ -466,6 +466,15 @@ impl Session {
                 debug!(run_id = %ack.run_id, seq = ack.seq, "收到 event_ack");
                 self.supervisor.outbox().ack(&ack.run_id, ack.seq);
             }
+            // 協定版本 2 的 frame：Orbis MCP 工具呼叫由 A2、Preview 通道由 E2 實作，在那之前略過。
+            ServerToRunner::ToolResult(_)
+            | ServerToRunner::PreviewOpen(_)
+            | ServerToRunner::PreviewWindow(_)
+            | ServerToRunner::PreviewEnd(_)
+            | ServerToRunner::PreviewReset(_)
+            | ServerToRunner::PreviewWsClose(_) => {
+                warn!(frame = frame.type_name(), "尚未支援的 frame，略過");
+            }
         }
         Ok(())
     }

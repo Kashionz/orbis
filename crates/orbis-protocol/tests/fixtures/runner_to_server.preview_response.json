@@ -1,0 +1,19 @@
+{
+  "type": "preview_response",
+  "stream_id": 17,
+  "status": 200,
+  "headers": [
+    [
+      "content-type",
+      "text/javascript"
+    ],
+    [
+      "set-cookie",
+      "a=1"
+    ],
+    [
+      "set-cookie",
+      "b=2"
+    ]
+  ]
+}

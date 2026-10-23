@@ -1,0 +1,44 @@
+{
+  "type": "tool_call",
+  "call_id": "0192f3a0-0000-7000-8000-000000000109",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "call": {
+    "tool": "propose_tasks",
+    "spec": "docs/specs/auth.md",
+    "tasks": [
+      {
+        "title": "refresh token 輪替",
+        "description": "每次使用後換發新的 refresh token。",
+        "acceptance_criteria": [
+          {
+            "kind": "command",
+            "description": "單元測試通過",
+            "command": "pnpm test"
+          },
+          {
+            "kind": "manual",
+            "description": "安全性 review",
+            "command": null
+          }
+        ],
+        "depends_on": []
+      },
+      {
+        "title": "登出時撤銷 refresh token",
+        "description": "",
+        "acceptance_criteria": [
+          {
+            "kind": "agent",
+            "description": "登出流程會呼叫撤銷 API",
+            "command": null
+          }
+        ],
+        "depends_on": [
+          "#1",
+          "ORB-7"
+        ]
+      }
+    ]
+  }
+}

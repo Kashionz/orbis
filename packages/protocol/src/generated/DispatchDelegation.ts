@@ -5,4 +5,13 @@ import type { RunId } from "./RunId";
 /**
  * Child Run 的 Delegation 資訊（ARCHITECTURE §9）。
  */
-export type DispatchDelegation = { parent_run_id: RunId, mode: DelegationMode, };
+export type DispatchDelegation = { parent_run_id: RunId, mode: DelegationMode, 
+/**
+ * Child Run 的深度：父 Run 是頂層 Run 時為 1（協定版本 2 新增，缺少時由 Runner 自己計算）。
+ */
+depth?: number, 
+/**
+ * 這是父 Run 的第幾個 Child Run，從 1 開始，即分支名稱 `--c<n>` 的 n
+ * （協定版本 2 新增）。
+ */
+child_seq?: number, };

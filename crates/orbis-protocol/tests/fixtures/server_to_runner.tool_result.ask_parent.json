@@ -1,0 +1,12 @@
+{
+  "type": "tool_result",
+  "call_id": "0192f3a0-0000-7000-8000-000000000107",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000ab",
+  "result": {
+    "outcome": "ok",
+    "output": {
+      "tool": "ask_parent",
+      "answer": "存在 HttpOnly cookie。"
+    }
+  }
+}

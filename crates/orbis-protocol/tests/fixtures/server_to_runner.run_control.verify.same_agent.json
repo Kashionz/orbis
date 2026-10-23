@@ -1,0 +1,19 @@
+{
+  "type": "run_control",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "action": "verify",
+  "verification_id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "attempt": 1,
+  "criteria": [
+    {
+      "criterion_id": "0192f3a0-0000-7000-8000-0000000000a2",
+      "kind": "agent",
+      "description": "錯誤訊息都有翻譯",
+      "command": null
+    }
+  ],
+  "judge": null,
+  "context": []
+}

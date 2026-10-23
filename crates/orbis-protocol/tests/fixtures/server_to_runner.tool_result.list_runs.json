@@ -1,0 +1,33 @@
+{
+  "type": "tool_result",
+  "call_id": "0192f3a0-0000-7000-8000-000000000105",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "result": {
+    "outcome": "ok",
+    "output": {
+      "tool": "list_runs",
+      "runs": [
+        {
+          "run_id": "0192f3a0-0000-7000-8000-0000000000ab",
+          "agent": "codex",
+          "model": null,
+          "mode": "consult",
+          "status": "completed",
+          "branch": null,
+          "final_message": "這段 session 處理沒有問題。",
+          "pending_question": null,
+          "usage": {
+            "input_tokens": 1200,
+            "output_tokens": 340,
+            "thought_tokens": null,
+            "cached_read_tokens": null,
+            "cached_write_tokens": null,
+            "context_used_tokens": null,
+            "context_window_tokens": null,
+            "cost": null
+          }
+        }
+      ]
+    }
+  }
+}

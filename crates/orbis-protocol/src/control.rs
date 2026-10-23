@@ -13,9 +13,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::enums::{GateDecision, GateKind, wire_enum};
+use crate::enums::{GateDecision, GateKind, PromptSource, wire_enum};
 use crate::event::ContentBlock;
 use crate::ids::{DispatchId, PermissionRequestId, RunControlId, RunId};
+use crate::verification::VerificationRequest;
 
 /// Server 對進行中的 Run 下的指令（Server→Runner）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -36,7 +37,13 @@ pub enum RunControlAction {
     Cancel,
     /// 送出後續 prompt，在**同一個 session** 繼續（例如 Review Gate 退回的行內留言、
     /// Verification 失敗的原因、在 Preview 上的留言）。Agent 接收後回 `applied`。
-    Prompt { prompt: Vec<ContentBlock> },
+    Prompt {
+        prompt: Vec<ContentBlock>,
+        /// prompt 的來源；缺少時視為 `user`（W5–7 之前的 Server 不會送這個欄位）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        source: Option<PromptSource>,
+    },
     /// 回覆 `permission_request` Event。轉給 Agent 後回 `applied`。
     PermissionResponse {
         request_id: PermissionRequestId,
@@ -52,6 +59,16 @@ pub enum RunControlAction {
     /// 把 Run 的分支 push 到 remote（供開 PR 使用）。push 完成後回 `branch_pushed`。
     /// 彈性：Worktree 中未 commit 的變更由誰、以什麼訊息 commit，留給 A1 決定。
     PushBranch,
+    /// 執行一輪 Verification（ARCHITECTURE §5.1，見 [`crate::verification`]）。Runner 開始執行後回
+    /// `applied`，結果以 `verification_result` 與 `verification_completed` Event 回報。
+    Verify(VerificationRequest),
+    /// 封存 Run（ARCHITECTURE §6.2）：執行 `archive` hook、刪除 Worktree，連同 Child Run 一起處理；
+    /// 分支上有未合併的 commit 時保留分支。處理完回 `applied`；hook 失敗時回 `rejected`（`failed`），
+    /// Worktree 不刪除。
+    Archive,
+    /// 重新啟動 Preview 的 dev server（ARCHITECTURE §13）。重新啟動後回 `applied`，
+    /// 就緒時照常送 `preview_ready`。這個 Run 沒有設定 Preview 時回 `rejected`（`invalid_state`）。
+    RestartPreview,
 }
 
 wire_enum! {
@@ -62,6 +79,9 @@ wire_enum! {
         PermissionResponse => "permission_response",
         GateResult => "gate_result",
         PushBranch => "push_branch",
+        Verify => "verify",
+        Archive => "archive",
+        RestartPreview => "restart_preview",
     }
 }
 
@@ -74,6 +94,9 @@ impl RunControlAction {
             Self::PermissionResponse { .. } => RunControlActionName::PermissionResponse,
             Self::GateResult { .. } => RunControlActionName::GateResult,
             Self::PushBranch => RunControlActionName::PushBranch,
+            Self::Verify(_) => RunControlActionName::Verify,
+            Self::Archive => RunControlActionName::Archive,
+            Self::RestartPreview => RunControlActionName::RestartPreview,
         }
     }
 }
