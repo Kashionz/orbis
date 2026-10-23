@@ -1,0 +1,32 @@
+# M1 完整系統 e2e（C1）：第一回合寫檔前請求權限，允許後寫入並結束回合（Runner 產生 diff、進入 Review Gate）；
+# Review 退回後，第二回合依退回的 prompt 修改同一個檔案再結束回合。
+# 退回的 prompt 必須包含「改成第二版」（例如在 diff 上留言「請改成第二版」）。
+description: M1：寫檔權限、完成、依退回的 prompt 再修改
+turns:
+  - steps:
+      - message: 我要新增 m1.txt。
+      - permission:
+          tool_call:
+            id: write-m1
+            title: 新增 m1.txt
+            edit:
+              path: m1.txt
+              content: "version 1\n"
+          allow:
+            - message: 已新增 m1.txt。
+            - stop: end_turn
+          reject:
+            - message: 好，我不會新增 m1.txt。
+            - stop: end_turn
+  - expect_prompt_contains: 改成第二版
+    steps:
+      - message: 收到 Review 意見，修改中。
+      - tool_call:
+          id: edit-m1-v2
+          title: 修改 m1.txt
+          edit:
+            path: m1.txt
+            old_text: version 1
+            new_text: version 2
+      - message: 已改成第二版。
+      - stop: end_turn

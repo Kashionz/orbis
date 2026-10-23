@@ -21,10 +21,11 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 9] = [
+const COVERED_SCRIPTS: [&str; 10] = [
     "cancel.yaml",
     "diff.yaml",
     "error.yaml",
+    "m1.yaml",
     "mcp.yaml",
     "permission.yaml",
     "plan.yaml",
@@ -792,6 +793,37 @@ async fn 兩個回合劇本_第二個_prompt_再修改並完成() {
     let [diff] = diffs(second.final_update("edit-v2")).try_into().unwrap();
     assert_eq!(diff.old_text.as_deref(), Some("version 1"));
     assert_eq!(diff.new_text, "version 2");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn m1_劇本_允許寫檔後完成_依退回的_prompt_改成第二版() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let file = dir.path().join("m1.txt");
+    let check = file.clone();
+    let (first, after_first, second) = with_agent(
+        "m1.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let first = conn.prompt(&session, "請新增 m1.txt").await;
+            let after_first = std::fs::read_to_string(&check).unwrap();
+            let second = conn.prompt(&session, "m1.txt 第 1 行：請改成第二版").await;
+            Ok((first, after_first, second))
+        },
+    )
+    .await;
+
+    assert_eq!(first.stop_reason(), StopReason::EndTurn);
+    let [request] = first.permissions.as_slice() else {
+        panic!("第一回合應該剛好有一次權限請求");
+    };
+    assert_eq!(request.tool_call.tool_call_id.0.as_ref(), "write-m1");
+    assert_eq!(after_first, "version 1\n");
+
+    assert_eq!(second.stop_reason(), StopReason::EndTurn);
+    assert!(second.permissions.is_empty());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "version 2\n");
 }
 
 #[tokio::test(flavor = "multi_thread")]

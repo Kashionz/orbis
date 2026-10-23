@@ -265,6 +265,103 @@ async fn 領取到完成_退回後再次完成並_push() {
     let _ = runner.child.kill().await;
 }
 
+/// C1 的 M1 完整系統 e2e 使用的劇本 `m1.yaml`：manual 政策下寫檔問人 → 允許 → diff
+/// → 退回的 prompt 改成第二版 → 核准 → push 回本機 bare repo（不需要網路）。
+#[tokio::test(flavor = "multi_thread")]
+async fn m1_劇本在_manual_政策下走完並_push_回本機_bare_repo() {
+    let mut env = Env::new(&[("README.md", "# web\n")], |wt| {
+        fake_agent_toml(wt, &script("m1.yaml"))
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_test")).await;
+    let mut o = offer(
+        "r1",
+        "d-r1",
+        env.remote.dispatch_repo("web"),
+        "fake",
+        "請新增 m1.txt",
+    );
+    o.permission_policy = PermissionPolicy::Manual;
+    conn.send(&send_offer(o)).await;
+    let (run, dispatch) = ("r1", "d-r1");
+
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "tool");
+    assert_eq!(request["tool_call_id"], "write-m1");
+    let result = conn
+        .control(
+            run,
+            dispatch,
+            "c1",
+            RunControlAction::PermissionResponse {
+                request_id: request["request_id"].as_str().unwrap().into(),
+                option_id: "allow_once".into(),
+            },
+        )
+        .await;
+    assert_eq!(result_outcome(&result), "applied", "{result}");
+    let diff = conn.wait_event("run_diff").await;
+    let file = diff_file(&diff, "m1.txt");
+    assert_eq!(file["change"], "added");
+    assert_eq!(file["binary"], false);
+    assert_eq!(text(&file["new"]), "version 1\n");
+    conn.wait_status("awaiting_gate").await;
+
+    for (id, action) in [
+        (
+            "c2",
+            RunControlAction::GateResult {
+                gate: GateKind::Review,
+                decision: GateDecision::Rejected,
+            },
+        ),
+        (
+            "c3",
+            RunControlAction::Prompt {
+                prompt: vec![ContentBlock::Text {
+                    text: "m1.txt 第 1 行：請改成第二版".into(),
+                }],
+            },
+        ),
+    ] {
+        let result = conn.control(run, dispatch, id, action).await;
+        assert_eq!(result_outcome(&result), "applied", "{result}");
+    }
+    let diff = conn.wait_event("run_diff").await;
+    assert_eq!(text(&diff_file(&diff, "m1.txt")["new"]), "version 2\n");
+    conn.wait_status("awaiting_gate").await;
+
+    let result = conn
+        .control(
+            run,
+            dispatch,
+            "c4",
+            RunControlAction::GateResult {
+                gate: GateKind::Review,
+                decision: GateDecision::Approved,
+            },
+        )
+        .await;
+    assert_eq!(result_outcome(&result), "applied");
+    let result = conn
+        .control(run, dispatch, "c5", RunControlAction::PushBranch)
+        .await;
+    let orbis_protocol::control::RunControlOutcome::BranchPushed { branch, commit_sha } =
+        parse_result(&result).outcome
+    else {
+        panic!("push 應該成功：{result}");
+    };
+    assert_eq!(
+        env.remote.branch_head(&branch).as_deref(),
+        Some(commit_sha.as_str())
+    );
+    let pushed = git(&env.remote.bare, &["show", &format!("{commit_sha}:m1.txt")]);
+    assert_eq!(pushed.replace("\r\n", "\n").trim_end(), "version 2");
+    conn.wait_status("completed").await;
+}
+
 /// 完成條件：取消時整個程序樹（含 Agent 開的子程序）都被結束。
 #[tokio::test(flavor = "multi_thread")]
 async fn 取消時整個程序樹都被結束() {
