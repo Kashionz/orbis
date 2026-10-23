@@ -59,7 +59,8 @@ const MIN_RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
 /// rate limit 恢復後送給 Agent 的 prompt。
 pub const RESUME_PROMPT: &str = "額度已恢復，請繼續剛才的工作。";
 /// session 中途 Agent 的設定檔被改、人處理完之後送給 Agent 的 prompt。
-pub const SETTINGS_RESUME_PROMPT: &str = "Agent 的設定檔已依 Orbis 的決定處理（接受或還原），請繼續剛才的工作，不要修改 Agent 的設定檔。";
+pub const SETTINGS_RESUME_PROMPT: &str =
+    "Agent 的設定檔已依人的決定處理（接受或還原），請繼續剛才的工作，不要修改 Agent 的設定檔。";
 /// 還原設定檔後 Agent 重新啟動、但無法接續原本的 session 時，接在原本的 prompt 後面的說明。
 pub const SETTINGS_RESTART_NOTE: &str = "（Agent 因為修改了自己的設定檔而被重新啟動，設定檔已還原。之前的修改都還在 Worktree 中，請先檢查目前的狀態再繼續，不要修改 Agent 的設定檔。）";
 /// Planning（Agent 沒有可靠的 plan 模式時）：接在第一個 prompt 後面，要 Agent 只產出 plan。
@@ -1775,8 +1776,12 @@ impl Run {
         let mut decision = policy::decide(&subject, &policy_ctx);
         // Orbis 自己的 MCP 工具：防護規則由 Server 套用，不轉給人（Planning 中也可以用）。
         // 只用在「其他」類的請求（不是指令、讀寫檔案），而且只把問人改成允許，不推翻拒絕。
-        // 判定 browser 條件的 Child Run 也一樣自動允許注入的瀏覽器 MCP server 的工具（只能連 Preview）。
-        let browser_judge = self.judge.as_ref().is_some_and(|j| j.browser.is_some());
+        // 判定 browser 條件的 Child Run 也自動允許注入的瀏覽器 MCP server 中，操作 Preview 的工具。
+        let browser_url = self
+            .judge
+            .as_ref()
+            .and_then(|j| j.browser.as_ref())
+            .map(|b| b.url.clone());
         let is_orbis_call = matches!(subject, crate::policy::PermissionSubject::Other { .. })
             && request
                 .tool_call
@@ -1785,7 +1790,13 @@ impl Run {
                 .as_deref()
                 .is_some_and(|title| {
                     crate::orbis_mcp::is_orbis_tool(title)
-                        || (browser_judge && crate::judge::is_browser_tool(title))
+                        || browser_url.as_deref().is_some_and(|url| {
+                            crate::judge::is_auto_allowed_browser_tool(
+                                title,
+                                request.tool_call.fields.raw_input.as_ref(),
+                                url,
+                            )
+                        })
                 });
         if is_orbis_call && matches!(decision, Decision::Ask { .. }) {
             decision = Decision::Allow;
@@ -2128,9 +2139,7 @@ impl Run {
                 .collect()
         };
         let Some(caller) = self.ctx.mcp.caller(self.run_id()) else {
-            return Ok(all(
-                "這個 Run 沒有可以建立 Child Run 的 Orbis MCP 登記".into()
-            ));
+            return Ok(all("這個 Run 沒有可以建立 Child Run 的 MCP 登記".into()));
         };
         let browser = if kind == VerificationKind::Browser {
             let url = self
@@ -2145,13 +2154,13 @@ impl Run {
                     crate::repo_config::config_path()
                 )));
             };
+            // 目錄名稱由 Runner 產生，不使用 Server 傳來的 ID。
             let output_dir = self
                 .ctx
                 .home
                 .state_dir()
                 .join("judge-screenshots")
-                .join(format!("{}-{}", request.verification_id, request.attempt));
-            let _ = std::fs::remove_dir_all(&output_dir);
+                .join(uuid::Uuid::new_v4().simple().to_string());
             Some(crate::orbis_mcp::hub::BrowserJudge { url, output_dir })
         } else {
             None

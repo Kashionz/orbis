@@ -89,9 +89,9 @@ pub const TOOLS: &[&str] = &[
     REPORT_VERDICT,
 ];
 
-/// 這個權限請求的標題是不是 Orbis 自己的某個 MCP 工具（不轉給人，由 Server 套用防護規則）。
-/// 只認完全相符的名稱：Claude Code 的 `mcp__orbis__<工具>`，或常見的 `orbis/<工具>`、
-/// `orbis.<工具>`、`orbis: <工具>`，工具名稱之後不能有其他內容。
+/// 這個權限請求的標題是不是產品自己的某個 MCP 工具（不轉給人，由 Server 套用防護規則）。
+/// 只認完全相符的名稱（`<名稱>` 是 [`server_name`]）：Claude Code 的 `mcp__<名稱>__<工具>`，或常見的
+/// `<名稱>/<工具>`、`<名稱>.<工具>`、`<名稱>: <工具>`，工具名稱之後不能有其他內容。
 pub fn is_orbis_tool(title: &str) -> bool {
     let name = server_name();
     let title = title.trim();
