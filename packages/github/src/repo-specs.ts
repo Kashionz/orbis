@@ -2,7 +2,7 @@
 // PR merge 之後更新 Repo Spec 的版本。
 
 import { randomBytes } from "node:crypto";
-import { NAMES } from "@orbis/api-contract";
+import { NAMES, type RepoSpecCommitResponse } from "@orbis/api-contract";
 import { GitHubApiError } from "./client/types";
 import { connectedRepo, type IntegrationContext } from "./context";
 import { REPO_SPEC_PULL_REQUEST_MARKER } from "./markdown";
@@ -19,18 +19,12 @@ export interface CommitRepoSpecInput {
 }
 
 export type CommitRepoSpecResult =
-  | {
+  /** 成功時是 API 的回應（`RepoSpecCommitResponse`）加上這次的 commit。 */
+  | (RepoSpecCommitResponse & {
       ok: true;
-      pullRequest: { number: number; url: string };
-      /** 這次新開了 PR（false：沿用這份 Spec 還開著的 PR）。 */
-      created: boolean;
       /** 這次的 commit；草稿與分支上的內容相同、沒有 commit 時為 null。 */
       commitSha: string | null;
-      /**
-       * repo 中的檔案在上一次提交之後被別人改過：PR 會覆蓋那些修改（照常開 PR，由 review 決定）。
-       */
-      overwritesUpstreamChanges: boolean;
-    }
+    })
   | {
       ok: false;
       /**

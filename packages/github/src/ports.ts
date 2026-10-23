@@ -8,12 +8,15 @@
 import type {
   AcceptanceCriterionKind,
   AcceptanceCriterionResult,
+  FeedbackFixStatus,
+  FeedbackSource,
+  NotificationKind,
   PullRequestState,
   TaskDoneReason,
   TaskStatus,
 } from "@orbis/api-contract";
 
-export type { PullRequestState, TaskDoneReason };
+export type { FeedbackFixStatus, FeedbackSource, PullRequestState, TaskDoneReason };
 
 // ── Server 提供的領域資料 ─────────────────────────────────────
 
@@ -152,8 +155,8 @@ export type GitHubNotificationKind =
   | "pr_merged"
   | "pr_closed_unmerged"
   | "pr_open_failed"
-  /** Feedback Loop 達到次數上限（§12.3）。 */
-  | "feedback_limit_reached";
+  /** Feedback Loop 達到次數上限（§12.3，與通知系統的種類相同）。 */
+  | Extract<NotificationKind, "feedback_limit_reached">;
 
 export interface Notifier {
   notify(notification: {
@@ -296,9 +299,6 @@ export class IssueAlreadyLinkedError extends Error {
 
 // ── Feedback Loop（ARCHITECTURE §5.2）──────────────────────────────
 
-/** Feedback Loop 的觸發來源，各自計算自動修正的次數。 */
-export type FeedbackSource = "review" | "ci";
-
 /** 一則會送回 Agent 的 review 回饋。 */
 export interface ReviewFeedbackItem {
   /** `review`：review 本身的內容；`review_comment`：行內留言；`pr_comment`：PR 對話串的留言。 */
@@ -350,15 +350,6 @@ export type FeedbackBatch =
       items: CiFeedbackItem[];
     });
 
-/**
- * 一次自動修正的紀錄。
- * - `sent`：已經交給 Server 開新的 Run 修正，等待 push。同一個 PR 同時只有一筆 `sent`。
- * - `pushed`：修正已經 push。
- * - `failed`：沒有開成 Run，或 Run 沒有 push 就結束。
- * - `limit_reached`：這個來源已經達到次數上限，沒有送出（每個 PR 每種來源只記一筆）。
- */
-export type FeedbackFixStatus = "sent" | "pushed" | "failed" | "limit_reached";
-
 export interface FeedbackFix {
   id: string;
   taskId: string;
@@ -371,6 +362,12 @@ export interface FeedbackFix {
   runId: string | null;
   /** 觸發這次修正的回饋。CI 的批次同時記錄 commit，用來避免同一個 check 重複觸發。 */
   trigger: FeedbackBatch;
+  /**
+   * - `sent`：已經交給 Server 開新的 Run 修正，等待 push。同一個 PR 同時只有一筆 `sent`。
+   * - `pushed`：修正已經 push。
+   * - `failed`：沒有開成 Run，或 Run 沒有 push 就結束。
+   * - `limit_reached`：這個來源已經達到次數上限，沒有送出（每個 PR 每種來源只記一筆）。
+   */
   status: FeedbackFixStatus;
   /** 修正 push 出去的 commit（`pushed` 時）。 */
   commitSha: string | null;
@@ -439,10 +436,7 @@ export interface FeedbackDependencies {
 
 // ── Repo Spec 提交到 repo（ARCHITECTURE §12.1）─────────────────────────
 
-/**
- * Repo 內的 Spec 檔（RepoSpec）中與提交有關的欄位。
- * TODO(contract): 版本相關欄位（version、committedSha、committedBlobSha）等契約 v2 的 repo_specs 合併後對齊名稱。
- */
+/** Repo 內的 Spec 檔（RepoSpec）中與提交有關的欄位（`repo_specs` 表）。 */
 export interface RepoSpecRecord {
   id: string;
   repoId: string;
