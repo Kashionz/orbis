@@ -57,6 +57,8 @@ export interface Services {
   blobCleanup: BlobCleanup;
   sessionCleanup: SessionCleanup;
   verification: VerificationService;
+  /** Feedback Loop 的修正 Run（GitHub 整合的 FeedbackRunPort）。 */
+  feedbackRuns: FeedbackRunService;
   /** Orbis MCP 工具呼叫的處理。 */
   tools: OrbisToolService;
   /** Run 狀態變化的程序內通知（阻塞的工具呼叫在這裡等）。 */
@@ -193,6 +195,7 @@ export function createServices(options: ServicesOptions): Services {
     }),
     runControls,
     verification,
+    feedbackRuns,
     tools,
     watch,
     webPush,

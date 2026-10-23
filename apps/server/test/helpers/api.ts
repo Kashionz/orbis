@@ -264,7 +264,9 @@ export async function seedReadyTask(
 export async function resetDatabase(db: Database): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      await db.execute(sql`truncate table teams, sessions, github_webhook_deliveries cascade`);
+      await db.execute(
+        sql`truncate table teams, sessions, github_webhook_deliveries, feedback_batches cascade`,
+      );
       return;
     } catch (error) {
       const code = (error as { cause?: { code?: string } }).cause?.code;
