@@ -12,6 +12,7 @@
 
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
+import { API_ROUTES } from "@orbis/api-contract";
 import { parse as parseCookie } from "hono/utils/cookie";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 import { ApiError } from "../http/errors";
@@ -21,11 +22,11 @@ import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
 import type { UpgradeRouter } from "../ws-upgrade";
 import { type CollabAccess, collabAccess } from "./authz";
-import { parseCollabDocName } from "./doc-name";
+import { parseCollabDocRef } from "./doc-name";
 import type { CollabPeer, CollabRoom } from "./room";
 
-// TODO(contract): 路徑改用 packages/api-contract 的 API_ROUTES（ORB-3 契約 v2）。
-export const COLLAB_PATH_PREFIX = "/api/collab/";
+/** `API_ROUTES.collab`（`/api/collab/:docName`）去掉參數的前綴。 */
+export const COLLAB_PATH_PREFIX = API_ROUTES.collab.slice(0, API_ROUTES.collab.indexOf(":"));
 /** 權限檢查結果的有效時間。 */
 export const COLLAB_AUTHZ_RECHECK_MS = 30_000;
 /** 單一訊息的大小上限。 */
@@ -73,7 +74,7 @@ export function attachCollabEndpoint(
       return;
     }
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-    const ref = parseCollabDocName(decodeURIComponent(pathname.slice(COLLAB_PATH_PREFIX.length)));
+    const ref = parseCollabDocRef(decodeURIComponent(pathname.slice(COLLAB_PATH_PREFIX.length)));
     if (!ref) {
       socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
       return;

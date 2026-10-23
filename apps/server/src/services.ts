@@ -6,7 +6,7 @@ import { BlobCleanup } from "./blobs/cleanup";
 import { type BlobStore, FileSystemBlobStore } from "./blobs/store";
 import { type Clock, systemClock } from "./clock";
 import { CollabHub } from "./collab/hub";
-import { type CollabStore, MemoryCollabStore } from "./collab/store";
+import { type CollabStore, PostgresCollabStore } from "./collab/store";
 import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_PUBLIC_URL } from "./config";
 import type { Database } from "./db/client";
 import { DomainEvents } from "./domain/events";
@@ -76,7 +76,7 @@ export interface ServicesOptions {
   blobDir?: string;
   /** Preview 網域（CONFIG_ENV.previewDomain）；未提供時不提供 Preview 網址。 */
   previewDomain?: string | null;
-  /** 共同編輯文件的快照儲存。TODO(contract): 契約 v2 的 collab 文件表合併後預設改用 Postgres。 */
+  /** 共同編輯文件的快照儲存，預設存在 Postgres。 */
   collabStore?: CollabStore;
   /** 共同編輯文件修改後多久寫回（測試用）。 */
   collabPersistDebounceMs?: number;
@@ -139,7 +139,7 @@ export function createServices(options: ServicesOptions): Services {
     sessionCleanup,
     collab: new CollabHub({
       db,
-      store: options.collabStore ?? new MemoryCollabStore(),
+      store: options.collabStore ?? new PostgresCollabStore(db),
       events,
       logger,
       persistDebounceMs: options.collabPersistDebounceMs,

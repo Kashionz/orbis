@@ -3,21 +3,21 @@
 // - Server 存檔時把文件轉成 markdown，回寫 Task 描述與 Acceptance Criterion 的描述。
 // - 文件第一次開啟、或描述被 REST／GitHub 改掉時，Server 從 markdown 重建文件內容。
 //
-// 文件結構沿用 TipTap StarterKit 加上 Mention 的節點名稱：
+// 文件結構以 api-contract `collab.ts` 為準（TipTap StarterKit 加上 Mention）：
 // - 區塊：paragraph、heading（level）、bulletList、orderedList（start）、listItem、blockquote、
 //   codeBlock（language）、horizontalRule。
-// - 行內：文字的 mark（bold、italic、strike、code、link（href））、hardBreak、mention（id、label）。
+// - 行內：文字的 mark（bold、italic、strike、code、link（href）、underline（markdown 沒有，只留文字））、
+//   hardBreak、mention（id、label、nodeId）。
 // - mention 的 id 是 `member:<uuid>` 或 `agent:<agent>`，markdown 寫成 `@[label](id)`。
 // 不認得的節點保留文字內容。
 
+import { randomUUID } from "node:crypto";
+import { COLLAB_FRAGMENT, parseMentionTargetId } from "@orbis/api-contract";
 import { lexer, type Token, type Tokens } from "marked";
 import * as Y from "yjs";
 
-// TODO(contract): 節點名稱、fragment 名稱與 mention 的寫法改用 packages/api-contract 的定義（ORB-3 契約 v2）。
-/** TipTap Collaboration 擴充預設使用的 fragment 名稱。 */
-export const COLLAB_FRAGMENT = "default";
-
-const MENTION_ID = /^(member|agent):[A-Za-z0-9._-]+$/;
+/** mention 節點的 `id`（`member:<id>`／`agent:<id>`）是否合法。 */
+const isMentionId = (id: string) => parseMentionTargetId(id) !== null;
 
 /**
  * 連結只接受 http、https、mailto 與相對路徑；其他 scheme（例如 `javascript:`）只保留文字。
@@ -142,7 +142,7 @@ function inlineToMarkdown(nodes: (Y.XmlElement | Y.XmlText | Y.XmlHook)[]): stri
         const id = String(node.getAttribute("id") ?? "");
         const label = String(node.getAttribute("label") ?? id);
         const safeLabel = label.replace(/[[\]\r\n]/g, "");
-        out += MENTION_ID.test(id) ? `@[${safeLabel}](${id})` : `@${escapeText(safeLabel)}`;
+        out += isMentionId(id) ? `@[${safeLabel}](${id})` : `@${escapeText(safeLabel)}`;
       } else out += inlineToMarkdown(node.toArray());
     }
   }
@@ -300,10 +300,11 @@ function appendInline(parent: Y.XmlElement, tokens: Token[]): void {
         case "link": {
           const t = token as Tokens.Link;
           const current = pending as { value: string; marks: Marks } | null;
-          if (MENTION_ID.test(t.href) && current?.value.endsWith("@")) {
+          if (isMentionId(t.href) && current?.value.endsWith("@")) {
             current.value = current.value.slice(0, -1);
             flush();
-            pushNode("mention", { id: t.href, label: t.text });
+            // nodeId 讓 Server 判斷哪些 mention 是新出現的（api-contract `CollabMentionAttrs`）。
+            pushNode("mention", { id: t.href, label: t.text, nodeId: randomUUID() });
           } else {
             flush();
             walk(t.tokens, isSafeHref(t.href) ? { ...marks, link: { href: t.href } } : marks);

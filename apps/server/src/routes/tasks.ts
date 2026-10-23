@@ -20,7 +20,7 @@ import {
   requireProjectCapability,
   type TaskRow,
 } from "../authz/scope";
-import { collabDocRef } from "../collab/hub";
+import { collabDocRef } from "../collab/doc-name";
 import {
   acceptanceCriteria,
   members,

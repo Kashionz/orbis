@@ -1,9 +1,9 @@
 // 共同編輯文件（TipTap 的 Y.XmlFragment）與 markdown 的互轉。
 
+import { COLLAB_FRAGMENT } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
-  COLLAB_FRAGMENT,
   fragmentToMarkdown,
   isSafeHref,
   markdownToDocUpdate,

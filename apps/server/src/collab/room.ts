@@ -1,6 +1,7 @@
 // 一份共同編輯文件在 Server 上的狀態：Y.Doc、awareness（游標與在線狀態）與連上的 client。
 // 收到的 update 轉送給其他 client，並在 debounce 後把快照寫進 CollabStore。
 
+import { COLLAB_FRAGMENT } from "@orbis/api-contract";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as awarenessProtocol from "y-protocols/awareness";
@@ -8,7 +9,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { Logger } from "../logger";
 import type { CollabDocRef } from "./doc-name";
-import { COLLAB_FRAGMENT, fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
+import { fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
 import type { CollabStore } from "./store";
 
 /** y-websocket 協定的訊息種類（第一個 varUint）。 */

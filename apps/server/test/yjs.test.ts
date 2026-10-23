@@ -1,6 +1,7 @@
 // 共同編輯（Yjs、y-websocket 協定）：兩個 client 同時編輯後內容一致、在線狀態、權限、
 // 重新啟動 Server 後內容仍在。
 
+import { COLLAB_FRAGMENT } from "@orbis/api-contract";
 import { eq } from "drizzle-orm";
 import * as encoding from "lib0/encoding";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -8,14 +9,10 @@ import { WebSocket } from "ws";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { collabDocName } from "../src/collab/doc-name";
+import { collabDocRef, parseCollabDocRef } from "../src/collab/doc-name";
 import { COLLAB_PATH_PREFIX } from "../src/collab/endpoint";
-import {
-  COLLAB_FRAGMENT,
-  fragmentToMarkdown,
-  replaceFragmentWithMarkdown,
-} from "../src/collab/markdown";
-import { MemoryCollabStore } from "../src/collab/store";
+import { fragmentToMarkdown, replaceFragmentWithMarkdown } from "../src/collab/markdown";
+import { PostgresCollabStore } from "../src/collab/store";
 import {
   acceptanceCriteria,
   projectMemberRoles,
@@ -43,7 +40,7 @@ const ORIGIN = "http://localhost:5173";
 
 describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   let database: TestDatabase;
-  let store: MemoryCollabStore;
+  let store: PostgresCollabStore;
   let server: RunningServer;
   let team: SeededTeam;
   let taskId: string;
@@ -107,6 +104,12 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   const synced = (provider: WebsocketProvider) =>
     waitUntil(() => provider.synced, 5000, "y-websocket 同步完成");
   const text = (doc: Y.Doc) => doc.getText("content").toString();
+  /** 資料庫中的快照（collab_documents）。 */
+  const snapshot = (name: string) => {
+    const ref = parseCollabDocRef(name);
+    if (!ref) throw new Error(`文件名稱不合法：${name}`);
+    return store.load(ref);
+  };
 
   beforeAll(async () => {
     database = await createTestDatabase();
@@ -118,7 +121,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
 
   beforeEach(async () => {
     await resetDatabase(database.db);
-    store = new MemoryCollabStore();
+    store = new PostgresCollabStore(database.db);
     server = await start();
     team = await seedTeam(database.db);
     const { project, repo } = await seedProject(database.db, team.teamId);
@@ -131,7 +134,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   });
 
   it("兩個 client 同時編輯後內容一致", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const a = connect(team.members.member, name);
     const b = connect(team.members.admin, name);
     await Promise.all([synced(a.provider), synced(b.provider)]);
@@ -156,7 +159,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   });
 
   it("在線狀態（awareness）：看得到其他人，斷線後移除", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const a = connect(team.members.member, name);
     const b = connect(team.members.admin, name);
     await Promise.all([synced(a.provider), synced(b.provider)]);
@@ -175,7 +178,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   });
 
   it("在線狀態不能冒用別人的 client id，memberId 由 Server 填入", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const a = connect(team.members.member, name);
     const b = connect(team.members.admin, name);
     const c = connect(team.members.owner, name);
@@ -221,16 +224,16 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   });
 
   it("重新啟動 Server 後內容仍在", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const a = connect(team.members.member, name);
     await synced(a.provider);
     a.doc.getText("content").insert(0, "重啟前的內容");
     await waitUntil(
-      () => {
-        const snapshot = store.snapshots.get(name);
-        if (!snapshot) return false;
+      async () => {
+        const state = await snapshot(name);
+        if (!state) return false;
         const saved = new Y.Doc();
-        Y.applyUpdate(saved, snapshot);
+        Y.applyUpdate(saved, state);
         return text(saved) === "重啟前的內容";
       },
       5000,
@@ -246,7 +249,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   });
 
   it("最後一個 client 離開後寫回並卸載文件", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const a = connect(team.members.member, name);
     await synced(a.provider);
     const b = connect(team.members.admin, name);
@@ -258,15 +261,15 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
     a.provider.destroy();
     b.provider.destroy();
     await waitUntil(() => server.services.collab.openDocumentCount === 0, 5000, "卸載文件");
-    const snapshot = store.snapshots.get(name);
-    if (!snapshot) throw new Error("沒有快照");
+    const saved = await snapshot(name);
+    if (!saved) throw new Error("沒有快照");
     const restored = new Y.Doc();
-    Y.applyUpdate(restored, snapshot);
+    Y.applyUpdate(restored, saved);
     expect(text(restored)).toBe("x");
   });
 
   it("Viewer 可以讀，但修改不會被套用", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const editor = connect(team.members.member, name);
     await synced(editor.provider);
     editor.doc.getText("content").insert(0, "原文");
@@ -283,7 +286,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   });
 
   it("沒有登入、別的 Team、Origin 不對、文件名稱不合法時拒絕連線", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     expect(await connect(null, name).closed).toBe(401);
     expect(
       await connect(team.members.member, name, { origin: "https://evil.example" }).closed,
@@ -300,7 +303,10 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       .from(acceptanceCriteria)
       .where(eq(acceptanceCriteria.taskId, taskId));
     if (!criterion) throw new Error("沒有 Acceptance Criterion");
-    const ac = connect(team.members.member, collabDocName("acceptance-criterion", criterion.id));
+    const ac = connect(
+      team.members.member,
+      collabDocRef("acceptance-criterion", criterion.id).name,
+    );
     await synced(ac.provider);
 
     const { repo } = await seedProject(database.db, team.teamId, { taskKeyPrefix: "SPEC" });
@@ -309,16 +315,16 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       .values({ repoId: repo.id, path: "docs/spec.md" })
       .returning();
     if (!spec) throw new Error("建立 Repo Spec 失敗");
-    const draft = connect(team.members.member, collabDocName("repo-spec-draft", spec.id));
+    const draft = connect(team.members.member, collabDocRef("repo-spec-draft", spec.id).name);
     await synced(draft.provider);
     const other = await seedTeam(database.db, "Other");
     expect(
-      await connect(other.members.owner, collabDocName("repo-spec-draft", spec.id)).closed,
+      await connect(other.members.owner, collabDocRef("repo-spec-draft", spec.id).name).closed,
     ).toBe(404);
   });
 
   it("連線期間 session 失效時以 4401 關閉；Role 降為 Viewer 後改成唯讀", async () => {
-    const name = collabDocName("task-description", taskId);
+    const name = collabDocRef("task-description", taskId).name;
     const owner = connect(team.members.owner, name);
     const member = connect(team.members.member, name);
     await Promise.all([synced(owner.provider), synced(member.provider)]);
@@ -349,11 +355,11 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       (await database.db.select().from(tasks).where(eq(tasks.id, taskId)))[0]?.description;
 
     it("第一次開啟時以 Task 描述建立文件，並立刻保存快照", async () => {
-      const name = collabDocName("task-description", taskId);
+      const name = collabDocRef("task-description", taskId).name;
       const a = connect(team.members.member, name);
       await synced(a.provider);
       await waitUntil(() => markdownOf(a.doc) === "用 GitHub 登入", 5000, "讀到描述");
-      expect(store.snapshots.has(name)).toBe(true);
+      expect(await snapshot(name)).not.toBeNull();
     });
 
     it("編輯後回寫 Task 描述，並發出 task.updated（source = collab）", async () => {
@@ -361,7 +367,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       server.services.events.subscribe((event) => {
         if (event.type === "task.updated" && event.taskId === taskId) seen.push(event.source);
       });
-      const a = connect(team.members.member, collabDocName("task-description", taskId));
+      const a = connect(team.members.member, collabDocRef("task-description", taskId).name);
       await synced(a.provider);
       await waitUntil(() => markdownOf(a.doc) !== "", 5000, "讀到描述");
       replaceFragmentWithMarkdown(a.doc.getXmlFragment(COLLAB_FRAGMENT), "## 新的描述\n\n- 第一點");
@@ -378,7 +384,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       server.services.events.subscribe((event) => {
         if (event.type === "task.updated" && event.taskId === taskId) seen.push(event.source);
       });
-      const a = connect(team.members.member, collabDocName("task-description", taskId));
+      const a = connect(team.members.member, collabDocRef("task-description", taskId).name);
       await synced(a.provider);
       await waitUntil(() => markdownOf(a.doc) !== "", 5000, "讀到描述");
       const res = await client(ctx.app, team.members.admin.cookie).patch(`/api/tasks/${taskId}`, {
@@ -392,7 +398,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
     });
 
     it("文件沒有載入時，描述的修改寫進快照；下次開啟看到新的內容", async () => {
-      const name = collabDocName("task-description", taskId);
+      const name = collabDocRef("task-description", taskId).name;
       const a = connect(team.members.member, name);
       await synced(a.provider);
       await waitUntil(() => markdownOf(a.doc) !== "", 5000, "讀到描述");
@@ -413,7 +419,10 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
         .from(acceptanceCriteria)
         .where(eq(acceptanceCriteria.taskId, taskId));
       if (!criterion) throw new Error("沒有 Acceptance Criterion");
-      const a = connect(team.members.member, collabDocName("acceptance-criterion", criterion.id));
+      const a = connect(
+        team.members.member,
+        collabDocRef("acceptance-criterion", criterion.id).name,
+      );
       await synced(a.provider);
       await waitUntil(() => markdownOf(a.doc) === "測試通過", 5000, "讀到描述");
 

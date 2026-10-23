@@ -5,7 +5,12 @@
 // - 由 GitHub 觸發的狀態轉換：Issue 關閉／PR merge → Done（有進行中的 Run 時拒絕）、
 //   Issue 重開 → Backlog、PR 沒 merge 就關閉 → Review Gate、PR 重開 → PR Open。
 
-import { formatTaskKey, type TaskStatus } from "@orbis/api-contract";
+import {
+  formatTaskKey,
+  parseMentions,
+  replaceMentions,
+  type TaskStatus,
+} from "@orbis/api-contract";
 import type {
   AcceptanceCriterionRecord,
   DomainService,
@@ -32,7 +37,6 @@ import {
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
 import { ApiError, notFound } from "../http/errors";
-import { parseMentions, replaceMentions } from "../mentions/parse";
 import { TERMINAL_RUN_STATUSES } from "./run-status";
 import type { TaskLifecycleService, TaskRow } from "./task-lifecycle";
 
@@ -103,7 +107,7 @@ export class GitHubDomainService implements DomainService {
    */
   private async issueBody(description: string, projectId: string): Promise<string> {
     const memberIds = parseMentions(description).flatMap((m) =>
-      m.target.kind === "member" ? [m.target.memberId] : [],
+      m.target.type === "member" ? [m.target.memberId] : [],
     );
     if (memberIds.length === 0) return description;
     const rows = await this.db
@@ -113,9 +117,8 @@ export class GitHubDomainService implements DomainService {
       .where(and(eq(projects.id, projectId), inArray(members.id, memberIds)));
     const logins = new Map(rows.map((r) => [r.id, r.login]));
     return replaceMentions(description, (m) => {
-      if (m.target.kind !== "member") return null;
-      const login = logins.get(m.target.memberId);
-      return login ? `@${login}` : null;
+      const login = m.target.type === "member" ? logins.get(m.target.memberId) : undefined;
+      return login ? `@${login}` : m.label;
     });
   }
 

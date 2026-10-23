@@ -6,14 +6,15 @@
 //   所以回寫與同步不會互相觸發。
 // - Repo Spec 草稿沒有對應的資料庫欄位，只存在文件中；「提交到 repo」時由 D 軌取出 markdown。
 
+import { COLLAB_FRAGMENT } from "@orbis/api-contract";
 import { and, eq, ne } from "drizzle-orm";
 import * as Y from "yjs";
 import type { Database } from "../db/client";
 import { acceptanceCriteria, tasks } from "../db/schema";
 import type { DomainEvents } from "../domain/events";
 import type { Logger } from "../logger";
-import { type CollabDocRef, collabDocName, parseCollabDocName } from "./doc-name";
-import { COLLAB_FRAGMENT, fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
+import { type CollabDocRef, collabDocRef } from "./doc-name";
+import { fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
 import { CollabRoom } from "./room";
 import type { CollabStore } from "./store";
 
@@ -195,11 +196,4 @@ export class CollabHub {
         return;
     }
   }
-}
-
-/** 由種類與 id 組出文件參照。 */
-export function collabDocRef(kind: CollabDocRef["kind"], id: string): CollabDocRef {
-  const ref = parseCollabDocName(collabDocName(kind, id));
-  if (!ref) throw new Error(`文件名稱不合法：${kind}:${id}`);
-  return ref;
 }

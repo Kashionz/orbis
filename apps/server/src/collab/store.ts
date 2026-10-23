@@ -1,5 +1,8 @@
-// 共同編輯文件的快照儲存（ARCHITECTURE §12.1：快照存在 Postgres）。
+// 共同編輯文件的快照儲存（ARCHITECTURE §12.1：快照存在 Postgres 的 collab_documents）。
 
+import { eq } from "drizzle-orm";
+import type { Database } from "../db/client";
+import { collabDocuments } from "../db/schema";
 import type { CollabDocRef } from "./doc-name";
 
 export interface CollabStore {
@@ -9,10 +12,35 @@ export interface CollabStore {
   save(ref: CollabDocRef, state: Uint8Array): Promise<void>;
 }
 
-/**
- * 存在記憶體的快照（測試用）。
- * TODO(contract): 契約 v2 的 collab 文件表合併後，Server 改用 Postgres 的實作。
- */
+/** 存在 Postgres。所屬的 Task、Acceptance Criterion 或 Repo Spec 被刪除時快照一併刪除。 */
+export class PostgresCollabStore implements CollabStore {
+  constructor(private readonly db: Database) {}
+
+  async load(ref: CollabDocRef): Promise<Uint8Array | null> {
+    const [row] = await this.db
+      .select({ state: collabDocuments.state })
+      .from(collabDocuments)
+      .where(eq(collabDocuments.name, ref.name));
+    return row?.state ?? null;
+  }
+
+  async save(ref: CollabDocRef, state: Uint8Array): Promise<void> {
+    const owner = {
+      taskId: ref.kind === "task-description" ? ref.id : null,
+      acceptanceCriterionId: ref.kind === "acceptance-criterion" ? ref.id : null,
+      repoSpecId: ref.kind === "repo-spec-draft" ? ref.id : null,
+    };
+    await this.db
+      .insert(collabDocuments)
+      .values({ name: ref.name, ...owner, state })
+      .onConflictDoUpdate({
+        target: collabDocuments.name,
+        set: { state, updatedAt: new Date() },
+      });
+  }
+}
+
+/** 存在記憶體（不需要資料庫的單元測試用）。 */
 export class MemoryCollabStore implements CollabStore {
   readonly snapshots = new Map<string, Uint8Array>();
 
