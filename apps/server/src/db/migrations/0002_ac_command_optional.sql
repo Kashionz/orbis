@@ -1,0 +1,2 @@
+ALTER TABLE "acceptance_criteria" DROP CONSTRAINT "acceptance_criteria_command_required";--> statement-breakpoint
+ALTER TABLE "acceptance_criteria" ADD CONSTRAINT "acceptance_criteria_command_only_for_command_kind" CHECK ("acceptance_criteria"."kind" = 'command' OR "acceptance_criteria"."command" IS NULL);
