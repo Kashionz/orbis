@@ -401,11 +401,15 @@ pub fn result_outcome(result: &Value) -> &str {
 }
 
 /// 真正的 `orbis-runner` 程序；stderr 持續讀進記憶體（避免 pipe 塞滿），失敗時印出來。
+///
+/// stderr 由獨立的執行緒讀取，不用 tokio 的 child pipe：Windows 上 tokio 讀 child pipe 佔用的是
+/// runtime 的阻塞執行緒，Runner 被結束後若還有孫程序握著 pipe（例如卡住的 `node --version`），
+/// 測試結束時 runtime 會一直等那條執行緒，整個測試程式卡住。
 pub struct RunnerProcess {
     pub child: Child,
     pub stderr: Arc<Mutex<String>>,
-    /// 讀 stderr 的背景工作；讀到 EOF 才結束。
-    stderr_reader: Option<tokio::task::JoinHandle<()>>,
+    /// stderr 讀到 EOF 時通知。
+    stderr_closed: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl RunnerProcess {
@@ -420,11 +424,10 @@ impl RunnerProcess {
             .await
             .unwrap_or_else(|_| panic!("Runner 沒有結束；stderr：\n{}", self.stderr()))
             .unwrap();
-        if let Some(reader) = self.stderr_reader.take() {
-            timeout(WAIT, reader)
+        if let Some(closed) = self.stderr_closed.take() {
+            let _ = timeout(WAIT, closed)
                 .await
-                .unwrap_or_else(|_| panic!("Runner 已結束，但 stderr 沒有關閉"))
-                .unwrap();
+                .unwrap_or_else(|_| panic!("Runner 已結束，但 stderr 沒有關閉"));
         }
         status
     }
@@ -488,24 +491,29 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
         } else {
             Stdio::null()
         })
-        .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = cmd.spawn().unwrap();
+    let (reader, writer) = std::io::pipe().unwrap();
+    cmd.stderr(writer);
+    let child = cmd.spawn().unwrap();
+    // 關掉自己手上的寫入端：Runner（與繼承它的程序）都結束時才讀得到 EOF。
+    drop(cmd);
     let stderr = Arc::new(Mutex::new(String::new()));
-    let pipe = child.stderr.take().unwrap();
     let sink = stderr.clone();
-    let stderr_reader = tokio::spawn(async move {
-        let mut lines = BufReader::new(pipe).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+    let (closed_tx, closed) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(reader).lines() {
+            let Ok(line) = line else { break };
             let mut s = sink.lock().unwrap();
             s.push_str(&line);
             s.push('\n');
         }
+        let _ = closed_tx.send(());
     });
     RunnerProcess {
         child,
         stderr,
-        stderr_reader: Some(stderr_reader),
+        stderr_closed: Some(closed),
     }
 }
 
