@@ -78,7 +78,8 @@ let settingsWindow: BrowserWindow | null = null;
 let tray: DesktopTray | null = null;
 let quitting = false;
 let needsYouCount = 0;
-let pairingToken: string | null = null;
+/** sidecar 目前使用的 Pairing token，以及取得它時的 Server。 */
+let pairing: { token: string; serverUrl: string } | null = null;
 const liveNotifications = new Set<Notification>();
 
 const testState = {
@@ -125,13 +126,14 @@ const runnerCommand = () =>
 
 const supervisor = new RunnerSupervisor({
   launch: () => {
-    const url = serverUrl();
-    if (!url || !pairingToken) throw new Error("沒有 Server URL 或 Pairing token，無法啟動 Runner");
+    if (!pairing) throw new Error("沒有 Pairing token，無法啟動 Runner");
     return buildRunnerLaunch({
       command: runnerCommand(),
       baseEnv: process.env,
-      serverUrl: process.env[DESKTOP_ENV.runnerServerUrl] || url,
-      pairingToken,
+      // 用取得 Pairing token 時的 Server，不重新讀設定：設定換了 Server 時，不能帶著前一個 Server 的
+      // Runner token 去連新的 Server
+      serverUrl: process.env[DESKTOP_ENV.runnerServerUrl] || pairing.serverUrl,
+      pairingToken: pairing.token,
       stateDir: runnerStateDir,
     });
   },
@@ -149,11 +151,16 @@ const sessionController = new SessionController({
   },
   runner: {
     start: async (token) => {
-      pairingToken = token;
+      const url = serverUrl();
+      if (!url) throw new Error("沒有 Server URL，無法啟動 Runner");
       await supervisor.stop();
+      pairing = { token, serverUrl: url };
       supervisor.start();
     },
-    stop: () => supervisor.stop(),
+    stop: async () => {
+      await supervisor.stop();
+      pairing = null;
+    },
     clearState: async () => {
       rmSync(runnerStateDir, { recursive: true, force: true });
     },
@@ -537,8 +544,9 @@ async function switchServer(url: string): Promise<void> {
     if (previous) {
       await session.defaultSession.clearStorageData({ origin: new URL(previous).origin });
     }
-    config.update({ serverUrl: url });
-    await sessionController.refresh();
+    await sessionController.changeServer(() => {
+      config.update({ serverUrl: url });
+    });
     if (mainWindow && !mainWindow.isDestroyed()) void mainWindow.loadURL(url);
   }
   showMainWindow();

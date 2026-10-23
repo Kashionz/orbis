@@ -119,6 +119,18 @@ describe("SessionController", () => {
     expect(controller.snapshot().me?.member?.id).toBe("m2");
   });
 
+  it("換 Server 時先停止 sidecar、刪除本機狀態，才套用新的 URL 並重新確認登入", async () => {
+    const { controller, calls, signIn } = setup();
+    signIn(member("m1"));
+    await controller.refresh();
+    calls.length = 0;
+    await controller.changeServer(() => {
+      calls.push("apply");
+    });
+    expect(calls).toEqual(["stop", "clear", "apply", "start:pt_2"]);
+    expect(controller.snapshot().phase).toBe("paired");
+  });
+
   it("暫時連不上 Server 時顯示 error，但不重啟已經在跑的 sidecar", async () => {
     const { controller, calls, signIn } = setup();
     signIn(member("m1"));

@@ -98,6 +98,22 @@ export class SessionController {
     });
   }
 
+  /**
+   * 換到另一個 Server：先停止 sidecar 並刪除本機的 Runner 狀態（裡面的 Runner token 屬於前一個 Server），
+   * 再套用新的 Server URL，最後重新確認登入狀態。全部在同一個 queue 中依序執行，
+   * 中途不會有用前一個 Server 的 token 連到新 Server 的 Pairing 或重啟。
+   */
+  changeServer(apply: () => void | Promise<void>): Promise<void> {
+    return this.enqueue(async () => {
+      this.clearRetry();
+      this.deps.log("換到另一個 Server，停止 Runner 並刪除本機的 Runner 狀態");
+      await this.unpairLocally();
+      this.update({ phase: "signed_out", me: null, error: null });
+      await apply();
+      await this.evaluate();
+    });
+  }
+
   /** 停止 sidecar（不清除本機狀態），App 結束時使用。 */
   dispose(): Promise<void> {
     this.disposed = true;
