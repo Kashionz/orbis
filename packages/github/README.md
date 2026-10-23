@@ -40,6 +40,9 @@ GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙�
    - 提出請求的 Member 本人（以 GitHub 帳號）必須對 repo 有寫入權限，否則回應與「沒有安裝」相同。
    - 這是因為同一個 App 可能安裝在不同 Team 的 repo 上。
    - Server 登記 Repo 時只能使用這裡回傳的 installation 與 repo id。
+4. **安裝狀態的即時更新**：`installation`（created、deleted、suspend、unsuspend）與 `installation_repositories` 事件會更新 Repo 的 installation。
+   - 已知 repo id 的 Repo 直接更新。payload 沒有列出 repo 時（例如 unsuspend），向 GitHub 查詢這個 installation 能存取的 repo。
+   - App 安裝之前登記的 Repo 還不知道 repo id，以 owner/name 比對。為了避免別的 Team 先登記同名的 repo，只在安裝 App 的人是該 Project 的 Member、而且對 repo 有寫入權限時才綁定，並補上 repo id 與 default branch。
 
 ### 環境變數
 
@@ -84,7 +87,7 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
 
 定義在 [`src/ports.ts`](src/ports.ts)：
 
-- **`DomainService`**：讀取 Task、Repo、Member、Acceptance Criterion、最近的 Run；從 Issue 建立 Task；寫回 Task 欄位；要求狀態轉換；判斷 Member 能不能編輯 Task（`canEditTasks`，Viewer 不行）；Project 是否開啟「自動建立 Issue」（`autoCreateIssues`）。狀態轉換會檢查進行中的 Run 與狀態機，不合法時回傳原因。需要的轉換如下：
+- **`DomainService`**：讀取 Task、Repo、Member、Acceptance Criterion、最近的 Run；從 Issue 建立 Task；寫回 Task 欄位；要求狀態轉換；判斷 Member 能不能編輯 Task（`canEditTasks`，Viewer 不行）；Project 是否開啟「自動建立 Issue」（`autoCreateIssues`）；以 owner/name 找 Repo（`listReposByFullName`，安裝事件用）。狀態轉換會檢查進行中的 Run 與狀態機，不合法時回傳原因。需要的轉換如下：
   - 任何非 Done 狀態轉 `done`：Issue 被關閉、PR merge。`cause.doneReason` 是要記錄的關閉原因（PR merge 一律是 `completed`）。
   - `done` 轉 `backlog`：Issue 重新打開。Server 清空關閉原因。
   - Task 已經是 Done 時，GitHub 上改了關閉原因，會以 `updateTaskFields(taskId, { doneReason })` 寫回。
@@ -108,6 +111,11 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
   - payload 與快照相同時不寫入。
   - 比該欄位上次同步還舊的 payload（晚到的 webhook）不套用。
 - **修改者的權限**：只套用能編輯 Task 的 Project Member，或對 repo 有寫入權限（admin、maintain、write）的人在 GitHub 上的修改。其他人的修改會被改回 Task 的值，並在摘要留言說明。
+- **同一個 Issue 對應到不同 Project 的 Task**（同一個 repo 登記在多個 Project）：
+  - 每個 Task 各有一則狀態摘要留言。
+  - GitHub 上的修改套用到所有對應的 Task，各自以該 Project 檢查修改者的權限。
+  - Task 寫到 Issue 的 title、body、state 也會同步到其他 Task（App 自己的寫入造成的 webhook 被當成回音略過，所以不等 webhook）。labels 與負責人各 Project 自己管理。
+  - 另一個 Task 不能跟著轉換狀態時（例如有進行中的 Run），維持原狀並在它的摘要留言說明，不把 Issue 改回來。
 - **欄位歸屬**：只套用這個 action 改到的欄位。
   - `edited` 依 payload 的 `changes`；`labeled`／`unlabeled` 只看 labels；`assigned`／`unassigned` 只看 assignee；`closed`／`reopened` 只看 state。
   - payload 中其他與快照不同的欄位不能算在這位 sender 頭上，不套用，等它們自己的 webhook。
@@ -130,6 +138,7 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
   - merged：Task 轉 Done，通知負責人。
   - 沒有 merge：退回 Review Gate，通知負責人。
 - `pull_request.reopened`：回到 PR Open。
+- 沒有 merge 的關閉與重開，和 Issue 一樣只採用能編輯 Task 的 Member 或對 repo 有寫入權限的人（GitHub 上 triage 角色也能關閉、重開 PR）。其他人的操作不改 Task 狀態，只記錄 PR 狀態並通知負責人。
 
 ## 開發與測試
 

@@ -10,7 +10,13 @@ import { createHash } from "node:crypto";
 import { senderCanWrite } from "../authz";
 import { toIssue } from "../client/http";
 import type { GitHubIssue, GitHubUserRef, IssuePatch } from "../client/types";
-import { type ConnectedRepo, connectedRepo, type IntegrationContext, isOwnEcho } from "../context";
+import {
+  appBotLogin,
+  type ConnectedRepo,
+  connectedRepo,
+  type IntegrationContext,
+  isOwnEcho,
+} from "../context";
 import { renderSummaryComment } from "../markdown";
 import type {
   IssueLink,
@@ -46,13 +52,112 @@ export interface PushOptions {
   notice?: string;
 }
 
-/** Orbis→GitHub：把 Task 同步到對應的 Issue（沒有就建立），並更新狀態摘要留言。 */
-export function pushTask(
+/**
+ * 同一個 Issue 對應到不同 Project 的 Task 時，經由 Issue 在這些 Task 之間同步的欄位（ARCHITECTURE §11）。
+ * labels 與負責人各 Project 自己管理，不互相同步。
+ */
+const SHARED_FIELDS: readonly SyncedField[] = ["title", "body", "state"];
+
+/**
+ * Orbis→GitHub：把 Task 同步到對應的 Issue（沒有就建立），並更新狀態摘要留言。
+ * 寫出 title、body、state 之後，同一個 Issue 對應的其他 Task 也跟著更新：App 自己的寫入造成的
+ * webhook 會被當成回音略過，所以不能等 webhook。
+ */
+export async function pushTask(
   ctx: IntegrationContext,
   taskId: string,
   options: PushOptions = {},
 ): Promise<PushOutcome> {
-  return ctx.taskLocks.run(taskId, () => pushTaskLocked(ctx, taskId, options));
+  const outcome = await ctx.taskLocks.run(taskId, () => pushTaskLocked(ctx, taskId, options));
+  if (outcome.kind === "synced" && !outcome.created) {
+    const shared = outcome.wrote.filter((field) => SHARED_FIELDS.includes(field));
+    if (shared.length > 0) await propagateToSiblings(ctx, taskId, shared);
+  }
+  return outcome;
+}
+
+/** 把來源 Task 剛寫到 Issue 的欄位，套用到同一個 Issue 對應的其他 Task。 */
+async function propagateToSiblings(
+  ctx: IntegrationContext,
+  sourceTaskId: string,
+  fields: readonly SyncedField[],
+): Promise<void> {
+  const source = await ctx.store.getIssueLinkByTask(sourceTaskId);
+  if (!source) return;
+  const sourceTask = await ctx.domain.getTask(sourceTaskId);
+  const siblings = await ctx.store.findIssueLinks(source.githubRepoId, source.issueNumber);
+  for (const { taskId } of siblings) {
+    if (taskId === sourceTaskId) continue;
+    await ctx.taskLocks.run(taskId, () =>
+      applySharedFields(ctx, taskId, source, fields, sourceTask?.key ?? sourceTaskId),
+    );
+  }
+}
+
+async function applySharedFields(
+  ctx: IntegrationContext,
+  taskId: string,
+  source: IssueLink,
+  fields: readonly SyncedField[],
+  sourceKey: string,
+): Promise<void> {
+  const link = await ctx.store.getIssueLinkByTask(taskId);
+  if (
+    !link ||
+    link.githubRepoId !== source.githubRepoId ||
+    link.issueNumber !== source.issueNumber
+  ) {
+    return;
+  }
+  const task = await ctx.domain.getTask(taskId);
+  if (!task) return;
+
+  // 與 webhook 相同的判斷：Issue 上的值比這個 Task 上次同步的新才算改過；這個 Task 自己也改過、
+  // 而且比較新的欄位保留 Task 的值，稍後的 push 會寫回 Issue。
+  const incoming = snapshotFields(source.snapshot);
+  const current = fieldsFromTask(task, null);
+  const changed = fields.filter(
+    (field) =>
+      !sameValue(incoming[field], link.snapshot[field]) &&
+      isAfter(source.snapshot.syncedAt[field], link.snapshot.syncedAt[field]),
+  );
+  if (changed.length === 0) return;
+  const applied = changed.filter(
+    (field) =>
+      sameValue(current[field], link.snapshot[field]) ||
+      isAfter(source.snapshot.syncedAt[field], task.updatedAt),
+  );
+
+  const patch: TaskFieldsPatch = {};
+  if (applied.includes("title")) patch.title = incoming.title;
+  if (applied.includes("body")) patch.description = incoming.body;
+  if (Object.keys(patch).length > 0) await ctx.domain.updateTaskFields(taskId, patch);
+
+  let synced = changed;
+  let notice: string | undefined;
+  if (applied.includes("state")) {
+    const rejected = await applyIssueState(
+      ctx,
+      task,
+      incoming.state,
+      link.issueUrl,
+      appBotLogin(ctx.appSlug),
+    );
+    if (rejected) {
+      // 不把 Issue 改回來（那會推翻另一個 Project 的 Task）；快照維持原值，這個 Task 保持原狀態。
+      synced = changed.filter((field) => field !== "state");
+      notice = `另一個 Project 的 Task ${sourceKey} 變更了這個 Issue 的狀態，但這個 Task 目前的狀態不能跟著轉換，維持原狀。`;
+    }
+  }
+
+  const fresh = updateSnapshot(link.snapshot, incoming, synced, source.snapshot.syncedAt.title);
+  for (const field of synced) fresh.syncedAt[field] = source.snapshot.syncedAt[field];
+  await ctx.store.saveIssueLink({ ...link, snapshot: fresh });
+  await pushTaskLocked(ctx, taskId, notice ? { notice } : {});
+  ctx.logger.info(
+    { taskId, sourceTaskId: source.taskId, issue: link.issueUrl, applied, notice },
+    "已把另一個 Task 寫到 Issue 的變更同步到這個 Task",
+  );
 }
 
 async function pushTaskLocked(
