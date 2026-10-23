@@ -166,7 +166,9 @@ class RunnerConnection implements RunnerLink {
       case "dispatch_accept": {
         const parsed = DispatchAcceptFrame.safeParse(frame);
         if (!parsed.success) return this.malformed(runner, frame);
-        await dispatcher.onAccept(runner.id, parsed.data);
+        // 改派後由這台 Runner 接手時，補送前一個 Dispatch 還沒有結果的 RunControl。
+        const accepted = await dispatcher.onAccept(runner.id, parsed.data);
+        if (accepted) await this.options.runControls.resend(runner.id, accepted.runId);
         return;
       }
       case "dispatch_reject": {
@@ -270,7 +272,7 @@ class RunnerConnection implements RunnerLink {
     }
     const { hub, dispatcher } = this.options;
     await recordHeartbeat(this.options.db, runner.id, this.options.clock.now());
-    const accepting = parsed.data.accepting_dispatches ?? true;
+    const accepting = parsed.data.accepting_dispatches;
     const changed = hub.isAcceptingDispatches(runner.id) !== accepting;
     hub.setAcceptingDispatches(runner.id, accepting);
     if (changed && accepting) void dispatcher.kick();

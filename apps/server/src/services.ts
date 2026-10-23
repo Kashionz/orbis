@@ -1,19 +1,21 @@
 // Server 的服務組裝：HTTP 路由、Runner WebSocket 與背景工作共用同一組服務。
 
 import type { MiddlewareHandler } from "hono";
+import { SessionCleanup } from "./auth/session-cleanup";
 import { BlobCleanup } from "./blobs/cleanup";
 import { type BlobStore, FileSystemBlobStore } from "./blobs/store";
 import { type Clock, systemClock } from "./clock";
-import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS } from "./config";
+import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_PUBLIC_URL } from "./config";
 import type { Database } from "./db/client";
 import { DomainEvents } from "./domain/events";
-import { GitHubDomainService } from "./domain/github-domain";
 import { type LifecycleHooks, TaskLifecycleService } from "./domain/task-lifecycle";
+import { createGitHubApp, type GitHubAppOptions } from "./github/app";
 import {
   createGitHubUserLookup,
+  createPullRequestOpener,
   type GitHubIntegration,
-  loggingPullRequestOpener,
-  passthroughRepoRegistrar,
+  type GitHubUserLookup,
+  type PullRequestOpener,
 } from "./github/integration";
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
@@ -32,8 +34,8 @@ export interface Services {
   events: DomainEvents;
   lifecycle: TaskLifecycleService;
   github: GitHubIntegration;
-  /** 給 D 軌呼叫的 domain service（PR merge、Issue 關閉等）。 */
-  githubDomain: GitHubDomainService;
+  /** 等背景的 GitHub 同步做完（沒有設定 GitHub App 時立即完成）。 */
+  githubIdle: () => Promise<void>;
   hub: RunnerHub;
   eventStore: EventStore;
   dispatcher: Dispatcher;
@@ -41,6 +43,7 @@ export interface Services {
   runControls: RunControlService;
   blobStore: BlobStore;
   blobCleanup: BlobCleanup;
+  sessionCleanup: SessionCleanup;
   heartbeatIntervalMs: number;
 }
 
@@ -48,8 +51,15 @@ export interface ServicesOptions {
   db: Database;
   logger: Logger;
   clock?: Clock;
-  /** D 軌的 GitHub 整合；未提供的部分用預設實作（不連 GitHub）。 */
-  github?: Partial<GitHubIntegration>;
+  /** GitHub 整合。`app` 未提供時不連 GitHub App（Repo 登記、Issue 同步、開 PR 都停用）。 */
+  github?: {
+    app?: GitHubAppOptions;
+    userLookup?: GitHubUserLookup;
+    /** 測試用：取代以 GitHub App 開 PR。 */
+    pullRequestOpener?: PullRequestOpener;
+  };
+  /** Web 的 origin（GitHub Issue 中的 Task 連結），預設 DEFAULT_PUBLIC_URL。 */
+  publicUrl?: string;
   lifecycleHooks?: LifecycleHooks;
   heartbeatIntervalMs?: number;
   offerTimeoutMs?: number;
@@ -65,12 +75,22 @@ export function createServices(options: ServicesOptions): Services {
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const events = new DomainEvents(logger);
   const lifecycle = new TaskLifecycleService(events, options.lifecycleHooks);
+  const githubApp = options.github?.app
+    ? createGitHubApp(options.github.app, {
+        db,
+        lifecycle,
+        events,
+        clock,
+        logger,
+        publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
+      })
+    : null;
   const github: GitHubIntegration = {
     userLookup: options.github?.userLookup ?? createGitHubUserLookup(),
-    repoRegistrar: options.github?.repoRegistrar ?? passthroughRepoRegistrar,
-    pullRequestOpener: options.github?.pullRequestOpener ?? loggingPullRequestOpener(logger),
-    routes: options.github?.routes,
-    webhookRoutes: options.github?.webhookRoutes,
+    app: githubApp?.app ?? null,
+    installUrl: githubApp?.installUrl ?? null,
+    pullRequestOpener:
+      options.github?.pullRequestOpener ?? createPullRequestOpener(githubApp?.app ?? null, logger),
   };
   const hub = new RunnerHub();
   const eventStore = new EventStore(db);
@@ -86,6 +106,7 @@ export function createServices(options: ServicesOptions): Services {
   });
   const blobStore =
     options.blobStore ?? new FileSystemBlobStore(options.blobDir ?? DEFAULT_BLOB_DIR);
+  const sessionCleanup = new SessionCleanup({ db, clock, hub, dispatcher }, logger);
   return {
     db,
     logger,
@@ -94,7 +115,7 @@ export function createServices(options: ServicesOptions): Services {
     events,
     lifecycle,
     github,
-    githubDomain: new GitHubDomainService(db, lifecycle),
+    githubIdle: githubApp?.idle ?? (async () => {}),
     hub,
     eventStore,
     dispatcher,
@@ -102,6 +123,7 @@ export function createServices(options: ServicesOptions): Services {
     runControls: new RunControlService(db, hub, clock, logger, github.pullRequestOpener),
     blobStore,
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
+    sessionCleanup,
     heartbeatIntervalMs,
   };
 }

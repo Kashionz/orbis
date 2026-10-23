@@ -1,4 +1,4 @@
-import { TASK_STATUSES, type TaskStatus } from "@orbis/api-contract";
+import { canTransitionManually, TASK_STATUSES, type TaskStatus } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
 import {
   canTransition,
@@ -24,8 +24,9 @@ const EXPECTED = new Set([
   "verifying→running(verification)",
   "review_gate→running(gate)",
   "review_gate→pr_open(gate)",
-  "pr_open→done(pull_request)",
   "pr_open→review_gate(pull_request)",
+  // PR 重新打開：退回 Review Gate 的 Task 回到 PR Open。
+  "review_gate→pr_open(pull_request)",
   "done→backlog(issue)",
   // Run 失敗或中止：Run 進行中的狀態回到 Ready。
   "planning→ready(run_stopped)",
@@ -42,6 +43,15 @@ const EXPECTED = new Set([
   "verifying→done(issue)",
   "review_gate→done(issue)",
   "pr_open→done(issue)",
+  // PR merge：同樣是 Done 以外的狀態都可以轉 Done（D 軌的 DomainService 需求）。
+  "backlog→done(pull_request)",
+  "ready→done(pull_request)",
+  "planning→done(pull_request)",
+  "plan_gate→done(pull_request)",
+  "running→done(pull_request)",
+  "verifying→done(pull_request)",
+  "review_gate→done(pull_request)",
+  "pr_open→done(pull_request)",
 ]);
 
 const label = (from: TaskStatus, to: TaskStatus, trigger: TransitionTrigger) =>
@@ -65,6 +75,14 @@ describe("Task 狀態機", () => {
       }
     }
   }
+
+  it("手動轉換與契約的 MANUAL_TASK_TRANSITIONS 一致", () => {
+    for (const from of TASK_STATUSES) {
+      for (const to of TASK_STATUSES) {
+        expect(canTransition(from, to, "manual")).toBe(canTransitionManually(from, to));
+      }
+    }
+  });
 
   it("手動轉換只有 Backlog 與 Ready 之間", () => {
     const manual = TASK_TRANSITIONS.filter((t) => t.trigger === "manual").map((t) =>

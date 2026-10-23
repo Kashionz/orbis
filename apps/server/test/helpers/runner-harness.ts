@@ -90,20 +90,26 @@ export class MockRunner {
   }
 
   heartbeat(extra: Record<string, unknown> = {}): void {
-    this.send({ type: "heartbeat", ts: new Date().toISOString(), active_run_ids: [], ...extra });
+    this.send({
+      type: "heartbeat",
+      ts: new Date().toISOString(),
+      active_run_ids: [],
+      accepting_dispatches: true,
+      ...extra,
+    });
   }
 
-  availability(agents: { id: string; available?: boolean }[] = [{ id: "claude-code" }]): void {
+  availability(agents: MockAgent[] = [{ id: "claude-code" }]): void {
     const frame: AgentAvailability = {
       agents: agents.map((a) => ({
         id: a.id,
-        version: "1.0.0",
+        version: a.version ?? "1.0.0",
         available: a.available ?? true,
         unavailable_reason: a.available === false ? "未登入" : null,
         capabilities: ["load_session"],
-        models: [],
-        permission_gaps: [],
-        credential: "default",
+        models: a.models ?? [],
+        permission_gaps: a.permissionGaps ?? [],
+        credential: a.credential === undefined ? "default" : a.credential,
       })),
       credentials: [{ label: "default", max_concurrent_runs: 30, active_runs: 0 }],
     };
@@ -140,17 +146,23 @@ export class MockRunner {
   }
 }
 
+/** 模擬 Runner 回報的一個 Agent（未指定的欄位用預設值；credential 預設 `default`）。 */
+export interface MockAgent {
+  id: string;
+  available?: boolean;
+  version?: string;
+  credential?: string | null;
+  models?: string[];
+  permissionGaps?: string[];
+}
+
 export interface Harness {
   ctx: TestContext;
   server: RunningServer;
   /** 開一條新的 Runner 連線（還沒送 Hello）。 */
   connect(): Promise<MockRunner>;
   /** 以某位 Member 取得 Pairing token 並完成 Pairing、回報 AgentAvailability、送一次 Heartbeat。 */
-  pairRunner(
-    member: SeededMember,
-    kind: RunnerKind,
-    agents?: { id: string; available?: boolean }[],
-  ): Promise<MockRunner>;
+  pairRunner(member: SeededMember, kind: RunnerKind, agents?: MockAgent[]): Promise<MockRunner>;
   /** 以 Runner token 重新連線。 */
   reconnect(previous: MockRunner): Promise<MockRunner>;
   close(): Promise<void>;
@@ -194,7 +206,7 @@ export async function startHarness(
     return runner;
   }
 
-  async function finishHello(runner: MockRunner, agents?: { id: string; available?: boolean }[]) {
+  async function finishHello(runner: MockRunner, agents?: MockAgent[]) {
     const ack = await runner.next("hello_ack");
     runner.runnerId = ack.runner_id;
     if (ack.runner_token) runner.runnerToken = ack.runner_token;

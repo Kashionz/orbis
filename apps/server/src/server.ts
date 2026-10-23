@@ -9,7 +9,7 @@ import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
 import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
-import { createServices, type Services } from "./services";
+import { createServices, type Services, type ServicesOptions } from "./services";
 import { attachWebEndpoint, type WebEndpoint } from "./web/ws";
 import { UpgradeRouter } from "./ws-upgrade";
 
@@ -22,12 +22,14 @@ export interface ServerDeps {
     | "devPairingToken"
     | "runnerHeartbeatIntervalMs"
   > &
-    Partial<Pick<Config, "blobDir">>;
+    Partial<Pick<Config, "blobDir" | "apiOrigin">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
   /** 未提供時以 config、db、logger 建立預設的服務。 */
   services?: Services;
+  /** GitHub 整合（main.ts 依 GitHub App 的環境變數提供）。 */
+  github?: ServicesOptions["github"];
   /** 測試用：縮短等待 Hello 的時間。 */
   helloTimeoutMs?: number;
   /** 測試用：Web 即時推送重新檢查權限的間隔。 */
@@ -53,6 +55,8 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       logger: deps.logger,
       heartbeatIntervalMs: deps.config.runnerHeartbeatIntervalMs,
       blobDir: deps.config.blobDir,
+      publicUrl: deps.config.publicUrl,
+      ...(deps.github && { github: deps.github }),
     });
   const app = createApp({ ...deps, services });
   const server = createAdaptorServer({ fetch: app.fetch }) as Server;
@@ -86,6 +90,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   if (intervalMs > 0) {
     services.dispatcher.start(intervalMs);
     services.blobCleanup.start();
+    services.sessionCleanup.start();
   }
 
   return {
@@ -96,7 +101,9 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     close: async () => {
       services.dispatcher.stop();
       services.blobCleanup.stop();
+      services.sessionCleanup.stop();
       await services.dispatcher.idle();
+      await services.githubIdle();
       router.close();
       await runnerEndpoint.close();
       await webEndpoint.close();

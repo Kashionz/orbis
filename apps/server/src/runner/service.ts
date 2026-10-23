@@ -44,6 +44,8 @@ export async function createPairingToken(
     teamId: string;
     kind: RunnerKind;
     createdByMemberId: string;
+    /** 建立 token 的 session；Pairing 時複製到 runners.paired_session_id（只用於 Local Runner）。 */
+    createdBySessionId: string | null;
     now: Date;
   },
 ): Promise<{ id: string; token: string; expiresAt: Date }> {
@@ -57,6 +59,7 @@ export async function createPairingToken(
       memberId: params.kind === "local" ? params.createdByMemberId : null,
       tokenHash: sha256Hex(token),
       createdByMemberId: params.createdByMemberId,
+      createdBySessionId: params.kind === "local" ? params.createdBySessionId : null,
       expiresAt,
     })
     .returning({ id: runnerPairingTokens.id });
@@ -105,6 +108,8 @@ export async function pairRunner(
         teamId: pairing.teamId,
         kind: pairing.kind,
         memberId: pairing.memberId,
+        // 登出或 session 過期時，Server 依此撤銷這台 Local Runner（ARCHITECTURE §16）。
+        pairedSessionId: pairing.kind === "local" ? pairing.createdBySessionId : null,
       })
       .returning(RUNNER_COLUMNS);
     if (!runner) throw new Error("建立 Runner 失敗");

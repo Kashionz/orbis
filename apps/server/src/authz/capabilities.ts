@@ -1,11 +1,13 @@
 // Role 授權（ARCHITECTURE §12.2）。純函式：給定 Role、Project 政策與 Task，判斷能不能做某件事。
 // 權限檢查只在 Server 端做；每個 API 在讀到資源後呼叫 authorize()。
 
-import type { Role } from "@orbis/api-contract";
+import type { Role, RunnerKind } from "@orbis/api-contract";
+import type { PermissionPurpose } from "@orbis/protocol";
 
 /**
  * 能力。對應 §12.2 的矩陣，以及計畫核准時補充的規則（矩陣沒寫到的操作一律 Admin 以上）。
- * 「核准 config 的信任」與「Credential 的並行上限」目前沒有資料表或協定可以實作，留到 A2／B2。
+ * 「核准 config 的信任」是權限請求的一種（purpose = config_trust），見 authorizePermissionResponse()。
+ * 「Credential 的並行上限」目前沒有資料表或協定可以實作，留到 B2。
  */
 export const CAPABILITIES = [
   /** 查看與留言。 */
@@ -93,6 +95,37 @@ export function authorize(capability: Capability, input: AuthzInput): AuthzResul
       input.task?.gateAssigneeMemberId === input.memberId)
   ) {
     return { ok: false, reason: "這個 Project 不允許核准指派給自己的 Task" };
+  }
+  return { ok: true };
+}
+
+export interface PermissionResponseAuthzInput {
+  memberId: string;
+  /** 在 Run 所屬 Project 的有效 Role。 */
+  role: Role;
+  /** Run 跑在哪一種 Runner。 */
+  runnerKind: RunnerKind;
+  /** Local Runner 的擁有者；Team Runner 為 null。 */
+  runnerOwnerMemberId: string | null;
+  purpose: PermissionPurpose;
+}
+
+/**
+ * 能不能回覆 Agent 的權限請求（ARCHITECTURE §8、§12.2）：
+ * - `config_trust`（設定的信任核准）：Admin 以上，不論 Runner 種類。
+ * - 其他用途（`tool`、`agent_settings_changed`）：
+ *   - Local Runner 上的 Run：只有該 Runner 的擁有者（且仍是 Member 以上）。
+ *   - Team Runner 上的 Run：有效 Role 至少是 Member。
+ */
+export function authorizePermissionResponse(input: PermissionResponseAuthzInput): AuthzResult {
+  if (input.purpose === "config_trust") {
+    return roleAtLeast(input.role, "admin")
+      ? { ok: true }
+      : { ok: false, reason: "設定的信任核准需要 admin 以上的 Role" };
+  }
+  if (!roleAtLeast(input.role, "member")) return { ok: false, reason: "需要 member 以上的 Role" };
+  if (input.runnerKind === "local" && input.runnerOwnerMemberId !== input.memberId) {
+    return { ok: false, reason: "只有這台 Local Runner 的擁有者能回覆它的權限請求" };
   }
   return { ok: true };
 }

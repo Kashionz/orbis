@@ -32,6 +32,7 @@ describe("Server 設定", () => {
       databaseUrl: REQUIRED[envVar("DATABASE_URL")],
       port: DEFAULT_SERVER_PORT,
       publicUrl: DEFAULT_PUBLIC_URL,
+      apiOrigin: `http://localhost:${DEFAULT_SERVER_PORT}`,
       github: { clientId: "client-id", clientSecret: "client-secret" },
       bootstrapOwnerGithubUserId: null,
       devPairingToken: null,
@@ -104,6 +105,18 @@ describe("Server 設定", () => {
     expect(config.bootstrapOwnerGithubUserId).toBe(583231);
     expect(config.devPairingToken).toBe("pt_dev");
     expect(config.runnerHeartbeatIntervalMs).toBe(5000);
+  });
+
+  it("API origin：未設定時是本機的 Server port，設定時只取 origin", () => {
+    expect(loadConfig({ ...REQUIRED, [envVar("SERVER_PORT")]: "4100" }).apiOrigin).toBe(
+      "http://localhost:4100",
+    );
+    expect(
+      loadConfig({ ...REQUIRED, [envVar("API_ORIGIN")]: "https://api.example.test/" }).apiOrigin,
+    ).toBe("https://api.example.test");
+    expect(configError({ ...REQUIRED, [envVar("API_ORIGIN")]: "ftp://x" }).problems[0]).toContain(
+      envVar("API_ORIGIN"),
+    );
   });
 
   it("易讀 log：未指定時依 NODE_ENV 決定，LOG_PRETTY 可以覆寫", () => {

@@ -1,18 +1,34 @@
 // Runner 登錄（Pairing token、撤銷、AgentAvailability）與 Dispatch 佇列（派工規則、逾時、改派）。
 // 以模擬 Runner 直接送協定 frame，時間用 ManualClock 推進。
 
-import { NAMES, Run } from "@orbis/api-contract";
+import {
+  API_ROUTES,
+  apiPath,
+  DispatchOptions,
+  NAMES,
+  PairingTokenCreated,
+  Run,
+  Runner,
+} from "@orbis/api-contract";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { PairingTokenCreated, Runner } from "../src/contract-pending";
-import { dispatches, runners, runs, tasks } from "../src/db/schema";
+import {
+  dispatches,
+  projects,
+  runnerPairingTokens,
+  runners,
+  runs,
+  sessions,
+  tasks,
+} from "../src/db/schema";
 import { CLOSE_REVOKED } from "../src/runner/hub";
 import {
   client,
   expectContract,
   resetDatabase,
   type SeededTeam,
+  seedMember,
   seedProject,
   seedReadyTask,
   seedTeam,
@@ -87,6 +103,13 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       const ack = await runner.next("hello_ack");
       const [row] = await database.db.select().from(runners).where(eq(runners.id, ack.runner_id));
       expect(row).toMatchObject({ kind: "local", memberId: team.members.member.id });
+      // 建立 token 的 session 複製到 Runner，登出時據此撤銷。
+      const [token] = await database.db
+        .select()
+        .from(runnerPairingTokens)
+        .where(eq(runnerPairingTokens.id, created.id));
+      expect(token?.createdBySessionId).not.toBeNull();
+      expect(row?.pairedSessionId).toBe(token?.createdBySessionId);
 
       const again = await h.connect();
       again.hello({ kind: "pairing_token", token: created.token });
@@ -117,7 +140,12 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       runner.hello({ kind: "pairing_token", token: res.body.token });
       const ack = await runner.next("hello_ack");
       const [row] = await database.db.select().from(runners).where(eq(runners.id, ack.runner_id));
-      expect(row).toMatchObject({ kind: "team", memberId: null, teamId: team.teamId });
+      expect(row).toMatchObject({
+        kind: "team",
+        memberId: null,
+        teamId: team.teamId,
+        pairedSessionId: null,
+      });
     });
 
     it("Viewer 不能產生 Local Runner 的 Pairing token", async () => {
@@ -146,6 +174,12 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
         ["claude-code", true, 30],
         ["codex", false, 30],
       ]);
+    });
+
+    it("沒有 Credential 的 Agent，credential 是 null（不是空字串）", async () => {
+      await h.pairRunner(team.members.member, "local", [{ id: "gemini", credential: null }]);
+      const list = expectContract(z.array(Runner), (await as("member").get("/api/runners")).body);
+      expect(list[0]?.agents).toMatchObject([{ agent: "gemini", credential: null }]);
     });
 
     it("Member 只看得到 Team Runner 與自己的 Local Runner；Admin 看得到全部", async () => {
@@ -298,7 +332,17 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
         runnerKind: "team",
         permissionPolicy: "yolo",
       });
-      expect(teamYolo.status).toBe(422);
+      // 契約的 CreateRunInput 直接拒絕（400，issues 指向 permissionPolicy）。
+      expect(teamYolo.status).toBe(400);
+      expect(teamYolo.body).toMatchObject({
+        error: "invalid_input",
+        issues: [{ path: ["permissionPolicy"] }],
+      });
+      // Project 的預設政策是 yolo 時，派工到 Team Runner 由 Server 拒絕。
+      await database.db.execute(
+        sql`update projects set default_permission_policy = 'yolo' where id = ${project.id}`,
+      );
+      expect((await dispatch(b.id, { agent: "claude-code", runnerKind: "team" })).status).toBe(422);
       const localYolo = await dispatch(b.id, {
         agent: "claude-code",
         runnerKind: "local",
@@ -314,6 +358,191 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       await as("member").post(`/api/runs/${first.id}/cancel`);
       const second = (await dispatch(task.id)).body;
       expect(second.branch).toBe(`${NAMES.branchPrefix}${task.key}-add-login-page-r2`);
+    });
+  });
+
+  describe("派工對話框的選項", () => {
+    const optionsOf = async (role: keyof SeededTeam["members"]) => {
+      const res = await as(role).get(
+        apiPath(API_ROUTES.projectDispatchOptions, { projectId: project.id }),
+      );
+      expect(res.status).toBe(200);
+      return expectContract(DispatchOptions, res.body);
+    };
+
+    it("彙整本人的 Local Runner 與 Team Runner 回報的 Agent，並帶 Project 的預設政策", async () => {
+      await database.db
+        .update(projects)
+        .set({ defaultPermissionPolicy: "manual" })
+        .where(eq(projects.id, project.id));
+      expect(await optionsOf("member")).toEqual({
+        local: null,
+        team: null,
+        defaultPermissionPolicy: "manual",
+      });
+      await h.pairRunner(team.members.member, "local", [
+        { id: "claude-code", models: ["opus"], permissionGaps: [".claude/settings.json"] },
+        { id: "codex", available: false },
+      ]);
+      // 別人的 Local Runner 不算在「我的電腦」。
+      await h.pairRunner(team.members.admin, "local", [{ id: "gemini" }]);
+      const first = await h.pairRunner(team.members.admin, "team", [
+        { id: "claude-code", models: ["sonnet"] },
+      ]);
+      await h.pairRunner(team.members.owner, "team", [
+        { id: "claude-code", models: ["opus"], permissionGaps: ["hooks"] },
+      ]);
+      expect(first.runnerId).toBeTruthy();
+
+      const options = await optionsOf("member");
+      expect(options.local).toEqual({
+        online: true,
+        agents: [
+          {
+            id: "claude-code",
+            version: "1.0.0",
+            available: true,
+            unavailableReason: null,
+            models: ["opus"],
+            permissionGaps: [".claude/settings.json"],
+          },
+          {
+            id: "codex",
+            version: "1.0.0",
+            available: false,
+            unavailableReason: "未登入",
+            models: [],
+            permissionGaps: [],
+          },
+        ],
+      });
+      // 多台 Team Runner：models 與 permissionGaps 取聯集。
+      expect(options.team?.agents).toEqual([
+        {
+          id: "claude-code",
+          version: "1.0.0",
+          available: true,
+          unavailableReason: null,
+          models: ["opus", "sonnet"],
+          permissionGaps: ["hooks"],
+        },
+      ]);
+    });
+
+    it("Runner 暫停領取或離線時，online 為 false、Agent 不可用", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      mine.heartbeat({ accepting_dispatches: false });
+      await waitUntil(() => !h.ctx.services.hub.isAcceptingDispatches(mine.runnerId));
+      const paused = await optionsOf("member");
+      expect(paused.local).toMatchObject({
+        online: false,
+        agents: [{ id: "claude-code", available: false }],
+      });
+      expect(paused.local?.agents[0]?.unavailableReason).not.toBeNull();
+      mine.close();
+      await mine.closed;
+      await waitUntil(() => !h.ctx.services.hub.isOnline(mine.runnerId));
+      expect((await optionsOf("member")).local).toMatchObject({ online: false });
+    });
+
+    it("依 Role 與 Project 政策：Viewer 都是 null；禁止 Member 派工到 Team Runner 時 Member 的 team 是 null", async () => {
+      await h.pairRunner(team.members.admin, "team");
+      expect(await optionsOf("viewer")).toMatchObject({ local: null, team: null });
+      expect((await optionsOf("member")).team).not.toBeNull();
+      await database.db
+        .update(projects)
+        .set({ allowMemberTeamRunnerDispatch: false })
+        .where(eq(projects.id, project.id));
+      expect((await optionsOf("member")).team).toBeNull();
+      expect((await optionsOf("admin")).team).not.toBeNull();
+    });
+
+    it("撤銷的 Runner 不列入；其他 Team 的 Project 回 404", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      expect((await as("member").delete(`/api/runners/${mine.runnerId}`)).status).toBe(204);
+      expect((await optionsOf("member")).local).toBeNull();
+      const other = await seedTeam(database.db, "Other");
+      const res = await client(h.ctx.app, other.members.owner.cookie).get(
+        apiPath(API_ROUTES.projectDispatchOptions, { projectId: project.id }),
+      );
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("登出與 session 過期時撤銷 Local Runner", () => {
+    it("登出：撤銷這個 session 配對的 Local Runner 並立刻斷線，其他 Runner 不受影響", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      // 同一個人在另一個 session（例如另一台電腦）配對的 Local Runner。
+      const otherSession = await seedMember(database.db, team.teamId, "member");
+      await database.db
+        .update(sessions)
+        .set({ githubUserId: team.members.member.githubUserId })
+        .where(eq(sessions.githubUserId, otherSession.githubUserId));
+      const elsewhere = await h.pairRunner(
+        { ...team.members.member, cookie: otherSession.cookie },
+        "local",
+      );
+      const teamRunner = await h.pairRunner(team.members.admin, "team");
+      const unused = await as("member").post<{ id: string; token: string }>(
+        "/api/runner-pairing-tokens",
+        { kind: "local" },
+      );
+
+      expect((await as("member").post("/api/auth/logout")).status).toBe(204);
+      expect(await mine.closed).toBe(CLOSE_REVOKED);
+      const [row] = await database.db.select().from(runners).where(eq(runners.id, mine.runnerId));
+      expect(row?.revokedAt).not.toBeNull();
+      expect(h.ctx.services.hub.isOnline(elsewhere.runnerId)).toBe(true);
+      expect(h.ctx.services.hub.isOnline(teamRunner.runnerId)).toBe(true);
+      // 還沒使用的 Pairing token 也一併失效。
+      const late = await h.connect();
+      late.hello({ kind: "pairing_token", token: unused.body.token });
+      expect(await late.next("hello_rejected")).toMatchObject({ reason: "invalid_pairing_token" });
+      // 撤銷後 Runner token 不能再連線。
+      const back = await h.connect();
+      back.hello({ kind: "runner_token", runner_id: mine.runnerId, token: mine.runnerToken });
+      expect(await back.next("hello_rejected")).toMatchObject({ reason: "invalid_runner_token" });
+    });
+
+    it("登出時 Runner 上進行中的 Run 回到佇列", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      const run = (await dispatch((await readyTask()).id)).body;
+      await h.ctx.services.dispatcher.kick();
+      const offer = await mine.next("dispatch_offer");
+      mine.send({ type: "dispatch_accept", dispatch_id: offer.dispatch_id });
+      await waitUntil(async () => (await runRow(run.id))?.status === "starting");
+      await as("member").post("/api/auth/logout");
+      expect(await mine.closed).toBe(CLOSE_REVOKED);
+      expect((await runRow(run.id))?.status).toBe("queued");
+    });
+
+    it("清除過期 session 時，先撤銷它配對的 Local Runner 再刪除 session", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      const keep = await h.pairRunner(team.members.admin, "local");
+      await database.db
+        .update(sessions)
+        .set({ expiresAt: new Date(h.ctx.clock.now().getTime() - 1) })
+        .where(eq(sessions.githubUserId, team.members.member.githubUserId));
+      expect(await h.ctx.services.sessionCleanup.runOnce()).toBe(1);
+      expect(await mine.closed).toBe(CLOSE_REVOKED);
+      const [row] = await database.db.select().from(runners).where(eq(runners.id, mine.runnerId));
+      expect(row?.revokedAt).not.toBeNull();
+      expect(
+        await database.db
+          .select()
+          .from(sessions)
+          .where(eq(sessions.githubUserId, team.members.member.githubUserId)),
+      ).toHaveLength(0);
+      expect(h.ctx.services.hub.isOnline(keep.runnerId)).toBe(true);
+    });
+
+    it("Desktop 以 session cookie 撤銷自己的 Local Runner", async () => {
+      const mine = await h.pairRunner(team.members.member, "local");
+      const res = await as("member").delete(
+        apiPath(API_ROUTES.runner, { runnerId: mine.runnerId }),
+      );
+      expect(res.status).toBe(204);
+      expect(await mine.closed).toBe(CLOSE_REVOKED);
     });
   });
 
@@ -454,6 +683,39 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
         `/api/runs/${run.id}/events`,
       );
       expect(events.body.map((e) => e.event.text)).toEqual(["0", "1", "2", "新的"]);
+    });
+
+    it("改派也遵守派工規則：Local Run 不會改派給在線的 Team Runner，也不派給暫停領取的 Runner", async () => {
+      const { mine, run, offer } = await offered();
+      const teamRunner = await h.pairRunner(team.members.admin, "team");
+      mine.send({ type: "dispatch_accept", dispatch_id: offer.dispatch_id });
+      await waitUntil(async () => (await runRow(run.id))?.status === "starting");
+
+      h.ctx.clock.advance(3 * HEARTBEAT_INTERVAL_MS + 1);
+      teamRunner.heartbeat();
+      await waitUntil(async () => {
+        const [row] = await database.db
+          .select()
+          .from(runners)
+          .where(eq(runners.id, teamRunner.runnerId));
+        return row?.lastHeartbeatAt?.getTime() === h.ctx.clock.now().getTime();
+      });
+      await h.ctx.services.dispatcher.kick();
+      expect(await mine.closed).toBe(4002);
+      expect((await runRow(run.id))?.status).toBe("queued");
+      await h.ctx.services.dispatcher.kick();
+      expect(teamRunner.pending("dispatch_offer")).toHaveLength(0);
+      expect((await runRow(run.id))?.status).toBe("queued");
+
+      // 負責的 Local Runner 回來但暫停領取時也不派；恢復後才派。
+      const back = await h.reconnect(mine);
+      back.heartbeat({ accepting_dispatches: false });
+      await waitUntil(() => !h.ctx.services.hub.isAcceptingDispatches(back.runnerId));
+      await h.ctx.services.dispatcher.kick();
+      expect(back.pending("dispatch_offer")).toHaveLength(0);
+      back.heartbeat({ accepting_dispatches: true });
+      expect(await back.next("dispatch_offer")).toMatchObject({ run_id: run.id });
+      expect(teamRunner.pending("dispatch_offer")).toHaveLength(0);
     });
 
     it("撤銷 Runner：立刻斷線、Runner token 失效、進行中的 Run 回到佇列", async () => {

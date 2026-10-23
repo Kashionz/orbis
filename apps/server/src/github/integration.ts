@@ -1,11 +1,12 @@
-// GitHub 整合（D 軌，packages/github）與 Server 之間的介面。
+// GitHub 整合與 Server 之間的介面。
 //
-// - Server → D 軌：`GitHubIntegration` 的各個介面，由 D 軌實作後在組裝 Server 時傳入。
-//   沒有傳入時使用這裡的預設實作（只記 log、不連 GitHub），讓 Server 可以單獨運作與測試。
-// - D 軌 → Server：見 domain/github-domain.ts 的 `GitHubDomainService`。
+// - GitHub App 整合（D 軌，packages/github 的 createGitHubIntegration）由 github/app.ts 組裝：
+//   Server 提供 DomainService（domain/github-domain.ts）、GitHubStore（github/store.ts）、Notifier。
+//   沒有設定 GitHub App 時 `app` 為 null，Server 照常運作，只是不連 GitHub。
+// - GitHub 使用者查詢（新增 Member 時以 login 查數字 user id）用公開 API，與 App 無關。
 
 import { NAMES } from "@orbis/api-contract";
-import type { Hono } from "hono";
+import type { GitHubIntegration as GitHubAppIntegration } from "@orbis/github";
 import { z } from "zod";
 import type { GitHubUser } from "../auth/github-oauth";
 import type { Logger } from "../logger";
@@ -15,29 +16,16 @@ export interface GitHubUserLookup {
   findByLogin(login: string): Promise<GitHubUser | null>;
 }
 
-export interface RepoRegistration {
-  owner: string;
-  name: string;
-  defaultBranch: string;
-  /** GitHub 的 repository id；查不到時為 null。 */
-  githubRepoId: number | null;
-}
-
-/**
- * 登記 Repo 前的檢查（D 軌：確認 GitHub App 安裝在該 Repo、讀取 default branch）。
- * 不能登記時丟出 `RepoRegistrationError`。
- */
-export interface RepoRegistrar {
-  register(input: {
-    owner: string;
-    name: string;
-    defaultBranch: string;
-  }): Promise<RepoRegistration>;
-}
-
-export class RepoRegistrationError extends Error {
-  override name = "RepoRegistrationError";
-}
+/** Server 用到的 GitHub App 整合介面。 */
+export type GitHubApp = Pick<
+  GitHubAppIntegration,
+  | "handleWebhook"
+  | "onTaskChanged"
+  | "onBranchPushed"
+  | "inspectRepo"
+  | "listImportableIssues"
+  | "importIssues"
+>;
 
 export interface OpenPullRequestInput {
   taskId: string;
@@ -48,22 +36,21 @@ export interface OpenPullRequestInput {
   commitSha: string;
 }
 
-/** Review Gate 核准、Runner push 完成後開 PR（D 軌實作）。 */
+export type OpenPullRequestOutcome =
+  /** `url` 為 null：GitHub 整合停用，沒有開 PR。 */
+  { ok: true; url: string | null } | { ok: false; message: string };
+
+/** Review Gate 核准、Runner push 完成後開 PR。 */
 export interface PullRequestOpener {
-  openPullRequest(input: OpenPullRequestInput): Promise<void>;
+  openPullRequest(input: OpenPullRequestInput): Promise<OpenPullRequestOutcome>;
 }
 
-/** D 軌掛在 Server 上的 HTTP 路由。 */
-export interface GitHubRoutes {
-  /** 掛在 `/api/github`（Repo 登記、從 Issue 匯入等）。 */
-  routes?: Hono;
-  /** 掛在 `/api/webhooks/github`（webhook，不經過登入檢查）。 */
-  webhookRoutes?: Hono;
-}
-
-export interface GitHubIntegration extends GitHubRoutes {
+export interface GitHubIntegration {
   userLookup: GitHubUserLookup;
-  repoRegistrar: RepoRegistrar;
+  /** GitHub App 整合；沒有設定 GitHub App 時為 null。 */
+  app: GitHubApp | null;
+  /** 安裝 GitHub App 的網址（Repo 資源的 `github.installUrl`）；app 為 null 時為 null。 */
+  installUrl: string | null;
   pullRequestOpener: PullRequestOpener;
 }
 
@@ -97,16 +84,16 @@ export function createGitHubUserLookup(fetchImpl: typeof fetch = fetch): GitHubU
   };
 }
 
-/** D 軌接上之前的預設實作：直接採用輸入的 default branch。 */
-export const passthroughRepoRegistrar: RepoRegistrar = {
-  register: async (input) => ({ ...input, githubRepoId: null }),
-};
-
-/** D 軌接上之前的預設實作：只記 log。 */
-export function loggingPullRequestOpener(logger: Logger): PullRequestOpener {
+/** 以 GitHub App 整合開 PR；整合停用時只記 log。 */
+export function createPullRequestOpener(app: GitHubApp | null, logger: Logger): PullRequestOpener {
   return {
     async openPullRequest(input) {
-      logger.warn(input, "尚未接上 GitHub 整合，略過開 PR");
+      if (!app) {
+        logger.warn(input, "沒有設定 GitHub App，略過開 PR");
+        return { ok: true, url: null };
+      }
+      const result = await app.onBranchPushed(input);
+      return result.ok ? { ok: true, url: result.url } : { ok: false, message: result.message };
     },
   };
 }

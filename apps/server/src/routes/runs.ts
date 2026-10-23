@@ -1,19 +1,42 @@
-// Run：派工、查詢、中止、Event 重播與 review diff（ARCHITECTURE §4、§6.1、§10、§14）。
+// Run：派工、派工對話框的選項、查詢、中止、Event 重播與 review diff（ARCHITECTURE §4、§6.1、§10、§14）。
 
-import type { RunEvent } from "@orbis/api-contract";
-import { and, asc, count, eq, isNull, ne } from "drizzle-orm";
+import {
+  API_ROUTES,
+  CreateRunInput,
+  type DispatchOptions,
+  type ReviewDiff,
+  type RunEvent,
+} from "@orbis/api-contract";
+import type { RunDiff } from "@orbis/protocol";
+import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { loadRunScope, loadTaskScope, requireProjectCapability } from "../authz/scope";
-import { CreateRunInput, REVIEW_DIFF_EVENT_KIND } from "../contract-pending";
-import { dispatches, needsYouItems, runs, taskDependencies, tasks } from "../db/schema";
+import { authorize } from "../authz/capabilities";
+import {
+  loadProjectScope,
+  loadRunScope,
+  loadTaskScope,
+  type ProjectScope,
+  requireProjectCapability,
+} from "../authz/scope";
+import {
+  agentAvailabilities,
+  dispatches,
+  needsYouItems,
+  runners,
+  runs,
+  taskDependencies,
+  tasks,
+} from "../db/schema";
 import { inTransaction } from "../db/tx";
 import { isTerminalRunStatus } from "../domain/run-status";
 import { isInFlight } from "../domain/task-state-machine";
 import { toRun, toRunEvent } from "../http/dto";
 import { ApiError, conflict, notFound, readId, readJson, readQuery } from "../http/errors";
 import type { AppEnv } from "../http/session";
+import { summarizeDispatchTarget } from "../runner/dispatch-options";
 import { branchName, runSequence } from "../runner/dispatcher";
+import { RUN_DIFF_EVENT_KIND } from "../runs/event-ingest";
 import type { Services } from "../services";
 
 const ListEventsQuery = z.object({
@@ -25,7 +48,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
   const { db, auth } = s;
   const app = new Hono<AppEnv>();
 
-  app.get("/tasks/:taskId/runs", auth, async (c) => {
+  app.get(API_ROUTES.taskRuns, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "view");
@@ -41,7 +64,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
    * 派工：建立 Run 並放進佇列。Task 必須在 Ready、相依的 Task 都已 Done。
    * Permission Policy 未指定時用 Project 的預設；`yolo` 只能用在「我的電腦」（Local Runner）。
    */
-  app.post("/tasks/:taskId/runs", auth, async (c) => {
+  app.post(API_ROUTES.taskRuns, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     const input = await readJson(c, CreateRunInput);
@@ -89,7 +112,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
     return c.json(toRun(run), 201);
   });
 
-  app.get("/runs/:runId", auth, async (c) => {
+  app.get(API_ROUTES.run, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
     requireProjectCapability(actor, scope, "view");
@@ -97,7 +120,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
   });
 
   /** 中止 Run。還沒被 Runner 接受時直接結束；已在 Runner 上執行時送 cancel，結果以 Event 回報。 */
-  app.post("/runs/:runId/cancel", auth, async (c) => {
+  app.post(API_ROUTES.runCancel, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
     requireProjectCapability(actor, scope, "edit_task");
@@ -124,17 +147,20 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
           .returning();
         const [task] = await tx.select().from(tasks).where(eq(tasks.id, current.taskId));
         if (task && current.parentRunId === null && isInFlight(task.status)) {
-          await s.lifecycle.transition(uow, task.id, "ready", "run_stopped");
+          await s.lifecycle.transition(uow, task.id, "ready", "run_stopped", {
+            source: "api",
+            actorMemberId: actor.memberId,
+          });
         }
         return canceled ?? current;
       }
-      await s.runControls.send(tx, current.id, { action: "cancel" }, uow);
+      await s.runControls.send(tx, current.id, { action: "cancel" }, uow, actor.memberId);
       return current;
     });
     return c.json(toRun(run), 202);
   });
 
-  app.get("/runs/:runId/events", auth, async (c) => {
+  app.get(API_ROUTES.runEvents, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
     requireProjectCapability(actor, scope, "view");
@@ -143,15 +169,92 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
     return c.json(rows.map(toRunEvent) satisfies RunEvent[]);
   });
 
-  /** 最新一份 review diff（Runner 進入 Review Gate 前送出）。還沒有時回 404。 */
-  app.get("/runs/:runId/review-diff", auth, async (c) => {
+  /** 最新一份 review diff（Runner 進入 Review Gate 前送出的 `run_diff` Event）。還沒有時回 404。 */
+  app.get(API_ROUTES.runReviewDiff, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
     requireProjectCapability(actor, scope, "view");
-    const row = await s.eventStore.latestOfKind(scope.run.id, REVIEW_DIFF_EVENT_KIND);
+    const row = await s.eventStore.latestOfKind(scope.run.id, RUN_DIFF_EVENT_KIND);
     if (!row) throw notFound("review diff");
-    return c.json(toRunEvent(row));
+    const diff = row.payload as RunDiff;
+    return c.json({
+      runId: row.runId,
+      seq: row.seq,
+      baseCommit: diff.base_commit,
+      files: diff.files.map((file) => ({
+        path: file.path,
+        oldPath: file.old_path,
+        change: file.change,
+        binary: file.binary,
+        old: file.old,
+        new: file.new,
+      })),
+    } satisfies ReviewDiff);
+  });
+
+  /**
+   * 派工對話框的選項：依目前 Member 的 Role 與 Project 政策，列出「我的電腦」（本人的 Local Runner）
+   * 與 Team Runner 目前能跑的 Agent，以及 Project 預設的 Permission Policy。
+   */
+  app.get(API_ROUTES.projectDispatchOptions, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
+    requireProjectCapability(actor, scope, "view");
+    return c.json({
+      local: await dispatchTarget(s, actor.memberId, scope, "local"),
+      team: await dispatchTarget(s, actor.memberId, scope, "team"),
+      defaultPermissionPolicy: scope.project.defaultPermissionPolicy,
+    } satisfies DispatchOptions);
   });
 
   return app;
+}
+
+/**
+ * 某一種 Runner 的派工選項。不能派工到這種 Runner（Role 或 Project 政策），
+ * 或沒有任何這種 Runner（Local：本人還沒完成 Pairing）時為 null。
+ */
+async function dispatchTarget(
+  s: Services,
+  memberId: string,
+  scope: ProjectScope,
+  kind: "local" | "team",
+): Promise<DispatchOptions["local"]> {
+  const allowed = authorize(kind === "local" ? "dispatch_local" : "dispatch_team", {
+    memberId,
+    role: scope.role,
+    project: {
+      allowMemberTeamRunnerDispatch: scope.project.allowMemberTeamRunnerDispatch,
+      forbidSelfApproval: scope.project.forbidSelfApproval,
+    },
+  });
+  if (!allowed.ok) return null;
+  const rows = await s.db
+    .select({ id: runners.id })
+    .from(runners)
+    .where(
+      and(
+        eq(runners.teamId, scope.project.teamId),
+        eq(runners.kind, kind),
+        isNull(runners.revokedAt),
+        kind === "local" ? eq(runners.memberId, memberId) : undefined,
+      ),
+    )
+    .orderBy(asc(runners.createdAt), asc(runners.id));
+  if (rows.length === 0) return null;
+  const availability = await s.db
+    .select()
+    .from(agentAvailabilities)
+    .where(
+      inArray(
+        agentAvailabilities.runnerId,
+        rows.map((r) => r.id),
+      ),
+    );
+  return summarizeDispatchTarget(
+    rows.map((runner) => ({
+      dispatchable: s.hub.isOnline(runner.id) && s.hub.isAcceptingDispatches(runner.id),
+      agents: availability.filter((a) => a.runnerId === runner.id),
+    })),
+  );
 }

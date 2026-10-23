@@ -299,8 +299,11 @@ export class Dispatcher {
     };
   }
 
-  /** Runner 接受 Offer。過期或不屬於這台 Runner 的 Dispatch 一律忽略。 */
-  async onAccept(runnerId: string, accept: DispatchAccept): Promise<boolean> {
+  /** Runner 接受 Offer，回傳接受的 Dispatch。過期或不屬於這台 Runner 的 Dispatch 一律忽略（回傳 null）。 */
+  async onAccept(
+    runnerId: string,
+    accept: DispatchAccept,
+  ): Promise<{ id: string; runId: string } | null> {
     const now = this.options.clock.now();
     const accepted = await this.db.transaction(async (tx) => {
       const [dispatch] = await tx
@@ -327,13 +330,13 @@ export class Dispatcher {
         { runnerId, dispatchId: accept.dispatch_id },
         "忽略過期或不明的 dispatch_accept",
       );
-      return false;
+      return null;
     }
     this.log.info(
       { runnerId, dispatchId: accepted.id, runId: accepted.runId },
       "Runner 接受 Dispatch",
     );
-    return true;
+    return { id: accepted.id, runId: accepted.runId };
   }
 
   /** Runner 拒絕 Offer：Run 回到佇列，冷卻期間不再派給同一台 Runner。 */

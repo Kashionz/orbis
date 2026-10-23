@@ -2,16 +2,20 @@
 
 import type {
   AcceptanceCriterion,
+  Gate,
+  Member,
   NeedsYouItem,
   Project,
   Repo,
+  ReviewComment,
   Run,
   RunEvent,
   RunUsage,
   Task,
+  Team,
 } from "@orbis/api-contract";
-import { inArray } from "drizzle-orm";
-import type { Gate, Member, ReviewComment, Team } from "../contract-pending";
+import type { PermissionPurpose } from "@orbis/protocol";
+import { asc, inArray } from "drizzle-orm";
 import {
   type acceptanceCriteria,
   type gates,
@@ -20,6 +24,7 @@ import {
   type projects,
   repoSpecs,
   type repos,
+  reviewComments,
   type runEvents,
   type runs,
   taskDependencies,
@@ -54,10 +59,7 @@ export function toMember(row: typeof members.$inferSelect): Member {
   };
 }
 
-// TODO(contract): `defaultPermissionPolicy` 尚未進入契約的 ProjectPolicy。
-export function toProject(
-  row: typeof projects.$inferSelect,
-): Project & { policy: { defaultPermissionPolicy: string } } {
+export function toProject(row: typeof projects.$inferSelect): Project {
   return {
     id: row.id,
     teamId: row.teamId,
@@ -71,13 +73,19 @@ export function toProject(
       forbidSelfApproval: row.forbidSelfApproval,
       memberCanDispatchToTeamRunner: row.allowMemberTeamRunnerDispatch,
       defaultPermissionPolicy: row.defaultPermissionPolicy,
+      autoCreateIssues: row.autoCreateIssues,
     },
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
 }
 
-export function toRepo(row: typeof repos.$inferSelect): Repo {
+/**
+ * `installUrl` 是 GitHub App 的安裝網址（GitHub 整合停用時為 null）；
+ * App 已安裝在這個 repo（有 installation id）時回應中一律是 null。
+ */
+export function toRepo(row: typeof repos.$inferSelect, installUrl: string | null): Repo {
+  const installed = row.githubInstallationId !== null;
   return {
     id: row.id,
     projectId: row.projectId,
@@ -85,6 +93,7 @@ export function toRepo(row: typeof repos.$inferSelect): Repo {
     name: row.githubName,
     // 契約要求非空；建立 Repo 時一律寫入 default branch。
     defaultBranch: row.defaultBranch ?? "main",
+    github: { installed, installUrl: installed ? null : installUrl },
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -113,11 +122,11 @@ export async function toTasks(db: Executor, rows: TaskRow[]): Promise<Task[]> {
     id: row.id,
     key: row.key,
     projectId: row.projectId,
-    // 建立 Task 時一律要求 Repo（ADR-0011），所以 API 上不會是 null。
-    repoId: row.repoId ?? "",
+    repoId: row.repoId,
     title: row.title,
     description: row.description,
     status: row.status,
+    doneReason: row.doneReason,
     assigneeMemberId: row.assigneeMemberId,
     specPath: row.repoSpecId ? (specPath.get(row.repoSpecId) ?? null) : null,
     dependsOn: deps
@@ -125,8 +134,7 @@ export async function toTasks(db: Executor, rows: TaskRow[]): Promise<Task[]> {
       .map((d) => d.dependsOnTaskId)
       .sort(),
     planGateEnabled: row.planGateEnabled,
-    // TODO(contract): 契約的 createdByMemberId 是非 null，但建立者被移除時 DB 會設成 null。
-    createdByMemberId: row.createdByMemberId ?? "",
+    createdByMemberId: row.createdByMemberId,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   }));
@@ -199,9 +207,24 @@ export function toRunEvent(row: typeof runEvents.$inferSelect): RunEvent {
   };
 }
 
-export function toGate(row: typeof gates.$inferSelect): Gate {
-  // TODO(contract): 行內留言改存 gates.review_comments（contract/db）；目前暫存在 subject。
-  const subject = (row.subject ?? {}) as { reviewComments?: ReviewComment[] };
+type GateRow = typeof gates.$inferSelect;
+type ReviewCommentRow = typeof reviewComments.$inferSelect;
+
+export function toReviewComment(row: ReviewCommentRow): ReviewComment {
+  return {
+    id: row.id,
+    gateId: row.gateId,
+    path: row.path,
+    line: row.line,
+    side: row.side,
+    body: row.body,
+    authorMemberId: row.authorMemberId,
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
+export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
   return {
     id: row.id,
     taskId: row.taskId,
@@ -211,9 +234,25 @@ export function toGate(row: typeof gates.$inferSelect): Gate {
     decidedByMemberId: row.decidedByMemberId,
     decidedAt: isoOrNull(row.decidedAt),
     comment: row.comment,
-    reviewComments: subject.reviewComments ?? [],
+    reviewComments: comments.filter((c) => c.gateId === row.id).map(toReviewComment),
     createdAt: iso(row.createdAt),
   };
+}
+
+/** 一次查出多個 Gate 的行內留言，組成 API 回應。 */
+export async function toGates(db: Executor, rows: GateRow[]): Promise<Gate[]> {
+  if (rows.length === 0) return [];
+  const comments = await db
+    .select()
+    .from(reviewComments)
+    .where(
+      inArray(
+        reviewComments.gateId,
+        rows.map((g) => g.id),
+      ),
+    )
+    .orderBy(asc(reviewComments.path), asc(reviewComments.line), asc(reviewComments.createdAt));
+  return rows.map((row) => toGate(row, comments));
 }
 
 /** Needs You 項目；呼叫端要一併提供 Task Key。 */
@@ -238,6 +277,7 @@ export function toNeedsYou(
         permissionRequestId: String(payload.permissionRequestId),
         toolCallId: (payload.toolCallId as string | null) ?? null,
         title: String(payload.title ?? ""),
+        purpose: (payload.purpose as PermissionPurpose | undefined) ?? "tool",
         options: payload.options as Extract<
           NeedsYouItem,
           { kind: "permission_request" }

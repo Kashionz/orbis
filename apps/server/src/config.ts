@@ -16,6 +16,11 @@ export interface Config {
   port: number;
   /** Web 的 origin，OAuth 的 redirect_uri 與登入後導回的位置都以它為準。 */
   publicUrl: string;
+  /**
+   * Server 的公開網址（Runner 連 `<apiOrigin>/runner`），由 `/api/health` 回傳給 Desktop。
+   * 未設定時為 `http://localhost:<port>`。
+   */
+  apiOrigin: string;
   github: { clientId: string; clientSecret: string };
   /** 第一次登入時建立 Team 並成為 Owner 的 GitHub login；未設定時不會自動建立 Team。 */
   /**
@@ -65,6 +70,7 @@ export const CONFIG_ENV = {
   databaseUrl: envVar("DATABASE_URL"),
   port: envVar("SERVER_PORT"),
   publicUrl: envVar("PUBLIC_URL"),
+  apiOrigin: envVar("API_ORIGIN"),
   githubClientId: envVar("GITHUB_CLIENT_ID"),
   githubClientSecret: envVar("GITHUB_CLIENT_SECRET"),
   bootstrapOwnerGithubUserId: envVar("BOOTSTRAP_OWNER"),
@@ -84,6 +90,9 @@ const EnvSchema = z.object({
   port: port(DEFAULT_SERVER_PORT),
   publicUrl: optionalString.pipe(
     z.url({ protocol: /^https?$/, error: "必須是 http(s) 網址" }).default(DEFAULT_PUBLIC_URL),
+  ),
+  apiOrigin: optionalString.pipe(
+    z.url({ protocol: /^https?$/, error: "必須是 http(s) 網址" }).optional(),
   ),
   githubClientId: required,
   githubClientSecret: required,
@@ -128,6 +137,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     databaseUrl: e.databaseUrl,
     port: e.port,
     publicUrl: e.publicUrl.replace(/\/+$/, ""),
+    apiOrigin: new URL(e.apiOrigin ?? `http://localhost:${e.port}`).origin,
     github: { clientId: e.githubClientId, clientSecret: e.githubClientSecret },
     bootstrapOwnerGithubUserId: e.bootstrapOwnerGithubUserId ?? null,
     devPairingToken: e.devPairingToken ?? null,

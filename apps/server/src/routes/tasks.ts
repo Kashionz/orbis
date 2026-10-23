@@ -1,6 +1,7 @@
 // Task、Task 相依、Acceptance Criterion、手動狀態轉換（ARCHITECTURE §4、§5）。
 
 import {
+  API_ROUTES,
   CreateAcceptanceCriterionInput,
   CreateTaskInput,
   formatTaskKey,
@@ -50,7 +51,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
   const { db, auth, events } = s;
   const app = new Hono<AppEnv>();
 
-  app.get("/projects/:projectId/tasks", auth, async (c) => {
+  app.get(API_ROUTES.projectTasks, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "view");
@@ -68,7 +69,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.json(await toTasks(db, rows));
   });
 
-  app.post("/projects/:projectId/tasks", auth, async (c) => {
+  app.post(API_ROUTES.projectTasks, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "edit_task");
@@ -115,16 +116,22 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
           .values(dependsOn.map((d) => ({ taskId: row.id, dependsOnTaskId: d })));
       }
       uow.afterCommit(() =>
-        events.emit({ type: "task.created", taskId: row.id, projectId: row.projectId }),
+        events.emit({
+          type: "task.created",
+          taskId: row.id,
+          projectId: row.projectId,
+          source: "api",
+          actorMemberId: actor.memberId,
+        }),
       );
       return row;
     });
     return c.json(await toTask(db, task), 201);
   });
 
-  app.get("/tasks/by-key/:key", auth, async (c) => {
+  app.get(API_ROUTES.taskByKey, auth, async (c) => {
     const actor = c.get("actor");
-    const key = c.req.param("key");
+    const key = c.req.param("taskKey");
     const parsed = parseTaskKey(key);
     if (!parsed) throw notFound("Task");
     const [row] = await db
@@ -144,14 +151,14 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.json(await toTask(db, scope.task));
   });
 
-  app.get("/tasks/:taskId", auth, async (c) => {
+  app.get(API_ROUTES.task, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "view");
     return c.json(await toTask(db, scope.task));
   });
 
-  app.patch("/tasks/:taskId", auth, async (c) => {
+  app.patch(API_ROUTES.task, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
@@ -197,6 +204,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
           projectId: row.projectId,
           fields: Object.keys(input),
           source: "api",
+          actorMemberId: actor.memberId,
         }),
       );
       return row;
@@ -204,7 +212,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.json(await toTask(db, task));
   });
 
-  app.delete("/tasks/:taskId", auth, async (c) => {
+  app.delete(API_ROUTES.task, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
@@ -222,20 +230,23 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.body(null, 204);
   });
 
-  app.post("/tasks/:taskId/transition", auth, async (c) => {
+  app.post(API_ROUTES.taskTransition, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
     const input = await readJson(c, TransitionTaskInput);
     const task = await inTransaction(db, (uow) =>
-      s.lifecycle.transition(uow, scope.task.id, input.status, "manual"),
+      s.lifecycle.transition(uow, scope.task.id, input.status, "manual", {
+        source: "api",
+        actorMemberId: actor.memberId,
+      }),
     );
     return c.json(await toTask(db, task));
   });
 
   // ---- Acceptance Criterion ----
 
-  app.get("/tasks/:taskId/acceptance-criteria", auth, async (c) => {
+  app.get(API_ROUTES.taskAcceptanceCriteria, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "view");
@@ -247,7 +258,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.json(rows.map(toAcceptanceCriterion));
   });
 
-  app.post("/tasks/:taskId/acceptance-criteria", auth, async (c) => {
+  app.post(API_ROUTES.taskAcceptanceCriteria, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
@@ -281,7 +292,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.json(toAcceptanceCriterion(row), 201);
   });
 
-  app.patch("/acceptance-criteria/:criterionId", auth, async (c) => {
+  app.patch(API_ROUTES.acceptanceCriterion, auth, async (c) => {
     const actor = c.get("actor");
     const criterionId = readId(c, "criterionId", "Acceptance Criterion");
     const existing = await findCriterion(criterionId);
@@ -333,7 +344,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     return c.json(toAcceptanceCriterion(row));
   });
 
-  app.delete("/acceptance-criteria/:criterionId", auth, async (c) => {
+  app.delete(API_ROUTES.acceptanceCriterion, auth, async (c) => {
     const actor = c.get("actor");
     const criterionId = readId(c, "criterionId", "Acceptance Criterion");
     const existing = await findCriterion(criterionId);

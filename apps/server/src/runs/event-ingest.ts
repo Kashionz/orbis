@@ -5,12 +5,16 @@
 // 3. 只對第一次寫入的 Event 套用副作用（投影）：Run 欄位、Run 狀態、Task 狀態、Gate、Needs You。
 // 4. commit 後回 event_ack（連續保存的最大 seq），並通知 Web 推送。
 
-import type { EventAck, RunStatus } from "@orbis/protocol";
-import { RUN_STATUSES } from "@orbis/protocol";
+import type { EventAck, EventKindName, RunStatus } from "@orbis/protocol";
+import {
+  GATE_KINDS,
+  PERMISSION_OPTION_KINDS,
+  PERMISSION_PURPOSES,
+  RUN_STATUSES,
+} from "@orbis/protocol";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Clock } from "../clock";
-import { REVIEW_DIFF_EVENT_KIND } from "../contract-pending";
 import type { Database } from "../db/client";
 import { dispatches, gates, needsYouItems, runEvents, runs, tasks } from "../db/schema";
 import { inTransaction, type UnitOfWork } from "../db/tx";
@@ -39,10 +43,11 @@ const PermissionRequestBody = z.object({
       z.object({
         option_id: z.string().min(1),
         name: z.string(),
-        kind: z.enum(["allow_once", "allow_always", "reject_once", "reject_always"]),
+        kind: z.enum(PERMISSION_OPTION_KINDS),
       }),
     )
     .min(1),
+  purpose: z.enum(PERMISSION_PURPOSES),
 });
 
 const PermissionResolvedBody = z.object({
@@ -52,7 +57,7 @@ const PermissionResolvedBody = z.object({
 
 const StatusChangedBody = z.object({
   status: z.enum(RUN_STATUSES),
-  gate: z.enum(["plan", "review"]).nullable(),
+  gate: z.enum(GATE_KINDS).nullable(),
   message: z.string().nullable(),
 });
 
@@ -73,6 +78,9 @@ const UsageBody = z.object({
   context_window_tokens: TokenCount,
   cost: z.object({ amount: z.number(), currency: z.string() }).nullable(),
 });
+
+/** Review 用完整 diff 的 Event kind（協定的 `run_diff`）。 */
+export const RUN_DIFF_EVENT_KIND = "run_diff" satisfies EventKindName;
 
 export type IngestResult =
   | { ok: true; ack: EventAck; inserted: boolean }
@@ -202,6 +210,7 @@ export class EventIngest {
             permissionRequestId: body.request_id,
             toolCallId: body.tool_call_id,
             title: body.title,
+            purpose: body.purpose,
             options: body.options.map((o) => ({
               optionId: o.option_id,
               name: o.name,
@@ -279,6 +288,15 @@ export class EventIngest {
         ...(terminal && { finishedAt: now }),
       })
       .where(eq(runs.id, runId));
+    uow.afterCommit(() =>
+      this.lifecycle.emit({
+        type: "task.run_changed",
+        taskId: task.id,
+        projectId: task.projectId,
+        runId,
+        source: "system",
+      }),
+    );
 
     const topLevel = run.parentRunId === null;
 
@@ -326,10 +344,11 @@ export class EventIngest {
     const updated = await this.lifecycle.agentFinished(uow, task.id);
     if (updated.status !== "review_gate") return;
 
+    // 送審的是當下最新的一份 diff（之後 Runner 又送新的 diff 時，Gate 仍記得審的是哪一份）。
     const [diff] = await tx
       .select({ seq: runEvents.seq })
       .from(runEvents)
-      .where(and(eq(runEvents.runId, run.id), eq(runEvents.kind, REVIEW_DIFF_EVENT_KIND)))
+      .where(and(eq(runEvents.runId, run.id), eq(runEvents.kind, RUN_DIFF_EVENT_KIND)))
       .orderBy(desc(runEvents.seq))
       .limit(1);
     const [created] = await tx
@@ -338,11 +357,8 @@ export class EventIngest {
         taskId: task.id,
         runId: run.id,
         kind: "review",
-        // TODO(contract)：送審內容的格式隨 contract/db 定案；行內留言改存 review_comments。
-        subject: {
-          reviewDiffSeq: diff?.seq ?? null,
-          assigneeMemberId: updated.assigneeMemberId,
-        },
+        assigneeMemberIdAtCreation: updated.assigneeMemberId,
+        subject: { reviewDiffSeq: diff?.seq ?? null },
       })
       .returning();
     if (!created) throw new Error("建立 Gate 失敗");

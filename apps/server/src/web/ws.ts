@@ -4,16 +4,26 @@
 // 再接上即時串流。每個訂閱記住「已送出的最後 seq」，有新 Event 寫入時從那裡往後讀，
 // 而且只送連續的 seq，所以重播與即時的交界不會漏送或重複。看板與 Needs You 由 Web 輪詢 REST。
 //
+// Event 以 `run_events { runId, events }` 批次送出：一次從資料庫讀到的連續 Event（最多
+// BATCH_SIZE 筆）放在同一則訊息；即時推送時通常一則一筆。每條連線最多訂閱
+// WEB_WS_MAX_SUBSCRIPTIONS 個 Run，超過時回 `limit_exceeded`。
+//
 // 安全：
 // - upgrade 時檢查 Origin 必須是 Web 的 origin（防止跨站 WebSocket 劫持），並以 session cookie 認證。
 // - 訂閱期間定期重新檢查 session 與權限：登出、被移出 Team 或 Role 改變後不會繼續收到 Event。
 
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
+import {
+  API_ROUTES,
+  type RunEvent,
+  WEB_WS_MAX_SUBSCRIPTIONS,
+  WebClientMessage,
+  type WebServerMessage,
+} from "@orbis/api-contract";
 import { parse as parseCookie } from "hono/utils/cookie";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 import { loadRunScope, requireProjectCapability } from "../authz/scope";
-import { WEB_WS_PATH, WebClientMessage, type WebServerMessage } from "../contract-pending";
 import { toRunEvent } from "../http/dto";
 import { ApiError } from "../http/errors";
 import { type Actor, resolveActor } from "../http/session";
@@ -22,10 +32,8 @@ import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
 import type { UpgradeRouter } from "../ws-upgrade";
 
-/** 一次從資料庫讀取的 Event 數。 */
-const BATCH_SIZE = 500;
-/** 一條連線最多同時訂閱的 Run 數。 */
-const MAX_SUBSCRIPTIONS = 50;
+/** 一次從資料庫讀取的 Event 數，也是一則 `run_events` 訊息最多的 Event 數。 */
+export const WEB_WS_BATCH_SIZE = 500;
 /** 權限檢查結果的有效時間；過期後下一次送 Event 前重新檢查。 */
 export const WEB_AUTHZ_RECHECK_MS = 30_000;
 /** session 失效時關閉連線用的 close code。 */
@@ -55,7 +63,7 @@ export function attachWebEndpoint(
     for (const connection of connections) connection.onAppended(runId);
   });
 
-  router.register(WEB_WS_PATH, (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+  router.register(API_ROUTES.ws, (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     // 瀏覽器一定會帶 Origin；沒有 Origin 的是非瀏覽器的 client，拿不到別人的 cookie。
     const origin = request.headers.origin;
     if (origin !== undefined && origin !== allowedOrigin) {
@@ -151,11 +159,14 @@ class WebConnection {
       this.subscriptions.delete(message.runId);
       return;
     }
-    if (!this.subscriptions.has(message.runId) && this.subscriptions.size >= MAX_SUBSCRIPTIONS) {
+    if (
+      !this.subscriptions.has(message.runId) &&
+      this.subscriptions.size >= WEB_WS_MAX_SUBSCRIPTIONS
+    ) {
       this.send({
         type: "error",
-        code: "invalid_message",
-        message: `同時最多訂閱 ${MAX_SUBSCRIPTIONS} 個 Run`,
+        code: "limit_exceeded",
+        message: `同時最多訂閱 ${WEB_WS_MAX_SUBSCRIPTIONS} 個 Run`,
         runId: message.runId,
       });
       return;
@@ -222,16 +233,18 @@ class WebConnection {
           const rows = await this.services.eventStore.list(
             subscription.runId,
             subscription.lastSentSeq,
-            BATCH_SIZE,
+            WEB_WS_BATCH_SIZE,
           );
-          let sent = 0;
+          const events: RunEvent[] = [];
           for (const row of rows) {
-            if (row.seq !== subscription.lastSentSeq + 1) break;
-            this.send({ type: "run_event", event: toRunEvent(row) });
-            subscription.lastSentSeq = row.seq;
-            sent++;
+            if (row.seq !== subscription.lastSentSeq + events.length + 1) break;
+            events.push(toRunEvent(row));
           }
-          if (sent < BATCH_SIZE) break;
+          if (events.length > 0) {
+            this.send({ type: "run_events", runId: subscription.runId, events });
+            subscription.lastSentSeq += events.length;
+          }
+          if (events.length < WEB_WS_BATCH_SIZE) break;
         }
       } while (subscription.dirty);
     } finally {

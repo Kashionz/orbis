@@ -1,10 +1,8 @@
 // Task 狀態機（ARCHITECTURE §5）。純資料與純函式：哪個觸發來源可以把 Task 從哪個狀態轉到哪個狀態。
 // 寫入資料庫由 TaskLifecycleService 負責，一律先經過這裡的檢查。
-//
-// TODO(contract): 合法轉換表會放進 packages/api-contract（contract/web-api），讓 Server 與 Web 共用；
-// 合併後改從契約匯入 TASK_TRANSITIONS。
+// 手動轉換（看板拖曳）以契約的 MANUAL_TASK_TRANSITIONS 為準，與 Web 共用。
 
-import type { TaskStatus } from "@orbis/api-contract";
+import { MANUAL_TASK_TRANSITIONS, TASK_STATUSES, type TaskStatus } from "@orbis/api-contract";
 
 /** 觸發狀態轉換的來源。 */
 export const TRANSITION_TRIGGERS = [
@@ -46,7 +44,7 @@ const IN_FLIGHT: readonly TaskStatus[] = [
   "review_gate",
 ];
 
-/** Done 以外的狀態：Issue 關閉時都可以轉成 Done（有進行中的 Run 時由服務層拒絕）。 */
+/** Done 以外的狀態：Issue 關閉、PR merge 時都可以轉成 Done（有進行中的 Run 時由服務層拒絕）。 */
 const NOT_DONE: readonly TaskStatus[] = [
   "backlog",
   "ready",
@@ -60,13 +58,11 @@ const NOT_DONE: readonly TaskStatus[] = [
 
 /** 所有合法的轉換。不在表中的轉換一律拒絕。 */
 export const TASK_TRANSITIONS: readonly TaskTransition[] = [
-  {
-    from: "backlog",
-    to: "ready",
-    trigger: "manual",
-    description: "Spec 與 Acceptance Criterion 齊備",
-  },
-  { from: "ready", to: "backlog", trigger: "manual", description: "退回 Backlog" },
+  ...TASK_STATUSES.flatMap((from) =>
+    MANUAL_TASK_TRANSITIONS[from].map(
+      (to): TaskTransition => ({ from, to, trigger: "manual", description: "看板上手動移動" }),
+    ),
+  ),
   { from: "ready", to: "planning", trigger: "dispatch", description: "派工" },
   { from: "planning", to: "running", trigger: "planning", description: "Plan Gate 關閉或直接通過" },
   { from: "planning", to: "plan_gate", trigger: "run", description: "plan 產出，等待核准" },
@@ -87,12 +83,17 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
   },
   { from: "review_gate", to: "running", trigger: "gate", description: "Review Gate 退回" },
   { from: "review_gate", to: "pr_open", trigger: "gate", description: "Review Gate 核准" },
-  { from: "pr_open", to: "done", trigger: "pull_request", description: "PR merge" },
   {
     from: "pr_open",
     to: "review_gate",
     trigger: "pull_request",
     description: "PR 未 merge 就關閉",
+  },
+  {
+    from: "review_gate",
+    to: "pr_open",
+    trigger: "pull_request",
+    description: "PR 重新打開",
   },
   { from: "done", to: "backlog", trigger: "issue", description: "Issue 重開" },
   ...IN_FLIGHT.map(
@@ -109,6 +110,16 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
       to: "done",
       trigger: "issue",
       description: "Issue 關閉",
+    }),
+  ),
+  // PR merge 通常發生在 PR Open；Task 被手動移回其他狀態後 PR 才 merge 時也轉成 Done
+  // （有進行中的 Run 時由服務層拒絕）。
+  ...NOT_DONE.map(
+    (from): TaskTransition => ({
+      from,
+      to: "done",
+      trigger: "pull_request",
+      description: "PR merge",
     }),
   ),
 ];

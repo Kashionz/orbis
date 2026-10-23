@@ -1,13 +1,21 @@
 // PM API：Team、Member、Project、Role 覆寫、Repo、Task、相依、Acceptance Criterion。
-// 每個成功的回應都用契約（packages/api-contract，或尚未進契約的暫時 schema）驗證。
+// 每個成功的回應都用契約（packages/api-contract）驗證。
 
-import { AcceptanceCriterion, Project, Repo, Task } from "@orbis/api-contract";
+import {
+  AcceptanceCriterion,
+  ApiError,
+  HealthResponse,
+  Member,
+  Project,
+  ProjectMemberRole,
+  Repo,
+  Task,
+  Team,
+} from "@orbis/api-contract";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { Member, ProjectMemberRole, ProjectPolicy, Team } from "../src/contract-pending";
-import { sessions } from "../src/db/schema";
-import { RepoRegistrationError } from "../src/github/integration";
+import { repos, sessions } from "../src/db/schema";
 import {
   client,
   createTestContext,
@@ -19,15 +27,12 @@ import {
   type TestContext,
 } from "./helpers/api";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
-
-// TODO(contract): Project 的 policy 加上 defaultPermissionPolicy 後改用契約的 Project。
-const ProjectWithPolicy = Project.extend({ policy: ProjectPolicy });
+import { APP_SLUG, createFakeGitHubApp, type FakeGitHubApp } from "./helpers/github";
 
 describe.skipIf(dbSkipReason !== null)("PM API", () => {
   let database: TestDatabase;
   let ctx: TestContext;
   let team: SeededTeam;
-  let rejectRepo: string | null;
 
   const as = (role: keyof SeededTeam["members"]) => client(ctx.app, team.members[role].cookie);
 
@@ -41,24 +46,14 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
 
   beforeEach(async () => {
     await resetDatabase(database.db);
-    rejectRepo = null;
-    ctx = createTestContext(database.db, {
-      repoRegistrar: {
-        register: async (input) => {
-          if (`${input.owner}/${input.name}` === rejectRepo) {
-            throw new RepoRegistrationError("GitHub App 沒有安裝在這個 Repo");
-          }
-          return { ...input, githubRepoId: 42 };
-        },
-      },
-    });
+    ctx = createTestContext(database.db);
     team = await seedTeam(database.db);
   });
 
   async function createProject(prefix = "ORB") {
     const res = await as("admin").post("/api/projects", { name: "Dogfood", keyPrefix: prefix });
     expect(res.status).toBe(201);
-    return expectContract(ProjectWithPolicy, res.body);
+    return expectContract(Project, res.body);
   }
 
   async function createRepo(projectId: string, name = "orbis") {
@@ -85,6 +80,17 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
     expect(res.status).toBe(201);
     return expectContract(Task, res.body);
   }
+
+  describe("health", () => {
+    it("不需要登入，回報 Server 設定的公開網址", async () => {
+      const res = await client(ctx.app, null).get("/api/health");
+      expect(res.status).toBe(200);
+      expect(expectContract(HealthResponse, res.body)).toEqual({
+        ok: true,
+        apiOrigin: "http://localhost:4000",
+      });
+    });
+  });
 
   describe("登入檢查", () => {
     it("沒有 session 時回 401", async () => {
@@ -197,7 +203,7 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       expect(project).toMatchObject({
         keyPrefix: "ORB",
         teamId: team.teamId,
-        policy: { planGateEnabled: true, defaultPermissionPolicy: "auto" },
+        policy: { planGateEnabled: true, defaultPermissionPolicy: "auto", autoCreateIssues: true },
       });
     });
 
@@ -222,17 +228,35 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         policy: { forbidSelfApproval: true, defaultPermissionPolicy: "manual" },
       });
       expect(res.status).toBe(200);
-      expect(expectContract(ProjectWithPolicy, res.body).policy).toMatchObject({
+      expect(expectContract(Project, res.body).policy).toMatchObject({
         forbidSelfApproval: true,
         defaultPermissionPolicy: "manual",
       });
+    });
+
+    it("可以關閉「自動建立 Issue」", async () => {
+      const project = await createProject();
+      const res = await as("admin").patch(`/api/projects/${project.id}`, {
+        policy: { autoCreateIssues: false },
+      });
+      expect(expectContract(Project, res.body).policy.autoCreateIssues).toBe(false);
+    });
+
+    it("輸入驗證失敗時回 400，並以 issues 列出各欄位的問題", async () => {
+      const res = await as("admin").post("/api/projects", { name: "", keyPrefix: "o" });
+      expect(res.status).toBe(400);
+      const error = expectContract(ApiError, res.body);
+      expect(error.error).toBe("invalid_input");
+      expect(error.issues?.map((i) => i.path)).toEqual(
+        expect.arrayContaining([["name"], ["keyPrefix"]]),
+      );
     });
 
     it("Viewer 可以讀取，不能修改或刪除", async () => {
       const project = await createProject();
       expect((await as("viewer").get(`/api/projects/${project.id}`)).status).toBe(200);
       expect(
-        expectContract(z.array(ProjectWithPolicy), (await as("viewer").get("/api/projects")).body),
+        expectContract(z.array(Project), (await as("viewer").get("/api/projects")).body),
       ).toHaveLength(1);
       expect((await as("viewer").patch(`/api/projects/${project.id}`, { name: "Z" })).status).toBe(
         403,
@@ -325,7 +349,7 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       expect(expectContract(z.array(Repo), list.body)).toHaveLength(1);
     });
 
-    it("重複登記回 409；GitHub 整合拒絕時回 422", async () => {
+    it("重複登記回 409", async () => {
       const project = await createProject();
       await createRepo(project.id);
       const dup = await as("admin").post(`/api/projects/${project.id}/repos`, {
@@ -333,12 +357,94 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         name: "orbis",
       });
       expect(dup.status).toBe(409);
-      rejectRepo = "acme/secret";
-      const rejected = await as("admin").post(`/api/projects/${project.id}/repos`, {
+    });
+
+    it("沒有設定 GitHub App 時用輸入的 default branch，沒有輸入就用 main", async () => {
+      const project = await createProject();
+      const res = await as("admin").post(`/api/projects/${project.id}/repos`, {
         owner: "acme",
-        name: "secret",
+        name: "plain",
       });
-      expect(rejected.status).toBe(422);
+      expect(res.status).toBe(201);
+      expect(expectContract(Repo, res.body)).toMatchObject({
+        defaultBranch: "main",
+        github: { installed: false, installUrl: null },
+      });
+      const custom = await as("admin").post(`/api/projects/${project.id}/repos`, {
+        owner: "acme",
+        name: "custom",
+        defaultBranch: "trunk",
+      });
+      expect(expectContract(Repo, custom.body).defaultBranch).toBe("trunk");
+    });
+
+    describe("接上 GitHub App", () => {
+      let gh: FakeGitHubApp;
+
+      beforeEach(() => {
+        gh = createFakeGitHubApp();
+        ctx = createTestContext(database.db, { github: { app: gh.options } });
+        gh.addMember(team.members.admin, "write");
+        gh.github.addRepo({
+          id: 4242,
+          owner: "Acme",
+          name: "Widgets",
+          defaultBranch: "develop",
+          installationId: 77,
+        });
+      });
+
+      const installUrl = `https://github.com/apps/${APP_SLUG}/installations/new`;
+
+      it("App 已安裝：用 GitHub 的名稱與 default branch，記下 repo id 與 installation", async () => {
+        const project = await createProject();
+        const res = await as("admin").post(`/api/projects/${project.id}/repos`, {
+          owner: "acme",
+          name: "widgets",
+          defaultBranch: "main",
+        });
+        expect(res.status).toBe(201);
+        expect(expectContract(Repo, res.body)).toMatchObject({
+          owner: "Acme",
+          name: "Widgets",
+          defaultBranch: "develop",
+          github: { installed: true, installUrl: null },
+        });
+        const [row] = await database.db.select().from(repos);
+        expect(row).toMatchObject({ githubRepoId: 4242, githubInstallationId: 77 });
+      });
+
+      it("App 沒有安裝：用輸入值（沒有就用 main），回傳安裝連結", async () => {
+        const project = await createProject();
+        const res = await as("admin").post(`/api/projects/${project.id}/repos`, {
+          owner: "acme",
+          name: "elsewhere",
+        });
+        expect(res.status).toBe(201);
+        expect(expectContract(Repo, res.body)).toMatchObject({
+          defaultBranch: "main",
+          github: { installed: false, installUrl },
+        });
+        const list = await as("viewer").get(`/api/projects/${project.id}/repos`);
+        expect(expectContract(z.array(Repo), list.body)[0]?.github.installUrl).toBe(installUrl);
+      });
+
+      it("請求者本人對 repo 沒有寫入權限時，視同沒有安裝（不借用別人的 App 安裝）", async () => {
+        gh.addMember(team.members.owner, "read");
+        const project = await createProject();
+        const res = await as("owner").post(`/api/projects/${project.id}/repos`, {
+          owner: "acme",
+          name: "widgets",
+          defaultBranch: "main",
+        });
+        expect(res.status).toBe(201);
+        expect(expectContract(Repo, res.body)).toMatchObject({
+          defaultBranch: "main",
+          github: { installed: false, installUrl },
+        });
+        const [row] = await database.db.select().from(repos);
+        expect(row).toMatchObject({ githubRepoId: null, githubInstallationId: null });
+      });
     });
 
     it("Member 不能登記 Repo", async () => {
@@ -370,8 +476,18 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         key: "ORB-1",
         status: "backlog",
         createdByMemberId: team.members.member.id,
+        doneReason: null,
       });
       expect(second.key).toBe("ORB-2");
+    });
+
+    it("建立者被移除後，createdByMemberId 是 null（不是空字串）", async () => {
+      const project = await createProject();
+      const repo = await createRepo(project.id);
+      const task = await createTask(project.id, repo.id);
+      expect((await as("admin").delete(`/api/members/${team.members.member.id}`)).status).toBe(204);
+      const res = await as("viewer").get(`/api/tasks/${task.id}`);
+      expect(expectContract(Task, res.body).createdByMemberId).toBeNull();
     });
 
     it("並行建立 20 個 Task，Task Key 不重複而且連續", async () => {
@@ -522,8 +638,9 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       expect(res.status).toBe(409);
       expect(res.body).toMatchObject({
         error: "invalid_transition",
-        missing: ["沒有描述或 Spec", "沒有 Acceptance Criterion"],
+        missing: ["description", "acceptance_criteria"],
       });
+      expectContract(ApiError, res.body);
     });
 
     it("齊備後可以 Backlog → Ready → Backlog", async () => {

@@ -1,4 +1,5 @@
-// API 的錯誤格式：一律回 `{ error, message }`，驗證失敗另外附上 `issues`。
+// API 的錯誤格式（契約的 ApiError）：一律回 `{ error, message }`，驗證失敗另外附上 `issues`，
+// Task 進入 Ready 的條件不足時附上 `missing`。
 
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -14,7 +15,9 @@ export type ApiErrorCode =
   | "conflict"
   | "invalid_transition"
   | "gone"
-  | "payload_too_large";
+  | "payload_too_large"
+  | "github_disabled"
+  | "repo_not_connected";
 
 export class ApiError extends Error {
   override name = "ApiError";
@@ -37,7 +40,11 @@ export const conflict = (message: string, details?: Record<string, unknown>) =>
 /** zod 驗證失敗轉成 400。 */
 export function invalidInput(error: z.ZodError): ApiError {
   return new ApiError(400, "invalid_input", "輸入格式不正確", {
-    issues: error.issues.map((issue) => ({ path: issue.path, message: issue.message })),
+    issues: error.issues.map((issue) => ({
+      // 契約的路徑只有字串與數字；symbol 鍵（實務上不會出現）轉成字串。
+      path: issue.path.map((key) => (typeof key === "symbol" ? String(key) : key)),
+      message: issue.message,
+    })),
   });
 }
 

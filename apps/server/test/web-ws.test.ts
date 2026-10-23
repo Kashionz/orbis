@@ -4,8 +4,14 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { NAMES } from "@orbis/api-contract";
-import type { EventKind } from "@orbis/protocol";
+import {
+  API_ROUTES,
+  NAMES,
+  RunEvent,
+  WEB_WS_MAX_SUBSCRIPTIONS,
+  WebServerMessage,
+} from "@orbis/api-contract";
+import { type EventKind, RUNNER_BLOB_PATH } from "@orbis/protocol";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
@@ -17,13 +23,7 @@ import {
   FileSystemBlobStore,
   type MemoryBlobStore,
 } from "../src/blobs/store";
-import {
-  PendingRunEvent,
-  RUNNER_BLOB_PATH,
-  WEB_WS_PATH,
-  type WebServerMessage,
-} from "../src/contract-pending";
-import { blobs, members } from "../src/db/schema";
+import { blobs, members, runs } from "../src/db/schema";
 import {
   client,
   expectContract,
@@ -45,7 +45,10 @@ class WebClient {
   readonly closed: Promise<number>;
 
   constructor(readonly ws: WebSocket) {
-    ws.on("message", (data) => this.messages.push(JSON.parse(data.toString()) as WebServerMessage));
+    // 每則訊息都必須符合契約的 WebServerMessage。
+    ws.on("message", (data) =>
+      this.messages.push(expectContract(WebServerMessage, JSON.parse(data.toString()))),
+    );
     this.opened = new Promise((resolve, reject) => {
       ws.once("open", () => resolve());
       ws.once("error", reject);
@@ -60,7 +63,14 @@ class WebClient {
 
   events(runId: string): number[] {
     return this.messages.flatMap((m) =>
-      m.type === "run_event" && m.event.runId === runId ? [m.event.seq] : [],
+      m.type === "run_events" && m.runId === runId ? m.events.map((e) => e.seq) : [],
+    );
+  }
+
+  /** 收到的 run_events 訊息（批次）。 */
+  batches(runId: string): number[][] {
+    return this.messages.flatMap((m) =>
+      m.type === "run_events" && m.runId === runId ? [m.events.map((e) => e.seq)] : [],
     );
   }
 
@@ -104,7 +114,7 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
     if (cookie) headers.cookie = cookie;
     if (origin) headers.origin = origin;
     const web = new WebClient(
-      new WebSocket(`ws://127.0.0.1:${h.server.port}${WEB_WS_PATH}`, { headers }),
+      new WebSocket(`ws://127.0.0.1:${h.server.port}${API_ROUTES.ws}`, { headers }),
     );
     webClients.push(web);
     await web.opened;
@@ -151,9 +161,11 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
       web.subscribe(runId, 2);
       await waitUntil(() => web.events(runId).length === 3);
       expect(web.events(runId)).toEqual([3, 4, 5]);
-      const first = web.messages.find((m) => m.type === "run_event");
+      // 重播的 Event 放在同一則 run_events 訊息中。
+      expect(web.batches(runId)).toEqual([[3, 4, 5]]);
+      const first = web.messages.find((m) => m.type === "run_events");
       expect(
-        first?.type === "run_event" && expectContract(PendingRunEvent, first.event),
+        first?.type === "run_events" && expectContract(RunEvent, first.events[0]),
       ).toMatchObject({
         runId,
         seq: 3,
@@ -163,6 +175,7 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
       await send({ kind: "thought_chunk", text: "6" });
       await waitUntil(() => web.events(runId).length === 4);
       expect(web.events(runId)).toEqual([3, 4, 5, 6]);
+      expect(web.batches(runId)).toEqual([[3, 4, 5], [6]]);
     });
 
     it("訂閱與寫入同時進行時不漏送也不重複", async () => {
@@ -228,6 +241,36 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
       expect(web.events(runId)).not.toContain(2);
     });
 
+    it(`每條連線最多訂閱 ${WEB_WS_MAX_SUBSCRIPTIONS} 個 Run，超過時回 limit_exceeded`, async () => {
+      const task = await seedReadyTask(database.db, project, repoId);
+      const created = await database.db
+        .insert(runs)
+        .values(
+          Array.from({ length: WEB_WS_MAX_SUBSCRIPTIONS + 1 }, () => ({
+            taskId: task.id,
+            agent: "claude-code",
+            permissionPolicy: "auto" as const,
+            target: "local" as const,
+          })),
+        )
+        .returning({ id: runs.id });
+      const web = await connectWeb(team.members.viewer.cookie);
+      const ids = created.map((r) => r.id);
+      for (const id of ids.slice(0, WEB_WS_MAX_SUBSCRIPTIONS)) web.subscribe(id, 0);
+      const extra = ids[WEB_WS_MAX_SUBSCRIPTIONS] ?? "";
+      web.subscribe(extra, 0);
+      await waitUntil(() => web.messages.length > 0);
+      expect(web.messages).toEqual([
+        { type: "error", code: "limit_exceeded", message: expect.any(String), runId: extra },
+      ]);
+      // 已訂閱的 Run 重新訂閱不算新的訂閱；取消一個之後就能訂閱新的。
+      web.subscribe(ids[0] ?? "", 0);
+      web.ws.send(JSON.stringify({ type: "unsubscribe_run", runId: ids[1] }));
+      web.subscribe(extra, 0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(web.messages).toHaveLength(1);
+    });
+
     it("格式錯誤的訊息回 invalid_message", async () => {
       const web = await connectWeb(team.members.viewer.cookie);
       web.ws.send("{nope");
@@ -245,7 +288,7 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
       overrides: { sha256?: string; contentType?: string } = {},
     ) {
       const sha256 = overrides.sha256 ?? createHash("sha256").update(data).digest("hex");
-      return h.ctx.app.request(`${RUNNER_BLOB_PATH}/${blobId}?runId=${runId}&sha256=${sha256}`, {
+      return h.ctx.app.request(`${RUNNER_BLOB_PATH}/${blobId}?run_id=${runId}&sha256=${sha256}`, {
         method: "PUT",
         headers: {
           authorization: `Bearer ${runner.runnerToken}`,
@@ -310,7 +353,7 @@ describe.skipIf(dbSkipReason !== null)("Web 即時推送與 blob", () => {
         },
       });
       const res = await limited.request(
-        `${RUNNER_BLOB_PATH}/${BLOB_ID}?runId=${runId}&sha256=${sha256}`,
+        `${RUNNER_BLOB_PATH}/${BLOB_ID}?run_id=${runId}&sha256=${sha256}`,
         {
           method: "PUT",
           headers: { authorization: `Bearer ${mine.runnerToken}`, "content-type": "text/plain" },

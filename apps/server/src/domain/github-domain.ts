@@ -1,150 +1,340 @@
-// 給 D 軌（packages/github）呼叫的 domain service：webhook 觸發的 Task 狀態轉換，以及 Issue 同步的讀寫。
-// D 軌只透過這個介面寫入 Task，不直接碰資料表；每次寫入都會發出 domain event
-//（task.updated 帶 `source: "github"`，D 軌據此避免同步回音）。
+// packages/github 的 DomainService 的 Server 實作：GitHub 整合只透過這個介面讀寫 Task、Repo、Member。
+//
+// - 寫入一律經過 Task 狀態機（TaskLifecycleService），並在 commit 後發出 domain event，
+//   `source: "github"` 讓 Server 不再對同一個變更呼叫 onTaskChanged（避免同步回音）。
+// - 由 GitHub 觸發的狀態轉換：Issue 關閉／PR merge → Done（有進行中的 Run 時拒絕）、
+//   Issue 重開 → Backlog、PR 沒 merge 就關閉 → Review Gate、PR 重開 → PR Open。
 
-import type { TaskStatus } from "@orbis/api-contract";
-import { and, count, eq, notInArray } from "drizzle-orm";
+import { formatTaskKey, type TaskStatus } from "@orbis/api-contract";
+import type {
+  AcceptanceCriterionRecord,
+  DomainService,
+  MemberRecord,
+  RepoRecord,
+  RunSummary,
+  TaskFieldsPatch,
+  TaskRecord,
+  TransitionCause,
+  TransitionResult,
+} from "@orbis/github";
+import { and, asc, count, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
+import { authorize, effectiveRole } from "../authz/capabilities";
 import type { Database } from "../db/client";
-import { members, projects, runs, tasks } from "../db/schema";
-import { inTransaction } from "../db/tx";
-import { ApiError } from "../http/errors";
+import {
+  acceptanceCriteria,
+  members,
+  projectMemberRoles,
+  projects,
+  repoSpecs,
+  repos,
+  runs,
+  tasks,
+} from "../db/schema";
+import { type Executor, inTransaction } from "../db/tx";
+import { ApiError, notFound } from "../http/errors";
 import { TERMINAL_RUN_STATUSES } from "./run-status";
 import type { TaskLifecycleService, TaskRow } from "./task-lifecycle";
 
-export type GitHubTransitionResult =
-  | { ok: true; task: TaskRow }
-  | {
-      ok: false;
-      reason: "not_found" | "invalid_transition" | "active_run";
-      message: string;
-      /** Task 目前的狀態；找不到 Task 時為 null。 */
-      status: TaskStatus | null;
-    };
+type RepoRow = typeof repos.$inferSelect;
 
-/** Task 轉 Done 的原因，取自 GitHub Issue 的 `state_reason`。 */
-export type IssueCloseReason = "completed" | "not_planned";
+const toRepoRecord = (row: RepoRow): RepoRecord => ({
+  id: row.id,
+  projectId: row.projectId,
+  owner: row.githubOwner,
+  name: row.githubName,
+  githubRepoId: row.githubRepoId,
+  defaultBranch: row.defaultBranch,
+  installationId: row.githubInstallationId,
+});
 
-/** Issue 同步可以寫入的欄位（ARCHITECTURE §11）。state 另外以狀態轉換處理。 */
-export interface IssueFields {
-  title?: string;
-  description?: string;
-  labels?: string[];
-  assigneeMemberId?: string | null;
-}
+const toMemberRecord = (row: typeof members.$inferSelect): MemberRecord => ({
+  id: row.id,
+  githubUserId: row.githubUserId,
+  githubLogin: row.githubLogin,
+});
 
-export class GitHubDomainService {
+export class GitHubDomainService implements DomainService {
   constructor(
     private readonly db: Database,
     private readonly lifecycle: TaskLifecycleService,
   ) {}
 
-  async getTask(taskId: string): Promise<TaskRow | null> {
-    const [task] = await this.db.select().from(tasks).where(eq(tasks.id, taskId));
-    return task ?? null;
-  }
-
-  /** 依 GitHub 數字 user id 找出 Task 所在 Team 的 Member（Issue 的 assignee 對應用）。 */
-  async findMemberForTask(taskId: string, githubUserId: number): Promise<string | null> {
+  async getTask(taskId: string): Promise<TaskRecord | null> {
     const [row] = await this.db
-      .select({ id: members.id })
+      .select({ task: tasks, specPath: repoSpecs.path })
       .from(tasks)
-      .innerJoin(projects, eq(projects.id, tasks.projectId))
-      .innerJoin(members, eq(members.teamId, projects.teamId))
-      .where(and(eq(tasks.id, taskId), eq(members.githubUserId, githubUserId)));
-    return row?.id ?? null;
+      .leftJoin(repoSpecs, eq(repoSpecs.id, tasks.repoSpecId))
+      .where(eq(tasks.id, taskId));
+    return row ? this.toTaskRecord(row.task, row.specPath) : null;
   }
 
-  /** PR 已 merge：PR Open → Done，關閉原因為 `completed`。 */
-  onPullRequestMerged(taskId: string): Promise<GitHubTransitionResult> {
-    // TODO(contract)：關閉原因存進 Task（contract/db 的欄位）。
-    return this.transition(taskId, "done", "pull_request");
+  private toTaskRecord(row: TaskRow, specPath: string | null): TaskRecord {
+    return {
+      id: row.id,
+      key: row.key,
+      projectId: row.projectId,
+      repoId: row.repoId,
+      title: row.title,
+      description: row.description,
+      status: row.status,
+      doneReason: row.doneReason,
+      assigneeMemberId: row.assigneeMemberId,
+      createdByMemberId: row.createdByMemberId,
+      labels: row.labels,
+      specPath,
+      updatedAt: row.updatedAt,
+    };
   }
 
-  /** PR 沒有 merge 就關閉：PR Open → Review Gate。 */
-  onPullRequestClosedUnmerged(taskId: string): Promise<GitHubTransitionResult> {
-    return this.transition(taskId, "review_gate", "pull_request");
+  private async taskRecord(row: TaskRow): Promise<TaskRecord> {
+    const [spec] = row.repoSpecId
+      ? await this.db
+          .select({ path: repoSpecs.path })
+          .from(repoSpecs)
+          .where(eq(repoSpecs.id, row.repoSpecId))
+      : [];
+    return this.toTaskRecord(row, spec?.path ?? null);
   }
 
-  /** Issue 關閉：Task 轉成 Done；Task 有進行中的 Run 時拒絕（D 軌重開 Issue 並說明）。 */
-  async onIssueClosed(
-    taskId: string,
-    /** GitHub 的 `state_reason`（ARCHITECTURE §11）。 */
-    _reason: IssueCloseReason,
-  ): Promise<GitHubTransitionResult> {
-    // TODO(contract)：關閉原因存進 Task（contract/db 的欄位），Issue 重開時清空。
-    const [active] = await this.db
-      .select({ n: count() })
-      .from(runs)
-      .where(and(eq(runs.taskId, taskId), notInArray(runs.status, TERMINAL_RUN_STATUSES)));
-    if ((active?.n ?? 0) > 0) {
-      const task = await this.getTask(taskId);
-      return {
-        ok: false,
-        reason: "active_run",
-        message: "Task 還有進行中的 Run，不能轉成 Done",
-        status: task?.status ?? null,
-      };
-    }
-    return this.transition(taskId, "done", "issue");
+  async getRepo(repoId: string): Promise<RepoRecord | null> {
+    const [row] = await this.db.select().from(repos).where(eq(repos.id, repoId));
+    return row ? toRepoRecord(row) : null;
   }
 
-  /** Issue 重開：已 Done 的 Task 回到 Backlog。 */
-  onIssueReopened(taskId: string): Promise<GitHubTransitionResult> {
-    return this.transition(taskId, "backlog", "issue");
+  async listReposByGithubRepoId(githubRepoId: number): Promise<RepoRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(repos)
+      .where(eq(repos.githubRepoId, githubRepoId))
+      .orderBy(asc(repos.createdAt), asc(repos.id));
+    return rows.map(toRepoRecord);
   }
 
-  /** 把 Issue 上的變更寫回 Task。 */
-  async applyIssueFields(taskId: string, fields: IssueFields): Promise<TaskRow | null> {
-    const changes: Partial<typeof tasks.$inferInsert> = {};
-    if (fields.title !== undefined) changes.title = fields.title;
-    if (fields.description !== undefined) changes.description = fields.description;
-    if (fields.labels !== undefined) changes.labels = fields.labels;
-    if (fields.assigneeMemberId !== undefined) changes.assigneeMemberId = fields.assigneeMemberId;
-    if (Object.keys(changes).length === 0) return this.getTask(taskId);
-    return inTransaction(this.db, async (uow) => {
-      const [task] = await uow.tx
+  async listReposByInstallationId(installationId: number): Promise<RepoRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(repos)
+      .where(eq(repos.githubInstallationId, installationId))
+      .orderBy(asc(repos.createdAt), asc(repos.id));
+    return rows.map(toRepoRecord);
+  }
+
+  async listReposByFullName(owner: string, name: string): Promise<RepoRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(repos)
+      .where(
+        and(
+          sql`lower(${repos.githubOwner}) = lower(${owner})`,
+          sql`lower(${repos.githubName}) = lower(${name})`,
+        ),
+      )
+      .orderBy(asc(repos.createdAt), asc(repos.id));
+    return rows.map(toRepoRecord);
+  }
+
+  async updateRepoGitHubInfo(
+    repoId: string,
+    info: { installationId?: number | null; githubRepoId?: number; defaultBranch?: string },
+  ): Promise<void> {
+    const changes: Partial<typeof repos.$inferInsert> = {};
+    if (info.installationId !== undefined) changes.githubInstallationId = info.installationId;
+    if (info.githubRepoId !== undefined) changes.githubRepoId = info.githubRepoId;
+    if (info.defaultBranch !== undefined) changes.defaultBranch = info.defaultBranch;
+    if (Object.keys(changes).length === 0) return;
+    await this.db.update(repos).set(changes).where(eq(repos.id, repoId));
+  }
+
+  async createTaskFromIssue(input: {
+    repoId: string;
+    title: string;
+    description: string;
+    labels: string[];
+    assigneeMemberId: string | null;
+    createdByMemberId: string;
+  }): Promise<TaskRecord> {
+    const row = await inTransaction(this.db, async (uow) => {
+      const { tx } = uow;
+      const [repo] = await tx.select().from(repos).where(eq(repos.id, input.repoId));
+      if (!repo) throw notFound("Repo");
+      // 鎖住 Project：Task 流水號的遞增要序列化（與 Task 的 API 相同）。
+      const [project] = await tx
+        .select()
+        .from(projects)
+        .where(eq(projects.id, repo.projectId))
+        .for("update");
+      if (!project) throw notFound("Project");
+      const number = project.nextTaskNumber;
+      await tx
+        .update(projects)
+        .set({ nextTaskNumber: number + 1 })
+        .where(eq(projects.id, project.id));
+      const [created] = await tx
+        .insert(tasks)
+        .values({
+          projectId: project.id,
+          number,
+          key: formatTaskKey(project.taskKeyPrefix, number),
+          repoId: repo.id,
+          title: input.title,
+          description: input.description,
+          labels: input.labels,
+          assigneeMemberId: input.assigneeMemberId,
+          createdByMemberId: input.createdByMemberId,
+        })
+        .returning();
+      if (!created) throw new Error("建立 Task 失敗");
+      uow.afterCommit(() =>
+        this.lifecycle.emit({
+          type: "task.created",
+          taskId: created.id,
+          projectId: created.projectId,
+          source: "github",
+        }),
+      );
+      return created;
+    });
+    return this.taskRecord(row);
+  }
+
+  async updateTaskFields(taskId: string, patch: TaskFieldsPatch): Promise<TaskRecord> {
+    const row = await inTransaction(this.db, async (uow) => {
+      const [current] = await uow.tx.select().from(tasks).where(eq(tasks.id, taskId)).for("update");
+      if (!current) throw notFound("Task");
+      const changes: Partial<typeof tasks.$inferInsert> = {};
+      if (patch.title !== undefined) changes.title = patch.title;
+      if (patch.description !== undefined) changes.description = patch.description;
+      if (patch.labels !== undefined) changes.labels = patch.labels;
+      if (patch.assigneeMemberId !== undefined) changes.assigneeMemberId = patch.assigneeMemberId;
+      // 關閉原因只對 Done 的 Task 有意義（DB 也有 CHECK）。
+      if (patch.doneReason !== undefined && current.status === "done") {
+        changes.doneReason = patch.doneReason;
+      }
+      if (Object.keys(changes).length === 0) return current;
+      const [updated] = await uow.tx
         .update(tasks)
         .set(changes)
         .where(eq(tasks.id, taskId))
         .returning();
-      if (!task) return null;
+      if (!updated) throw notFound("Task");
       uow.afterCommit(() =>
         this.lifecycle.emit({
           type: "task.updated",
           taskId,
-          projectId: task.projectId,
+          projectId: updated.projectId,
           fields: Object.keys(changes),
           source: "github",
         }),
       );
-      return task;
+      return updated;
     });
+    return this.taskRecord(row);
   }
 
-  private async transition(
+  async transitionTask(
     taskId: string,
     to: TaskStatus,
-    trigger: "pull_request" | "issue",
-  ): Promise<GitHubTransitionResult> {
+    cause: TransitionCause,
+  ): Promise<TransitionResult> {
+    const trigger = cause.kind.startsWith("issue_") ? "issue" : "pull_request";
     try {
-      const task = await inTransaction(this.db, (uow) =>
-        this.lifecycle.transition(uow, taskId, to, trigger),
-      );
-      return { ok: true, task };
+      const row = await inTransaction(this.db, async (uow) => {
+        if (to === "done") {
+          const [active] = await uow.tx
+            .select({ n: count() })
+            .from(runs)
+            .where(and(eq(runs.taskId, taskId), notInArray(runs.status, TERMINAL_RUN_STATUSES)));
+          if ((active?.n ?? 0) > 0) return null;
+        }
+        return this.lifecycle.transition(uow, taskId, to, trigger, {
+          ...("doneReason" in cause && { doneReason: cause.doneReason }),
+          source: "github",
+        });
+      });
+      if (!row) return { ok: false, reason: "active_run" };
+      return { ok: true, task: await this.taskRecord(row) };
     } catch (error) {
       if (
         error instanceof ApiError &&
         (error.code === "not_found" || error.code === "invalid_transition")
       ) {
-        const task = await this.getTask(taskId);
-        return {
-          ok: false,
-          reason: error.code,
-          message: error.message,
-          status: task?.status ?? null,
-        };
+        return { ok: false, reason: "invalid_transition" };
       }
       throw error;
     }
   }
+
+  async listAcceptanceCriteria(taskId: string): Promise<AcceptanceCriterionRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(acceptanceCriteria)
+      .where(eq(acceptanceCriteria.taskId, taskId))
+      .orderBy(asc(acceptanceCriteria.position));
+    return rows.map((row) => ({
+      kind: row.kind,
+      description: row.description,
+      result: row.passed === null ? "pending" : row.passed ? "passed" : "failed",
+    }));
+  }
+
+  async getLatestRun(taskId: string): Promise<RunSummary | null> {
+    const [row] = await this.db
+      .select({ id: runs.id, agent: runs.agent, status: runs.status })
+      .from(runs)
+      .where(and(eq(runs.taskId, taskId), isNull(runs.parentRunId)))
+      .orderBy(desc(runs.createdAt), desc(runs.id))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async getMember(memberId: string): Promise<MemberRecord | null> {
+    const [row] = await this.db.select().from(members).where(eq(members.id, memberId));
+    return row ? toMemberRecord(row) : null;
+  }
+
+  async findMemberByGithubUserId(
+    projectId: string,
+    githubUserId: number,
+  ): Promise<MemberRecord | null> {
+    const [row] = await this.db
+      .select({ member: members })
+      .from(projects)
+      .innerJoin(members, eq(members.teamId, projects.teamId))
+      .where(and(eq(projects.id, projectId), eq(members.githubUserId, githubUserId)));
+    return row ? toMemberRecord(row.member) : null;
+  }
+
+  async canEditTasks(projectId: string, memberId: string): Promise<boolean> {
+    return canEditTasks(this.db, projectId, memberId);
+  }
+
+  async autoCreateIssues(projectId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ autoCreateIssues: projects.autoCreateIssues })
+      .from(projects)
+      .where(eq(projects.id, projectId));
+    return row?.autoCreateIssues ?? false;
+  }
+}
+
+/** Member 在這個 Project 能不能編輯 Task（有效 Role 至少 Member，§12.2）；不是同一個 Team 時為 false。 */
+export async function canEditTasks(
+  db: Executor,
+  projectId: string,
+  memberId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ role: members.role, override: projectMemberRoles.role })
+    .from(projects)
+    .innerJoin(members, and(eq(members.teamId, projects.teamId), eq(members.id, memberId)))
+    .leftJoin(
+      projectMemberRoles,
+      and(
+        eq(projectMemberRoles.projectId, projects.id),
+        eq(projectMemberRoles.memberId, members.id),
+      ),
+    )
+    .where(eq(projects.id, projectId));
+  if (!row) return false;
+  return authorize("edit_task", { memberId, role: effectiveRole(row.role, row.override) }).ok;
 }

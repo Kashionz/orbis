@@ -1,19 +1,21 @@
 // blob 的上傳（Runner，Runner token 認證）與下載（Web，session 認證）。
 //
-// 上傳：`PUT <RUNNER_BLOB_PATH>/:blobId?runId=<Run>&sha256=<hex>`，body 是內容本身，
+// 上傳（協定的 RUNNER_BLOB_PATH）：`PUT <RUNNER_BLOB_PATH>/:blobId?run_id=<Run>&sha256=<hex>`，
+// 以 `Authorization: Bearer <Runner token>` 認證，body 是內容本身，
 // `Content-Type` 是 media type。Server 計算 sha256 與大小並和 BlobRef 比對。blob_id 由 Runner 產生；
 // 同一個 blob_id 重送相同內容視為成功（可以安全地重試），內容不同回 409。
-// Runner 只能把 blob 掛在自己正在執行的 Run 上。
+// Runner 只能把 blob 掛在自己正在執行的 Run 上。單一 blob 最大 MAX_BLOB_BYTES，讀取 body 時就檢查。
 //
-// TODO(contract)：上傳路徑、查詢參數與認證方式隨 contract/protocol 定案。
+// 下載（Web）：`GET API_ROUTES.blob`，session 認證，需要能查看 blob 所屬的 Run。
 
 import { createHash } from "node:crypto";
+import { API_ROUTES } from "@orbis/api-contract";
+import { RUNNER_BLOB_PATH } from "@orbis/protocol";
 import { and, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { loadRunScope, requireProjectCapability } from "../authz/scope";
-import { RUNNER_BLOB_PATH } from "../contract-pending";
 import { blobs, dispatches } from "../db/schema";
 import { ApiError, conflict, notFound, readId, readQuery } from "../http/errors";
 import type { AppEnv } from "../http/session";
@@ -25,7 +27,7 @@ import { BLOB_RETENTION_MS, type BlobStore, blobStorageKey } from "./store";
 export const MAX_BLOB_BYTES = 64 * 1024 * 1024;
 
 const UploadQuery = z.object({
-  runId: z.uuid(),
+  run_id: z.uuid(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/, { error: "sha256 必須是 64 個小寫十六進位字元" }),
 });
 
@@ -76,14 +78,19 @@ export function createBlobRoutes(
         .from(dispatches)
         .where(
           and(
-            eq(dispatches.runId, query.runId),
+            eq(dispatches.runId, query.run_id),
             eq(dispatches.runnerId, caller.id),
             inArray(dispatches.status, ["accepted", "completed"]),
           ),
         )
         .limit(1);
       if (!dispatch) throw new ApiError(403, "forbidden", "這台 Runner 沒有在執行這個 Run");
-      c.set("upload", { blobId, ...query, mediaType: mediaType.data });
+      c.set("upload", {
+        blobId,
+        runId: query.run_id,
+        sha256: query.sha256,
+        mediaType: mediaType.data,
+      });
       await next();
     },
     // 讀取 body 時就計算大小，超過上限立刻中止。
@@ -138,7 +145,7 @@ export function createBlobRoutes(
   );
 
   const web = new Hono<AppEnv>();
-  web.get("/blobs/:blobId", auth, async (c) => {
+  web.get(API_ROUTES.blob, auth, async (c) => {
     const actor = c.get("actor");
     const blobId = readId(c, "blobId", "blob");
     const [blob] = await db.select().from(blobs).where(eq(blobs.id, blobId));

@@ -1,24 +1,31 @@
 // Project、Project 的 Role 覆寫、Repo（ARCHITECTURE §4、§12.2）。管理操作一律 Admin 以上。
 
-import { and, asc, count, eq, notInArray } from "drizzle-orm";
-import { Hono } from "hono";
-import { loadProjectScope, requireProjectCapability, requireTeamCapability } from "../authz/scope";
 import {
+  API_ROUTES,
   CreateProjectInput,
   CreateRepoInput,
+  GitBranchName,
+  GitHubOwnerName,
+  GitHubRepoName,
   type ProjectPolicy,
   SetProjectRoleInput,
   UpdateProjectInput,
-} from "../contract-pending";
+} from "@orbis/api-contract";
+import { and, asc, count, eq, notInArray } from "drizzle-orm";
+import { Hono } from "hono";
+import { loadProjectScope, requireProjectCapability, requireTeamCapability } from "../authz/scope";
+import { isUniqueViolation } from "../db/errors";
 import { members, projectMemberRoles, projects, repos, runs, tasks } from "../db/schema";
 import { TERMINAL_RUN_STATUSES } from "../domain/run-status";
-import { RepoRegistrationError } from "../github/integration";
 import { toProject, toRepo } from "../http/dto";
 import { ApiError, conflict, notFound, readId, readJson } from "../http/errors";
 import type { AppEnv } from "../http/session";
 import type { Services } from "../services";
 
 type ProjectInsert = typeof projects.$inferInsert;
+
+/** App 沒有安裝、也沒有指定時的 default branch。 */
+const DEFAULT_BRANCH = "main";
 
 /** API 的 ProjectPolicy 欄位對應到資料表欄位。 */
 function policyColumns(policy: Partial<ProjectPolicy>): Partial<ProjectInsert> {
@@ -37,19 +44,21 @@ function policyColumns(policy: Partial<ProjectPolicy>): Partial<ProjectInsert> {
   if (policy.defaultPermissionPolicy !== undefined) {
     columns.defaultPermissionPolicy = policy.defaultPermissionPolicy;
   }
+  if (policy.autoCreateIssues !== undefined) columns.autoCreateIssues = policy.autoCreateIssues;
   return columns;
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  const cause = (error as { cause?: { code?: string } }).cause;
-  return (error as { code?: string }).code === "23505" || cause?.code === "23505";
-}
+/**
+ * Project 的 Role 覆寫清單。契約的 API_ROUTES 只有單筆的 `projectRole`，清單沿用同一個前綴。
+ * 之後由契約補上時改用 API_ROUTES。
+ */
+export const PROJECT_ROLES_PATH = `${API_ROUTES.project}/roles`;
 
 export function createProjectRoutes(s: Services): Hono<AppEnv> {
   const { db, auth } = s;
   const app = new Hono<AppEnv>();
 
-  app.get("/projects", auth, async (c) => {
+  app.get(API_ROUTES.projects, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "view");
     const rows = await db
@@ -60,7 +69,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     return c.json(rows.map(toProject));
   });
 
-  app.post("/projects", auth, async (c) => {
+  app.post(API_ROUTES.projects, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "manage_project");
     const input = await readJson(c, CreateProjectInput);
@@ -83,14 +92,14 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     }
   });
 
-  app.get("/projects/:projectId", auth, async (c) => {
+  app.get(API_ROUTES.project, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "view");
     return c.json(toProject(scope.project));
   });
 
-  app.patch("/projects/:projectId", auth, async (c) => {
+  app.patch(API_ROUTES.project, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
@@ -111,7 +120,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     return c.json(toProject(project));
   });
 
-  app.delete("/projects/:projectId", auth, async (c) => {
+  app.delete(API_ROUTES.project, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
@@ -129,7 +138,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
 
   // ---- Role 覆寫 ----
 
-  app.get("/projects/:projectId/roles", auth, async (c) => {
+  app.get(PROJECT_ROLES_PATH, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "view");
@@ -145,7 +154,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     return c.json(rows);
   });
 
-  app.put("/projects/:projectId/roles/:memberId", auth, async (c) => {
+  app.put(API_ROUTES.projectRole, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
@@ -167,7 +176,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     return c.json({ projectId: scope.project.id, memberId, role: input.role });
   });
 
-  app.delete("/projects/:projectId/roles/:memberId", auth, async (c) => {
+  app.delete(API_ROUTES.projectRole, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
@@ -185,7 +194,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
 
   // ---- Repo ----
 
-  app.get("/projects/:projectId/repos", auth, async (c) => {
+  app.get(API_ROUTES.projectRepos, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "view");
@@ -194,44 +203,25 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
       .from(repos)
       .where(eq(repos.projectId, scope.project.id))
       .orderBy(asc(repos.createdAt), asc(repos.id));
-    return c.json(rows.map(toRepo));
+    return c.json(rows.map((row) => toRepo(row, s.github.installUrl)));
   });
 
-  app.post("/projects/:projectId/repos", auth, async (c) => {
+  app.post(API_ROUTES.projectRepos, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
     const input = await readJson(c, CreateRepoInput);
-    let registration: Awaited<ReturnType<typeof s.github.repoRegistrar.register>>;
-    try {
-      registration = await s.github.repoRegistrar.register(input);
-    } catch (error) {
-      if (error instanceof RepoRegistrationError) {
-        throw new ApiError(422, "invalid_input", error.message);
-      }
-      throw error;
-    }
-    // GitHub 整合回傳的值（例如讀到的 default branch）也要符合同樣的格式，才能交給 Runner。
-    const { owner, name, defaultBranch } = registration;
-    if (!CreateRepoInput.safeParse({ owner, name, defaultBranch }).success) {
-      throw new ApiError(422, "invalid_input", "GitHub 回傳的 Repo 資訊格式不正確");
-    }
+    const registration = await registerRepo(s, input, actor.memberId);
     const [repo] = await db
       .insert(repos)
-      .values({
-        projectId: scope.project.id,
-        githubOwner: registration.owner,
-        githubName: registration.name,
-        defaultBranch: registration.defaultBranch,
-        githubRepoId: registration.githubRepoId,
-      })
+      .values({ projectId: scope.project.id, ...registration })
       .onConflictDoNothing()
       .returning();
     if (!repo) throw conflict(`${input.owner}/${input.name} 已經登記在這個 Project`);
-    return c.json(toRepo(repo), 201);
+    return c.json(toRepo(repo, s.github.installUrl), 201);
   });
 
-  app.delete("/repos/:repoId", auth, async (c) => {
+  app.delete(API_ROUTES.repo, auth, async (c) => {
     const actor = c.get("actor");
     const repoId = readId(c, "repoId", "Repo");
     const [repo] = await db.select().from(repos).where(eq(repos.id, repoId));
@@ -245,4 +235,48 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
   });
 
   return app;
+}
+
+/**
+ * 登記 Repo 前向 GitHub 檢查（ARCHITECTURE §11）：
+ * - GitHub App 已安裝、而且請求者本人對 repo 有寫入權限：以 GitHub 上的名稱、default branch 與
+ *   repo id 為準，並記下 installation（之後由 installation webhook 即時更新）。
+ * - 沒有安裝（或 Server 沒有設定 GitHub App）：用輸入值，沒有指定 default branch 就用 `main`。
+ */
+async function registerRepo(
+  s: Services,
+  input: { owner: string; name: string; defaultBranch?: string | undefined },
+  requesterMemberId: string,
+): Promise<{
+  githubOwner: string;
+  githubName: string;
+  defaultBranch: string;
+  githubRepoId: number | null;
+  githubInstallationId: number | null;
+}> {
+  const fallback = {
+    githubOwner: input.owner,
+    githubName: input.name,
+    defaultBranch: input.defaultBranch ?? DEFAULT_BRANCH,
+    githubRepoId: null,
+    githubInstallationId: null,
+  };
+  if (!s.github.app) return fallback;
+  const inspection = await s.github.app.inspectRepo(input.owner, input.name, requesterMemberId);
+  if (!inspection.installed) return fallback;
+  // GitHub 回傳的值也要符合同樣的格式，才能交給 Runner 用在 git 指令與 Worktree 路徑。
+  if (
+    !GitHubOwnerName.safeParse(inspection.owner).success ||
+    !GitHubRepoName.safeParse(inspection.name).success ||
+    !GitBranchName.safeParse(inspection.defaultBranch).success
+  ) {
+    throw new ApiError(422, "invalid_input", "GitHub 回傳的 Repo 資訊格式不正確");
+  }
+  return {
+    githubOwner: inspection.owner,
+    githubName: inspection.name,
+    defaultBranch: inspection.defaultBranch,
+    githubRepoId: inspection.githubRepoId,
+    githubInstallationId: inspection.installationId,
+  };
 }

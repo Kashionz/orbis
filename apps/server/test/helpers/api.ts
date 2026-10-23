@@ -22,8 +22,8 @@ import {
 } from "../../src/db/schema";
 import type {
   OpenPullRequestInput,
+  OpenPullRequestOutcome,
   PullRequestOpener,
-  RepoRegistrar,
 } from "../../src/github/integration";
 import { createLogger, type Logger } from "../../src/logger";
 import { SESSION_COOKIE } from "../../src/routes/auth";
@@ -56,8 +56,12 @@ export class FakeGitHubUsers {
 export class FakePullRequestOpener implements PullRequestOpener {
   readonly opened: OpenPullRequestInput[] = [];
 
-  async openPullRequest(input: OpenPullRequestInput): Promise<void> {
+  /** 下一次開 PR 的結果；預設成功。 */
+  nextOutcome: OpenPullRequestOutcome = { ok: true, url: "https://github.com/acme/app/pull/1" };
+
+  async openPullRequest(input: OpenPullRequestInput): Promise<OpenPullRequestOutcome> {
     this.opened.push(input);
+    return this.nextOutcome;
   }
 }
 
@@ -72,7 +76,7 @@ export interface TestContext {
 
 export function createTestContext(
   db: Database,
-  options: Partial<ServicesOptions> & { repoRegistrar?: RepoRegistrar } = {},
+  options: Partial<ServicesOptions> = {},
 ): TestContext {
   const logger = createLogger({ level: "silent", pretty: false });
   const clock = new ManualClock(new Date("2026-10-23T08:00:00.000Z"));
@@ -86,13 +90,17 @@ export function createTestContext(
     ...options,
     github: {
       userLookup: githubUsers.lookup,
-      pullRequestOpener: pullRequests,
-      ...(options.repoRegistrar && { repoRegistrar: options.repoRegistrar }),
+      // 有接上 GitHub App 時改用它開 PR（測試 D 軌的整合）。
+      ...(!options.github?.app && { pullRequestOpener: pullRequests }),
       ...options.github,
     },
   });
   const app = createApp({
-    config: { publicUrl: "http://localhost:5173", bootstrapOwnerGithubUserId: null },
+    config: {
+      publicUrl: "http://localhost:5173",
+      apiOrigin: "http://localhost:4000",
+      bootstrapOwnerGithubUserId: null,
+    },
     db,
     logger,
     githubOAuth: unusedGitHubOAuth,
@@ -253,7 +261,7 @@ export async function seedReadyTask(
 export async function resetDatabase(db: Database): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      await db.execute(sql`truncate table teams, sessions cascade`);
+      await db.execute(sql`truncate table teams, sessions, github_webhook_deliveries cascade`);
       return;
     } catch (error) {
       const code = (error as { cause?: { code?: string } }).cause?.code;

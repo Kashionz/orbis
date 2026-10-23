@@ -3,11 +3,16 @@
 // Owner 規則：只有 Owner 能指派、變更或移除 Owner；Admin 管理 Admin／Member／Viewer；
 // 不能移除或降級最後一位 Owner。
 
-import type { Role } from "@orbis/api-contract";
+import {
+  AddMemberInput,
+  API_ROUTES,
+  type Role,
+  UpdateMemberInput,
+  UpdateTeamInput,
+} from "@orbis/api-contract";
 import { and, asc, count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { requireTeamCapability } from "../authz/scope";
-import { AddMemberInput, UpdateMemberInput, UpdateTeamInput } from "../contract-pending";
 import { members, teams } from "../db/schema";
 import type { Executor } from "../db/tx";
 import { toMember, toTeam } from "../http/dto";
@@ -19,7 +24,7 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
   const { db, auth } = s;
   const app = new Hono<AppEnv>();
 
-  app.get("/team", auth, async (c) => {
+  app.get(API_ROUTES.team, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "view");
     const [team] = await db.select().from(teams).where(eq(teams.id, actor.teamId));
@@ -27,7 +32,7 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
     return c.json(toTeam(team));
   });
 
-  app.patch("/team", auth, async (c) => {
+  app.patch(API_ROUTES.team, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "manage_team");
     const input = await readJson(c, UpdateTeamInput);
@@ -40,7 +45,7 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
     return c.json(toTeam(team));
   });
 
-  app.get("/members", auth, async (c) => {
+  app.get(API_ROUTES.members, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "view");
     const rows = await db
@@ -51,7 +56,7 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
     return c.json(rows.map(toMember));
   });
 
-  app.post("/members", auth, async (c) => {
+  app.post(API_ROUTES.members, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "manage_team");
     const input = await readJson(c, AddMemberInput);
@@ -74,7 +79,7 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
     return c.json(toMember(member), 201);
   });
 
-  app.patch("/members/:memberId", auth, async (c) => {
+  app.patch(API_ROUTES.member, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "manage_team");
     const memberId = readId(c, "memberId", "Member");
@@ -97,7 +102,7 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
     return c.json(toMember(updated));
   });
 
-  app.delete("/members/:memberId", auth, async (c) => {
+  app.delete(API_ROUTES.member, auth, async (c) => {
     const actor = c.get("actor");
     requireTeamCapability(actor, "manage_team");
     const memberId = readId(c, "memberId", "Member");

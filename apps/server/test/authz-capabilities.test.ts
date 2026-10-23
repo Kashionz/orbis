@@ -1,6 +1,13 @@
 import type { Role } from "@orbis/api-contract";
+import { PERMISSION_PURPOSES } from "@orbis/protocol";
 import { describe, expect, it } from "vitest";
-import { authorize, CAPABILITIES, type Capability, effectiveRole } from "../src/authz/capabilities";
+import {
+  authorize,
+  authorizePermissionResponse,
+  CAPABILITIES,
+  type Capability,
+  effectiveRole,
+} from "../src/authz/capabilities";
 
 const ME = "member-me";
 const OTHER = "member-other";
@@ -112,6 +119,44 @@ describe("Role 授權（純函式）", () => {
     });
     it("Team 的 Owner 不受覆寫影響", () => {
       expect(effectiveRole("owner", "viewer")).toBe("owner");
+    });
+  });
+
+  describe("回覆權限請求", () => {
+    /** 逐格寫出：用途 × Runner 種類 × Role ×（是不是 Runner 的擁有者）。 */
+    const cases: [string, "local" | "team", Role, boolean, boolean][] = [
+      ["tool", "team", "owner", false, true],
+      ["tool", "team", "admin", false, true],
+      ["tool", "team", "member", false, true],
+      ["tool", "team", "viewer", false, false],
+      ["tool", "local", "owner", false, false],
+      ["tool", "local", "admin", false, false],
+      ["tool", "local", "member", true, true],
+      ["tool", "local", "viewer", true, false],
+      ["config_trust", "team", "admin", false, true],
+      ["config_trust", "team", "member", false, false],
+      ["config_trust", "local", "owner", false, true],
+      ["config_trust", "local", "admin", false, true],
+      ["config_trust", "local", "member", true, false],
+      ["agent_settings_changed", "team", "member", false, true],
+      ["agent_settings_changed", "local", "admin", false, false],
+      ["agent_settings_changed", "local", "member", true, true],
+    ];
+    for (const [purpose, runnerKind, role, isOwner, expected] of cases) {
+      it(`${purpose}／${runnerKind}／${role}${isOwner ? "（擁有者）" : ""} → ${expected ? "允許" : "拒絕"}`, () => {
+        const result = authorizePermissionResponse({
+          memberId: ME,
+          role,
+          runnerKind,
+          runnerOwnerMemberId: runnerKind === "local" ? (isOwner ? ME : OTHER) : null,
+          purpose: purpose as (typeof PERMISSION_PURPOSES)[number],
+        });
+        expect(result.ok).toBe(expected);
+      });
+    }
+
+    it("涵蓋協定的每一種用途", () => {
+      expect([...new Set(cases.map((c) => c[0]))].sort()).toEqual([...PERMISSION_PURPOSES].sort());
     });
   });
 });
