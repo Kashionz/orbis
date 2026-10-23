@@ -167,6 +167,13 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 已保存這個 Server 的 Runner token 時，Pairing token 會被忽略。
 - **重新連線**：斷線後以指數退避重新連線（1 秒到 60 秒，加上 ±20% jitter）。`hello_ack` 的 `resume` 沒有列出、但 Runner 還在執行的 Run，Runner 會中止並清除暫存。Runner 重新啟動時，暫存中沒有結束的 Run 補上 `agent_crashed` 與 `failed`。
 - **sidecar 的結束碼**：0＝正常結束；78＝Runner token 無效或已被撤銷，需要重新 Pairing（sidecar 模式下 Runner token 被撤銷時不改用 Pairing token）；76＝協定版本不相容，需要更新 Runner；其他非 0 視為當掉。
+- **Server 的實作參數**：
+  - Pairing token 的有效期限：Local Runner 10 分鐘（Desktop 登入後立刻使用），Team Runner 24 小時。
+  - `dispatch_offer` 30 秒內沒有回覆就過期，Run 回到佇列重新派工。
+  - 超過 3 個心跳間隔（預設間隔 15 秒）沒有 `heartbeat`，視為離線：這台 Runner 上進行中的 Dispatch 全部過期並改派。逾時之前重新連上，沿用原本的 Dispatch。
+  - Runner 拒絕某個 Run 之後，60 秒內不再把同一個 Run 派給它；Runner 送出新的 `agent_availability` 時解除。
+  - 派工與逾時每秒檢查一次。
+  - `run_control` 送出前先存進 `run_controls`，收到 `run_control_result` 時記下結果。還沒有結果的指令，在 Runner 重新連上、或接受改派的 Dispatch 時補送（改派時換成新的 Dispatch ID），Server 重新啟動後也一樣。
 
 ### 6.2 Worktree 管理
 
@@ -427,6 +434,11 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **@agent**：觸發一個 `consult` Run。
 - **個人設定**：可以依事件類型關閉通知，也可以設定勿擾時段。
 - **Phase 1 的即時更新**：Needs You 的數量、桌面通知與看板都以輪詢取得（每 5 秒），之後再換成推送。即時推送只用於 Run 的 Event。
+  - Web 的 WebSocket 是 `/api/ws`，以 session cookie 認證，而且 Origin 必須是 Web 的 origin。訊息定義在 `packages/api-contract` 的 `ws.ts`。
+  - Web 送 `subscribe_run { runId, afterSeq }`，Server 先從資料庫重播 `afterSeq` 之後的 Event，再接上即時串流，只送連續的 seq，不漏也不重。不再需要時送 `unsubscribe_run`。
+  - Server 以 `run_events { runId, events }` 批次送出：重播時一則最多 500 筆，即時推送時通常一則一筆。
+  - 每條連線最多訂閱 50 個 Run，超過時回 `limit_exceeded`。其他錯誤：訊息格式不對（`invalid_message`）、Run 不存在或不屬於這個 Team（`not_found`）、沒有權限（`forbidden`）。
+  - 訂閱期間每 30 秒重新檢查 session 與權限。session 失效時以 close code 4401 關閉連線；沒有權限時停止推送該 Run。
 
 ---
 
@@ -445,8 +457,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - Runner 把正規化後的 Event **即時串流**到 Server，存進 Postgres 的 `run_events` 表（JSONB，依 run_id 與 seq 排序）。
 - **大型內容**（完整的檔案內容、截圖）另外存成 blob，Event 中只放參照；預設保存 **90 天**。
   - Runner 以 HTTP `PUT` 上傳 blob，以 Runner token 認證，Server 驗證 SHA-256 與大小。
+    - 路徑是 `PUT /api/runner/blobs/<blob_id>?run_id=<Run>&sha256=<hex>`，body 是內容本身，`Content-Type` 是 media type。`blob_id` 由 Runner 產生。
+    - Runner 只能把 blob 掛在自己正在執行（或剛執行完）的 Run 上。單一 blob 最大 64 MiB，讀取 body 時就檢查，超過回 413。
+    - 同一個 `blob_id` 重送相同內容視為成功，可以安全地重試；內容不同回 409。
+    - Web 以 `GET /api/blobs/<blob_id>` 下載，需要能查看該 Run。只有圖片直接顯示，其他內容一律以附件下載；過期回 410。
   - 上傳成功後，Runner 才送出參照它的 Event。
-  - 到期的 blob 會被清除，但 **`run_events` 不刪**：Run 永遠可以完整重播，到期的內容顯示為已過期。
+  - 到期的 blob 會被清除（Server 每小時檢查一次），但 **`run_events` 不刪**：Run 永遠可以完整重播，到期的內容顯示為已過期。
   - Review 用的完整 diff（§10）也存在 `run_events` 中。**超過 90 天的 Run，review diff 中放在 blob 的大檔案無法顯示**，只剩檔案清單與內嵌的小檔案。
 - **斷線處理**：Runner 斷線時，Event 先暫存在本機，重新連上後以 seq 補送。UI 可以從 Event 重播整個 Run。
   - Server 以 `event_ack` 回報每個 Run 已連續保存的最大 seq，Runner 據此清除本機暫存。
@@ -484,6 +500,8 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - 如果還有 Run 執行中，Desktop 先詢問使用者；使用者取消時不登出。
     - 確認後，先撤銷這台 Local Runner，再停止 Runner、清除本機狀態，最後 Web UI 才真正登出。
     - Server 端也會撤銷：Pairing 時記下取得 Pairing token 的 session。登出或清除過期 session 時，Server 會撤銷由這個 session 配對的 Local Runner。所以 Desktop 當掉、或 session 自然過期時，Runner 也不會一直保持配對。
+      - 撤銷時立刻斷線，Runner 上進行中的 Run 回到佇列；這個 session 取得、還沒使用的 Pairing token 也一併失效。
+      - 過期的 session 每小時清除一次。
 - **Team Runner**：以 Docker image 發布。
 
 ---
