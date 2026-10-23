@@ -50,6 +50,23 @@ describe("markdown → 文件 → markdown", () => {
     expect(mention?.getAttribute("label")).toBe("claude");
   });
 
+  it("只保留 http、https、mailto 與相對路徑的連結，其他 scheme 只留文字", () => {
+    expect(roundTrip("[a](https://x.dev) [b](mailto:a@b.c) [c](./docs/spec.md)")).toBe(
+      "[a](https://x.dev) [b](mailto:a@b.c) [c](./docs/spec.md)",
+    );
+    expect(roundTrip("[點我](javascript:alert(1)) 與 [資料](data:text/html,x)")).toBe(
+      "點我 與 資料",
+    );
+    // client 直接寫進文件的危險連結，轉成 markdown 時也只留文字。
+    const doc = new Y.Doc();
+    const paragraph = new Y.XmlElement("paragraph");
+    doc.getXmlFragment(COLLAB_FRAGMENT).insert(0, [paragraph]);
+    const text = new Y.XmlText();
+    paragraph.insert(0, [text]);
+    text.insert(0, "x", { link: { href: "JavaScript:alert(1)" } });
+    expect(fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT))).toBe("x");
+  });
+
   it("不支援的區塊（表格）保留原文", () => {
     const table = "| a | b |\n|---|---|\n| 1 | 2 |";
     expect(roundTrip(table)).toBe(table);

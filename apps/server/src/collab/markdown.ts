@@ -19,6 +19,15 @@ export const COLLAB_FRAGMENT = "default";
 
 const MENTION_ID = /^(member|agent):[A-Za-z0-9._-]+$/;
 
+/**
+ * 連結只接受 http、https、mailto 與相對路徑；其他 scheme（例如 `javascript:`）只保留文字。
+ * 描述會同步到 GitHub、也會顯示在 Web，不在源頭留下危險的連結。
+ */
+export function isSafeHref(href: string): boolean {
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(href.trim())?.[1]?.toLowerCase();
+  return scheme === undefined || scheme === "http" || scheme === "https" || scheme === "mailto";
+}
+
 type Marks = Record<string, Record<string, unknown>>;
 
 // ── Y.XmlFragment → markdown ─────────────────────────────
@@ -121,7 +130,7 @@ function applyMarks(text: string, marks: Marks): string {
   if (marks.italic) out = `*${out}*`;
   if (marks.strike) out = `~~${out}~~`;
   const href = marks.link?.href;
-  if (typeof href === "string") out = `[${out}](${href})`;
+  if (typeof href === "string" && isSafeHref(href)) out = `[${out}](${href})`;
   return out;
 }
 
@@ -267,7 +276,7 @@ function appendInline(parent: Y.XmlElement, tokens: Token[]): void {
             pushNode("mention", { id: t.href, label: t.text });
           } else {
             flush();
-            walk(t.tokens, { ...marks, link: { href: t.href } });
+            walk(t.tokens, isSafeHref(t.href) ? { ...marks, link: { href: t.href } } : marks);
           }
           break;
         }
