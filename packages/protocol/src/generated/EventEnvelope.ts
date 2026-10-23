@@ -2,8 +2,10 @@
 import type { ContentBlock } from "./ContentBlock";
 import type { GateKind } from "./GateKind";
 import type { PermissionOption } from "./PermissionOption";
+import type { PermissionPurpose } from "./PermissionPurpose";
 import type { PermissionRequestId } from "./PermissionRequestId";
 import type { PlanEntry } from "./PlanEntry";
+import type { RunDiff } from "./RunDiff";
 import type { RunErrorCode } from "./RunErrorCode";
 import type { RunId } from "./RunId";
 import type { RunStatus } from "./RunStatus";
@@ -32,7 +34,11 @@ tool_call_id: ToolCallId | null,
 /**
  * 給人看的說明，例如要執行的指令。
  */
-title: string, options: Array<PermissionOption>, } | { "kind": "permission_resolved", request_id: PermissionRequestId, 
+title: string, options: Array<PermissionOption>, 
+/**
+ * 這筆請求的用途。Server 依此決定誰可以回覆（ARCHITECTURE §8）。
+ */
+purpose: PermissionPurpose, } | { "kind": "permission_resolved", request_id: PermissionRequestId, 
 /**
  * 被選擇的 [`PermissionOption::option_id`]；請求被取消時為 `null`。
  */
@@ -73,4 +79,4 @@ branch: string | null,
 /**
  * 開出 Worktree 時的 commit SHA（40 個十六進位字元）。
  */
-base_commit: string, });
+base_commit: string, } | { "kind": "run_diff" } & RunDiff);

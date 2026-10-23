@@ -13,4 +13,9 @@ ts: Timestamp,
 /**
  * Runner 目前正在執行的 Run。
  */
-active_run_ids: Array<RunId>, };
+active_run_ids: Array<RunId>, 
+/**
+ * Runner 是否接受新的 Dispatch。`false` 時 Server 不派工給這台 Runner
+ * （Desktop 的「暫停領取」，ARCHITECTURE §6.1）；正在執行的 Run 不受影響。
+ */
+accepting_dispatches: boolean, };

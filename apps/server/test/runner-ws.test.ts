@@ -69,7 +69,12 @@ function hello(
 }
 
 function heartbeat(activeRunIds: string[] = []) {
-  return { type: "heartbeat", ts: new Date().toISOString(), active_run_ids: activeRunIds } as const;
+  return {
+    type: "heartbeat",
+    ts: new Date().toISOString(),
+    active_run_ids: activeRunIds,
+    accepting_dispatches: true,
+  } as const;
 }
 
 /** 等到條件成立（輪詢），逾時就失敗。 */

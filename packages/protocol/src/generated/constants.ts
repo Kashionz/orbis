@@ -3,16 +3,19 @@ import type { AgentCapability } from "./AgentCapability";
 import type { DelegationMode } from "./DelegationMode";
 import type { DispatchRejectReason } from "./DispatchRejectReason";
 import type { EventKindName } from "./EventKindName";
+import type { FileChange } from "./FileChange";
 import type { GateDecision } from "./GateDecision";
 import type { GateKind } from "./GateKind";
 import type { PermissionOptionKind } from "./PermissionOptionKind";
 import type { PermissionPolicy } from "./PermissionPolicy";
+import type { PermissionPurpose } from "./PermissionPurpose";
 import type { PlanEntryStatus } from "./PlanEntryStatus";
 import type { RunControlActionName } from "./RunControlActionName";
 import type { RunControlRejectReason } from "./RunControlRejectReason";
 import type { RunErrorCode } from "./RunErrorCode";
 import type { RunStatus } from "./RunStatus";
 import type { RunnerKind } from "./RunnerKind";
+import type { SidecarConnectionState } from "./SidecarConnectionState";
 import type { ToolCallStatus } from "./ToolCallStatus";
 import type { ToolKind } from "./ToolKind";
 
@@ -21,6 +24,14 @@ export const PROTOCOL_VERSION = 1;
 export const RUNNER_WS_PATH = "/runner";
 
 export const DEFAULT_MAX_CONCURRENT_RUNS = 30;
+
+export const RUNNER_BLOB_PATH = "/api/runner/blobs";
+
+export const SIDECAR_FLAG = "--sidecar";
+
+export const SIDECAR_EXIT_NEEDS_PAIRING = 78;
+
+export const SIDECAR_EXIT_VERSION_MISMATCH = 76;
 
 export const RUN_STATUSES = ["queued", "dispatched", "starting", "running", "awaiting_permission", "rate_limited", "awaiting_gate", "completed", "failed", "canceled"] as const satisfies readonly RunStatus[];
 
@@ -36,7 +47,7 @@ export const GATE_KINDS = ["plan", "review"] as const satisfies readonly GateKin
 
 export const GATE_DECISIONS = ["approved", "rejected"] as const satisfies readonly GateDecision[];
 
-export const EVENT_KINDS = ["message_chunk", "thought_chunk", "tool_call", "permission_request", "permission_resolved", "plan", "usage", "status_changed", "error", "rate_limited", "preview_ready", "worktree_ready"] as const satisfies readonly EventKindName[];
+export const EVENT_KINDS = ["message_chunk", "thought_chunk", "tool_call", "permission_request", "permission_resolved", "plan", "usage", "status_changed", "error", "rate_limited", "preview_ready", "worktree_ready", "run_diff"] as const satisfies readonly EventKindName[];
 
 export const RUN_CONTROL_ACTIONS = ["cancel", "prompt", "permission_response", "gate_result", "push_branch"] as const satisfies readonly RunControlActionName[];
 
@@ -53,5 +64,11 @@ export const TOOL_CALL_STATUSES = ["pending", "in_progress", "completed", "faile
 export const PLAN_ENTRY_STATUSES = ["pending", "in_progress", "completed"] as const satisfies readonly PlanEntryStatus[];
 
 export const PERMISSION_OPTION_KINDS = ["allow_once", "allow_always", "reject_once", "reject_always"] as const satisfies readonly PermissionOptionKind[];
+
+export const PERMISSION_PURPOSES = ["tool", "config_trust", "agent_settings_changed"] as const satisfies readonly PermissionPurpose[];
+
+export const FILE_CHANGES = ["added", "modified", "deleted", "renamed"] as const satisfies readonly FileChange[];
+
+export const SIDECAR_CONNECTION_STATES = ["connecting", "connected", "offline"] as const satisfies readonly SidecarConnectionState[];
 
 export const RUN_ERROR_CODES = ["agent_start_failed", "agent_crashed", "agent_error", "worktree_failed", "setup_failed", "git_failed", "path_too_long", "internal"] as const satisfies readonly RunErrorCode[];

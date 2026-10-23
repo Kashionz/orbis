@@ -22,6 +22,22 @@ pub const WORKTREE_ROOT_WINDOWS: &str = r"C:\ob";
 /// macOS／Linux 上的 Worktree 根目錄，`~` 代表家目錄。
 pub const WORKTREE_ROOT_UNIX: &str = "~/.orbis/wt";
 
+/// `~/<CONFIG_DIR>/` 下 Runner 的設定檔（給人編輯：Server 網址、Repo 對應、Agent 設定）。
+pub const RUNNER_CONFIG_FILE: &str = "runner.toml";
+/// `~/<CONFIG_DIR>/` 下 Runner 的狀態目錄（Runner token、port 分配、信任紀錄、Event 暫存）。
+pub const RUNNER_STATE_DIR: &str = "runner";
+
+/// Runner 讀取的環境變數：覆寫整個 `~/<CONFIG_DIR>`（設定檔與狀態目錄），供測試使用。
+pub const ENV_HOME: &str = "ORBIS_HOME";
+/// Runner 讀取的環境變數：只覆寫狀態目錄，`RUNNER_CONFIG_FILE` 仍從 `~/<CONFIG_DIR>/` 讀取。
+/// Desktop 代管的 Runner 用它，避免和手動啟動的 Runner 共用 Runner token。
+pub const ENV_RUNNER_STATE_DIR: &str = "ORBIS_RUNNER_STATE_DIR";
+/// Runner 讀取的環境變數：Server 的 base URL（命令列 `--server` 的替代）。
+pub const ENV_SERVER_URL: &str = "ORBIS_SERVER_URL";
+/// Runner 讀取的環境變數：第一次連線用的 Pairing token（命令列 `--pairing-token` 的替代）。
+/// Desktop 一律用環境變數傳，避免 token 出現在程序清單的命令列上。
+pub const ENV_PAIRING_TOKEN: &str = "ORBIS_PAIRING_TOKEN";
+
 /// 注入到 Worktree 程序的環境變數（ARCHITECTURE §6.3）。
 pub const ENV_ROOT_PATH: &str = "ORBIS_ROOT_PATH";
 pub const ENV_WORKTREE_PATH: &str = "ORBIS_WORKTREE_PATH";
@@ -47,7 +63,20 @@ pub struct Names {
     pub branch_prefix: String,
     pub worktree_root_windows: String,
     pub worktree_root_unix: String,
+    pub runner_config_file: String,
+    pub runner_state_dir: String,
     pub env: WorktreeEnvNames,
+    pub runner_env: RunnerEnvNames,
+}
+
+/// Runner 讀取的環境變數名稱。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerEnvNames {
+    pub home: String,
+    pub state_dir: String,
+    pub server_url: String,
+    pub pairing_token: String,
 }
 
 /// 注入到 Worktree 程序的環境變數名稱。
@@ -71,6 +100,14 @@ pub fn all() -> Names {
         branch_prefix: BRANCH_PREFIX.into(),
         worktree_root_windows: WORKTREE_ROOT_WINDOWS.into(),
         worktree_root_unix: WORKTREE_ROOT_UNIX.into(),
+        runner_config_file: RUNNER_CONFIG_FILE.into(),
+        runner_state_dir: RUNNER_STATE_DIR.into(),
+        runner_env: RunnerEnvNames {
+            home: ENV_HOME.into(),
+            state_dir: ENV_RUNNER_STATE_DIR.into(),
+            server_url: ENV_SERVER_URL.into(),
+            pairing_token: ENV_PAIRING_TOKEN.into(),
+        },
         env: WorktreeEnvNames {
             root_path: ENV_ROOT_PATH.into(),
             worktree_path: ENV_WORKTREE_PATH.into(),
@@ -107,5 +144,9 @@ mod tests {
             assert!(name.starts_with(ENV_PREFIX), "{name} 沒有使用 ENV_PREFIX");
         }
         assert_eq!(env_var("PORT"), ENV_PORT);
+        assert_eq!(env_var("HOME"), ENV_HOME);
+        assert_eq!(env_var("RUNNER_STATE_DIR"), ENV_RUNNER_STATE_DIR);
+        assert_eq!(env_var("SERVER_URL"), ENV_SERVER_URL);
+        assert_eq!(env_var("PAIRING_TOKEN"), ENV_PAIRING_TOKEN);
     }
 }
