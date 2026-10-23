@@ -429,7 +429,7 @@ impl Supervisor {
         }
         if let Some(until) = self.rate_limits.active(&profile.credential) {
             return Err((
-                DispatchRejectReason::ConcurrencyLimit,
+                DispatchRejectReason::RateLimited,
                 format!(
                     "Credential {} 的額度用完，預計 {} 恢復",
                     profile.credential,

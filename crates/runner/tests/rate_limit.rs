@@ -90,7 +90,7 @@ async fn gemini_格式的_rate_limit_暫停後在同一個_session_繼續() {
 }
 
 /// 某個 Run 撞到 rate limit：到恢復時間之前，同一組 Credential 的新 Dispatch 以
-/// `concurrency_limit` 拒絕，AgentAvailability 也回報無法使用。
+/// `rate_limited` 拒絕，AgentAvailability 也回報無法使用。
 #[tokio::test(flavor = "multi_thread")]
 async fn rate_limit_期間同一組_credential_不接受新的_dispatch() {
     let mut env = Env::new(&[("README.md", "a\n")], |wt| {
@@ -140,7 +140,7 @@ async fn rate_limit_期間同一組_credential_不接受新的_dispatch() {
         })
         .await;
     assert_eq!(reply["type"], "dispatch_reject", "{reply}");
-    assert_eq!(reply["reason"], "concurrency_limit", "{reply}");
+    assert_eq!(reply["reason"], "rate_limited", "{reply}");
     assert!(
         reply["message"].as_str().unwrap().contains("額度"),
         "{reply}"
