@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import { runEvents, runs, sessions } from "../../src/db/schema";
 import { ACCESS_CACHE_MS } from "../../src/preview/auth";
 import { PREVIEW_CALLBACK_PATH, PREVIEW_COOKIE } from "../../src/preview/domain";
+import { PREVIEW_SCREENSHOT_MAX_BYTES } from "../../src/preview/routes";
 import { PreviewState } from "../../src/preview/state";
 import { type RunningServer, startServer } from "../../src/server";
 import {
@@ -312,6 +313,44 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
       expect(health.status).toBe(200);
       // Preview 網址上沒有 Orbis 的 API
       expect((await raw(server.port, previewHost, "/api/health")).status).toBe(401);
+    });
+  });
+
+  describe("Preview 留言的截圖", () => {
+    const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+
+    function upload(cookie: string, bytes: Uint8Array, type = "image/png") {
+      const form = new FormData();
+      form.append("file", new Blob([bytes], { type }), "screenshot.png");
+      return ctx.app.request(`/api/runs/${runId}/preview/screenshots`, {
+        method: "POST",
+        headers: { cookie },
+        body: form,
+      });
+    }
+
+    it("能退回 Review Gate 的人可以上傳 PNG，blob 掛在這個 Run 上，可以下載", async () => {
+      const res = await upload(team.members.member.cookie, PNG);
+      expect(res.status).toBe(201);
+      const { blobId } = (await res.json()) as { blobId: string };
+      const download = await ctx.app.request(`/api/blobs/${blobId}`, {
+        headers: { cookie: team.members.viewer.cookie },
+      });
+      expect(download.status).toBe(200);
+      expect(download.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await download.arrayBuffer())).toEqual(PNG);
+    });
+
+    it("Viewer 不能上傳；不是 PNG 或超過上限時拒絕", async () => {
+      expect((await upload(team.members.viewer.cookie, PNG)).status).toBe(403);
+      expect((await upload(team.members.member.cookie, Uint8Array.from([1, 2, 3]))).status).toBe(
+        400,
+      );
+      const big = new Uint8Array(PREVIEW_SCREENSHOT_MAX_BYTES + 1);
+      big.set(PNG);
+      expect((await upload(team.members.member.cookie, big)).status).toBe(413);
+      const other = await seedTeam(database.db, "Other");
+      expect((await upload(other.members.owner.cookie, PNG)).status).toBe(404);
     });
   });
 });
