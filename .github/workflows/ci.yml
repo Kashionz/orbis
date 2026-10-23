@@ -52,9 +52,11 @@ jobs:
 
       # 完整系統 e2e 用的原生 Postgres（三平台都裝；macOS 與 Windows 的 runner 不能跑 Linux container）。
       # 只有完整系統 e2e 的步驟會拿到 DATABASE_URL，其他 DB 測試照舊用 Testcontainers。
+      # 固定在 master 的 commit：v8 的 Linux 安裝用 apt-key，ubuntu-latest（26.04）已經沒有這個指令，
+      # master 已改用 /etc/apt/keyrings，但還沒有發新版
       - name: Install Postgres
         id: postgres
-        uses: ikalnytskyi/action-setup-postgres@v8
+        uses: ikalnytskyi/action-setup-postgres@0f1fdf59c857aabfa61ab1a2619e9af34de678d3
         with:
           postgres-version: "17"
 
