@@ -7,6 +7,7 @@ export * from "./errors";
 export * from "./event";
 export * from "./gate";
 export * from "./github";
+export * from "./health";
 export * from "./names";
 export * from "./needs-you";
 export * from "./permission";

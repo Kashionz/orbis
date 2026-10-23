@@ -63,3 +63,7 @@ export const NeedsYouItem = z.discriminatedUnion("kind", [
   NeedsYouStoppedRun,
 ]);
 export type NeedsYouItem = z.infer<typeof NeedsYouItem>;
+
+/** `GET` Needs You 的回應：目前 Member 待處理的項目，依建立時間排序（新的在前）。 */
+export const NeedsYouListResponse = z.array(NeedsYouItem);
+export type NeedsYouListResponse = z.infer<typeof NeedsYouListResponse>;

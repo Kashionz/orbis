@@ -12,10 +12,12 @@ import {
   DispatchOptions,
   Gate,
   GateDecisionInput,
+  HealthResponse,
   ImportIssueResult,
   ImportIssuesInput,
   MANUAL_TASK_TRANSITIONS,
   Member,
+  NeedsYouListResponse,
   type NeedsYouPermissionRequest,
   PairingTokenCreated,
   PermissionResponseInput,
@@ -401,5 +403,19 @@ describe("GitHub：Repo 的 App 安裝狀態與 Issue 匯入", () => {
       "/api/repos/r1/import-issues",
     );
     expect(API_ROUTES.githubWebhook).toBe("/api/webhooks/github");
+  });
+});
+
+describe("Health 與 Needs You 清單", () => {
+  it("health 回報 Server 的公開網址", () => {
+    expect(HealthResponse.safeParse({ ok: true, apiOrigin: "http://localhost:4000" }).success).toBe(
+      true,
+    );
+    expect(HealthResponse.safeParse({ ok: true }).success).toBe(false);
+  });
+
+  it("Needs You 清單是項目的陣列", () => {
+    expect(NeedsYouListResponse.safeParse([]).success).toBe(true);
+    expect(NeedsYouListResponse.safeParse({ items: [] }).success).toBe(false);
   });
 });
