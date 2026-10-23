@@ -76,6 +76,15 @@ describe("runnerStatusLabel", () => {
 });
 
 describe("buildTrayModel", () => {
+  it("Runner 版本與 Server 不相容時顯示要更新的提示", () => {
+    const view = deriveRunnerView(session("paired"), sidecar("version_mismatch"));
+    expect(view).toEqual({ kind: "version_mismatch" });
+    expect(runnerStatusLabel(view)).toBe("Runner 版本與 Server 不相容，請更新");
+    expect(buildTrayModel({ runner: view, needsYouCount: 0, claimingPaused: false }).tone).toBe(
+      "warn",
+    );
+  });
+
   it("tooltip 帶產品名稱、狀態與 Needs You 數量", () => {
     const model = buildTrayModel({
       runner: { kind: "connected", activeRuns: 1 },

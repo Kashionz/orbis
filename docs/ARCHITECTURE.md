@@ -534,6 +534,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
     - log 一律走 stderr，Desktop 寫到有大小上限、會輪替的 log 檔。
   - 當掉時以指數退避重啟（1 秒起、上限 60 秒，連續正常運作 60 秒後重置）。
   - 以「需要重新 Pairing」的結束碼結束時不重啟，而是重新取得 Pairing token。
+  - 以「協定版本不相容」的結束碼結束時也不重啟，系統匣與視窗提示「Runner 版本與 Server 不相容，請更新」。
   - **結束 App 時**：Desktop 送出 `shutdown` 並關閉 stdin，Runner 結束自己的 Run（§6.4）後退出。stdin EOF 也視為 shutdown，所以 Desktop 當掉時 Runner 也會自行結束。Runner 逾時沒有結束，Desktop 就強制結束整個程序樹：Windows 用 `taskkill /T`，macOS／Linux 用 process group。
 - **系統匣**：
   - 顯示 Runner 狀態（連線中、已連線與執行中的 Run 數、離線）與 Needs You 的數量。

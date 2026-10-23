@@ -10,6 +10,8 @@ export type RunnerView =
   | { kind: "connecting" }
   | { kind: "connected"; activeRuns: number }
   | { kind: "offline"; restarting: boolean }
+  /** Runner 與 Server 的協定版本不相容（SIDECAR_EXIT_VERSION_MISMATCH）。 */
+  | { kind: "version_mismatch" }
   | { kind: "error"; message: string };
 
 export function deriveRunnerView(session: SessionState, sidecar: SupervisorSnapshot): RunnerView {
@@ -40,11 +42,16 @@ export function deriveRunnerView(session: SessionState, sidecar: SupervisorSnaps
       return { kind: "offline", restarting: true };
     case "needs_pairing":
       return { kind: "connecting" };
+    case "version_mismatch":
+      return { kind: "version_mismatch" };
     case "stopping":
     case "stopped":
       return { kind: "offline", restarting: false };
   }
 }
+
+/** Runner 版本不相容時，系統匣與視窗顯示的提示。 */
+export const VERSION_MISMATCH_MESSAGE = "Runner 版本與 Server 不相容，請更新";
 
 export function runnerStatusLabel(view: RunnerView): string {
   switch (view.kind) {
@@ -58,6 +65,8 @@ export function runnerStatusLabel(view: RunnerView): string {
       return view.activeRuns > 0 ? `已連線・執行中 ${view.activeRuns} 個 Run` : "已連線";
     case "offline":
       return view.restarting ? "離線（Runner 重新啟動中）" : "離線";
+    case "version_mismatch":
+      return VERSION_MISMATCH_MESSAGE;
     case "error":
       return `錯誤：${view.message}`;
   }
@@ -74,6 +83,7 @@ export function trayTone(view: RunnerView): TrayTone {
       return "busy";
     case "offline":
     case "error":
+    case "version_mismatch":
       return "warn";
     default:
       return "idle";

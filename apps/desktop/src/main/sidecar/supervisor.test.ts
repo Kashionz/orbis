@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { isProcessAlive } from "./process-tree";
-import { SIDECAR_EXIT_NEEDS_PAIRING } from "./protocol";
+import { SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH } from "./protocol";
 import { type LogSink, RunnerSupervisor, type SupervisorSnapshot } from "./supervisor";
 
 const FAKE_SIDECAR = fileURLToPath(new URL("./test-fixtures/fake-sidecar.mjs", import.meta.url));
@@ -146,6 +146,15 @@ describe("RunnerSupervisor", () => {
     await new Promise((r) => setTimeout(r, FAST_BACKOFF.maxMs * 2));
     expect(spawns()).toHaveLength(1);
     expect(supervisor.snapshot().lastExit?.code).toBe(SIDECAR_EXIT_NEEDS_PAIRING);
+  });
+
+  it("以「版本不相容」的結束碼結束時不重啟", async () => {
+    const { supervisor, spawns } = setup([`--exit-code=${SIDECAR_EXIT_VERSION_MISMATCH}`]);
+    supervisor.start();
+    await waitFor(() => supervisor.snapshot().phase === "version_mismatch", "version_mismatch");
+    await new Promise((r) => setTimeout(r, FAST_BACKOFF.maxMs * 2));
+    expect(spawns()).toHaveLength(1);
+    expect(supervisor.snapshot().lastExit?.code).toBe(SIDECAR_EXIT_VERSION_MISMATCH);
   });
 
   it("其他非 0 結束碼（例如參數錯誤的 2）視為當掉並重啟", async () => {

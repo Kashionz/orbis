@@ -8,6 +8,7 @@ import {
   encodeSidecarCommand,
   parseSidecarLine,
   SIDECAR_EXIT_NEEDS_PAIRING,
+  SIDECAR_EXIT_VERSION_MISMATCH,
   type SidecarCommand,
   type SidecarStatus,
 } from "./protocol";
@@ -20,6 +21,8 @@ export type SupervisorPhase =
   | "backoff"
   /** Runner 以「需要重新 Pairing」結束，等呼叫端取得新的 Pairing token 後再 start()。 */
   | "needs_pairing"
+  /** Runner 與 Server 的協定版本不相容，重啟也不會成功，等使用者更新。 */
+  | "version_mismatch"
   | "stopping";
 
 export interface SupervisorSnapshot {
@@ -231,6 +234,11 @@ export class RunnerSupervisor {
     }
     if (code === SIDECAR_EXIT_NEEDS_PAIRING) {
       this.update({ phase: "needs_pairing", pid: null, status: null, lastExit });
+      return;
+    }
+    if (code === SIDECAR_EXIT_VERSION_MISMATCH) {
+      this.options.log.note("Runner 與 Server 的協定版本不相容，不再重啟");
+      this.update({ phase: "version_mismatch", pid: null, status: null, lastExit });
       return;
     }
     const delay = this.backoff.next(uptimeMs);

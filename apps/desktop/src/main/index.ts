@@ -58,6 +58,7 @@ import {
   deriveRunnerView,
   type TrayMenuId,
   type TrayModel,
+  VERSION_MISMATCH_MESSAGE,
 } from "./tray/tray-model";
 
 // ---- 啟動前的設定（要在 ready 之前完成）
@@ -195,12 +196,28 @@ const sessionController = new SessionController({
   },
 });
 
+let lastSupervisorPhase = supervisor.snapshot().phase;
 supervisor.onChange((snapshot) => {
   if (snapshot.phase === "needs_pairing") void sessionController.runnerNeedsPairing();
+  if (snapshot.phase === "version_mismatch" && lastSupervisorPhase !== "version_mismatch") {
+    showVersionMismatch();
+  }
+  lastSupervisorPhase = snapshot.phase;
   const runnerId = snapshot.status?.runner_id;
   if (runnerId && runnerId !== config.get().runnerId) config.update({ runnerId });
   renderTray();
 });
+
+/** Runner 與 Server 的協定版本不相容：系統匣之外，也在視窗上提示一次。 */
+function showVersionMismatch(): void {
+  const options = {
+    type: "warning" as const,
+    message: VERSION_MISMATCH_MESSAGE,
+    detail: "Runner 已停止，不會自動重啟。更新後重新啟動 App 即可。",
+  };
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options));
+}
 
 // ---- Needs You 輪詢與桌面通知
 
