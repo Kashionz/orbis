@@ -48,3 +48,47 @@ input.preview-address {
   border: 1px dashed var(--border);
   border-radius: 6px;
 }
+
+.preview-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 0;
+  height: 100%;
+}
+
+.preview-comment {
+  display: grid;
+  grid-template-columns: minmax(8rem, 16rem) 1fr;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.preview-comment-shot {
+  grid-row: span 3;
+  max-width: 100%;
+  border: 1px solid var(--border);
+}
+
+.preview-comment dl {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.preview-comment textarea {
+  min-height: 4rem;
+}
+
+.preview-drafts ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.preview-drafts li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}

@@ -2,10 +2,12 @@
 
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
-import { apiRequest } from "../../api/client";
+import { ApiError, apiRequest, UnauthorizedError } from "../../api/client";
 
 // TODO(contract): 契約 v2 合併後改用 api-contract 的 PreviewState 與 API_ROUTES（#29）。
 const PREVIEW_STATE_ROUTE = "/api/runs/:runId/preview";
+// TODO(contract): 同上（API_ROUTES.runPreviewScreenshots）。
+const PREVIEW_SCREENSHOTS_ROUTE = "/api/runs/:runId/preview/screenshots";
 
 // TODO(contract): 同上；欄位和 apps/server/src/preview/state.ts 的暫時型別一致。
 export const PreviewState = z.object({
@@ -46,4 +48,28 @@ export function unavailableMessage(state: PreviewState, inDesktop: boolean): str
   // Desktop 可以直接開自己的 Local Runner 跑的 Run，是否能開由 Desktop 判斷
   if (inDesktop || state.shareUrl) return null;
   return "Server 沒有設定 Preview 網域，只能在執行這個 Run 的電腦上用 Desktop 開啟 Preview";
+}
+
+/** 上傳 Preview 留言的截圖（PNG），回傳 blob ID。 */
+export async function uploadScreenshot(runId: string, screenshot: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("file", new File([screenshot], "screenshot.png", { type: "image/png" }));
+  const response = await fetch(
+    PREVIEW_SCREENSHOTS_ROUTE.replace(":runId", encodeURIComponent(runId)),
+    { method: "POST", credentials: "same-origin", body: form },
+  );
+  if (response.status === 401) throw new UnauthorizedError();
+  const body = (await response.json().catch(() => null)) as {
+    blobId?: string;
+    error?: string;
+    message?: string;
+  } | null;
+  if (!response.ok || !body?.blobId) {
+    throw new ApiError(
+      response.status,
+      body?.error ?? null,
+      body?.message ?? `上傳截圖失敗：HTTP ${response.status}`,
+    );
+  }
+  return body.blobId;
 }

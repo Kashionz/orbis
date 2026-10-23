@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type PreviewState, unavailableMessage } from "./preview-api";
+import { clearPreviewDrafts, loadPreviewDrafts, savePreviewDrafts } from "./preview-drafts";
 import { cropToElement } from "./screenshot";
 
 describe("cropToElement", () => {
@@ -53,5 +54,23 @@ describe("unavailableMessage", () => {
   it("還沒就緒時說明原因", () => {
     expect(unavailableMessage({ ...ready, status: "starting" }, true)).toBe("Preview 啟動中…");
     expect(unavailableMessage({ ...ready, status: "stopped" }, false)).toBe("Preview 已停止");
+  });
+});
+
+describe("Preview 留言的草稿", () => {
+  const draft = {
+    body: "按鈕顏色太淡",
+    url: "http://localhost:41000/",
+    selector: '[data-testid="save"]',
+    screenshotBlobId: "0192f0c4-7a1b-7c3d-8e9f-0a1b2c3d4e5f",
+  };
+
+  it("依 Run 分開保存；sessionStorage 無法使用時存在記憶體中", () => {
+    expect(loadPreviewDrafts("run-1")).toEqual([]);
+    savePreviewDrafts("run-1", [draft]);
+    expect(loadPreviewDrafts("run-1")).toEqual([draft]);
+    expect(loadPreviewDrafts("run-2")).toEqual([]);
+    clearPreviewDrafts("run-1");
+    expect(loadPreviewDrafts("run-1")).toEqual([]);
   });
 });

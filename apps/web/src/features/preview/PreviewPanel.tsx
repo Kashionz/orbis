@@ -8,10 +8,11 @@ import {
   getDesktopBridge,
   type PreviewNavState,
 } from "@orbis/desktop/bridge";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ErrorText } from "../../components/ErrorText";
-import { previewStateQuery, unavailableMessage } from "./preview-api";
+import { previewStateQuery, unavailableMessage, uploadScreenshot } from "./preview-api";
+import { loadPreviewDrafts, type PreviewCommentDraft, savePreviewDrafts } from "./preview-drafts";
 import { canCaptureTab, captureElement, imageFromClipboard } from "./screenshot";
 import "./preview.css";
 
@@ -25,19 +26,128 @@ export interface PreviewCapture {
 
 export interface PreviewPanelProps {
   runId: string;
-  /** 擷取到截圖時呼叫（之後開啟留言框）。 */
-  onCapture?: (capture: PreviewCapture) => void;
+  /** 能不能留言（和 Review Gate 退回的權限相同）。 */
+  canComment: boolean;
 }
 
-export function PreviewPanel({ runId, onCapture }: PreviewPanelProps) {
+export function PreviewPanel({ runId, canComment }: PreviewPanelProps) {
   const [bridge] = useState(() => getDesktopBridge()?.preview ?? null);
   const { data: state, error } = useQuery(previewStateQuery(runId));
+  const [capture, setCapture] = useState<PreviewCapture | null>(null);
+  const [drafts, setDrafts] = useState(() => loadPreviewDrafts(runId));
   if (error) return <ErrorText error={error} />;
   if (!state) return <p className="preview-message">載入中…</p>;
   const message = unavailableMessage(state, bridge !== null);
   if (message) return <p className="preview-message">{message}</p>;
-  if (bridge) return <DesktopPreview runId={runId} bridge={bridge} onCapture={onCapture} />;
-  return <BrowserPreview url={state.shareUrl ?? ""} onCapture={onCapture} />;
+
+  const onCapture = canComment ? setCapture : undefined;
+  const update = (next: PreviewCommentDraft[]) => {
+    savePreviewDrafts(runId, next);
+    setDrafts(next);
+  };
+  return (
+    <div className="preview-tab">
+      {bridge ? (
+        <DesktopPreview runId={runId} bridge={bridge} onCapture={onCapture} />
+      ) : (
+        <BrowserPreview url={state.shareUrl ?? ""} onCapture={onCapture} />
+      )}
+      {/* 留言框與草稿放在 Preview 下方：Desktop 的內嵌瀏覽器疊在上面的區塊，不會蓋住它們 */}
+      {capture && (
+        <PreviewCommentForm
+          runId={runId}
+          capture={capture}
+          onSaved={(draft) => {
+            update([...drafts, draft]);
+            setCapture(null);
+          }}
+          onCancel={() => setCapture(null)}
+        />
+      )}
+      {drafts.length > 0 && (
+        <section className="preview-drafts" aria-label="Preview 留言草稿">
+          <h3>Preview 留言草稿（{drafts.length}）</h3>
+          <p className="preview-message">Review Gate 退回時，會和 diff 行內留言一起送給 Agent。</p>
+          <ul>
+            {drafts.map((draft, index) => (
+              // 每則草稿的截圖都是剛上傳的 blob，ID 不會重複
+              <li key={draft.screenshotBlobId ?? `${draft.url}|${draft.body}`}>
+                <span>{draft.body}</span>
+                {draft.selector && <code>{draft.selector}</code>}
+                <button type="button" onClick={() => update(drafts.filter((_, i) => i !== index))}>
+                  刪除
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/** 留言框：附上截圖、selector 與網址；加入草稿時上傳截圖。 */
+function PreviewCommentForm({
+  runId,
+  capture,
+  onSaved,
+  onCancel,
+}: {
+  runId: string;
+  capture: PreviewCapture;
+  onSaved: (draft: PreviewCommentDraft) => void;
+  onCancel: () => void;
+}) {
+  const [body, setBody] = useState("");
+  const [image] = useState(() => URL.createObjectURL(capture.screenshot));
+  useEffect(() => () => URL.revokeObjectURL(image), [image]);
+  const save = useMutation({
+    mutationFn: async (): Promise<PreviewCommentDraft> => ({
+      body: body.trim(),
+      url: capture.url,
+      selector: capture.selector,
+      screenshotBlobId: await uploadScreenshot(runId, capture.screenshot),
+    }),
+    onSuccess: onSaved,
+  });
+  return (
+    <form
+      className="preview-comment"
+      aria-label="Preview 留言"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save.mutate();
+      }}
+    >
+      <img className="preview-comment-shot" src={image} alt="Preview 的截圖" />
+      <dl>
+        {capture.selector && (
+          <>
+            <dt>元素</dt>
+            <dd>
+              <code>{capture.selector}</code>
+            </dd>
+          </>
+        )}
+        <dt>網址</dt>
+        <dd>{capture.url}</dd>
+      </dl>
+      <textarea
+        aria-label="留言內容"
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+      />
+      <ErrorText error={save.error} />
+      <div className="preview-toolbar">
+        <button type="submit" disabled={body.trim() === "" || save.isPending}>
+          {save.isPending ? "上傳截圖中…" : "加入 Review 留言草稿"}
+        </button>
+        <button type="button" onClick={onCancel}>
+          取消
+        </button>
+      </div>
+    </form>
+  );
 }
 
 /** 依元素的位置算出內嵌瀏覽器的範圍（CSS 像素，相對於 viewport）。 */
