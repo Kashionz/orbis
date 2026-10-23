@@ -1,8 +1,8 @@
 // C2 的完成條件跑在完整系統上：Plan Gate → Verification 失敗後重試 → 通過 → manual 打勾 → 核准。
 // Fake Agent 用 plan-verify.yaml（A2），所以這個檔案自己啟動一組 stack 與 Vite（全域的那組用 m1.yaml）。
 //
-// TODO(api): A2（plan-verify.yaml、Verification 指令經過 Permission Policy）與 B2（Server 發起 Verification、
-// Plan Gate、manual 打勾）合併後拿掉 fixme，並依真實 Server 核對步驟。
+// TODO(A2, #30): 等 A2 的 plan-verify.yaml（與 Verification 指令經過 Permission Policy）合併後，
+// 由 A2 在它的 PR 中拿掉 fixme 並跑通。B2 的 Server 端（Plan Gate、Verification、manual 打勾）已合併。
 
 import { API_ROUTES, apiPath, Task } from "@orbis/api-contract";
 import { expect, test } from "@playwright/test";
@@ -16,7 +16,7 @@ let web: StartedWeb;
 let baseURL: string;
 
 test.describe("Plan Gate 到核准（完整系統）", () => {
-  test.fixme(true, "TODO(api)：等 A2、B2 合併");
+  test.fixme(true, "TODO(A2, #30)：等 A2 的 plan-verify.yaml 合併");
 
   test.beforeAll(async () => {
     test.setTimeout(600_000);
