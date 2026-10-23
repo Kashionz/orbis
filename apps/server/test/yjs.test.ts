@@ -2,8 +2,10 @@
 // 重新啟動 Server 後內容仍在。
 
 import { eq } from "drizzle-orm";
+import * as encoding from "lib0/encoding";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
+import * as awarenessProtocol from "y-protocols/awareness";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 import { collabDocName } from "../src/collab/doc-name";
@@ -163,6 +165,52 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       5000,
       "Alice 離線後移除",
     );
+  });
+
+  it("在線狀態不能冒用別人的 client id，memberId 由 Server 填入", async () => {
+    const name = collabDocName("task-description", taskId);
+    const a = connect(team.members.member, name);
+    const b = connect(team.members.admin, name);
+    const c = connect(team.members.owner, name);
+    await Promise.all([synced(a.provider), synced(b.provider), synced(c.provider)]);
+    a.provider.awareness.setLocalStateField("user", { name: "Alice" });
+    // b 自稱是 Owner，還想冒用 a 的 client id。
+    b.provider.awareness.setLocalState({ user: { name: "Bob" }, memberId: team.members.owner.id });
+    await waitUntil(
+      () =>
+        c.provider.awareness.getStates().get(a.doc.clientID)?.user?.name === "Alice" &&
+        c.provider.awareness.getStates().get(b.doc.clientID)?.user?.name === "Bob",
+      5000,
+      "看到 Alice 與 Bob",
+    );
+    expect(c.provider.awareness.getStates().get(a.doc.clientID)?.memberId).toBe(
+      team.members.member.id,
+    );
+    expect(c.provider.awareness.getStates().get(b.doc.clientID)?.memberId).toBe(
+      team.members.admin.id,
+    );
+
+    const forgedDoc = new Y.Doc();
+    forgedDoc.clientID = a.doc.clientID;
+    const forged = new awarenessProtocol.Awareness(forgedDoc);
+    forged.setLocalState({ user: { name: "冒充的 Alice" } });
+    // 讓 clock 比 a 的大，確保不是因為 clock 較舊才被忽略。
+    for (let i = 0; i < 5; i++) forged.setLocalState({ user: { name: "冒充的 Alice" }, i });
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 1);
+    encoding.writeVarUint8Array(
+      encoder,
+      awarenessProtocol.encodeAwarenessUpdate(forged, [a.doc.clientID]),
+    );
+    b.provider.ws?.send(encoding.toUint8Array(encoder));
+    b.provider.awareness.setLocalStateField("user", { name: "Bob 2" });
+    await waitUntil(
+      () => c.provider.awareness.getStates().get(b.doc.clientID)?.user?.name === "Bob 2",
+      5000,
+      "b 的下一個狀態",
+    );
+    expect(c.provider.awareness.getStates().get(a.doc.clientID)?.user?.name).toBe("Alice");
+    forged.destroy();
   });
 
   it("重新啟動 Server 後內容仍在", async () => {

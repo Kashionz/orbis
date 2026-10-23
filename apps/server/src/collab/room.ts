@@ -14,9 +14,13 @@ import type { CollabStore } from "./store";
 export const MESSAGE_SYNC = 0;
 export const MESSAGE_AWARENESS = 1;
 export const MESSAGE_QUERY_AWARENESS = 3;
+/** 一條連線最多能宣告幾個 awareness client id（同一個分頁重新載入 Y.Doc 時會換新的 id）。 */
+export const MAX_AWARENESS_IDS_PER_PEER = 4;
 
 /** 房間中的一個 client。 */
 export interface CollabPeer {
+  /** 連線者（已認證）。Server 會把它寫進這條連線的 awareness 狀態，其他 client 可以信任這個欄位。 */
+  readonly memberId: string;
   /** 是否可以修改文件；唯讀的 client 送來的 update 一律丟棄。 */
   readonly writable: boolean;
   send(message: Uint8Array): void;
@@ -138,19 +142,58 @@ export class CollabRoom {
         }
         return;
       }
-      case MESSAGE_AWARENESS:
-        awarenessProtocol.applyAwarenessUpdate(
-          this.awareness,
-          decoding.readVarUint8Array(decoder),
-          peer,
-        );
+      case MESSAGE_AWARENESS: {
+        const update = this.sanitizeAwareness(peer, decoding.readVarUint8Array(decoder));
+        if (update) awarenessProtocol.applyAwarenessUpdate(this.awareness, update, peer);
         return;
+      }
       case MESSAGE_QUERY_AWARENESS:
         this.sendAwareness(peer);
         return;
       default:
         throw new Error(`不認得的訊息種類：${type}`);
     }
+  }
+
+  /**
+   * 過濾 client 送來的 awareness update，避免冒用別人的在線狀態：
+   * - 已被其他連線使用的 client id 一律忽略；
+   * - 每條連線最多 MAX_AWARENESS_IDS_PER_PEER 個 client id；
+   * - 狀態中的 `memberId` 一律改成這條連線的 Member。
+   * 編碼格式同 y-protocols 的 encodeAwarenessUpdate：數量，接著每筆 clientID、clock、JSON 狀態。
+   */
+  private sanitizeAwareness(peer: CollabPeer, update: Uint8Array): Uint8Array | null {
+    const owned = this.peers.get(peer);
+    if (!owned) return null;
+    const decoder = decoding.createDecoder(update);
+    const count = decoding.readVarUint(decoder);
+    const accepted: { clientId: number; clock: number; state: string }[] = [];
+    for (let i = 0; i < count; i++) {
+      const clientId = decoding.readVarUint(decoder);
+      const clock = decoding.readVarUint(decoder);
+      const raw = decoding.readVarString(decoder);
+      const ownedByOther = [...this.peers].some(
+        ([other, ids]) => other !== peer && ids.has(clientId),
+      );
+      if (ownedByOther) continue;
+      if (!owned.has(clientId) && owned.size >= MAX_AWARENESS_IDS_PER_PEER) continue;
+      const state: unknown = JSON.parse(raw);
+      const stamped =
+        state !== null && typeof state === "object" && !Array.isArray(state)
+          ? JSON.stringify({ ...state, memberId: peer.memberId })
+          : "null";
+      accepted.push({ clientId, clock, state: stamped });
+      owned.add(clientId);
+    }
+    if (accepted.length === 0) return null;
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, accepted.length);
+    for (const entry of accepted) {
+      encoding.writeVarUint(encoder, entry.clientId);
+      encoding.writeVarUint(encoder, entry.clock);
+      encoding.writeVarString(encoder, entry.state);
+    }
+    return encoding.toUint8Array(encoder);
   }
 
   private sendAwareness(peer: CollabPeer): void {

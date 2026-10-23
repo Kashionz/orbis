@@ -203,6 +203,10 @@ class CollabConnection implements CollabPeer {
     this.timer.unref();
   }
 
+  get memberId(): string {
+    return this.actor.memberId;
+  }
+
   get writable(): boolean {
     return this.access === "write";
   }
