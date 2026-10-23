@@ -185,6 +185,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
           taskId={run.taskId}
           maxRetries={project?.policy.verificationMaxRetries ?? 3}
           canDecide={permissions.can("run.control")}
+          canSkip={permissions.can("gate.approve")}
         />
       )}
       {/* 只在選取時掛載：Desktop 的內嵌瀏覽器在 PreviewPanel 卸載時才會隱藏 */}

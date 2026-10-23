@@ -40,6 +40,8 @@ interface Connection {
 }
 
 interface Room {
+  /** 已經模擬過另一位成員的修改。 */
+  peerEdited: boolean;
   doc: Y.Doc;
   awareness: awarenessProtocol.Awareness;
   connections: Set<Connection>;
@@ -147,7 +149,9 @@ export class MockCollabServer {
     }
 
     const peer = this.backend.collabPeer;
-    if (peer?.editText) {
+    // 每份文件只模擬一次（開發模式的 StrictMode 會連線兩次）
+    if (peer?.editText && !room.peerEdited) {
+      room.peerEdited = true;
       // 模擬另一位成員在稍後加入一段文字
       const editText = peer.editText;
       setTimeout(() => {
@@ -180,7 +184,7 @@ export class MockCollabServer {
     const awareness = new awarenessProtocol.Awareness(doc);
     const peer = this.backend.collabPeer;
     awareness.setLocalState(peer ? { user: { name: peer.name, color: peer.color } } : null);
-    const room: Room = { doc, awareness, connections: new Set() };
+    const room: Room = { doc, awareness, connections: new Set(), peerEdited: false };
 
     doc.on("update", (update: Uint8Array, origin: unknown) => {
       const encoder = encoding.createEncoder();

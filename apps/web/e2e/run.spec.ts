@@ -60,6 +60,8 @@ test.describe("Run 即時檢視", () => {
   test("重新整理後從 seq 重播，畫面完全一樣", async ({ page }) => {
     await dispatch(page, "ORB-2");
     await permission(page).getByRole("button", { name: "允許" }).click();
+    // 回合結束後還有 Verification；等它結束、進入 Review Gate 後 Event 才不再增加
+    await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
     await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
 
     const snapshot = () =>

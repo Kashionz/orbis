@@ -342,7 +342,7 @@ function Review({
         </section>
       )}
 
-      <ReviewCriteria taskId={task.id} runId={run.id} canCheck={canComment} />
+      <ReviewCriteria taskId={task.id} runId={run.id} canCheck={canApprove} />
       {previous.length > 0 && <PreviousReviews gates={previous} />}
 
       {(canReject || canApprove) && (

@@ -1890,6 +1890,9 @@ export class MockBackend {
   decideVerification(runId: string, input: VerificationDecisionInput): void {
     this.requireEditor();
     const run = this.run(runId);
+    if (input.action === "skip" && !this.mayApprove(this.task(run.taskId))) {
+      throw new MockError(403, "forbidden", "略過失敗進入 Review Gate 需要核准 Gate 的權限");
+    }
     const latest = this.verifications(runId).at(-1);
     if (!latest?.awaitingDecision) {
       throw new MockError(409, "conflict", "這個 Run 沒有在等待 Verification 的決定");
@@ -1937,6 +1940,10 @@ export class MockBackend {
     this.requireEditor();
     const criterion = this.state.acceptanceCriteria.find((c) => c.id === criterionId);
     if (!criterion) throw new MockError(404, "not_found", "找不到這條 Acceptance Criterion");
+    // 同 Server：打勾需要核准 Gate 的權限
+    if (!this.mayApprove(this.task(criterion.taskId))) {
+      throw new MockError(403, "forbidden", "沒有核准這個 Gate 的權限");
+    }
     if (criterion.kind !== "manual") {
       throw new MockError(422, "invalid_input", "只有 manual 類型的條件可以打勾");
     }

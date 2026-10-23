@@ -97,9 +97,14 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   await expect(page.locator(".editor.modified .view-lines")).toContainText("version 2");
 
   // manual 條件全部打勾後才能核准
-  await checkManualCriteria(page, taskKey);
+  const approve = page.getByRole("button", { name: "核准並開 PR" });
+  await expect(approve).toBeDisabled();
+  await page
+    .getByRole("region", { name: "Acceptance Criterion" })
+    .getByRole("checkbox", { name: "m1.txt 存在" })
+    .check();
   // 核准：Task 進入 PR Open，Runner 把分支 push 到本機 bare repo 後 Run 完成
-  await page.getByRole("button", { name: "核准並開 PR" }).click();
+  await approve.click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
   await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 60_000 });
 
@@ -117,35 +122,3 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   await page.goto("/board");
   await expect(page.locator(`[data-status="pr_open"] [data-task-key="${taskKey}"]`)).toBeVisible();
 });
-
-/**
- * 為 Task 的 manual 條件打勾：核准 Review Gate 前 manual 條件必須全部打勾。
- * 在頁面中以 fetch 呼叫 API（同一個 origin、帶 session cookie）。
- * TODO(C2, #41)：Web 做出打勾的 UI 後改成點 UI。
- */
-async function checkManualCriteria(page: Page, taskKey: string): Promise<void> {
-  const routes = {
-    task: apiPath(API_ROUTES.taskByKey, { taskKey }),
-    criteria: (taskId: string) => apiPath(API_ROUTES.taskAcceptanceCriteria, { taskId }),
-    check: (criterionId: string) => apiPath(API_ROUTES.acceptanceCriterionCheck, { criterionId }),
-  };
-  const task = (await page.evaluate((url) => fetch(url).then((r) => r.json()), routes.task)) as {
-    id: string;
-  };
-  const criteria = (await page.evaluate(
-    (url) => fetch(url).then((r) => r.json()),
-    routes.criteria(task.id),
-  )) as { id: string; kind: string }[];
-  for (const criterion of criteria.filter((c) => c.kind === "manual")) {
-    const status = await page.evaluate(
-      (url) =>
-        fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ checked: true }),
-        }).then((r) => r.status),
-      routes.check(criterion.id),
-    );
-    expect(status).toBe(200);
-  }
-}

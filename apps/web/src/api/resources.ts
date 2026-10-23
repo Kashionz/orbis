@@ -519,7 +519,6 @@ export function fetchNotifications(
   before: string | null,
   signal?: AbortSignal,
 ): Promise<NotificationListResponse> {
-  // TODO(api): 查詢參數（unreadOnly、before、limit）的格式在 B2 合併後以真實 Server 核對
   const query = new URLSearchParams({ limit: "50" });
   if (unreadOnly) query.set("unreadOnly", "true");
   if (before) query.set("before", before);

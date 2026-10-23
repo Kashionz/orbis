@@ -30,8 +30,10 @@ interface VerificationPanelProps {
   taskId: string;
   /** Project 的自動重試上限（`ProjectPolicy.verificationMaxRetries`）。 */
   maxRetries: number;
-  /** 超過重試上限時能不能做決定（再試、略過、中止）。 */
+  /** 超過重試上限時能不能做決定（再試、中止）。 */
   canDecide: boolean;
+  /** 能不能略過失敗、進入 Review Gate（和核准 Gate 的權限相同）。 */
+  canSkip: boolean;
 }
 
 /**
@@ -43,6 +45,7 @@ export function VerificationPanel({
   taskId,
   maxRetries,
   canDecide,
+  canSkip,
 }: VerificationPanelProps) {
   const { data: verifications = [], error } = useQuery({
     ...verificationsQuery(runId),
@@ -58,7 +61,12 @@ export function VerificationPanel({
       <ErrorText error={error} />
       {verifications.length === 0 && <p className="empty">這個 Run 還沒有 Verification。</p>}
       {latest?.awaitingDecision && canDecide && (
-        <VerificationDecisionForm runId={runId} taskId={taskId} verification={latest} />
+        <VerificationDecisionForm
+          runId={runId}
+          taskId={taskId}
+          verification={latest}
+          canSkip={canSkip}
+        />
       )}
       {latest?.awaitingDecision && !canDecide && (
         <p className="notice-inline">Verification 超過重試上限，等待有權限的 Member 決定。</p>
@@ -228,10 +236,12 @@ function VerificationDecisionForm({
   runId,
   taskId,
   verification,
+  canSkip,
 }: {
   runId: string;
   taskId: string;
   verification: Verification;
+  canSkip: boolean;
 }) {
   const queryClient = useQueryClient();
   const [comment, setComment] = useState("");
@@ -270,13 +280,15 @@ function VerificationDecisionForm({
         <button type="submit" className="primary" disabled={decide.isPending}>
           附意見再試
         </button>
-        <button
-          type="button"
-          disabled={decide.isPending}
-          onClick={() => decide.mutate({ action: "skip" })}
-        >
-          略過失敗，進入 Review Gate
-        </button>
+        {canSkip && (
+          <button
+            type="button"
+            disabled={decide.isPending}
+            onClick={() => decide.mutate({ action: "skip" })}
+          >
+            略過失敗，進入 Review Gate
+          </button>
+        )}
         <button
           type="button"
           className="danger"

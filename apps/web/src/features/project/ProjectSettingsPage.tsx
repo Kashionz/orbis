@@ -209,7 +209,7 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
       ) : (
         <span className="hint">（Server 沒有設定 GitHub App）</span>
       )}
-      {/* TODO(api): 重新檢查需要的權限待 D2／B2 實作 repoRefreshInstallation 後核對（目前與登記 Repo 相同：Admin 以上） */}
+      {/* 重新檢查與登記 Repo 相同：Admin 以上（Server 的 manage_project） */}
       {canManage && (
         <button
           type="button"
