@@ -146,6 +146,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         plan_text: None,
         turn_text: String::new(),
         last_source: PromptSource::User,
+        approved_verify_commands: std::collections::HashSet::new(),
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -260,6 +261,8 @@ struct Run {
     turn_text: String,
     /// 最近一個 prompt 的來源。Runner 自己補送的 prompt（rate limit 恢復後的「請繼續」等）沿用它。
     last_source: PromptSource,
+    /// 這個 Run 中已經被允許的 Verification 指令（Task 指定、不在 Repo 設定檔中的指令）。
+    approved_verify_commands: std::collections::HashSet<String>,
 }
 
 impl Run {
@@ -697,11 +700,17 @@ impl Run {
         if self.profile.plan_mode.is_none() {
             return Ok(());
         }
-        let Some(mode) = self.profile.session_mode else {
+        let session = self.session.as_ref().expect("Agent 已啟動");
+        // 切回 profile 指定的執行模式；沒有指定時切回建立 session 時的模式。
+        let Some(mode) = self
+            .profile
+            .session_mode
+            .map(str::to_owned)
+            .or_else(|| session.mode().map(str::to_owned))
+        else {
             return Ok(());
         };
-        let session = self.session.as_ref().expect("Agent 已啟動");
-        session.set_mode(mode).await.map_err(|e| {
+        session.set_mode(&mode).await.map_err(|e| {
             Stop::failed(
                 RunErrorCode::AgentError,
                 format!("Plan Gate 核准後無法切換到 {mode} 模式：{e}"),
@@ -1452,17 +1461,26 @@ impl Run {
             return;
         }
         let mut decision = policy::decide(&subject, &policy_ctx);
-        // Planning 中不可以修改檔案（plan 核准之前）。
-        if self.planning
-            && matches!(
-                subject,
+        // Planning 中（plan 核准之前）不可以修改檔案；指令與其他操作可能間接修改，原本會自動
+        // 允許的也改成問人（不論 Permission Policy 的等級）。
+        if self.planning {
+            match subject {
                 crate::policy::PermissionSubject::Write { .. }
-                    | crate::policy::PermissionSubject::Delete { .. }
-            )
-        {
-            decision = Decision::Deny {
-                reason: "Planning 階段不可以修改檔案".into(),
-            };
+                | crate::policy::PermissionSubject::Delete { .. } => {
+                    decision = Decision::Deny {
+                        reason: "Planning 階段不可以修改檔案".into(),
+                    };
+                }
+                crate::policy::PermissionSubject::Command { .. }
+                | crate::policy::PermissionSubject::Other { .. }
+                    if decision == Decision::Allow =>
+                {
+                    decision = Decision::Ask {
+                        reason: "Planning 階段：確認這個操作不會修改檔案".into(),
+                    };
+                }
+                _ => {}
+            }
         }
         let protected = policy::protected_targets(&subject, &policy_ctx);
         let tool_call_id = request.tool_call.tool_call_id.0.to_string();
@@ -1755,6 +1773,9 @@ impl Run {
                 Vec::new(),
             ));
         }
+        if let Some(reason) = self.approve_verify_command(criterion).await? {
+            return Ok((VerificationOutcome::Error, reason, Vec::new()));
+        }
         let mut evidence = Vec::new();
         let mut failure: Option<String> = None;
         for command in &commands {
@@ -1800,6 +1821,57 @@ impl Run {
                 evidence,
             ),
         })
+    }
+
+    /// Task 指定的 Verification 指令：Task 的作者不一定是這台 Runner 的擁有者，執行前要經過
+    /// Permission Policy（和 Repo 設定檔 `[verify].commands` 完全相同的指令已經過信任核准）。
+    /// 沒有被自動允許時問人，同一個 Run 中同一個指令只問一次。回傳 `Some(原因)` 表示不執行。
+    async fn approve_verify_command(
+        &mut self,
+        criterion: &orbis_protocol::verification::VerificationCriterion,
+    ) -> Result<Option<String>, Stop> {
+        let Some(command) = criterion.command.clone().filter(|c| !c.trim().is_empty()) else {
+            return Ok(None);
+        };
+        let wt = self.wt().clone();
+        if wt.config.config.verify.commands.contains(&command)
+            || self.approved_verify_commands.contains(&command)
+        {
+            return Ok(None);
+        }
+        let decision = policy::decide(
+            &crate::policy::PermissionSubject::Command {
+                command: command.clone(),
+            },
+            &PolicyContext {
+                policy: self.offer.permission_policy,
+                worktree: &wt.path,
+                allow_commands: &wt.config.config.permissions.allow_commands,
+                default_branch: &wt.default_branch,
+                protected_paths: &self.profile.protected_paths,
+            },
+        );
+        match decision {
+            Decision::Allow => {}
+            Decision::Deny { reason } => {
+                return Ok(Some(format!("不能執行 Task 指定的指令：{reason}")));
+            }
+            Decision::Ask { reason } => {
+                let options = vec![
+                    option("allow_once", "允許這次", PermissionOptionKind::AllowOnce),
+                    option("reject_once", "拒絕", PermissionOptionKind::RejectOnce),
+                ];
+                let title = format!("Verification 要執行 Task 指定的指令：{command}（{reason}）");
+                let chosen = self
+                    .ask_human(PermissionPurpose::Tool, None, title, options)
+                    .await?;
+                if chosen != "allow_once" {
+                    return Ok(Some("Task 指定的指令沒有被允許執行".into()));
+                }
+            }
+        }
+        self.approved_verify_commands.insert(command);
+        Ok(None)
     }
 
     /// Review 已核准：等 `push_branch`，push 成功後 Run 才進入 `completed`。

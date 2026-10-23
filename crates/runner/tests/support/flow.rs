@@ -74,6 +74,40 @@ impl Env {
             .await;
         assert_eq!(reply["type"], "dispatch_accept", "{reply}");
     }
+
+    /// 連上、完成交握並送出調整過的 Dispatch（例如打開 Plan Gate），等到 Runner 接受。
+    pub async fn dispatch_with(
+        &mut self,
+        run_id: &str,
+        agent: &str,
+        prompt: &str,
+        adjust: impl FnOnce(&mut orbis_protocol::dispatch::DispatchOffer),
+    ) -> RunnerSide {
+        let mut conn = self.server.accept().await;
+        conn.handshake(Vec::new(), Some("rt_test")).await;
+        let mut o = offer(
+            run_id,
+            &format!("d-{run_id}"),
+            self.remote.dispatch_repo("web"),
+            agent,
+            prompt,
+        );
+        adjust(&mut o);
+        conn.send(&send_offer(o)).await;
+        let reply = conn
+            .wait_for("dispatch 回覆", |v| {
+                v["type"] == "dispatch_accept" || v["type"] == "dispatch_reject"
+            })
+            .await;
+        assert_eq!(reply["type"], "dispatch_accept", "{reply}");
+        conn
+    }
+}
+
+/// 送一個 RunControl 給 `r1`（Dispatch `d-r1`），確認被接受。
+pub async fn control_r1(conn: &mut RunnerSide, control_id: &str, action: RunControlAction) {
+    let result = conn.control("r1", "d-r1", control_id, action).await;
+    assert_eq!(result_outcome(&result), "applied", "{result}");
 }
 
 /// 回覆設定檔的信任核准（allow_once）。

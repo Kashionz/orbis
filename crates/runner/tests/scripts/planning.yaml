@@ -1,0 +1,29 @@
+# Planning（Agent 沒有可靠的 plan 模式，用只產出 plan 的 prompt）：
+# - 第一回合：產出 plan；途中想寫檔，Runner 在 Planning 階段一律拒絕。
+# - Plan Gate 核准後：依計畫新增 impl.txt。
+description: Planning 與 Plan Gate（prompt 後備）
+turns:
+  - expect_prompt_contains: 這是 Planning 階段
+    steps:
+      - message: "# 計畫\n\n1. 新增 impl.txt。"
+      - permission:
+          tool_call:
+            id: write-during-planning
+            title: 新增 plan.txt
+            raw_input: { file_path: plan.txt }
+            edit:
+              path: plan.txt
+              content: "不該寫入\n"
+          allow:
+            - stop: end_turn
+          reject:
+            - stop: end_turn
+  - expect_prompt_contains: Plan 已核准
+    steps:
+      - tool_call:
+          id: write-impl
+          title: 新增 impl.txt
+          edit:
+            path: impl.txt
+            content: "impl\n"
+      - stop: end_turn

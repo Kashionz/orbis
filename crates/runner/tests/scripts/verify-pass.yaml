@@ -1,0 +1,11 @@
+# Verification 用：新增內容是 pass 的 verify.txt 後完成。
+description: 新增 verify.txt（pass）
+turns:
+  - steps:
+      - tool_call:
+          id: write-verify
+          title: 新增 verify.txt
+          edit:
+            path: verify.txt
+            content: "pass\n"
+      - stop: end_turn

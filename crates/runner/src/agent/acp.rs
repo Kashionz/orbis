@@ -66,6 +66,8 @@ pub struct AcpSession {
     agent_info: Option<Implementation>,
     /// 是否接續了之前的 session（`session/resume` 或 `session/load`），而不是開新的。
     resumed: bool,
+    /// 套用修補後的 session mode（見 [`Self::mode`]）。
+    mode: Option<String>,
     tree: ProcessTree,
     shutdown: Option<oneshot::Sender<()>>,
     driver: tokio::task::JoinHandle<()>,
@@ -225,6 +227,7 @@ impl AcpSession {
             capabilities: Vec::new(),
             agent_info: None,
             resumed: false,
+            mode: None,
             tree,
             shutdown: Some(shutdown_tx),
             driver,
@@ -308,6 +311,7 @@ impl AcpSession {
         profile: &AgentProfile,
         modes: Option<&SessionModeState>,
     ) -> Result<(), AgentError> {
+        self.mode = modes.map(|m| m.current_mode_id.0.to_string());
         let Some(wanted) = profile.session_mode else {
             return Ok(());
         };
@@ -344,7 +348,14 @@ impl AcpSession {
             .block_task()
             .await
             .map_err(AgentError::Acp)?;
+        self.mode = Some(wanted.to_owned());
         Ok(())
+    }
+
+    /// 建立（或接續）session 並套用修補後的 session mode；Agent 沒有回報 mode 時為 `None`。
+    /// Planning 核准後切回這個模式。
+    pub fn mode(&self) -> Option<&str> {
+        self.mode.as_deref()
     }
 
     pub fn capabilities(&self) -> &[AgentCapability] {

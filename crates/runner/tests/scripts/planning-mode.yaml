@@ -1,0 +1,22 @@
+# Planning（Agent 有可靠的 plan 模式）：Runner 先切到 plan 模式；Agent 以切換模式的權限請求
+# 交出 plan（像 Claude Code 的 ExitPlanMode，rawInput.plan），Runner 記下 plan、拒絕切換。
+# Plan Gate 核准後切回原本的模式。
+description: Planning 與 Plan Gate（plan 模式）
+turns:
+  - steps:
+      - echo_session_mode
+      - permission:
+          tool_call:
+            id: exit-plan-mode
+            title: ExitPlanMode
+            kind: switch_mode
+            raw_input: { plan: "# 計畫（plan 模式）\n\n1. 新增 impl.txt。" }
+          allow:
+            - message: 不應該被允許。
+            - stop: end_turn
+          reject:
+            - stop: end_turn
+  - expect_prompt_contains: Plan 已核准
+    steps:
+      - echo_session_mode
+      - stop: end_turn
