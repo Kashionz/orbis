@@ -137,7 +137,11 @@ class WebConnection {
 
   onAppended(runId: string): void {
     const subscription = this.subscriptions.get(runId);
-    if (subscription) void this.catchUp(subscription);
+    if (!subscription) return;
+    // 推送失敗（例如資料庫暫時出錯）只記 log：下一筆 Event 寫入或重新訂閱時會從 lastSentSeq 補送。
+    this.catchUp(subscription).catch((error: unknown) =>
+      this.log.error({ err: error, runId }, "推送 Run Event 時發生錯誤"),
+    );
   }
 
   private async onMessage(data: RawData, isBinary: boolean): Promise<void> {
