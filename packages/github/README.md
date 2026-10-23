@@ -74,7 +74,7 @@ if (config) {
 
 | 時機 | 呼叫 |
 |---|---|
-| Task 建立或修改之後：title、描述、狀態、關閉原因、負責人、labels、Acceptance Criterion 的結果、Run 狀態。Draft Task 確認、進入 Backlog 之前不要呼叫 | `github.onTaskChanged(taskId)` |
+| Task 建立或修改之後：title、描述、狀態、關閉原因、負責人、labels、Acceptance Criterion 的結果、Run 狀態。Draft Task 確認、進入 Backlog 之前不要呼叫 | `github.onTaskChanged(taskId, { actorMemberId })`：`actorMemberId` 是做出修改的 Member，系統觸發的修改不用傳 |
 | Runner 回報 `branch_pushed`（Review Gate 核准之後） | `github.onBranchPushed({ taskId, runId, branch, commitSha })` |
 | Project 新增 Repo | `github.inspectRepo(owner, name, requesterMemberId)` |
 | Team Runner 要 push | `github.getInstallationTokenForRepo(repoId)`：只限該 repo、只有 contents 寫入權限 |
@@ -115,6 +115,7 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
   - 每個 Task 各有一則狀態摘要留言。
   - GitHub 上的修改套用到所有對應的 Task，各自以該 Project 檢查修改者的權限。
   - Task 寫到 Issue 的 title、body、state 也會同步到其他 Task（App 自己的寫入造成的 webhook 被當成回音略過，所以不等 webhook）。labels 與負責人各 Project 自己管理。
+  - 同步到其他 Task 前，用與 GitHub 上的修改相同的規則檢查做出修改的人（`onTaskChanged` 的 `actorMemberId`，PR merge 時是 merge 的人）：他在對方 Project 也要能編輯 Task，或對 repo 有寫入權限。沒有權限、或沒有傳入做出修改的人時，對方 Task 維持原狀（沒有權限時在它的摘要留言說明）。
   - 另一個 Task 不能跟著轉換狀態時（例如有進行中的 Run），維持原狀並在它的摘要留言說明，不把 Issue 改回來。
 - **欄位歸屬**：只套用這個 action 改到的欄位。
   - `edited` 依 payload 的 `changes`；`labeled`／`unlabeled` 只看 labels；`assigned`／`unassigned` 只看 assignee；`closed`／`reopened` 只看 state。

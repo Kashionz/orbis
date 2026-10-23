@@ -10,13 +10,7 @@ import { createHash } from "node:crypto";
 import { senderCanWrite } from "../authz";
 import { toIssue } from "../client/http";
 import type { GitHubIssue, GitHubUserRef, IssuePatch } from "../client/types";
-import {
-  appBotLogin,
-  type ConnectedRepo,
-  connectedRepo,
-  type IntegrationContext,
-  isOwnEcho,
-} from "../context";
+import { type ConnectedRepo, connectedRepo, type IntegrationContext, isOwnEcho } from "../context";
 import { renderSummaryComment } from "../markdown";
 import type {
   IssueLink,
@@ -47,9 +41,17 @@ export type PushOutcome =
     }
   | { kind: "synced"; issueNumber: number; created: boolean; wrote: SyncedField[] };
 
+/** 在 GitHub 上以誰的身分看待一次修改（用來檢查權限、記錄在歷程中）。 */
+export interface GitHubActor {
+  login: string;
+  id: number;
+}
+
 export interface PushOptions {
   /** 顯示在狀態摘要留言上的提醒。 */
   notice?: string;
+  /** 做出這次修改的人；同步到其他 Project 的 Task 前，以它檢查權限。 */
+  actor?: GitHubActor;
 }
 
 /**
@@ -71,7 +73,9 @@ export async function pushTask(
   const outcome = await ctx.taskLocks.run(taskId, () => pushTaskLocked(ctx, taskId, options));
   if (outcome.kind === "synced" && !outcome.created) {
     const shared = outcome.wrote.filter((field) => SHARED_FIELDS.includes(field));
-    if (shared.length > 0) await propagateToSiblings(ctx, taskId, shared);
+    if (shared.length > 0 && options.actor) {
+      await propagateToSiblings(ctx, taskId, shared, options.actor);
+    }
   }
   return outcome;
 }
@@ -81,6 +85,7 @@ async function propagateToSiblings(
   ctx: IntegrationContext,
   sourceTaskId: string,
   fields: readonly SyncedField[],
+  actor: GitHubActor,
 ): Promise<void> {
   const source = await ctx.store.getIssueLinkByTask(sourceTaskId);
   if (!source) return;
@@ -89,7 +94,7 @@ async function propagateToSiblings(
   for (const { taskId } of siblings) {
     if (taskId === sourceTaskId) continue;
     await ctx.taskLocks.run(taskId, () =>
-      applySharedFields(ctx, taskId, source, fields, sourceTask?.key ?? sourceTaskId),
+      applySharedFields(ctx, taskId, source, fields, sourceTask?.key ?? sourceTaskId, actor),
     );
   }
 }
@@ -100,6 +105,7 @@ async function applySharedFields(
   source: IssueLink,
   fields: readonly SyncedField[],
   sourceKey: string,
+  actor: GitHubActor,
 ): Promise<void> {
   const link = await ctx.store.getIssueLinkByTask(taskId);
   if (
@@ -122,6 +128,20 @@ async function applySharedFields(
       isAfter(source.snapshot.syncedAt[field], link.snapshot.syncedAt[field]),
   );
   if (changed.length === 0) return;
+
+  // 與 GitHub 上的修改相同的規則：做出修改的人在這個 Project 也要能編輯 Task，或對 repo 有寫入權限。
+  // 沒有權限時這個 Task 維持原狀，快照也不更新（Issue 上是另一個 Project 的值）。
+  if (!(await senderCanWrite(ctx, task.projectId, link.repoId, actor.login, actor.id))) {
+    await pushTaskLocked(ctx, taskId, {
+      notice: `@${actor.login} 在另一個 Project 的 Task ${sourceKey} 修改了這個 Issue，但沒有這個 Project 的編輯權限，這個 Task 維持原狀。`,
+    });
+    ctx.logger.warn(
+      { taskId, sourceTaskId: source.taskId, actor: actor.login, fields: changed },
+      "修改者沒有這個 Project 的權限，不同步到這個 Task",
+    );
+    return;
+  }
+
   const applied = changed.filter(
     (field) =>
       sameValue(current[field], link.snapshot[field]) ||
@@ -136,13 +156,7 @@ async function applySharedFields(
   let synced = changed;
   let notice: string | undefined;
   if (applied.includes("state")) {
-    const rejected = await applyIssueState(
-      ctx,
-      task,
-      incoming.state,
-      link.issueUrl,
-      appBotLogin(ctx.appSlug),
-    );
+    const rejected = await applyIssueState(ctx, task, incoming.state, link.issueUrl, actor.login);
     if (rejected) {
       // 不把 Issue 改回來（那會推翻另一個 Project 的 Task）；快照維持原值，這個 Task 保持原狀態。
       synced = changed.filter((field) => field !== "state");

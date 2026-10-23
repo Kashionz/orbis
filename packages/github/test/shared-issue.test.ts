@@ -6,6 +6,8 @@ import { createWorld, REPO_ID, type World } from "./helpers/world";
 
 const OTHER_PROJECT = "project-2";
 const OTHER_REPO = "repo-2";
+/** Task 端的修改由 alice 做出（alice 在兩個 Project 都是 Member）。 */
+const byAlice = { actorMemberId: "member-alice" };
 
 /** Project 1 的 Task A 建立 Issue，Project 2 匯入同一個 Issue 成為 Task B。 */
 async function sharedIssue(w: World = createWorld()) {
@@ -48,7 +50,7 @@ describe("同一個 Issue 對應到不同 Project 的 Task", () => {
   it("Task A 改 title 與描述：寫到 Issue，Task B 也跟著更新", async () => {
     const { w, a, b, issueNumber } = await sharedIssue();
     w.domain.editTask(a.id, { title: "新的標題", description: "新的內容" });
-    await w.integration.onTaskChanged(a.id);
+    await w.integration.onTaskChanged(a.id, byAlice);
 
     expect(w.github.issue(w.repo.id, issueNumber)).toMatchObject({
       title: "新的標題",
@@ -64,7 +66,7 @@ describe("同一個 Issue 對應到不同 Project 的 Task", () => {
   it("Task A 轉 Done 關閉 Issue：Task B 也轉 Done，關閉原因相同", async () => {
     const { w, a, b } = await sharedIssue();
     w.domain.editTask(a.id, { status: "done", doneReason: "not_planned" });
-    await w.integration.onTaskChanged(a.id);
+    await w.integration.onTaskChanged(a.id, byAlice);
     expect(w.domain.task(b.id)).toMatchObject({ status: "done", doneReason: "not_planned" });
     expect(w.domain.transitions).toMatchObject([
       { taskId: b.id, to: "done", cause: { kind: "issue_closed", doneReason: "not_planned" } },
@@ -94,7 +96,7 @@ describe("同一個 Issue 對應到不同 Project 的 Task", () => {
     w.domain.editTask(b.id, { status: "running" });
     w.domain.activeRunTaskIds.add(b.id);
     w.domain.editTask(a.id, { status: "done" });
-    await w.integration.onTaskChanged(a.id);
+    await w.integration.onTaskChanged(a.id, byAlice);
 
     expect(w.domain.task(b.id).status).toBe("running");
     expect(w.github.issue(w.repo.id, issueNumber).state).toBe("closed");
@@ -105,10 +107,48 @@ describe("同一個 Issue 對應到不同 Project 的 Task", () => {
     expect(summary?.body).toContain(`另一個 Project 的 Task ${a.key}`);
   });
 
+  it("沒有傳入做出修改的人（例如系統觸發的修改）：不同步到其他 Task", async () => {
+    const { w, a, b } = await sharedIssue();
+    w.domain.editTask(a.id, { title: "系統改的標題" });
+    await w.integration.onTaskChanged(a.id);
+    expect(w.domain.task(b.id).title).toBe("共同的 Issue");
+  });
+
+  it("做出修改的人在 Task B 的 Project 沒有權限：B 維持原狀並在 B 的摘要留言說明", async () => {
+    const { w, a, b, issueNumber } = await sharedIssue();
+    const carol = w.domain.addMember(
+      { id: "member-carol", githubUserId: 4004, githubLogin: "carol" },
+      ["project-1"],
+    );
+    w.domain.editTask(a.id, { title: "carol 改的標題" });
+    await w.integration.onTaskChanged(a.id, { actorMemberId: carol.id });
+
+    expect(w.github.issue(w.repo.id, issueNumber).title).toBe("carol 改的標題");
+    expect(w.domain.task(b.id).title).toBe("共同的 Issue");
+    const link = await w.store.getIssueLinkByTask(b.id);
+    const summary = w.github
+      .commentsOn(w.repo.id, issueNumber)
+      .find((c) => c.id === link?.summaryCommentId);
+    expect(summary?.body).toContain("@carol 在另一個 Project 的 Task");
+  });
+
+  it("做出修改的人不是 B 的 Project 的 Member、但對 repo 有寫入權限：同步過去", async () => {
+    const { w, a, b } = await sharedIssue();
+    const dave = w.domain.addMember(
+      { id: "member-dave", githubUserId: 5005, githubLogin: "dave" },
+      ["project-1"],
+    );
+    w.github.addUser({ id: dave.githubUserId, login: dave.githubLogin, type: "User" });
+    w.github.roles.set(dave.githubLogin, "write");
+    w.domain.editTask(a.id, { title: "dave 改的標題" });
+    await w.integration.onTaskChanged(a.id, { actorMemberId: dave.id });
+    expect(w.domain.task(b.id).title).toBe("dave 改的標題");
+  });
+
   it("labels 不會在 Task 之間同步", async () => {
     const { w, a, b } = await sharedIssue();
     w.domain.editTask(a.id, { labels: ["p1"] });
-    await w.integration.onTaskChanged(a.id);
+    await w.integration.onTaskChanged(a.id, byAlice);
     expect(w.domain.task(b.id).labels).toEqual([]);
     expect(w.domain.fieldUpdates.filter((u) => u.taskId === b.id)).toEqual([]);
   });

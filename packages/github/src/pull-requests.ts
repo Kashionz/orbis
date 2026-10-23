@@ -225,7 +225,10 @@ export async function handlePullRequestEvent(
 
       await ctx.store.savePullRequestLink({ ...current, state: nextState });
       // 由 GitHub 觸發的轉換 Server 不會回呼 onTaskChanged，這裡自己同步 Issue 與摘要留言。
-      await pushTask(ctx, task.id);
+      // merge 需要寫入權限；關閉、重開在上面已經檢查過操作者的權限。
+      await pushTask(ctx, task.id, {
+        actor: { login: payload.sender.login, id: payload.sender.id },
+      });
       ctx.logger.info(
         { taskId: task.id, pullRequest: pullRequestUrl, state: nextState, transitioned },
         "已處理 PR 狀態變更",

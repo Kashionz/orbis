@@ -41,8 +41,11 @@ export interface GitHubIntegration {
    * Task 在 Orbis 中被建立或修改（title、描述、狀態、負責人、labels、Acceptance Criterion 的結果、
    * Run 狀態）之後由 Server 呼叫：建立或更新對應的 Issue 與狀態摘要留言。
    * 由這個套件透過 DomainService 發起的寫入不需要呼叫。
+   *
+   * `actorMemberId` 是做出這次修改的 Member。同一個 Issue 對應到其他 Project 的 Task 時，
+   * 只有這個人在對方 Project 也有權限，title、body、state 才會同步過去；沒有傳入（例如系統觸發的修改）時不同步。
    */
-  onTaskChanged(taskId: string): Promise<PushOutcome>;
+  onTaskChanged(taskId: string, options?: { actorMemberId?: string }): Promise<PushOutcome>;
   /** Runner 回報 `branch_pushed` 之後由 Server 呼叫：以 App 身分開 PR。 */
   onBranchPushed(pushed: BranchPushed): Promise<OpenPullRequestResult>;
   /**
@@ -82,7 +85,16 @@ export function createGitHubIntegration(options: GitHubIntegrationOptions): GitH
 
   return {
     handleWebhook: (request) => handleWebhook(ctx, options.config.webhookSecret, request),
-    onTaskChanged: (taskId) => pushTask(ctx, taskId),
+    onTaskChanged: async (taskId, options = {}) => {
+      const actor = options.actorMemberId
+        ? await ctx.domain.getMember(options.actorMemberId)
+        : null;
+      return pushTask(
+        ctx,
+        taskId,
+        actor ? { actor: { login: actor.githubLogin, id: actor.githubUserId } } : {},
+      );
+    },
     onBranchPushed: (pushed) => openPullRequest(ctx, pushed),
     inspectRepo: (owner, name, requesterMemberId) =>
       inspectRepo(ctx, owner, name, requesterMemberId),
