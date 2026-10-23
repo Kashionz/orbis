@@ -10,9 +10,11 @@ import { COLLAB_FRAGMENT } from "@orbis/api-contract";
 import { and, eq, ne } from "drizzle-orm";
 import * as Y from "yjs";
 import type { Database } from "../db/client";
-import { acceptanceCriteria, tasks } from "../db/schema";
+import { acceptanceCriteria, repoSpecs, repos, tasks } from "../db/schema";
+import { inTransaction } from "../db/tx";
 import type { DomainEvents } from "../domain/events";
 import type { Logger } from "../logger";
+import type { MentionService } from "../mentions/service";
 import { type CollabDocRef, collabDocRef } from "./doc-name";
 import { fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
 import { CollabRoom } from "./room";
@@ -23,6 +25,7 @@ export const COLLAB_PERSIST_DEBOUNCE_MS = 1_000;
 
 export interface CollabHubOptions {
   db: Database;
+  mentions: MentionService;
   store: CollabStore;
   events: DomainEvents;
   logger: Logger;
@@ -57,7 +60,7 @@ export class CollabHub {
         this.options.store,
         this.log,
         this.options.persistDebounceMs ?? COLLAB_PERSIST_DEBOUNCE_MS,
-        (r, doc) => this.writeBack(r, doc),
+        (r, doc, writer) => this.writeBack(r, doc, writer),
       );
       room = created.load(() => this.seed(ref)).then(() => created);
       room.catch(() => this.rooms.delete(ref.name));
@@ -160,7 +163,8 @@ export class CollabHub {
   }
 
   /** 存檔後把內容回寫資料庫。 */
-  private async writeBack(ref: CollabDocRef, doc: Y.Doc): Promise<void> {
+  private async writeBack(ref: CollabDocRef, doc: Y.Doc, writer: string | null): Promise<void> {
+    await this.processMentions(ref, doc, writer);
     const markdown = fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT));
     const { db, events } = this.options;
     switch (ref.kind) {
@@ -196,4 +200,76 @@ export class CollabHub {
         return;
     }
   }
+
+  /** 文件中新出現的 mention 節點（以 nodeId 去重）：@member 通知，@agent 建立 consult Run。 */
+  private async processMentions(
+    ref: CollabDocRef,
+    doc: Y.Doc,
+    writer: string | null,
+  ): Promise<void> {
+    const nodes = mentionNodes(doc.getXmlFragment(COLLAB_FRAGMENT));
+    if (nodes.length === 0) return;
+    const { db } = this.options;
+    const owner = await documentOwner(db, ref);
+    if (!owner) return;
+    await inTransaction(db, (uow) =>
+      this.options.mentions.processNodes(
+        uow,
+        { kind: "collab_document", id: ref.name },
+        {
+          projectId: owner.projectId,
+          task: owner.task,
+          actorMemberId: writer,
+          text: fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT)),
+        },
+        nodes,
+      ),
+    );
+  }
+}
+
+/** 文件中所有的 mention 節點。 */
+function mentionNodes(fragment: Y.XmlFragment): { id: string; label: string; nodeId: string }[] {
+  const found: { id: string; label: string; nodeId: string }[] = [];
+  const walk = (node: Y.XmlElement | Y.XmlFragment) => {
+    for (const child of node.toArray()) {
+      if (!(child instanceof Y.XmlElement)) continue;
+      if (child.nodeName === "mention") {
+        const id = child.getAttribute("id");
+        const nodeId = child.getAttribute("nodeId");
+        if (typeof id === "string" && typeof nodeId === "string") {
+          found.push({ id, nodeId, label: String(child.getAttribute("label") ?? id) });
+        }
+      } else walk(child);
+    }
+  };
+  walk(fragment);
+  return found;
+}
+
+/** 文件所屬的 Project 與 Task（Repo Spec 草稿沒有 Task）。 */
+async function documentOwner(
+  db: Database,
+  ref: CollabDocRef,
+): Promise<{ projectId: string; task: typeof tasks.$inferSelect | null } | null> {
+  if (ref.kind === "repo-spec-draft") {
+    const [spec] = await db
+      .select({ projectId: repos.projectId })
+      .from(repoSpecs)
+      .innerJoin(repos, eq(repos.id, repoSpecs.repoId))
+      .where(eq(repoSpecs.id, ref.id));
+    return spec ? { projectId: spec.projectId, task: null } : null;
+  }
+  const taskId =
+    ref.kind === "task-description"
+      ? ref.id
+      : (
+          await db
+            .select({ taskId: acceptanceCriteria.taskId })
+            .from(acceptanceCriteria)
+            .where(eq(acceptanceCriteria.id, ref.id))
+        )[0]?.taskId;
+  if (!taskId) return null;
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  return task ? { projectId: task.projectId, task } : null;
 }

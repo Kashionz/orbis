@@ -14,16 +14,25 @@ import {
   RUN_STATUSES,
   VERIFICATION_OUTCOMES,
 } from "@orbis/protocol";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
-import { childQuestions, dispatches, needsYouItems, runs, tasks } from "../db/schema";
+import {
+  childQuestions,
+  dispatches,
+  needsYouItems,
+  runEvents,
+  runs,
+  taskComments,
+  tasks,
+} from "../db/schema";
 import { inTransaction, type UnitOfWork } from "../db/tx";
 import { isPrimaryRun, isTerminalRunStatus } from "../domain/run-status";
 import type { TaskLifecycleService } from "../domain/task-lifecycle";
 import { isInFlight } from "../domain/task-state-machine";
 import type { Logger } from "../logger";
+import { permissionRequestRecipients } from "../notifications/recipients";
 import type { Notify } from "../notifications/types";
 import { addQuestionToNeedsYou } from "../tools/delegation-tools";
 import type { RunWatch } from "../tools/run-watch";
@@ -268,6 +277,19 @@ export class EventIngest {
             })),
           },
         });
+        await this.deps.notify.notify(uow, {
+          kind: "permission_request",
+          recipients: await permissionRequestRecipients(
+            tx,
+            context.run,
+            context.task,
+            body.purpose,
+          ),
+          taskId: context.task.id,
+          runId,
+          title: `${context.task.key} 的 Agent 在等待權限`,
+          body: body.title,
+        });
         return;
       }
       case "permission_resolved": {
@@ -397,6 +419,7 @@ export class EventIngest {
     uow.afterCommit(() => {
       for (const id of canceled) this.deps.watch.changed(id);
     });
+    if (run.origin === "mention") await this.postMentionReply(uow, run, status, message);
     // Run 結束後，還沒回覆的權限請求與等待中的 Gate 都不必再處理。
     await tx
       .update(needsYouItems)
@@ -411,6 +434,31 @@ export class EventIngest {
     if (status !== "completed" && primary && isInFlight(task.status)) {
       await this.lifecycle.transition(uow, task.id, "ready", "run_stopped");
     }
+  }
+
+  /** @agent 的 consult Run 結束：把 Agent 最後的回覆貼回成 Task 留言（作者是這個 Run）。 */
+  private async postMentionReply(
+    uow: UnitOfWork,
+    run: RunRow,
+    status: RunStatus,
+    message: string | null,
+  ): Promise<void> {
+    const [last] = await uow.tx
+      .select({ payload: runEvents.payload })
+      .from(runEvents)
+      .where(and(eq(runEvents.runId, run.id), eq(runEvents.kind, "final_message")))
+      .orderBy(desc(runEvents.seq))
+      .limit(1);
+    const text = (last?.payload as { text?: { type: string; text?: string } } | undefined)?.text;
+    const reply =
+      text?.type === "inline" && text.text
+        ? text.text
+        : status === "completed"
+          ? "（Agent 沒有留下回覆）"
+          : `（Run 沒有完成：${message ?? status}）`;
+    await uow.tx
+      .insert(taskComments)
+      .values({ taskId: run.taskId, authorRunId: run.id, body: reply });
   }
 
   private async moveOpenQuestionsToNeedsYou(

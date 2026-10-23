@@ -6,6 +6,7 @@ import type {
   Gate,
   Member,
   NeedsYouItem,
+  Notification,
   PreviewComment,
   Project,
   Repo,
@@ -27,6 +28,7 @@ import {
   type gates,
   type members,
   needsYouItems,
+  type notifications,
   type projects,
   repoSpecs,
   type repos,
@@ -435,6 +437,27 @@ export function toTaskNote(row: typeof taskNotes.$inferSelect): TaskNote {
     source: row.source,
     body: row.body,
     url: row.url,
+    createdAt: iso(row.createdAt),
+  };
+}
+
+/** 通知（DB 的 notifications）；呼叫端提供 Task Key。 */
+export function toNotification(
+  row: typeof notifications.$inferSelect,
+  taskKey: string | null,
+): Notification {
+  return {
+    id: row.id,
+    kind: row.kind,
+    taskId: row.taskId,
+    taskKey,
+    runId: row.runId,
+    gateId: row.gateId,
+    actorMemberId: row.actorMemberId,
+    title: row.title,
+    body: row.body,
+    url: row.url,
+    readAt: isoOrNull(row.readAt),
     createdAt: iso(row.createdAt),
   };
 }

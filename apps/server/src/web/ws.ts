@@ -1,4 +1,4 @@
-// Web 的即時推送（WebSocket，只推 Run Event）。
+// Web 的即時推送（WebSocket）：Run Event（需要訂閱）與給本人的通知（不需要訂閱）。
 //
 // Client 送 `subscribe_run { runId, afterSeq }` 後，Server 先從資料庫重播 afterSeq 之後的 Event，
 // 再接上即時串流。每個訂閱記住「已送出的最後 seq」，有新 Event 寫入時從那裡往後讀，
@@ -82,7 +82,14 @@ export function attachWebEndpoint(
             options.authzRecheckMs ?? WEB_AUTHZ_RECHECK_MS,
           );
           connections.add(connection);
-          ws.on("close", () => connections.delete(connection));
+          // 給本人的通知不需要訂閱，送到本人所有的連線（ARCHITECTURE §12.3）。
+          const unsubscribePush = services.webPush.subscribe(actor.memberId, (message) =>
+            connection.push(message),
+          );
+          ws.on("close", () => {
+            connections.delete(connection);
+            unsubscribePush();
+          });
         });
       },
       (error: unknown) => {
@@ -254,6 +261,11 @@ class WebConnection {
     } finally {
       subscription.running = false;
     }
+  }
+
+  /** Server 主動推送的訊息（例如通知）。 */
+  push(message: WebServerMessage): void {
+    this.send(message);
   }
 
   private send(message: WebServerMessage): void {

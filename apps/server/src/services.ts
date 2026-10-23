@@ -22,7 +22,9 @@ import {
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
 import { createPreviewService, type PreviewService } from "./preview";
-import { NO_NOTIFY, type Notify } from "./notifications/types";
+import { MentionService } from "./mentions/service";
+import { DesktopChannel, InAppChannel, WebPushHub } from "./notifications/channels";
+import { NotificationService } from "./notifications/service";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
 import { EventIngest } from "./runs/event-ingest";
@@ -58,7 +60,11 @@ export interface Services {
   tools: OrbisToolService;
   /** Run 狀態變化的程序內通知（阻塞的工具呼叫在這裡等）。 */
   watch: RunWatch;
-  notify: Notify;
+  notify: NotificationService;
+  /** @mention 的處理（通知、@agent 建立 consult Run）。 */
+  mentions: MentionService;
+  /** 每位 Member 的 Web 連線（推送通知）。 */
+  webPush: WebPushHub;
   /** Preview 子網域的網域（`<run-id>.preview.<domain>` 的 domain）；未設定時只檢查前綴。 */
   previewDomain: string | null;
   /** 共同編輯的文件（載入、寫回、與資料庫內容同步）。 */
@@ -101,6 +107,14 @@ export function createServices(options: ServicesOptions): Services {
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const events = new DomainEvents(logger);
   const lifecycle = new TaskLifecycleService(events);
+  const webPush = new WebPushHub();
+  const notify = new NotificationService({
+    db,
+    clock,
+    logger,
+    channels: [new InAppChannel(webPush), new DesktopChannel()],
+  });
+  notify.watch(events);
   const githubApp = options.github?.app
     ? createGitHubApp(options.github.app, {
         db,
@@ -108,6 +122,7 @@ export function createServices(options: ServicesOptions): Services {
         events,
         clock,
         logger,
+        notify,
         publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
       })
     : null;
@@ -133,11 +148,17 @@ export function createServices(options: ServicesOptions): Services {
   const blobStore =
     options.blobStore ?? new FileSystemBlobStore(options.blobDir ?? DEFAULT_BLOB_DIR);
   const sessionCleanup = new SessionCleanup({ db, clock, hub, dispatcher }, logger);
-  // TODO(B2)：通知系統（S9）完成後換成 NotificationService。
-  const notify = NO_NOTIFY;
-  const runControls = new RunControlService(db, hub, clock, logger, github.pullRequestOpener);
+  const runControls = new RunControlService(
+    db,
+    hub,
+    clock,
+    logger,
+    github.pullRequestOpener,
+    notify,
+  );
   const verification = new VerificationService({ lifecycle, runControls, notify, clock, logger });
   const watch = new RunWatch();
+  const mentions = new MentionService({ notify, dispatcher, logger });
   const tools = new OrbisToolService({ db, hub, clock, logger });
   tools.register(taskToolHandlers(db));
   tools.register(delegationToolHandlers({ db, dispatcher, watch, notify, clock }));
@@ -168,6 +189,8 @@ export function createServices(options: ServicesOptions): Services {
     verification,
     tools,
     watch,
+    webPush,
+    mentions,
     notify,
     previewDomain: options.previewDomain ?? null,
     blobStore,
@@ -175,6 +198,7 @@ export function createServices(options: ServicesOptions): Services {
     sessionCleanup,
     collab: new CollabHub({
       db,
+      mentions,
       store: options.collabStore ?? new PostgresCollabStore(db),
       events,
       logger,

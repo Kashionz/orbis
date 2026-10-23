@@ -14,6 +14,7 @@ import type { DomainEvents } from "../domain/events";
 import { GitHubDomainService } from "../domain/github-domain";
 import type { TaskLifecycleService } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
+import type { Notify } from "../notifications/types";
 import type { GitHubApp } from "./integration";
 import { DrizzleGitHubStore } from "./store";
 
@@ -21,7 +22,7 @@ export interface GitHubAppOptions {
   config: GitHubAppConfig;
   /** 測試用：替換 GitHub API 的呼叫（例如 @orbis/github/testing 的 FakeGitHub）。 */
   client?: GitHubClient;
-  /** 測試用：替換通知（預設只記 log）。 */
+  /** 測試用：替換通知（預設交給通知系統）。 */
   notifier?: Notifier;
 }
 
@@ -31,13 +32,35 @@ export function taskUrl(publicUrl: string, taskKey: string): string {
 }
 
 /**
- * 只記 log 的通知（PR merge、PR 沒 merge 就關閉、開 PR 失敗）。
- * TODO(B2, #16)：換成通知中心與桌面通知（ARCHITECTURE §12.3）。
+ * GitHub 整合的通知交給通知系統（ARCHITECTURE §12.3）：
+ * - `pr_merged` → 自己的 Task 被 merge（`task_merged`）。
+ * - `pr_closed_unmerged` → 自己的 Task 被退回（`task_rejected`）。
+ * - `feedback_limit_reached` → Feedback Loop 達到次數上限。
+ * - `pr_open_failed` 不另外通知：開 PR 失敗時 run-control 已經建立「停下來的 Run」並通知。
  */
-export function loggingNotifier(logger: Logger): Notifier {
+export function notificationNotifier(notify: Notify, logger: Logger): Notifier {
   return {
     async notify(notification) {
-      logger.info({ notification }, "GitHub 整合的通知（通知系統尚未實作，只記 log）");
+      const kind = notification.kind as string;
+      const mapped =
+        kind === "pr_merged"
+          ? "task_merged"
+          : kind === "pr_closed_unmerged"
+            ? "task_rejected"
+            : kind === "feedback_limit_reached"
+              ? "feedback_limit_reached"
+              : null;
+      if (!mapped) {
+        logger.debug({ notification }, "GitHub 整合的通知由其他地方處理，略過");
+        return;
+      }
+      await notify.notify(null, {
+        kind: mapped,
+        recipients: [notification.memberId],
+        taskId: notification.taskId,
+        title: notification.message,
+        body: notification.url ?? null,
+      });
     },
   };
 }
@@ -50,6 +73,7 @@ export function createGitHubApp(
     events: DomainEvents;
     clock: Clock;
     logger: Logger;
+    notify: Notify;
     publicUrl: string;
   },
 ): { app: GitHubApp; installUrl: string; idle: () => Promise<void> } {
@@ -58,7 +82,7 @@ export function createGitHubApp(
     config: options.config,
     domain: new GitHubDomainService(deps.db, deps.lifecycle),
     store: new DrizzleGitHubStore(deps.db),
-    notifier: options.notifier ?? loggingNotifier(logger),
+    notifier: options.notifier ?? notificationNotifier(deps.notify, logger),
     logger,
     taskUrl: (task) => taskUrl(deps.publicUrl, task.key),
     now: () => deps.clock.now(),

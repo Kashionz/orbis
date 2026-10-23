@@ -20,6 +20,7 @@ import type { Executor, UnitOfWork } from "../db/tx";
 import type { PullRequestOpener } from "../github/integration";
 import { conflict } from "../http/errors";
 import type { Logger } from "../logger";
+import { NO_NOTIFY, type Notify } from "../notifications/types";
 import type { RunnerHub } from "../runner/hub";
 
 type RunControlRow = typeof runControls.$inferSelect;
@@ -42,6 +43,7 @@ export class RunControlService {
     private readonly clock: Clock,
     private readonly logger: Logger,
     private readonly pullRequestOpener: PullRequestOpener,
+    private readonly notify: Notify = NO_NOTIFY,
   ) {
     hub.onConnect((runnerId) => {
       this.resend(runnerId).catch((error: unknown) =>
@@ -246,13 +248,22 @@ export class RunControlService {
       .innerJoin(tasks, eq(tasks.id, runs.taskId))
       .where(eq(runs.id, runId));
     if (!row) return;
+    const memberId = row.task.assigneeMemberId ?? row.run.requestedByMemberId;
     await this.db.insert(needsYouItems).values({
       projectId: row.task.projectId,
-      memberId: row.task.assigneeMemberId ?? row.run.requestedByMemberId,
+      memberId,
       kind: "stopped_run",
       taskId: row.task.id,
       runId,
       payload: { reason },
+    });
+    await this.notify.notify(null, {
+      kind: "run_stopped",
+      recipients: [memberId],
+      taskId: row.task.id,
+      runId,
+      title: `${row.task.key} 停下來了`,
+      body: reason,
     });
   }
 }

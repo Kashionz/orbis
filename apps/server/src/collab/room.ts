@@ -32,7 +32,12 @@ export interface CollabPeer {
 }
 
 /** 文件快照寫進 CollabStore 之後呼叫（例如把內容回寫成 markdown）。 */
-export type CollabPersistHook = (ref: CollabDocRef, doc: Y.Doc) => Promise<void>;
+export type CollabPersistHook = (
+  ref: CollabDocRef,
+  doc: Y.Doc,
+  /** 最近一次修改文件的 Member（共同編輯中新出現的 mention 記在他名下）；沒有時為 null。 */
+  lastWriterMemberId: string | null,
+) => Promise<void>;
 
 export class CollabRoom {
   readonly doc = new Y.Doc({ gc: true });
@@ -42,6 +47,7 @@ export class CollabRoom {
   private persistTimer: NodeJS.Timeout | null = null;
   private persisting: Promise<void> = Promise.resolve();
   private dirty = false;
+  private lastWriterMemberId: string | null = null;
   /** 已通過權限檢查、正在完成 WebSocket upgrade 的 client 數（避免這段期間被卸載）。 */
   private reserved = 0;
 
@@ -171,7 +177,10 @@ export class CollabRoom {
         ) {
           const update = decoding.readVarUint8Array(decoder);
           // 唯讀的 client（Viewer）不能修改文件。
-          if (peer.writable) Y.applyUpdate(this.doc, update, peer);
+          if (peer.writable) {
+            this.lastWriterMemberId = peer.memberId;
+            Y.applyUpdate(this.doc, update, peer);
+          }
         } else {
           throw new Error(`不認得的 sync 訊息：${syncType}`);
         }
@@ -264,7 +273,7 @@ export class CollabRoom {
       this.dirty = false;
       try {
         await this.store.save(this.ref, Y.encodeStateAsUpdate(this.doc));
-        await this.onPersisted?.(this.ref, this.doc);
+        await this.onPersisted?.(this.ref, this.doc, this.lastWriterMemberId);
       } catch (error) {
         // 留到下一次再寫；文件還在記憶體中。
         this.dirty = true;

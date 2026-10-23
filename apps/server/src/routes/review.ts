@@ -293,26 +293,45 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         .returning();
       if (!decided) throw conflict("這個 Gate 已經有決定了");
       if (diffComments.length > 0 || previewComments.length > 0) {
-        await tx.insert(reviewComments).values([
-          ...diffComments.map((comment) => ({
-            gateId: gate.id,
-            kind: "diff" as const,
-            path: comment.path,
-            line: comment.line,
-            side: comment.side,
-            body: comment.body,
-            authorMemberId: actor.memberId,
-          })),
-          ...previewComments.map(({ input: comment }) => ({
-            gateId: gate.id,
-            kind: "preview" as const,
-            url: comment.url,
-            selector: comment.selector,
-            screenshotBlobId: comment.screenshotBlobId,
-            body: comment.body,
-            authorMemberId: actor.memberId,
-          })),
-        ]);
+        const inserted = await tx
+          .insert(reviewComments)
+          .values([
+            ...diffComments.map((comment) => ({
+              gateId: gate.id,
+              kind: "diff" as const,
+              path: comment.path,
+              line: comment.line,
+              side: comment.side,
+              body: comment.body,
+              authorMemberId: actor.memberId,
+            })),
+            ...previewComments.map(({ input: comment }) => ({
+              gateId: gate.id,
+              kind: "preview" as const,
+              url: comment.url,
+              selector: comment.selector,
+              screenshotBlobId: comment.screenshotBlobId,
+              body: comment.body,
+              authorMemberId: actor.memberId,
+            })),
+          ])
+          .returning();
+        // 留言中的 @mention：@agent 讀這個 Run 的 Worktree，並附上檔案與行號。
+        for (const comment of inserted) {
+          await s.mentions.processText(
+            uow,
+            { kind: "review_comment", id: comment.id },
+            {
+              projectId: scope.project.id,
+              task: scope.task,
+              actorMemberId: actor.memberId,
+              text: comment.body,
+              consultOfRunId: runId,
+              location:
+                comment.path && comment.line ? { path: comment.path, line: comment.line } : null,
+            },
+          );
+        }
       }
       await tx
         .update(needsYouItems)
