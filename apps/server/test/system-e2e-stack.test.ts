@@ -28,6 +28,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { parseReadyLine, type ReadyLine, sendPullRequestMergedWebhook } from "../e2e";
 import { createScratchDatabase, type ScratchDatabase } from "../src/db/test-database";
+import { buildRunnerBinaries } from "./helpers/binaries";
 import { dbSkipReason } from "./helpers/db";
 
 const skipStack = dbSkipReason !== null;
@@ -60,7 +61,6 @@ async function query<T extends pg.QueryResultRow>(
 const databaseName = (url: string) => decodeURIComponent(new URL(url).pathname.slice(1));
 
 const serverDir = fileURLToPath(new URL("..", import.meta.url));
-const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -157,21 +157,6 @@ async function startStack(extraArgs: string[] = []): Promise<StartedStack> {
   };
 }
 
-function buildBinaries(): void {
-  execFileSync(
-    "cargo",
-    [
-      "build",
-      "--quiet",
-      "-p",
-      `${NAMES.productSlug}-runner`,
-      "-p",
-      `${NAMES.productSlug}-fake-agent`,
-    ],
-    { cwd: repoRoot, stdio: "inherit" },
-  );
-}
-
 const isAlive = (pid: number) => {
   try {
     process.kill(pid, 0);
@@ -211,7 +196,7 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
   };
 
   beforeAll(async () => {
-    buildBinaries();
+    buildRunnerBinaries();
     started = await startStack();
     stack = started.child;
     ready = started.ready;
@@ -389,7 +374,7 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本：--runner-config-o
   let configDir: string;
 
   beforeAll(async () => {
-    buildBinaries();
+    buildRunnerBinaries();
     configDir = await mkdtemp(path.join(tmpdir(), `${NAMES.productSlug}-e2e-runner-home-`));
     started = await startStack(["--runner-config-out", configDir]);
   }, 600_000);
