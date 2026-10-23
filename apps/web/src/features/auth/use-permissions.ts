@@ -12,16 +12,17 @@ export interface Permissions {
 
 /**
  * 只能在 AuthedLayout 底下使用：那裡已經確認登入者是 Team 的 Member。
- * `project`、`task` 提供操作所在的 Project 政策與 Task。
+ * `project`、`task` 提供操作所在的 Project（有效 Role 與政策）與 Task。
+ * 有 Project 時用它的 `viewerRole`（含 Project 的 Role 覆寫），否則用 Team 的 Role。
  */
 export function usePermissions(
-  project?: Pick<Project, "policy"> | null,
+  project?: Pick<Project, "policy" | "viewerRole"> | null,
   task?: Pick<Task, "assigneeMemberId"> | null,
 ): Permissions {
   const { data: me } = useSuspenseQuery(meQueryOptions);
   if (!me.member) throw new Error("登入者還不是 Team 的 Member");
   const ctx: PermissionContext = {
-    role: me.member.role,
+    role: project?.viewerRole ?? me.member.role,
     memberId: me.member.id,
     policy: project?.policy,
     task: task ?? undefined,

@@ -6,8 +6,10 @@ import type { ProjectPolicy, Role } from "@orbis/api-contract";
 export const MOCK_STATE_STORAGE_KEY = "mock-backend-state";
 
 export interface MockConfig {
-  /** 登入者的 Role，預設 `owner`。 */
+  /** 登入者在 Team 的 Role，預設 `owner`。 */
   role?: Role;
+  /** 登入者在「核心產品」Project 的 Role 覆寫（Project 的 `viewerRole`）；省略時沿用 Team 的 Role。 */
+  projectRole?: Role;
   /** 登入狀態：`unauthorized`＝回 401、`error`＝回 500、`no-team`＝還不是任何 Team 的 Member。 */
   session?: "ok" | "unauthorized" | "error" | "no-team";
   /** 模擬 Agent 每一步的間隔，預設 150ms。 */

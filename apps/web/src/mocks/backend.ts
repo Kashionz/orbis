@@ -242,6 +242,7 @@ export class MockBackend {
             autoCreateIssues: false,
             ...this.config.policy,
           },
+          viewerRole: this.role,
           createdAt: SEED_TIME,
           updatedAt: SEED_TIME,
         },
@@ -260,6 +261,7 @@ export class MockBackend {
             defaultPermissionPolicy: "manual",
             autoCreateIssues: false,
           },
+          viewerRole: this.config.role ?? "owner",
           createdAt: SEED_TIME,
           updatedAt: SEED_TIME,
         },
@@ -486,8 +488,13 @@ export class MockBackend {
       .map((item) => ({ ...item, memberId: ME_ID }));
   }
 
+  /**
+   * 登入者在「核心產品」Project 的有效 Role（假後端的資料與操作幾乎都在這個 Project）：
+   * 有覆寫時用覆寫，但 Team 的 Owner 不能被覆寫（同 Server 的 effectiveRole）。
+   */
   private get role(): Role {
-    return this.config.role ?? "owner";
+    const teamRole = this.config.role ?? "owner";
+    return teamRole === "owner" ? "owner" : (this.config.projectRole ?? teamRole);
   }
 
   /** 核准 Gate（§12.2）：Member 以上；禁止核准自己的 Task 時，Member 不能核准指派給自己的。 */

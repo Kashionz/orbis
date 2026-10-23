@@ -80,6 +80,36 @@ for (const role of ROLES) {
   });
 }
 
+test.describe("Project 的 Role 覆寫（Project.viewerRole）", () => {
+  test.describe("Team 是 Member、Project 覆寫成 Viewer", () => {
+    test.use({ mock: { role: "member", projectRole: "viewer" } });
+
+    test("依 Project 的有效 Role 隱藏操作：看不到派工與編輯", async ({ page }) => {
+      await page.goto("/tasks/ORB-2");
+      await expect(page.getByRole("heading", { name: /新增 hello.txt/ })).toBeVisible();
+      // 頂部顯示的是 Team 的 Role
+      await expect(page.locator(".role-badge")).toHaveText("Member");
+      await expect(page.getByRole("button", { name: "派工" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "編輯標題" })).toHaveCount(0);
+
+      await page.goto("/board");
+      await expect(column(page, "backlog").locator('[data-task-key="ORB-1"]')).toBeVisible();
+      await expect(page.getByRole("button", { name: "新增 Task" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("Team 是 Viewer、Project 覆寫成 Member", () => {
+    test.use({ mock: { role: "viewer", projectRole: "member" } });
+
+    test("依 Project 的有效 Role 顯示派工與編輯", async ({ page }) => {
+      await page.goto("/tasks/ORB-2");
+      await expect(page.locator(".role-badge")).toHaveText("Viewer");
+      await expect(page.getByRole("button", { name: "派工" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "編輯標題" })).toBeVisible();
+    });
+  });
+});
+
 test.describe("Server 拒絕（403）", () => {
   test.use({ mock: { forbidWrites: true } });
 

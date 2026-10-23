@@ -33,7 +33,7 @@ export type Action =
   | "view";
 
 export interface PermissionContext {
-  /** 目前登入者的 Role。 */
+  /** 目前登入者的有效 Role：在 Project 中用 `Project.viewerRole`（含覆寫），否則用 Team 的 Role。 */
   role: Role;
   /** 目前登入者的 Member ID。 */
   memberId: string;
@@ -46,8 +46,6 @@ export interface PermissionContext {
 const EDITORS: readonly Role[] = ["owner", "admin", "member"];
 const ADMINS: readonly Role[] = ["owner", "admin"];
 
-// TODO(contract): 一律用 Team 的 Role。契約沒有讓 Member 取得自己在 Project 的有效 Role（含覆寫）
-// 的端點；有覆寫時 UI 可能多顯示或少顯示操作，實際權限仍由 Server 判斷（403 時顯示原因）。
 export function can(action: Action, ctx: PermissionContext): boolean {
   const { role } = ctx;
   switch (action) {
