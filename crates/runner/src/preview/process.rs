@@ -16,6 +16,7 @@ use orbis_protocol::enums::RunStatus;
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
+use super::registry::Registration;
 use crate::process::{self, Pipes, ProcessTree};
 use crate::secrets::Redactor;
 use crate::shell::Shell;
@@ -150,6 +151,7 @@ impl Preview {
     pub fn start(
         spec: PreviewSpec,
         after: Option<oneshot::Receiver<bool>>,
+        registration: Option<Registration>,
         redactor: Redactor,
         status: watch::Receiver<RunStatus>,
         timing: PreviewTiming,
@@ -158,7 +160,14 @@ impl Preview {
         let (stop, stop_rx) = oneshot::channel();
         let port = spec.port;
         let task = tokio::spawn(supervise(
-            spec, after, redactor, status, timing, stop_rx, notify,
+            spec,
+            after,
+            registration,
+            redactor,
+            status,
+            timing,
+            stop_rx,
+            notify,
         ));
         Self {
             port,
@@ -215,9 +224,11 @@ enum End {
     Exited(Option<i32>),
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn supervise(
     spec: PreviewSpec,
     after: Option<oneshot::Receiver<bool>>,
+    registration: Option<Registration>,
     redactor: Redactor,
     mut status: watch::Receiver<RunStatus>,
     timing: PreviewTiming,
@@ -250,6 +261,8 @@ async fn supervise(
             return;
         }
     };
+    // 程序在執行期間登記 port，relay 才會轉送；結束（這個函式返回）時取消登記
+    let _registered = registration.map(|r| r.register(spec.port));
     let tail = Arc::new(Mutex::new(Tail::default()));
     let drains = [
         tree.take_stdout().map(|r| drain(r, tail.clone())),
@@ -420,9 +433,17 @@ mod tests {
         spec.env = vec![(ENV_PORT.into(), spec.port.to_string())];
         let (tx, rx) = mpsc::unbounded_channel();
         let (status_tx, status) = watch::channel(RunStatus::Running);
-        let preview = Preview::start(spec, after, Redactor::new(), status, timing, move |n| {
-            let _ = tx.send(n);
-        });
+        let preview = Preview::start(
+            spec,
+            after,
+            None,
+            Redactor::new(),
+            status,
+            timing,
+            move |n| {
+                let _ = tx.send(n);
+            },
+        );
         (preview, rx, status_tx)
     }
 

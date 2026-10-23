@@ -23,6 +23,7 @@ use crate::agent::{self, Profiles};
 use crate::connection::now;
 use crate::home::RunnerHome;
 use crate::outbox::Outbox;
+use crate::preview::PreviewRegistry;
 use crate::run::{self, RunContext, RunHandle, RunInput};
 use crate::worktree::WorktreeManager;
 
@@ -40,6 +41,7 @@ pub struct Supervisor {
     profiles: Profiles,
     runs: Mutex<HashMap<RunId, RunHandle>>,
     frames: mpsc::UnboundedSender<RunnerToServer>,
+    previews: Arc<PreviewRegistry>,
     paused: watch::Sender<bool>,
     snapshot: watch::Sender<Snapshot>,
     detected: tokio::sync::Mutex<Option<Vec<(String, agent::Detected)>>>,
@@ -64,6 +66,7 @@ impl Supervisor {
             profiles,
             runs: Mutex::new(HashMap::new()),
             frames,
+            previews: PreviewRegistry::new(),
             paused: watch::Sender::new(false),
             snapshot: watch::Sender::new(Snapshot {
                 active_runs: 0,
@@ -81,6 +84,11 @@ impl Supervisor {
 
     pub fn home(&self) -> &Arc<RunnerHome> {
         &self.home
+    }
+
+    /// 正在執行的 Preview（Preview 的 relay 使用）。
+    pub fn previews(&self) -> &Arc<PreviewRegistry> {
+        &self.previews
     }
 
     /// 上次 Runner 結束時還在進行的 Run：Agent 已經不在了，補上失敗的 Event 讓 Server 知道。
@@ -244,6 +252,7 @@ impl Supervisor {
                         worktrees: self.worktrees.clone(),
                         outbox: self.outbox.clone(),
                         frames: self.frames.clone(),
+                        previews: self.previews.clone(),
                     },
                 );
                 lock(&self.runs).insert(handle.run_id.clone(), handle);

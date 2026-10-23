@@ -38,7 +38,9 @@ use crate::home::RunnerHome;
 use crate::normalize::{self, Normalizer};
 use crate::outbox::Outbox;
 use crate::policy::{self, Decision, PolicyContext};
-use crate::preview::{Preview, PreviewNotice, PreviewSpec, PreviewTiming};
+use crate::preview::{
+    Preview, PreviewNotice, PreviewRegistry, PreviewSpec, PreviewTiming, Registration,
+};
 use crate::repo_config::CommitFields;
 use crate::secrets::Redactor;
 use crate::worktree::{Worktree, WorktreeManager, WorktreeRequest};
@@ -60,6 +62,8 @@ pub struct RunContext {
     pub outbox: Arc<Outbox>,
     /// RunControlResult 等非 Event 的 frame。
     pub frames: mpsc::UnboundedSender<RunnerToServer>,
+    /// 正在執行的 Preview（relay 依此轉送，§13）。
+    pub previews: Arc<PreviewRegistry>,
 }
 
 /// 送給 Run 的訊息。
@@ -483,9 +487,14 @@ impl Run {
                 tracing::error!(run_id = %run_id, error = %e, "無法記錄 Preview 的 Event");
             }
         };
+        let registration = Registration {
+            registry: self.ctx.previews.clone(),
+            run_id: self.offer.run_id.clone(),
+        };
         self.preview = Some(Preview::start(
             spec,
             after,
+            Some(registration),
             self.redactor.clone(),
             self.status_tx.subscribe(),
             PreviewTiming::default(),

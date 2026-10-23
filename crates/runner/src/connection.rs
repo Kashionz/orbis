@@ -27,6 +27,7 @@ use tracing::{debug, info, warn};
 use crate::config::ConnectConfig;
 use crate::home::StoredToken;
 use crate::outbox::Spooled;
+use crate::preview;
 use crate::supervisor::Supervisor;
 use orbis_protocol::RUNNER_BLOB_PATH;
 use orbis_protocol::sidecar::SidecarConnectionState;
@@ -291,28 +292,61 @@ impl Connection {
             .context("送出 frame 失敗")
     }
 
+    /// 送出 Preview 的訊息（§13）：控制 frame 是 JSON，資料是 binary。
+    async fn send_preview(&mut self, outbound: preview::Outbound) -> anyhow::Result<()> {
+        match outbound {
+            preview::Outbound::Text(text) => self.send_text(text).await,
+            preview::Outbound::Binary(bytes) => self
+                .ws
+                .send(Message::binary(bytes))
+                .await
+                .context("送出 preview 資料失敗"),
+        }
+    }
+
     /// 收下一個 frame。連線正常關閉時回傳 `None`；無法解析的訊息記 log 後略過。
-    pub async fn recv(&mut self) -> anyhow::Result<Option<ServerToRunner>> {
+    pub async fn recv(&mut self) -> anyhow::Result<Option<Inbound>> {
         while let Some(message) = self.ws.next().await {
             match message.context("接收 frame 失敗")? {
-                Message::Text(text) => match serde_json::from_str::<ServerToRunner>(&text) {
-                    Ok(frame) => {
-                        debug!(frame = frame.type_name(), "收到 frame");
-                        return Ok(Some(frame));
+                Message::Text(text) => {
+                    // TODO(contract): 契約 v2 合併後 preview frame 是 ServerToRunner 的變體（#29）。
+                    if let Some(parsed) = preview::wire::PreviewFromServer::parse(&text) {
+                        match parsed {
+                            Ok(frame) => return Ok(Some(Inbound::Preview(frame))),
+                            Err(e) => warn!(error = %e, "無法解析 preview frame，略過"),
+                        }
+                        continue;
                     }
-                    Err(e) => warn!(error = %e, "無法解析 Server 送來的 frame，略過"),
-                },
+                    match serde_json::from_str::<ServerToRunner>(&text) {
+                        Ok(frame) => {
+                            debug!(frame = frame.type_name(), "收到 frame");
+                            return Ok(Some(Inbound::Frame(frame)));
+                        }
+                        Err(e) => warn!(error = %e, "無法解析 Server 送來的 frame，略過"),
+                    }
+                }
                 Message::Close(frame) => {
                     debug!(?frame, "Server 關閉連線");
                     return Ok(None);
                 }
                 // Ping 由 tungstenite 自動回 Pong
                 Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
-                Message::Binary(_) => warn!("收到 binary 訊息，協定只使用 JSON 文字，略過"),
+                // binary 只用在 Preview 的資料（§13）
+                Message::Binary(bytes) => return Ok(Some(Inbound::PreviewData(bytes.to_vec()))),
             }
         }
         Ok(None)
     }
+}
+
+/// Server 送來的訊息。
+#[derive(Debug)]
+pub enum Inbound {
+    Frame(ServerToRunner),
+    /// Preview 的控制 frame（§13）。
+    Preview(preview::wire::PreviewFromServer),
+    /// Preview 的資料（binary 訊息）。
+    PreviewData(Vec<u8>),
 }
 
 /// 送出 Hello，等待 Server 的回應。
@@ -329,9 +363,12 @@ pub async fn handshake(
     .await?;
 
     match conn.recv().await? {
-        Some(ServerToRunner::HelloAck(ack)) => Ok(ack),
-        Some(ServerToRunner::HelloRejected(rejected)) => Err(Rejected(rejected).into()),
-        Some(other) => bail!("預期 hello_ack，卻收到 {}", other.type_name()),
+        Some(Inbound::Frame(ServerToRunner::HelloAck(ack))) => Ok(ack),
+        Some(Inbound::Frame(ServerToRunner::HelloRejected(rejected))) => {
+            Err(Rejected(rejected).into())
+        }
+        Some(Inbound::Frame(other)) => bail!("預期 hello_ack，卻收到 {}", other.type_name()),
+        Some(_) => bail!("預期 hello_ack，卻收到 preview 訊息"),
         None => bail!("Server 在回應 Hello 之前就關閉了連線"),
     }
 }
@@ -404,26 +441,34 @@ impl Session {
         let mut heartbeat = tokio::time::interval(self.heartbeat);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let outbox = self.supervisor.outbox().clone();
+        // Preview 的轉送（§13）：這條連線結束時所有 stream 一起結束
+        let (mut relay, mut preview_out) =
+            preview::PreviewRelay::new(self.supervisor.previews().clone());
         loop {
             // 先把能送的 Event 送完（依 seq），再等下一件事。
             while let Some(item) = outbox.next_unsent() {
                 self.send_event(&item).await?;
             }
+            // biased：Preview 的資料排在 Event、control 與 Heartbeat 之後（§13 背壓），大檔案不會卡住它們
             tokio::select! {
-                _ = heartbeat.tick() => {
-                    let hb = self.supervisor.heartbeat();
-                    self.conn.send_typed("heartbeat", &hb).await?;
-                }
-                () = outbox.notified() => {}
-                Some(frame) = frames.recv() => self.conn.send(&frame).await?,
-                frame = self.conn.recv() => match frame? {
-                    Some(frame) => self.handle(frame).await?,
-                    None => return Ok(false),
-                },
+                biased;
                 _ = shutdown.wait_for(|s| *s) => {
                     let _ = self.conn.ws.close(None).await;
                     return Ok(true);
                 }
+                _ = heartbeat.tick() => {
+                    let hb = self.supervisor.heartbeat();
+                    self.conn.send_typed("heartbeat", &hb).await?;
+                }
+                Some(frame) = frames.recv() => self.conn.send(&frame).await?,
+                () = outbox.notified() => {}
+                frame = self.conn.recv() => match frame? {
+                    Some(Inbound::Frame(frame)) => self.handle(frame).await?,
+                    Some(Inbound::Preview(frame)) => relay.handle_frame(frame),
+                    Some(Inbound::PreviewData(bytes)) => relay.handle_data(&bytes),
+                    None => return Ok(false),
+                },
+                Some(outbound) = preview_out.recv() => self.conn.send_preview(outbound).await?,
             }
         }
     }
