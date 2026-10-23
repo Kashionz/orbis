@@ -180,6 +180,21 @@ impl RunnerHome {
         Ok(())
     }
 
+    /// 記下 Run 的 Worktree 位置（Feedback Loop 的新 Run 沿用前一個 Run 的 Worktree，§5.2）。
+    pub fn record_run_worktree(&self, run_id: &str, worktree: &Path) -> anyhow::Result<()> {
+        let _guard = lock(&self.lock);
+        let mut runs: BTreeMap<String, PathBuf> = self.read_json(RUN_WORKTREES_FILE)?;
+        runs.insert(run_id.to_owned(), worktree.to_owned());
+        self.write_json(RUN_WORKTREES_FILE, &runs, false)
+    }
+
+    /// 之前記下的 Run 的 Worktree 位置。
+    pub fn run_worktree(&self, run_id: &str) -> Option<PathBuf> {
+        let _guard = lock(&self.lock);
+        let runs: BTreeMap<String, PathBuf> = self.read_json(RUN_WORKTREES_FILE).ok()?;
+        runs.get(run_id).cloned()
+    }
+
     /// 這個 Repo 的 config.toml 內容（hash）是否已被核准「永遠允許」。
     pub fn is_trusted(&self, repo_key: &str, hash: &str) -> anyhow::Result<bool> {
         let _guard = lock(&self.lock);
@@ -202,6 +217,8 @@ impl RunnerHome {
 
 const CREDENTIALS_FILE: &str = "credentials.json";
 const PORTS_FILE: &str = "ports.json";
+/// 每個 Run 的 Worktree 位置（狀態目錄中）。
+const RUN_WORKTREES_FILE: &str = "run-worktrees.json";
 const TRUST_FILE: &str = "trust.json";
 
 fn lock(mutex: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {

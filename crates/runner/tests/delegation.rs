@@ -122,7 +122,7 @@ async fn consult_在父_worktree_中唯讀() {
         "consult 用父 Run 的 Worktree"
     );
     assert_eq!(ready["branch"], Value::Null);
-    wait_run_status(&mut conn, "c1", "awaiting_gate").await;
+    wait_run_status(&mut conn, "c1", "completed").await;
     assert!(!parent_wt.join("consult.txt").exists(), "consult 是唯讀的");
     assert!(
         !conn
@@ -160,7 +160,7 @@ async fn 深度超過上限被拒絕() {
         })
         .await;
     assert!(failed.to_string().contains("depth_exceeded"), "{failed}");
-    wait_run_status(&mut conn, "c2", "awaiting_gate").await;
+    wait_run_status(&mut conn, "c2", "completed").await;
     assert!(
         !conn.frames().iter().any(|f| f["type"] == "tool_call"),
         "本機擋下的呼叫不送到 Server"
@@ -263,7 +263,7 @@ async fn ask_parent_阻塞到收到回答() {
         })
         .await;
     assert!(answered.to_string().contains("用 A 方案"), "{answered}");
-    wait_run_status(&mut conn, "c1", "awaiting_gate").await;
+    wait_run_status(&mut conn, "c1", "completed").await;
 }
 
 /// branch 模式：從父 Run 當下的 HEAD 開出子 Worktree；merge_child 有衝突時保留衝突狀態交給父 Agent，
@@ -293,7 +293,7 @@ async fn branch_的_merge_child_發生衝突() {
     assert_eq!(ready["branch"], branch("ORB-1-x--c1").as_str());
     let child_wt = worktree_of(&ready);
     assert_ne!(child_wt, parent_wt);
-    wait_run_status(&mut conn, "c1", "awaiting_gate").await;
+    wait_run_status(&mut conn, "c1", "completed").await;
     git(&child_wt, &["commit", "-qam", "child"]);
 
     // 父 Run 也改了同一行 → merge 會衝突。

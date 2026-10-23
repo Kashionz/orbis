@@ -65,8 +65,12 @@ pub struct WorktreeRequest {
     pub repo: DispatchRepo,
     /// `None` 時以 detached HEAD 開出（`consult` 模式的 Child Run）。
     pub branch: Option<String>,
-    /// 不從 `repo.base_ref` 開出時的基準（`branch` 模式的 Child Run：父 Run 當下的 HEAD）。
+    /// 不從 `repo.base_ref` 開出時的基準（`branch` 模式的 Child Run：父 Run 當下的 HEAD；
+    /// Feedback Loop：前一個 Run 的 base commit）。
     pub base: Option<BaseOverride>,
+    /// 沿用的 Worktree 位置（Feedback Loop 的新 Run 沿用前一個 Run 的 Worktree）；`None` 時依
+    /// Task Key 與 Run 序號計算（§6.2）。
+    pub path: Option<std::path::PathBuf>,
 }
 
 /// [`WorktreeRequest::base`]：開出 Worktree 的 commit，與讀取 Repo 設定檔的 commit。
@@ -260,7 +264,22 @@ impl WorktreeManager {
 
     /// 執行 §6.2 建立流程的 1–5 步（不含信任核准與 setup）。
     pub async fn create(&self, req: &WorktreeRequest) -> Result<Worktree, WorktreeError> {
-        let path = self.path_for(&req.repo.name, &req.task_key, req.run_seq)?;
+        let path = match &req.path {
+            Some(path) => {
+                // 只沿用 Worktree 根目錄之下的路徑（本機紀錄被改過時不會跑到別的地方）。
+                if !paths::is_within(
+                    &paths::canonical(path),
+                    &paths::canonical(&self.home.worktree_root()),
+                ) {
+                    return Err(WorktreeError::worktree(format!(
+                        "要沿用的 Worktree 不在 Worktree 根目錄之下：{}",
+                        path.display()
+                    )));
+                }
+                path.clone()
+            }
+            None => self.path_for(&req.repo.name, &req.task_key, req.run_seq)?,
+        };
         validate_request(req).await?;
         if paths::running_in_wsl() && paths::is_wsl_windows_mount(&path) {
             return Err(WorktreeError::worktree(format!(
@@ -316,8 +335,17 @@ impl WorktreeManager {
                             &format!("refs/heads/{branch}"),
                         ])
                         .await;
+                    let remote = format!("refs/remotes/origin/{branch}");
                     if exists {
                         git.run(["worktree", "add", "--", &path_arg, branch])
+                            .await?;
+                    } else if req.path.is_some()
+                        && git
+                            .succeeds(["rev-parse", "--verify", "--quiet", &remote])
+                            .await
+                    {
+                        // 要沿用的 Worktree 已經不在、本機也沒有分支：從 remote 的分支重建（§5.2）。
+                        git.run(["worktree", "add", "-b", branch, "--", &path_arg, &remote])
                             .await?;
                     } else {
                         git.run([

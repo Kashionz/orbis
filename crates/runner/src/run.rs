@@ -158,6 +158,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         approved_verify_commands: std::collections::HashSet::new(),
         mcp_token: None,
         read_only: false,
+        fresh_continuation: false,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -279,6 +280,8 @@ struct Run {
     mcp_token: Option<String>,
     /// `consult` 模式的 Child Run：在父 Run 的 Worktree 中唯讀，寫入一律拒絕。
     read_only: bool,
+    /// Feedback Loop 的新 Run 沒有接續到原本的 session：第一個 prompt 要附上 Task 與目前的變更。
+    fresh_continuation: bool,
 }
 
 impl Run {
@@ -432,6 +435,22 @@ impl Run {
             }
             None => None,
         };
+        // Feedback Loop 的新 Run：沿用前一個 Run 的 Worktree 與 base commit（§5.2）。
+        let continuation = self.offer.continuation.clone();
+        let base = base.or_else(|| {
+            continuation
+                .as_ref()
+                .map(|c| crate::worktree::BaseOverride {
+                    commit: c.base_commit.clone(),
+                    config_commit: c.base_commit.clone(),
+                })
+        });
+        let path = continuation
+            .as_ref()
+            .and_then(|c| self.ctx.home.run_worktree(c.previous_run_id.as_str()));
+        if self.offer.origin == Some(orbis_protocol::enums::RunOrigin::Mention) {
+            self.read_only = true;
+        }
         let request = WorktreeRequest {
             run_id: self.offer.run_id.clone(),
             task_key: self.offer.task.task_key.clone(),
@@ -439,12 +458,20 @@ impl Run {
             repo: self.offer.repo.clone(),
             branch: self.offer.branch.clone(),
             base,
+            path,
         };
         let manager = self.ctx.worktrees.clone();
         let mut wt = self
             .interruptible(async move { manager.create(&request).await })
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
+        if let Err(e) = self
+            .ctx
+            .home
+            .record_run_worktree(self.offer.run_id.as_str(), &wt.path)
+        {
+            tracing::warn!(error = %e, "無法記下 Run 的 Worktree 位置");
+        }
         // 沿用父 Run 的信任核准，只在子 Worktree 的內容和核准時的 base commit 完全相同時：
         // 父 Run 的 Agent 改過的檔案（例如 package.json 的 script）可能讓已核准的 setup 執行別的東西。
         if let Some((caller, _)) = &parent
@@ -488,8 +515,38 @@ impl Run {
         self.check_agent_settings(SettingsCheck::BeforePrompt)
             .await?;
         self.planning = self.offer.plan_gate;
-        self.start_agent(None).await?;
+        let resume = self
+            .offer
+            .continuation
+            .as_ref()
+            .and_then(|c| c.session_id.clone());
+        let wanted_resume = resume.is_some();
+        let resumed = self.start_agent(resume).await?;
+        if self.offer.continuation.is_some() && !resumed {
+            // 沒辦法接續原本的 session：開新的 session，第一個 prompt 附上 Task 與目前的變更（§5.2）。
+            if wanted_resume {
+                self.emit(EventKind::Error {
+                    code: RunErrorCode::SessionResumeFailed,
+                    message: "無法恢復前一個 Run 的 session，改開新的 session".into(),
+                    fatal: false,
+                });
+            }
+            self.fresh_continuation = true;
+        }
         self.enter_plan_mode().await
+    }
+
+    /// 主 Run：推動 Task 生命週期的 Run（人派工與 Feedback Loop 的 Run）。Child Run、判定
+    /// Verification 與 @agent 的 consult Run 不經過 Review Gate，回合結束就完成（Server 等它們進入
+    /// 終止狀態：`wait_run` 回傳、`merge_child` 可以合併、@agent 的回覆貼出）。
+    fn is_primary(&self) -> bool {
+        use orbis_protocol::enums::RunOrigin;
+        self.offer.delegation.is_none()
+            && self.offer.consult_of_run_id.is_none()
+            && !matches!(
+                self.offer.origin,
+                Some(RunOrigin::Delegation | RunOrigin::Verification | RunOrigin::Mention)
+            )
     }
 
     /// Child Run 的父 Run（在這台 Runner 上，hub 中有登記）與 Delegation 模式；一般 Run 為 `None`。
@@ -497,7 +554,14 @@ impl Run {
         &self,
     ) -> Result<Option<(crate::orbis_mcp::hub::Caller, DelegationMode)>, Stop> {
         let Some(delegation) = &self.offer.delegation else {
-            return Ok(None);
+            // @agent 的 consult Run：要讀的 Run 還在這台 Runner 上時用它的 Worktree（唯讀）；
+            // 已經不在時從 base_ref 開出唯讀的 Worktree（§12.3）。
+            return Ok(self
+                .offer
+                .consult_of_run_id
+                .as_ref()
+                .and_then(|id| self.ctx.mcp.caller(id))
+                .map(|caller| (caller, DelegationMode::Consult)));
         };
         match self.ctx.mcp.caller(&delegation.parent_run_id) {
             Some(caller) => Ok(Some((caller, delegation.mode))),
@@ -781,7 +845,7 @@ impl Run {
             return Ok(Prompt::text(SETTINGS_RESUME_PROMPT, self.last_source));
         }
         self.enter_plan_mode().await?;
-        let mut prompt = self.first_prompt();
+        let mut prompt = self.first_prompt().await;
         prompt.blocks.push(ContentBlock::Text {
             text: SETTINGS_RESTART_NOTE.to_owned(),
         });
@@ -790,8 +854,13 @@ impl Run {
 
     /// 第一個 prompt：DispatchOffer 的 prompt；Planning 而且 Agent 沒有可靠的 plan 模式時，
     /// 接上只產出 plan 的指示。
-    fn first_prompt(&self) -> Prompt {
+    async fn first_prompt(&self) -> Prompt {
         let mut blocks = self.offer.prompt.clone();
+        if self.fresh_continuation {
+            blocks.push(ContentBlock::Text {
+                text: self.continuation_context().await,
+            });
+        }
         if self.planning && self.profile.plan_mode.is_none() {
             blocks.push(ContentBlock::Text {
                 text: PLAN_ONLY_PROMPT.to_owned(),
@@ -801,6 +870,22 @@ impl Run {
             blocks,
             source: self.offer.prompt_source.unwrap_or(PromptSource::User),
         }
+    }
+
+    /// 沒有接續到原本 session 的 Feedback Loop Run：說明 Task 與分支上目前的變更。
+    async fn continuation_context(&self) -> String {
+        let wt = self.wt();
+        let stat = wt
+            .git()
+            .run(["diff", "--stat", &wt.base_commit])
+            .await
+            .unwrap_or_default();
+        format!(
+            "（這是 {} {} 的 PR 修正。原本的 session 無法恢復，這是新的 session；之前的修改都在這個分支上。目前相對 base commit 的變更：\n{}）",
+            self.offer.task.task_key,
+            self.offer.task.title,
+            self.redactor.redact(stat.trim())
+        )
     }
 
     /// Planning 而且 profile 有可靠的 plan 模式時切過去。
@@ -1171,7 +1256,7 @@ impl Run {
     // ── 執行與 Review ──────────────────────────────────────────────────────────
 
     async fn work(&mut self) -> Result<(), Stop> {
-        let mut prompt = self.first_prompt();
+        let mut prompt = self.first_prompt().await;
         loop {
             match self.turn(prompt).await? {
                 TurnEnd::RateLimited { resets_at, message } => {
@@ -1197,6 +1282,14 @@ impl Run {
                         }
                         PlanDecision::Revise(next) => next,
                     };
+                }
+                TurnEnd::Done(reason) if !self.is_primary() => {
+                    if !self.read_only {
+                        self.send_run_diff().await;
+                    }
+                    self.set_status(RunStatus::Completed, None, Some(stop_reason_text(reason)));
+                    self.ctx.outbox.finish_run(self.run_id());
+                    return Ok(());
                 }
                 TurnEnd::Done(reason) => {
                     self.send_run_diff().await;
