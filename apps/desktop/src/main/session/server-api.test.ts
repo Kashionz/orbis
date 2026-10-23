@@ -62,4 +62,19 @@ describe("createServerApi", () => {
     const asObject = fakeFetch(() => json(200, { items: [gate] }));
     expect(await createServerApi("http://s", asObject.fetchFn).listNeedsYou()).toEqual([gate]);
   });
+
+  it("revokeRunner() 以 DELETE 撤銷；Server 已經沒有這台 Runner（404）也算成功", async () => {
+    const ok = fakeFetch(() => new Response(null, { status: 204 }));
+    await createServerApi("http://s", ok.fetchFn).revokeRunner("rn/1");
+    expect(ok.requests[0]?.url).toBe("http://s/api/runners/rn%2F1");
+    expect(ok.requests[0]?.init.method).toBe("DELETE");
+    const gone = fakeFetch(() => json(404, {}));
+    await expect(createServerApi("http://s", gone.fetchFn).revokeRunner("rn_1")).resolves.toBe(
+      undefined,
+    );
+    const broken = fakeFetch(() => json(500, {}));
+    await expect(createServerApi("http://s", broken.fetchFn).revokeRunner("rn_1")).rejects.toThrow(
+      "HTTP 500",
+    );
+  });
 });

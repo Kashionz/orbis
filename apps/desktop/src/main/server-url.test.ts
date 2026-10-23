@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkServerHealth, normalizeServerUrl } from "./server-url";
+import { checkServerHealth, normalizeServerUrl, resolveRunnerServerUrl } from "./server-url";
 
 describe("normalizeServerUrl", () => {
   it("只保留 origin，去掉結尾斜線，沒有 scheme 時補 https", () => {
@@ -52,7 +52,7 @@ describe("checkServerHealth", () => {
       requested = String(input);
       return new Response('{"ok":true}');
     }) as typeof fetch;
-    expect(await checkServerHealth("http://s", fetchFn)).toEqual({ ok: true });
+    expect(await checkServerHealth("http://s", fetchFn)).toEqual({ ok: true, apiOrigin: null });
     expect(requested).toBe("http://s/api/health");
   });
 
@@ -72,5 +72,43 @@ describe("checkServerHealth", () => {
       ok: false,
       message: "無法連線到 Server：ECONNREFUSED",
     });
+  });
+});
+
+describe("apiOrigin 與 Runner 的連線網址", () => {
+  const health = (body: unknown): typeof fetch =>
+    (async () => new Response(JSON.stringify(body))) as typeof fetch;
+
+  it("讀出 /api/health 回報的 apiOrigin，正規化成 origin", async () => {
+    expect(
+      await checkServerHealth(
+        "http://s",
+        health({ ok: true, apiOrigin: "http://localhost:4000/" }),
+      ),
+    ).toEqual({ ok: true, apiOrigin: "http://localhost:4000" });
+  });
+
+  it("apiOrigin 不是明確的 http／https origin 時視為沒有", async () => {
+    for (const apiOrigin of ["localhost:4000", "ftp://x", "http://x/api", 42, ""]) {
+      expect(await checkServerHealth("http://s", health({ ok: true, apiOrigin }))).toEqual({
+        ok: true,
+        apiOrigin: null,
+      });
+    }
+  });
+
+  it("Runner 連線網址：環境變數覆寫 → apiOrigin → Web UI 的 origin", async () => {
+    const withOrigin = health({ ok: true, apiOrigin: "http://localhost:4000" });
+    expect(await resolveRunnerServerUrl("http://localhost:5173", withOrigin)).toBe(
+      "http://localhost:4000",
+    );
+    expect(
+      await resolveRunnerServerUrl("http://localhost:5173", withOrigin, "http://localhost:4501"),
+    ).toBe("http://localhost:4501");
+    expect(await resolveRunnerServerUrl("https://web", health({ ok: true }))).toBe("https://web");
+    const failing = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as typeof fetch;
+    expect(await resolveRunnerServerUrl("https://web", failing)).toBe("https://web");
   });
 });

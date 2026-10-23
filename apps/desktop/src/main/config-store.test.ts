@@ -20,10 +20,11 @@ describe("ConfigStore", () => {
     const store = new ConfigStore(path, "win32");
     expect(store.get()).toEqual(defaultConfig("win32"));
     expect(store.get().terminal.preset).toBe("windows-terminal");
-    store.update({ serverUrl: "https://s.example", claimingPaused: true });
+    store.update({ serverUrl: "https://s.example", claimingPaused: true, runnerId: "rn_1" });
     expect(new ConfigStore(path, "win32").get()).toMatchObject({
       serverUrl: "https://s.example",
       claimingPaused: true,
+      runnerId: "rn_1",
     });
     expect(JSON.parse(readFileSync(path, "utf8")).serverUrl).toBe("https://s.example");
   });
@@ -43,6 +44,7 @@ describe("ConfigStore", () => {
       JSON.stringify({
         serverUrl: "https://x",
         claimingPaused: "yes",
+        runnerId: "",
         editor: { preset: "notepad", customCommand: "vim {path}" },
         terminal: { preset: "windows-terminal", customCommand: 3 },
       }),
@@ -50,6 +52,7 @@ describe("ConfigStore", () => {
     expect(new ConfigStore(path, "linux").get()).toEqual({
       serverUrl: "https://x",
       claimingPaused: false,
+      runnerId: null,
       editor: { preset: "vscode", customCommand: "vim {path}" },
       terminal: { preset: "x-terminal-emulator", customCommand: "" },
     });

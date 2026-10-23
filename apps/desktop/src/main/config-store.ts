@@ -16,6 +16,8 @@ export interface DesktopConfig {
   serverUrl: string | null;
   /** 系統匣的「暫停領取新 Run」，重啟後保留（使用者核准的決定 D6）。 */
   claimingPaused: boolean;
+  /** sidecar 最後一次回報的 Runner ID，登出時用來撤銷這台 Local Runner；從來沒有連上過時為 null。 */
+  runnerId: string | null;
   editor: ToolChoice;
   terminal: ToolChoice;
 }
@@ -24,6 +26,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform): Des
   return {
     serverUrl: null,
     claimingPaused: false,
+    runnerId: null,
     editor: defaultEditor(),
     terminal: defaultTerminal(platform),
   };
@@ -48,6 +51,7 @@ function configSchema(platform: NodeJS.Platform) {
   return z.object({
     serverUrl: z.string().nullable().catch(null),
     claimingPaused: z.boolean().catch(false),
+    runnerId: z.string().min(1).nullable().catch(null),
     editor: toolChoice(EDITOR_PRESETS, defaults.editor),
     terminal: toolChoice(terminalPresets(platform), defaults.terminal),
   });

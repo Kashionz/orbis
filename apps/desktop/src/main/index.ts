@@ -9,6 +9,7 @@ import { NAMES } from "@orbis/api-contract/names";
 import {
   app,
   BrowserWindow,
+  dialog,
   type IpcMainInvokeEvent,
   ipcMain,
   Menu,
@@ -44,7 +45,7 @@ import {
   type NotificationContent,
   needsYouNotification,
 } from "./notifications/needs-you";
-import { checkServerHealth, normalizeServerUrl } from "./server-url";
+import { checkServerHealth, normalizeServerUrl, resolveRunnerServerUrl } from "./server-url";
 import { createServerApi, type ServerApi, UnauthorizedError } from "./session/server-api";
 import { SessionController } from "./session/session-controller";
 import { RotatingLogFile } from "./sidecar/log-file";
@@ -105,6 +106,7 @@ const api: ServerApi = {
   me: () => currentApi().me(),
   createLocalPairingToken: () => currentApi().createLocalPairingToken(),
   listNeedsYou: () => currentApi().listNeedsYou(),
+  revokeRunner: (runnerId) => currentApi().revokeRunner(runnerId),
 };
 
 function currentApi(): ServerApi {
@@ -130,9 +132,9 @@ const supervisor = new RunnerSupervisor({
     return buildRunnerLaunch({
       command: runnerCommand(),
       baseEnv: process.env,
-      // 用取得 Pairing token 時的 Server，不重新讀設定：設定換了 Server 時，不能帶著前一個 Server 的
+      // 用取得 Pairing token 時解析好的 Server，不重新讀設定：設定換了 Server 時，不能帶著前一個 Server 的
       // Runner token 去連新的 Server
-      serverUrl: process.env[DESKTOP_ENV.runnerServerUrl] || pairing.serverUrl,
+      serverUrl: pairing.serverUrl,
       pairingToken: pairing.token,
       stateDir: runnerStateDir,
     });
@@ -153,8 +155,15 @@ const sessionController = new SessionController({
     start: async (token) => {
       const url = serverUrl();
       if (!url) throw new Error("沒有 Server URL，無法啟動 Runner");
+      // Runner 直接連 Server 的 API origin（/api/health 回報），不經過 Web UI 的 dev server
+      const runnerUrl = await resolveRunnerServerUrl(
+        url,
+        sessionFetch,
+        process.env[DESKTOP_ENV.runnerServerUrl] || undefined,
+      );
+      if (runnerUrl !== url) runnerLog.note(`Runner 連線到 ${runnerUrl}`);
       await supervisor.stop();
-      pairing = { token, serverUrl: url };
+      pairing = { token, serverUrl: runnerUrl };
       supervisor.start();
     },
     stop: async () => {
@@ -163,13 +172,33 @@ const sessionController = new SessionController({
     },
     clearState: async () => {
       rmSync(runnerStateDir, { recursive: true, force: true });
+      config.update({ runnerId: null });
     },
+    activeRuns: () => supervisor.snapshot().status?.active_runs ?? 0,
+    runnerId: () => config.get().runnerId,
   },
   log: (message) => runnerLog.note(message),
+  confirmLogout: async (activeRuns) => {
+    const options = {
+      type: "warning" as const,
+      buttons: ["登出", "取消"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `仍有 ${activeRuns} 個 Run 執行中，登出會中止它們`,
+      detail: "登出後會撤銷這台電腦的 Local Runner，並停止 Runner。",
+    };
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const { response } = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    return response === 0;
+  },
 });
 
 supervisor.onChange((snapshot) => {
   if (snapshot.phase === "needs_pairing") void sessionController.runnerNeedsPairing();
+  const runnerId = snapshot.status?.runner_id;
+  if (runnerId && runnerId !== config.get().runnerId) config.update({ runnerId });
   renderTray();
 });
 
@@ -496,6 +525,10 @@ function registerIpc(): void {
   ipcMain.handle(BRIDGE_IPC.openWorktreeInTerminal, (event, path: unknown) =>
     fromMainWindow(event) ? openWorktree(path, buildTerminalLaunch, config.get().terminal) : denied,
   );
+  ipcMain.handle(BRIDGE_IPC.beforeLogout, (event) => {
+    if (!fromMainWindow(event)) throw new Error(denied.message);
+    return sessionController.prepareLogout();
+  });
 
   ipcMain.handle(SETTINGS_IPC.getState, (event): SettingsState => {
     if (!fromSettingsWindow(event)) throw new Error(denied.message);

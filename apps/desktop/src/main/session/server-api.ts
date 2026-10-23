@@ -9,6 +9,7 @@ export const API_PATHS = {
   me: "/api/auth/me",
   pairingTokens: "/api/runner-pairing-tokens",
   needsYou: "/api/needs-you",
+  runner: (runnerId: string) => `/api/runners/${encodeURIComponent(runnerId)}`,
 } as const;
 
 // TODO(contract): Local Runner Pairing token 的回應格式（B1）
@@ -39,16 +40,23 @@ export interface ServerApi {
   createLocalPairingToken(): Promise<PairingToken>;
   /** 等待自己處理的 Needs You 項目。看不懂的項目（例如新的 kind）略過。 */
   listNeedsYou(): Promise<NeedsYouItem[]>;
+  /** 撤銷 Runner（`DELETE /api/runners/:id`）。Server 已經沒有這台 Runner（404）時視為成功。 */
+  revokeRunner(runnerId: string): Promise<void>;
 }
 
 export function createServerApi(serverUrl: string, fetchFn: typeof fetch): ServerApi {
-  async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+  async function send(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await fetchFn(`${serverUrl}${path}`, {
       ...init,
       headers: { accept: "application/json", ...init.headers },
       signal: init.signal ?? AbortSignal.timeout(10_000),
     });
     if (response.status === 401) throw new UnauthorizedError();
+    return response;
+  }
+
+  async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+    const response = await send(path, init);
     if (!response.ok) {
       throw new Error(`${init.method ?? "GET"} ${path} 失敗：HTTP ${response.status}`);
     }
@@ -80,6 +88,13 @@ export function createServerApi(serverUrl: string, fetchFn: typeof fetch): Serve
         const parsed = NeedsYouItem.safeParse(item);
         return parsed.success ? [parsed.data] : [];
       });
+    },
+    async revokeRunner(runnerId) {
+      const path = API_PATHS.runner(runnerId);
+      const response = await send(path, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`DELETE ${path} 失敗：HTTP ${response.status}`);
+      }
     },
   };
 }

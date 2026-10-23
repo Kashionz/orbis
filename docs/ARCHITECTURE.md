@@ -512,16 +512,20 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 
 - **Server URL**：
   - 第一次啟動時由使用者輸入 Web UI 的 origin，Desktop 以 `GET /api/health` 確認後存在本機設定中。
-  - Runner 也連到同一個 origin 的 `/runner`。
+  - Runner 要連的 API origin 取自 `GET /api/health` 回報的 `apiOrigin`；回應沒有這個欄位時，退回 Web UI 的 origin。Desktop 在取得 Pairing token 時決定這個網址，sidecar 重新啟動也沿用同一個網址。
 - **安全設定**：
   - 主視窗啟用 `contextIsolation` 與 `sandbox`，不啟用 `nodeIntegration`。
-  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree。main 程序只接受來自 Server origin 主 frame 的呼叫。
+  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree、登出前的 `beforeLogout()`。main 程序只接受來自 Server origin 主 frame 的呼叫。
   - 導覽只允許 Server origin 與 GitHub OAuth 的登入頁，其他 http(s) 連結用外部瀏覽器開啟，不開新視窗。
 - **登入與 Pairing**：
   - main 程序監看 Server 的 session cookie，有變化時以 `/api/auth/me` 確認登入狀態。
   - 登入的人是某個 Team 的 Member 時，向 Server 取得 Local Runner 的 Pairing token，以環境變數交給 sidecar（不放在命令列上）。
   - Runner 完成 Pairing 後自己保存 Runner token，之後重新啟動都用它。
-  - 登出時，Server 撤銷這個 session 配對的 Local Runner。Desktop 在 cookie 消失時停止 sidecar，並刪除 Runner 存在本機的狀態目錄。
+  - **登出**：Web UI 送出登出前呼叫 bridge 的 `beforeLogout()`，Desktop 依 §16 的流程處理後才回傳放行。
+    - 撤銷用的 Runner ID 是 sidecar 最後一次回報的值，存在本機設定中。從來沒有連上過時跳過撤銷。撤銷失敗時照樣放行，交給 Server 端撤銷。
+    - 放行後 15 秒內，即使 cookie 還在也不重新 Pairing。這段時間過後 cookie 仍然存在，表示登出失敗，Desktop 會重新 Pairing。
+    - 沒有經過 `beforeLogout()` 的登出（cookie 消失或 `/api/auth/me` 回 401）時，Desktop 也會停止 sidecar 並刪除本機狀態。
+  - **換 Server**：先停止 sidecar 並刪除本機的 Runner 狀態，之後才改用新的 Server URL。
 - **Runner sidecar**：
   - 開發模式使用 `cargo build` 的產物，打包模式使用內建的執行檔。Desktop 代管的 Runner 使用自己的狀態目錄，不和手動執行的 Runner 共用 Runner token。
   - 以 `--sidecar` 啟動，透過 stdio 溝通：

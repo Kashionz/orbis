@@ -10,6 +10,7 @@ const bridge: DesktopBridge = {
     ipcRenderer.invoke(BRIDGE_IPC.openWorktreeInEditor, String(worktreePath)),
   openWorktreeInTerminal: (worktreePath) =>
     ipcRenderer.invoke(BRIDGE_IPC.openWorktreeInTerminal, String(worktreePath)),
+  beforeLogout: () => ipcRenderer.invoke(BRIDGE_IPC.beforeLogout),
 };
 
 contextBridge.exposeInMainWorld(DESKTOP_BRIDGE_KEY, bridge);

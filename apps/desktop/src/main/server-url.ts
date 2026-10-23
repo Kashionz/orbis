@@ -28,9 +28,21 @@ export function normalizeServerUrl(input: string): ServerUrlResult {
   return { ok: true, url: url.origin };
 }
 
-export type HealthCheckResult = { ok: true } | { ok: false; message: string };
+export type HealthCheckResult =
+  | {
+      ok: true;
+      /**
+       * Server 回報的 API origin（Runner 連 `<apiOrigin>/runner`）。回應沒有這個欄位、或不是合法的
+       * http／https origin 時為 null，由呼叫端退回使用 Web UI 的 origin。
+       */
+      apiOrigin: string | null;
+    }
+  | { ok: false; message: string };
 
-/** 確認網址上確實是 Server：`GET /api/health` 回 `{ ok: true }`。 */
+/**
+ * 確認網址上確實是 Server：`GET /api/health` 回 `{ ok: true }`，同時讀出 `apiOrigin`。
+ * TODO(contract): 回應格式以 contract/web-api 的 HealthResponse 為準，合併後改用 @orbis/api-contract
+ */
 export async function checkServerHealth(
   serverUrl: string,
   fetchFn: typeof fetch,
@@ -42,11 +54,35 @@ export async function checkServerHealth(
       headers: { accept: "application/json" },
     });
     if (!response.ok) return { ok: false, message: `Server 回應 HTTP ${response.status}` };
-    const body = (await response.json().catch(() => null)) as { ok?: unknown } | null;
+    const body = (await response.json().catch(() => null)) as {
+      ok?: unknown;
+      apiOrigin?: unknown;
+    } | null;
     if (body?.ok !== true) return { ok: false, message: "這個網址看起來不是 Server" };
-    return { ok: true };
+    return { ok: true, apiOrigin: parseApiOrigin(body.apiOrigin) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `無法連線到 Server：${message}` };
   }
+}
+
+/** `apiOrigin` 一定要明確寫出 http:// 或 https://，不替它補 scheme。 */
+function parseApiOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || !/^https?:\/\//i.test(value.trim())) return null;
+  const normalized = normalizeServerUrl(value);
+  return normalized.ok ? normalized.url : null;
+}
+
+/**
+ * Runner 要連線的 Server（ARCHITECTURE §16）：環境變數覆寫優先，其次是 `/api/health` 回報的
+ * `apiOrigin`；取不到時（舊版 Server、暫時連不上）退回 Web UI 的 origin。
+ */
+export async function resolveRunnerServerUrl(
+  webOrigin: string,
+  fetchFn: typeof fetch,
+  override?: string,
+): Promise<string> {
+  if (override) return override;
+  const health = await checkServerHealth(webOrigin, fetchFn);
+  return (health.ok && health.apiOrigin) || webOrigin;
 }

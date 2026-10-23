@@ -1,8 +1,10 @@
 // 登入與 Pairing（使用者核准的決定 D1、D2）：
 // - main 程序監看 Server 的 session cookie，有變化就呼叫 refresh()，以 `/api/auth/me` 確認登入狀態。
 // - 登入（而且是某個 Team 的 Member）後取得 Local Runner 的 Pairing token，交給 sidecar 啟動。
-// - 登出（cookie 消失或 /me 回 401）時停止 sidecar 並刪除本機的 Runner 狀態。
-//   Server 端的 Runner 由 Server 在 logout 時撤銷（B1）。
+// - 登出：Web UI 登出前呼叫 bridge 的 beforeLogout()，由 prepareLogout() 處理。還有 Run 在跑時先詢問，
+//   確認後撤銷這台 Local Runner → 停止 sidecar → 刪除本機狀態，Web UI 才真正登出（ARCHITECTURE §16）。
+// - 沒有經過 beforeLogout()（cookie 消失或 /me 回 401）時，也停止 sidecar 並刪除本機狀態；
+//   Server 端在登出或 session 過期時也會撤銷由這個 session 配對的 Local Runner。
 // 不依賴 Electron，Cookie 與 sidecar 都經由介面注入。
 
 import type { MeResponse } from "@orbis/api-contract";
@@ -33,13 +35,23 @@ export interface RunnerControl {
   stop(): Promise<void>;
   /** 刪除 Runner 存在本機的狀態（Runner token 等）。呼叫前 sidecar 已停止。 */
   clearState(): Promise<void>;
+  /** sidecar 回報的執行中 Run 數；沒有在跑時為 0。 */
+  activeRuns(): number;
+  /** sidecar 最後一次回報的 Runner ID（保存在設定中）；從來沒有連上過時為 null。 */
+  runnerId(): string | null;
 }
+
+export type LogoutDecision = { proceed: boolean };
 
 export interface SessionControllerDeps {
   api: ServerApi;
   hasSessionCookie: () => Promise<boolean>;
   runner: RunnerControl;
   log: (message: string) => void;
+  /** 還有 Run 在跑時詢問使用者是否要登出；回傳 true 表示確認登出。 */
+  confirmLogout: (activeRuns: number) => Promise<boolean>;
+  /** beforeLogout() 放行後，這段時間內 cookie 還在也不重新 Pairing（等 Web UI 送出登出）。 */
+  logoutGraceMs?: number;
   /** 連線失敗後多久重試。 */
   retryDelayMs?: number;
   /** 拿到新 Pairing token 後這段時間內又被要求重新 Pairing，就判定 Pairing 失敗、不再自動重試。 */
@@ -48,6 +60,7 @@ export interface SessionControllerDeps {
 
 const DEFAULT_RETRY_DELAY_MS = 5_000;
 const DEFAULT_PAIRING_LOOP_WINDOW_MS = 30_000;
+const DEFAULT_LOGOUT_GRACE_MS = 15_000;
 
 type Listener = (state: SessionState) => void;
 
@@ -60,6 +73,8 @@ export class SessionController {
   private lastPairedAt = 0;
   /** 目前 sidecar 是替哪個 Member 啟動的；顯示用的 phase 可能因為暫時連不上 Server 變成 error，這個不會。 */
   private pairedMemberId: string | null = null;
+  /** beforeLogout() 放行後到這個時間為止，不因為 cookie 還在而重新 Pairing。 */
+  private logoutPendingUntil = 0;
   private disposed = false;
 
   constructor(private readonly deps: SessionControllerDeps) {}
@@ -114,6 +129,36 @@ export class SessionController {
     });
   }
 
+  /**
+   * Web UI 登出前呼叫（bridge 的 beforeLogout）。還有 Run 在跑時先詢問，取消時回傳 proceed: false。
+   * 確認後依序：撤銷這台 Local Runner → 停止 sidecar → 刪除本機狀態，再回傳 proceed: true 讓 Web UI 登出。
+   * 撤銷失敗（例如暫時連不上 Server）時記 log 後照樣放行，交給 Server 端在登出時撤銷。
+   */
+  prepareLogout(): Promise<LogoutDecision> {
+    return this.enqueue(async () => {
+      const activeRuns = this.deps.runner.activeRuns();
+      if (activeRuns > 0 && !(await this.deps.confirmLogout(activeRuns))) {
+        return { proceed: false };
+      }
+      this.clearRetry();
+      const runnerId = this.deps.runner.runnerId();
+      if (runnerId) {
+        try {
+          await this.deps.api.revokeRunner(runnerId);
+          this.deps.log(`登出前已撤銷 Local Runner ${runnerId}`);
+        } catch (error) {
+          this.deps.log(`登出前撤銷 Local Runner 失敗，交給 Server 端撤銷：${messageOf(error)}`);
+        }
+      }
+      this.deps.log("登出：停止 Runner 並刪除本機的 Runner 狀態");
+      await this.unpairLocally();
+      this.update({ phase: "signed_out", me: null, error: null });
+      this.logoutPendingUntil = Date.now() + this.logoutGraceMs();
+      this.scheduleRefresh(this.logoutGraceMs());
+      return { proceed: true };
+    });
+  }
+
   /** 停止 sidecar（不清除本機狀態），App 結束時使用。 */
   dispose(): Promise<void> {
     this.disposed = true;
@@ -121,9 +166,12 @@ export class SessionController {
     return this.enqueue(() => this.deps.runner.stop());
   }
 
-  private enqueue(task: () => Promise<void>): Promise<void> {
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
     const next = this.queue.then(task, task);
-    this.queue = next.catch(() => {});
+    this.queue = next.then(
+      () => {},
+      () => {},
+    );
     return next;
   }
 
@@ -131,9 +179,17 @@ export class SessionController {
     if (this.disposed) return;
     this.clearRetry();
     if (!(await this.deps.hasSessionCookie())) {
+      this.logoutPendingUntil = 0;
       await this.signOut();
       return;
     }
+    const pendingMs = this.logoutPendingUntil - Date.now();
+    if (pendingMs > 0) {
+      // beforeLogout() 已經放行，Web UI 的登出還沒完成；時間到了再確認一次（登出失敗時重新 Pairing）
+      this.scheduleRefresh(pendingMs);
+      return;
+    }
+    this.logoutPendingUntil = 0;
     if (this.state.phase === "signed_out") this.update({ phase: "checking" });
 
     let me: MeResponse | null;
@@ -195,10 +251,19 @@ export class SessionController {
   private fail(message: string): void {
     this.deps.log(message);
     this.update({ phase: "error", error: message });
+    this.scheduleRefresh(this.deps.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS);
+  }
+
+  private scheduleRefresh(delayMs: number): void {
+    this.clearRetry();
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       void this.refresh();
-    }, this.deps.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS);
+    }, delayMs);
+  }
+
+  private logoutGraceMs(): number {
+    return this.deps.logoutGraceMs ?? DEFAULT_LOGOUT_GRACE_MS;
   }
 
   private clearRetry(): void {
