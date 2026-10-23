@@ -81,7 +81,7 @@ test("主視窗使用嚴格的安全設定，頁面中只有 bridge、沒有 Nod
   expect(page).toEqual({
     require: "undefined",
     process: "undefined",
-    bridgeKeys: ["getVersion", "openWorktreeInEditor", "openWorktreeInTerminal"],
+    bridgeKeys: ["beforeLogout", "getVersion", "openWorktreeInEditor", "openWorktreeInTerminal"],
   });
   expect(
     await main.evaluate(

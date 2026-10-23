@@ -1,10 +1,11 @@
 // 真實的 Runner sidecar（使用者決定 sidecar 的 e2e 一律用真實的 Runner，不用 fake）：
 // 登入 → 自動 Pairing → 系統匣顯示已連線、當掉後自動重啟、App 結束後沒有殘留的 Runner 程序、登出解除 Pairing。
-// Runner 還不支援 sidecar 模式（A1 合併前）時整組明確 skip 並印出原因。
+// Runner 執行檔不支援 sidecar 模式時整組明確 skip 並印出原因。
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { DESKTOP_BRIDGE_KEY } from "../src/bridge";
 import { isProcessAlive } from "../src/main/sidecar/process-tree";
 import {
   type Desktop,
@@ -99,6 +100,35 @@ test.describe("真實 Runner sidecar", () => {
     expect(isProcessAlive(pid)).toBe(false);
     expect(existsSync(stateDir)).toBe(false);
     expect(await d.hooks((h) => h.tray().statusLabel)).toBe("尚未登入");
+  });
+
+  test("Web UI 登出前呼叫 beforeLogout()：撤銷 Local Runner → 停止 Runner → 刪除本機狀態，才放行", async () => {
+    const { desktop: d, pid } = await signInAndConnect();
+    const runnerId = await d.hooks((h) => h.sidecar().status?.runner_id);
+    expect(runnerId).toBeTruthy();
+    expect(await d.hooks((h) => h.config().runnerId)).toBe(runnerId);
+    const main = await d.mainWindow();
+    const decision = await main.evaluate(
+      (key) =>
+        (window as unknown as Record<string, { beforeLogout(): Promise<{ proceed: boolean }> }>)[
+          key
+        ]?.beforeLogout(),
+      DESKTOP_BRIDGE_KEY,
+    );
+    expect(decision).toEqual({ proceed: true });
+    expect(server.state.revokedRunners).toEqual([runnerId]);
+    expect(isProcessAlive(pid)).toBe(false);
+    expect(existsSync(join(d.userDataDir, "runner"))).toBe(false);
+    expect(await d.hooks((h) => h.config().runnerId)).toBeNull();
+
+    // 放行後 Web UI 才真正登出；之後不會重新 Pairing
+    await main.click("#logout");
+    await waitUntil(
+      () => d.hooks((h) => h.tray().statusLabel),
+      (label) => label === "尚未登入",
+      "系統匣顯示尚未登入",
+    );
+    expect(server.state.pairingRequests).toHaveLength(1);
   });
 
   test("系統匣的「暫停領取新 Run」送給 Runner，並保存在設定中", async () => {
