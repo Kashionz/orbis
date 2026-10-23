@@ -1,21 +1,28 @@
-// 完整系統 e2e 的啟動腳本（System E2E Stack）：一次準備好 Postgres、Server、種子資料、真實的
-// Local Runner 與 Fake Agent，給 Web 的完整系統 e2e（C 軌）使用。用法見 apps/server/README.md。
+// 完整系統 e2e 的啟動腳本（System E2E Stack）：一次準備好 Postgres、Server（掛上 GitHub App 整合，
+// 連 GitHub 的部分是 D 軌的 FakeGitHub）、種子資料、真實的 Local Runner 與 Fake Agent，給 Web 與
+// Desktop 的完整系統 e2e 使用。用法見 apps/server/README.md。
 //
+// - `--runner-config-out <dir>`：不啟動 Runner，只把對應好的 runner.toml 寫到 <dir>，
+//   由 Desktop 的 sidecar 以 <dir> 作為 ORBIS_HOME 自己完成 Pairing。
 // - 一切就緒後在 stdout 印「一行」JSON（ready 行），其他 log 一律寫到 stderr。
 // - 執行到收到 SIGINT／SIGTERM，或 stdin（是 pipe 時）關閉為止；結束時停掉 Runner 與它的子程序、
 //   刪除暫存目錄、停掉 Testcontainers，以 0 結束。
 // - 不新增任何 HTTP 登入端點：Member 與 session 直接寫進 DB（決定 R22）。
 
 import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { randomBytes, randomInt } from "node:crypto";
 import { existsSync, fstatSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
-import { envVar, NAMES } from "@orbis/api-contract";
+import { API_ROUTES, envVar, NAMES } from "@orbis/api-contract";
+import type { GitHubUserRef } from "@orbis/github";
+import { FakeGitHub, TestClock } from "@orbis/github/testing";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
+import type { ReadyLine } from "../e2e/ready";
 import type { GitHubOAuth } from "../src/auth/github-oauth";
 import { DEFAULT_PUBLIC_URL, DEFAULT_SERVER_PORT } from "../src/config";
 import { randomToken, sha256Hex } from "../src/crypto";
@@ -29,7 +36,6 @@ import {
   sessions,
   teams,
 } from "../src/db/schema";
-import type { PullRequestOpener } from "../src/github/integration";
 import { createLogger } from "../src/logger";
 import { SESSION_COOKIE } from "../src/routes/auth";
 import { createPairingToken } from "../src/runner/service";
@@ -59,6 +65,8 @@ const SEED = {
   repoName: "m1-repo",
   defaultBranch: "main",
   runnerName: "e2e-local-runner",
+  /** GitHub App 的 slug（FakeGitHub 的 bot 帳號是 `<slug>[bot]`）。 */
+  githubAppSlug: "orbis-e2e",
 } as const;
 
 /** 腳本讀取的環境變數（名稱一律由名稱常數組出）。 */
@@ -72,24 +80,6 @@ export const E2E_STACK_ENV = {
   fakeAgentBin: envVar("E2E_FAKE_AGENT_BIN"),
   agentScript: envVar("E2E_AGENT_SCRIPT"),
 } as const;
-
-/** ready 行的內容。欄位說明見 README。 */
-export interface ReadyLine {
-  ready: true;
-  serverUrl: string;
-  webOrigin: string;
-  sessionCookie: { name: string; value: string };
-  teamId: string;
-  memberId: string;
-  projectId: string;
-  projectKey: string;
-  repoId: string;
-  runnerId: string;
-  runnerPid: number;
-  bareRepoPath: string;
-  checkoutPath: string;
-  tempDir: string;
-}
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const exe = (name: string) => (process.platform === "win32" ? `${name}.exe` : name);
@@ -108,6 +98,7 @@ const { values: args } = parseArgs({
     "fake-agent-bin": { type: "string" },
     "agent-script": { type: "string" },
     port: { type: "string" },
+    "runner-config-out": { type: "string" },
   },
   strict: true,
 });
@@ -177,7 +168,7 @@ async function createRepos(tempDir: string): Promise<{ bare: string; checkout: s
 /** TOML 的 basic string（JSON 的跳脫規則是它的子集合）。 */
 const tomlString = (value: string) => JSON.stringify(value);
 
-async function connectDatabase(): Promise<DatabaseHandle> {
+async function connectDatabase(): Promise<DatabaseHandle & { url: string }> {
   let url = env("databaseUrl");
   if (!url) {
     logger.info(
@@ -195,19 +186,7 @@ async function connectDatabase(): Promise<DatabaseHandle> {
   onCleanup("資料庫連線", () => database.close());
   await runMigrations(database.db);
   logger.info("資料庫 migration 完成");
-  return database;
-}
-
-/** 開 PR 時回假的網址，不連 GitHub。 */
-function fakePullRequestOpener(): PullRequestOpener {
-  let next = 1;
-  return {
-    async openPullRequest(input) {
-      const url = `https://example.test/${SEED.repoOwner}/${SEED.repoName}/pull/${next++}`;
-      logger.info({ ...input, url }, "開 PR（fake，不連 GitHub）");
-      return { ok: true, url };
-    },
-  };
+  return { ...database, url };
 }
 
 const unusedGitHubOAuth: GitHubOAuth = {
@@ -266,6 +245,100 @@ async function waitFor<T>(
   }
 }
 
+/** 以種子資料的 Member 建立 Pairing token，啟動 Runner（sidecar 模式），等它上線並回報 Agent 可用。 */
+async function launchRunner(deps: {
+  runnerBin: string;
+  runnerHome: string;
+  serverUrl: string;
+  database: DatabaseHandle;
+  services: ReturnType<typeof createServices>;
+  teamId: string;
+  memberId: string;
+  sessionId: string;
+}): Promise<{ runnerId: string; pid: number }> {
+  const pairing = await createPairingToken(deps.database.db, {
+    teamId: deps.teamId,
+    kind: "local",
+    createdByMemberId: deps.memberId,
+    createdBySessionId: deps.sessionId,
+    now: new Date(),
+  });
+  // 不繼承本機 .env 的設定（前綴相同的環境變數），Runner 只看這裡給的值。
+  const runnerEnv: NodeJS.ProcessEnv = {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
+    ),
+    [NAMES.runnerEnv.home]: deps.runnerHome,
+    // Pairing token 以環境變數傳遞（和 Desktop 相同）：token 是 base64url，可能以 `-` 開頭，
+    // 放在命令列上會被當成另一個參數；也不會出現在程序清單中。
+    [NAMES.runnerEnv.pairingToken]: pairing.token,
+  };
+  const runner = spawn(
+    deps.runnerBin,
+    ["--sidecar", "--server", deps.serverUrl, "--name", SEED.runnerName],
+    {
+      env: runnerEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+      // 其他平台另開 process group，強制結束時可以連同子程序一起結束。
+      detached: process.platform !== "win32",
+    },
+  );
+  onCleanup("Runner", () => stopRunner(runner));
+  let runnerExit: string | undefined;
+  runner.once("exit", (code, signal) => {
+    runnerExit = `Runner 結束（code=${code}, signal=${signal}）`;
+    if (!shuttingDown) {
+      logger.error({ code, signal }, "Runner 意外結束");
+      void shutdown("Runner 意外結束", 1);
+    }
+  });
+  // sidecar 的狀態（stdout）與 log（stderr）都轉到 stderr，stdout 只留給 ready 行。
+  runner.stdout?.on("data", (chunk: Buffer) => process.stderr.write(`[runner:status] ${chunk}`));
+  runner.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[runner] ${chunk}`));
+
+  const runnerId = await waitFor(
+    "Runner 完成 Pairing",
+    RUNNER_READY_TIMEOUT_MS,
+    async () => {
+      const [row] = await deps.database.db
+        .select({ id: runners.id })
+        .from(runners)
+        .where(and(eq(runners.pairedSessionId, deps.sessionId), isNull(runners.revokedAt)));
+      return row?.id;
+    },
+    () => runnerExit,
+  );
+  // 收到第一個 Heartbeat、accepting_dispatches 為 true 之後，Server 才會派工給它。
+  await waitFor(
+    "Runner 的第一個 Heartbeat",
+    RUNNER_READY_TIMEOUT_MS,
+    async () =>
+      deps.services.hub.isOnline(runnerId) && deps.services.hub.isAcceptingDispatches(runnerId)
+        ? true
+        : undefined,
+    () => runnerExit,
+  );
+  await waitFor(
+    `Runner 回報 ${AGENT_PROFILE} 可用`,
+    RUNNER_READY_TIMEOUT_MS,
+    async () => {
+      const rows = await deps.database.db
+        .select()
+        .from(agentAvailabilities)
+        .where(
+          and(
+            eq(agentAvailabilities.runnerId, runnerId),
+            eq(agentAvailabilities.agent, AGENT_PROFILE),
+          ),
+        );
+      return rows.some((r) => r.available) ? true : undefined;
+    },
+    () => runnerExit,
+  );
+  return { runnerId, pid: runner.pid ?? -1 };
+}
+
 async function main(): Promise<void> {
   const runnerBin = resolvePath(
     args["runner-bin"] ??
@@ -282,11 +355,14 @@ async function main(): Promise<void> {
       env("agentScript") ??
       path.join(repoRoot, "crates", "fake-agent", "scripts", "m1.yaml"),
   );
-  for (const [what, file] of [
-    ["Runner 執行檔", runnerBin],
+  // 不啟動 Runner 時（Desktop 的 sidecar 自己啟動），不需要 Runner 執行檔。
+  const runnerConfigOut = args["runner-config-out"] ? resolvePath(args["runner-config-out"]) : null;
+  const required: [string, string][] = [
     ["Fake Agent 執行檔", fakeAgentBin],
     ["Fake Agent 劇本", agentScript],
-  ] as const) {
+  ];
+  if (!runnerConfigOut) required.unshift(["Runner 執行檔", runnerBin]);
+  for (const [what, file] of required) {
     if (!existsSync(file)) {
       throw new Error(
         `找不到${what}：${file}。請先執行 cargo build -p ${NAMES.productSlug}-runner -p ${NAMES.productSlug}-fake-agent，或以參數指定路徑`,
@@ -305,6 +381,24 @@ async function main(): Promise<void> {
     await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
+  // ---- GitHub（D 軌的 FakeGitHub：in-memory 的 GitHub，App 已安裝在種子資料的 Repo）----
+  const githubRepo = {
+    owner: SEED.repoOwner,
+    name: SEED.repoName,
+    id: randomInt(100_000_000, 999_999_999),
+    installationId: randomInt(10_000_000, 99_999_999),
+  };
+  const webhookSecret = randomBytes(32).toString("hex");
+  const bot: GitHubUserRef = { id: 9_000_001, login: `${SEED.githubAppSlug}[bot]`, type: "Bot" };
+  const fakeGitHub = new FakeGitHub(new TestClock(new Date().toISOString()), bot);
+  fakeGitHub.addRepo({
+    id: githubRepo.id,
+    owner: githubRepo.owner,
+    name: githubRepo.name,
+    defaultBranch: SEED.defaultBranch,
+    installationId: githubRepo.installationId,
+  });
+
   // ---- Postgres 與 Server ----
   const database = await connectDatabase();
   const services = createServices({
@@ -313,7 +407,13 @@ async function main(): Promise<void> {
     heartbeatIntervalMs,
     blobDir: path.join(tempDir, "blobs"),
     publicUrl,
-    github: { pullRequestOpener: fakePullRequestOpener() },
+    github: {
+      app: {
+        // private key 不會用到：所有 GitHub API 都由 FakeGitHub 回應。
+        config: { appId: 1, privateKey: "unused", webhookSecret, slug: SEED.githubAppSlug },
+        client: fakeGitHub,
+      },
+    },
   });
   const serverUrl = `http://localhost:${port}`;
   const server: RunningServer = await startServer({
@@ -376,6 +476,9 @@ async function main(): Promise<void> {
         githubOwner: SEED.repoOwner,
         githubName: SEED.repoName,
         defaultBranch: SEED.defaultBranch,
+        // App 已安裝：開 PR、webhook 都以這兩個值對應到 FakeGitHub 的 repo。
+        githubRepoId: githubRepo.id,
+        githubInstallationId: githubRepo.installationId,
       })
       .returning();
     if (!repo) throw new Error("建立 Repo 失敗");
@@ -384,19 +487,15 @@ async function main(): Promise<void> {
   logger.info({ teamId: seeded.team.id, projectId: seeded.project.id }, "種子資料已建立");
 
   // ---- Runner ----
-  const pairing = await createPairingToken(database.db, {
-    teamId: seeded.team.id,
-    kind: "local",
-    createdByMemberId: seeded.member.id,
-    createdBySessionId: seeded.session.id,
-    now: new Date(),
-  });
-  const runnerHome = path.join(tempDir, "runner-home");
+  // runner.toml 放在 Runner 的本機目錄（ORBIS_HOME）底下；狀態目錄預設是 <ORBIS_HOME>/runner，
+  // Desktop 的 sidecar 會另外以 ORBIS_RUNNER_STATE_DIR 指定。
+  const runnerHome = runnerConfigOut ?? path.join(tempDir, "runner-home");
   await mkdir(runnerHome, { recursive: true });
   // Server 送出的 clone URL 是 GitHub 的網址；以 [repos."<clone URL>"] 對應到本機 checkout，
   // Runner 從這裡開 Worktree，fetch 與 push 都走它的 origin（本機 bare repo），不連網路。
   const cloneUrl = `https://github.com/${SEED.repoOwner}/${SEED.repoName}.git`;
   const runnerToml = [
+    // 環境變數 ORBIS_SERVER_URL 與 --server 的優先順序都比這裡高（Desktop 以環境變數指定）。
     `server = ${tomlString(serverUrl)}`,
     `name = ${tomlString(SEED.runnerName)}`,
     `worktree_root = ${tomlString(path.join(tempDir, "wt"))}`,
@@ -409,86 +508,24 @@ async function main(): Promise<void> {
     `args = [${tomlString("--script")}, ${tomlString(agentScript)}]`,
     "",
   ].join("\n");
-  await writeFile(path.join(runnerHome, NAMES.runnerConfigFile), runnerToml);
+  const runnerConfigPath = path.join(runnerHome, NAMES.runnerConfigFile);
+  await writeFile(runnerConfigPath, runnerToml);
 
-  // 不繼承本機 .env 的設定（前綴相同的環境變數），Runner 只看這裡給的值。
-  const runnerEnv: NodeJS.ProcessEnv = {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
-    ),
-    [NAMES.runnerEnv.home]: runnerHome,
-  };
-  const runner = spawn(
-    runnerBin,
-    [
-      "--sidecar",
-      "--server",
-      serverUrl,
-      "--pairing-token",
-      pairing.token,
-      "--name",
-      SEED.runnerName,
-    ],
-    {
-      env: runnerEnv,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      // 其他平台另開 process group，強制結束時可以連同子程序一起結束。
-      detached: process.platform !== "win32",
-    },
-  );
-  onCleanup("Runner", () => stopRunner(runner));
-  let runnerExit: string | undefined;
-  runner.once("exit", (code, signal) => {
-    runnerExit = `Runner 結束（code=${code}, signal=${signal}）`;
-    if (!shuttingDown) {
-      logger.error({ code, signal }, "Runner 意外結束");
-      void shutdown("Runner 意外結束", 1);
-    }
-  });
-  // sidecar 的狀態（stdout）與 log（stderr）都轉到 stderr，stdout 只留給 ready 行。
-  runner.stdout?.on("data", (chunk: Buffer) => process.stderr.write(`[runner:status] ${chunk}`));
-  runner.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[runner] ${chunk}`));
-
-  const runnerId = await waitFor(
-    "Runner 完成 Pairing",
-    RUNNER_READY_TIMEOUT_MS,
-    async () => {
-      const [row] = await database.db
-        .select({ id: runners.id })
-        .from(runners)
-        .where(and(eq(runners.pairedSessionId, seeded.session.id), isNull(runners.revokedAt)));
-      return row?.id;
-    },
-    () => runnerExit,
-  );
-  // 收到第一個 Heartbeat、accepting_dispatches 為 true 之後，Server 才會派工給它。
-  await waitFor(
-    "Runner 的第一個 Heartbeat",
-    RUNNER_READY_TIMEOUT_MS,
-    async () =>
-      services.hub.isOnline(runnerId) && services.hub.isAcceptingDispatches(runnerId)
-        ? true
-        : undefined,
-    () => runnerExit,
-  );
-  await waitFor(
-    `Runner 回報 ${AGENT_PROFILE} 可用`,
-    RUNNER_READY_TIMEOUT_MS,
-    async () => {
-      const rows = await database.db
-        .select()
-        .from(agentAvailabilities)
-        .where(
-          and(
-            eq(agentAvailabilities.runnerId, runnerId),
-            eq(agentAvailabilities.agent, AGENT_PROFILE),
-          ),
-        );
-      return rows.some((r) => r.available) ? true : undefined;
-    },
-    () => runnerExit,
-  );
+  const launched = runnerConfigOut
+    ? null
+    : await launchRunner({
+        runnerBin,
+        runnerHome,
+        serverUrl,
+        database,
+        services,
+        teamId: seeded.team.id,
+        memberId: seeded.member.id,
+        sessionId: seeded.session.id,
+      });
+  if (runnerConfigOut) {
+    logger.info({ runnerConfigPath }, "已寫出 runner.toml；不啟動 Runner（--runner-config-out）");
+  }
 
   const ready: ReadyLine = {
     ready: true,
@@ -500,10 +537,18 @@ async function main(): Promise<void> {
     projectId: seeded.project.id,
     projectKey: seeded.project.taskKeyPrefix,
     repoId: seeded.repo.id,
-    runnerId,
-    runnerPid: runner.pid ?? -1,
+    runnerId: launched?.runnerId ?? null,
+    runnerPid: launched?.pid ?? null,
+    runnerHome,
+    runnerConfigPath,
     bareRepoPath: repoPaths.bare,
     checkoutPath: repoPaths.checkout,
+    databaseUrl: database.url,
+    github: {
+      webhookUrl: `${serverUrl}${API_ROUTES.githubWebhook}`,
+      webhookSecret,
+      repo: githubRepo,
+    },
     tempDir,
   };
   process.stdout.write(`${JSON.stringify(ready)}\n`);

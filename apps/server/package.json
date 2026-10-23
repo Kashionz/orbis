@@ -5,7 +5,8 @@
   "description": "Orbis Server：Hono API、Runner WebSocket、Drizzle（B 軌）",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./e2e": "./e2e/index.ts"
   },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",

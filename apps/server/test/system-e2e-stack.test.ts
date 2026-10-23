@@ -1,13 +1,17 @@
 // 完整系統 e2e 的啟動腳本（scripts/system-e2e-stack.ts）：以子程序執行，確認 ready 行、
 // 以 session cookie 呼叫 API、Runner 在線，並以真實的 Runner＋Fake Agent 走一次 M1 劇本
-// （push 回本機 bare repo），最後確認關閉後沒有殘留的子程序與暫存目錄。
+// （push 回本機 bare repo → 以 App 開 PR → merged webhook → Task Done），最後確認關閉後
+// 沒有殘留的子程序與暫存目錄。另外測試 `--runner-config-out`（不啟動 Runner）模式。
 //
-// 沒有設定 DATABASE_URL，所以腳本會自己以 Testcontainers 啟動 Postgres（需要 Docker），
-// 和其他 DB 測試一樣只在 Linux CI 跑。
+// 有設定 DATABASE_URL 時傳給腳本（CI 在三平台安裝原生 Postgres）；沒有設定時腳本自己以
+// Testcontainers 啟動 Postgres，和其他 DB 測試一樣只在有 Docker 的 Linux 上跑。
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   API_ROUTES,
@@ -17,10 +21,17 @@ import {
   type NeedsYouListResponse,
   type Run,
   type Runner,
+  type Task,
 } from "@orbis/api-contract";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ReadyLine } from "../scripts/system-e2e-stack";
+import { parseReadyLine, type ReadyLine, sendPullRequestMergedWebhook } from "../e2e";
 import { dbSkipReason } from "./helpers/db";
+
+/** CI 在三平台安裝原生 Postgres 時，以這個資料庫執行 stack（不需要 Docker）。 */
+const externalDatabaseUrl = process.env[envVar("DATABASE_URL")]?.trim() || undefined;
+const skipStack = dbSkipReason !== null && externalDatabaseUrl === undefined;
+if (skipStack)
+  console.warn(`[e2e-stack] 略過：${dbSkipReason}，而且沒有設定 ${envVar("DATABASE_URL")}`);
 
 const serverDir = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -67,6 +78,73 @@ function descendants(rootPid: number): number[] {
   return found;
 }
 
+interface StartedStack {
+  child: ChildProcess;
+  ready: ReadyLine;
+  stderr: () => string;
+  /** 結束 stack（Windows 的 kill() 不會觸發 SIGTERM 的處理，改用關閉 stdin），回傳結束碼。 */
+  stop: () => Promise<number | null>;
+}
+
+/** 以子程序執行 stack，等到 ready 行。 */
+async function startStack(extraArgs: string[] = []): Promise<StartedStack> {
+  // 不繼承本機 .env 的設定（前綴相同的環境變數），只傳需要的。
+  const env: NodeJS.ProcessEnv = {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
+    ),
+    [envVar("SERVER_PORT")]: String(await freePort()),
+  };
+  if (externalDatabaseUrl) env[envVar("DATABASE_URL")] = externalDatabaseUrl;
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "scripts/system-e2e-stack.ts", ...extraArgs],
+    { cwd: serverDir, env, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  let stdout = "";
+  const ready = await new Promise<ReadyLine>((resolve, reject) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      const newline = stdout.indexOf("\n");
+      if (newline >= 0) resolve(parseReadyLine(stdout.slice(0, newline)));
+    });
+    child.once("exit", (code) =>
+      reject(new Error(`腳本提早結束（${code}）\n${stderr.slice(-4000)}`)),
+    );
+  });
+  return {
+    child,
+    ready,
+    stderr: () => stderr,
+    stop: async () => {
+      if (child.exitCode !== null) return child.exitCode;
+      const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+      if (process.platform === "win32") child.stdin?.end();
+      else child.kill("SIGTERM");
+      return exited;
+    },
+  };
+}
+
+function buildBinaries(): void {
+  execFileSync(
+    "cargo",
+    [
+      "build",
+      "--quiet",
+      "-p",
+      `${NAMES.productSlug}-runner`,
+      "-p",
+      `${NAMES.productSlug}-fake-agent`,
+    ],
+    { cwd: repoRoot, stdio: "inherit" },
+  );
+}
+
 const isAlive = (pid: number) => {
   try {
     process.kill(pid, 0);
@@ -76,10 +154,11 @@ const isAlive = (pid: number) => {
   }
 };
 
-describe.skipIf(dbSkipReason !== null)("完整系統 e2e 的啟動腳本", () => {
+describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
+  let started: StartedStack;
   let stack: ChildProcess;
-  let stderr = "";
   let ready: ReadyLine;
+  const stderr = () => started?.stderr() ?? "";
 
   const api = async <T>(method: string, path: string, body?: unknown) => {
     const res = await fetch(`${ready.serverUrl}${path}`, {
@@ -99,47 +178,16 @@ describe.skipIf(dbSkipReason !== null)("完整系統 e2e 的啟動腳本", () =>
     for (;;) {
       const value = await check();
       if (value) return value;
-      if (Date.now() > deadline) throw new Error(`等待${what}逾時\n${stderr.slice(-4000)}`);
+      if (Date.now() > deadline) throw new Error(`等待${what}逾時\n${stderr().slice(-4000)}`);
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   };
 
   beforeAll(async () => {
-    execFileSync(
-      "cargo",
-      [
-        "build",
-        "--quiet",
-        "-p",
-        `${NAMES.productSlug}-runner`,
-        "-p",
-        `${NAMES.productSlug}-fake-agent`,
-      ],
-      { cwd: repoRoot, stdio: "inherit" },
-    );
-    // 不繼承本機 .env 的設定：沒有 DATABASE_URL，腳本會自己啟動 Postgres 容器。
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
-    );
-    stack = spawn(process.execPath, ["--import", "tsx", "scripts/system-e2e-stack.ts"], {
-      cwd: serverDir,
-      env: { ...env, [envVar("SERVER_PORT")]: String(await freePort()) },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    stack.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    let stdout = "";
-    ready = await new Promise<ReadyLine>((resolve, reject) => {
-      stack.stdout?.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
-        const newline = stdout.indexOf("\n");
-        if (newline >= 0) resolve(JSON.parse(stdout.slice(0, newline)) as ReadyLine);
-      });
-      stack.once("exit", (code) =>
-        reject(new Error(`腳本提早結束（${code}）\n${stderr.slice(-4000)}`)),
-      );
-    });
+    buildBinaries();
+    started = await startStack();
+    stack = started.child;
+    ready = started.ready;
   }, 600_000);
 
   afterAll(async () => {
@@ -159,6 +207,18 @@ describe.skipIf(dbSkipReason !== null)("完整系統 e2e 的啟動腳本", () =>
     }
     expect(existsSync(ready.bareRepoPath)).toBe(true);
     expect(existsSync(ready.checkoutPath)).toBe(true);
+    expect(ready.runnerConfigPath).toBe(path.join(ready.runnerHome, NAMES.runnerConfigFile));
+    expect(ready.github).toMatchObject({
+      webhookUrl: `${ready.serverUrl}${API_ROUTES.githubWebhook}`,
+      webhookSecret: expect.stringMatching(/^[0-9a-f]{64}$/),
+      repo: {
+        owner: expect.any(String),
+        name: expect.any(String),
+        id: expect.any(Number),
+        installationId: expect.any(Number),
+      },
+    });
+    expect(ready.databaseUrl).toMatch(/^postgres(ql)?:\/\//);
   });
 
   it("以 session cookie 呼叫 API；Local Runner 在線、接受派工、Fake Agent 可用", async () => {
@@ -178,7 +238,7 @@ describe.skipIf(dbSkipReason !== null)("完整系統 e2e 的啟動腳本", () =>
     ]);
   });
 
-  it("M1 劇本走完：權限請求 → 退回「改成第二版」→ 核准 → push 回本機 bare repo", async () => {
+  it("M1 劇本走完：權限請求 → 退回「改成第二版」→ 核准 → push → 以 App 開 PR → merged webhook → Done", async () => {
     const created = await api<{ id: string }>(
       "POST",
       apiPath(API_ROUTES.projectTasks, { projectId: ready.projectId }),
@@ -241,20 +301,85 @@ describe.skipIf(dbSkipReason !== null)("完整系統 e2e 的啟動腳本", () =>
       encoding: "utf8",
     });
     expect(pushed).toBe("version 2\n");
+
+    // 以 App 開 PR（FakeGitHub），寫入 pull_requests，Task 在 PR Open。
+    const task = () => api<Task>("GET", apiPath(API_ROUTES.task, { taskId }));
+    expect((await task()).body.status).toBe("pr_open");
+    const merged = await until("以 App 開 PR", async () => {
+      try {
+        return await sendPullRequestMergedWebhook(ready, { branch: finished.branch ?? "" });
+      } catch {
+        return undefined;
+      }
+    });
+    expect(merged.status).toBe(200);
+    expect(merged.pullRequest).toMatchObject({
+      taskId,
+      headBranch: finished.branch,
+      number: expect.any(Number),
+    });
+    expect((await task()).body).toMatchObject({ status: "done", doneReason: "completed" });
+
+    // 簽章錯誤的 webhook 被拒絕（webhook secret 每次隨機產生）。
+    const forged = await sendPullRequestMergedWebhook(
+      { ...ready, github: { ...ready.github, webhookSecret: "wrong" } },
+      { prNumber: merged.pullRequest.number },
+    );
+    expect(forged.status).toBe(401);
   }, 180_000);
 
   it("SIGTERM（Windows 為關閉 stdin）後以 0 結束：沒有殘留的子程序，暫存目錄已刪除", async () => {
     const children = descendants(stack.pid as number);
     expect(children).toContain(ready.runnerPid);
-    const exited = new Promise<number | null>((resolve) =>
-      stack.once("exit", (code) => resolve(code)),
-    );
-    // Windows 的 kill() 會直接終止程序、不會觸發 SIGTERM 的處理，所以改用關閉 stdin。
-    if (process.platform === "win32") stack.stdin?.end();
-    else stack.kill("SIGTERM");
-    expect(await exited).toBe(0);
+    expect(await started.stop()).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(children.filter(isAlive)).toEqual([]);
     expect(existsSync(ready.tempDir)).toBe(false);
+  }, 120_000);
+});
+
+describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本：--runner-config-out（不啟動 Runner）", () => {
+  let started: StartedStack;
+  let configDir: string;
+
+  beforeAll(async () => {
+    buildBinaries();
+    configDir = await mkdtemp(path.join(tmpdir(), `${NAMES.productSlug}-e2e-runner-home-`));
+    started = await startStack(["--runner-config-out", configDir]);
+  }, 600_000);
+
+  afterAll(async () => {
+    if (started?.child.exitCode === null) started.child.kill("SIGKILL");
+    if (configDir) await rm(configDir, { recursive: true, force: true });
+  });
+
+  it("寫出對應好的 runner.toml，不啟動 Runner；ready 行的 runnerId、runnerPid 是 null", async () => {
+    const { ready } = started;
+    expect(ready).toMatchObject({ runnerId: null, runnerPid: null, runnerHome: configDir });
+    expect(ready.runnerConfigPath).toBe(path.join(configDir, NAMES.runnerConfigFile));
+    expect(await readdir(configDir)).toEqual([NAMES.runnerConfigFile]);
+    const toml = readFileSync(ready.runnerConfigPath, "utf8");
+    const cloneUrl = `https://github.com/${ready.github.repo.owner}/${ready.github.repo.name}.git`;
+    // 路徑以 TOML basic string（JSON 的跳脫規則）寫入。
+    expect(toml).toContain(`server = ${JSON.stringify(ready.serverUrl)}`);
+    expect(toml).toContain(
+      `[repos.${JSON.stringify(cloneUrl)}]\npath = ${JSON.stringify(ready.checkoutPath)}`,
+    );
+    expect(toml).toMatch(
+      /\[agents\.claude-code\]\ncommand = ".*fake-agent.*"\nargs = \["--script", ".*m1\.yaml"\]/,
+    );
+
+    // 沒有啟動 Runner：stack 沒有子程序，Server 上也沒有 Runner。
+    expect(descendants(started.child.pid as number)).toEqual([]);
+    const res = await fetch(`${ready.serverUrl}${API_ROUTES.runners}`, {
+      headers: { cookie: `${ready.sessionCookie.name}=${ready.sessionCookie.value}` },
+    });
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("結束時刪除 stack 自己的暫存目錄，但保留指定的目錄", async () => {
+    expect(await started.stop()).toBe(0);
+    expect(existsSync(started.ready.tempDir)).toBe(false);
+    expect(existsSync(started.ready.runnerConfigPath)).toBe(true);
   }, 120_000);
 });
