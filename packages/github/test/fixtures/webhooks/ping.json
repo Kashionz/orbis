@@ -1,0 +1,29 @@
+{
+  "zen": "Responsive is better than fast.",
+  "hook_id": 701809700,
+  "hook": {
+    "type": "App",
+    "id": 701809700,
+    "name": "web",
+    "active": true,
+    "events": [
+      "check_run",
+      "check_suite",
+      "issues",
+      "issue_comment",
+      "pull_request",
+      "pull_request_review",
+      "pull_request_review_comment"
+    ],
+    "config": {
+      "content_type": "json",
+      "secret": "********",
+      "url": "https://smee.io/3NMxIlcAZtkLteUD",
+      "insecure_ssl": "0"
+    },
+    "updated_at": "2026-10-22T19:27:41Z",
+    "created_at": "2026-10-22T19:27:41Z",
+    "app_id": 5431481,
+    "deliveries_url": "https://api.github.com/app/hook/deliveries"
+  }
+}
