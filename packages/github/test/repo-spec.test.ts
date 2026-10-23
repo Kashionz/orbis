@@ -272,6 +272,28 @@ describe("無法提交的情況", () => {
     expect(await commit(disabled)).toMatchObject({ ok: false, reason: "disabled" });
   });
 
+  it("只能提交 repo 內 .github/ 以外的 .md 檔（App 有 contents 的寫入權限）", async () => {
+    for (const path of [
+      ".github/workflows/ci.md",
+      ".GitHub/CODEOWNERS.md",
+      "package.json",
+      "docs/spec.md.sh",
+      "../outside.md",
+      "docs/../../x.md",
+      "/abs/spec.md",
+      "docs//spec.md",
+      "docs\\spec.md",
+    ]) {
+      const w = createWorld();
+      w.repoSpecs.addSpec({ id: "spec-1", repoId: REPO_ID, path });
+      expect(await commit(w), path).toMatchObject({ ok: false, reason: "invalid_path" });
+      expect(w.github.callsTo("putFile")).toEqual([]);
+    }
+    const w = createWorld();
+    w.repoSpecs.addSpec({ id: "spec-1", repoId: REPO_ID, path: "SPEC.MD" });
+    expect(await commit(w)).toMatchObject({ ok: true });
+  });
+
   it("GitHub 回錯：github_error，不留下 PR 對應", async () => {
     const { w } = withSpec();
     w.github.failNext("createBranch");

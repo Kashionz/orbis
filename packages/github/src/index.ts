@@ -33,6 +33,7 @@ export type {
   CommitRepoSpecResult,
   RepoSpecPullRequestOutcome,
 } from "./repo-specs";
+export { isCommittableSpecPath } from "./repo-specs";
 export { installUrl, type RepoInspection, type RepoInstallationRefresh } from "./repos";
 export { createGitHubWebhookRoutes } from "./routes";
 export {

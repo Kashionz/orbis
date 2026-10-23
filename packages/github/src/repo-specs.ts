@@ -36,10 +36,29 @@ export type CommitRepoSpecResult =
       /**
        * `disabled`：Server 沒有提供 Repo Spec 的依賴。
        * `forbidden`：提出請求的人不是能在這個 Project 編輯 Task 的 Member。
+       * `invalid_path`：不是能提交的路徑（見 `isCommittableSpecPath`）。
        */
-      reason: "disabled" | "spec_not_found" | "forbidden" | "repo_not_connected" | "github_error";
+      reason:
+        | "disabled"
+        | "spec_not_found"
+        | "invalid_path"
+        | "forbidden"
+        | "repo_not_connected"
+        | "github_error";
       message: string;
     };
+
+/**
+ * 能從 Orbis 提交的 Spec 路徑：repo 內的相對路徑、`.md` 檔、不在 `.github/` 底下。
+ * App 有 contents 的寫入權限，不能讓 Repo Spec 變成改動任意檔案的管道。
+ */
+export function isCommittableSpecPath(path: string): boolean {
+  if (path.startsWith("/") || path.includes("\\")) return false;
+  const segments = path.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) return false;
+  if (segments[0]?.toLowerCase() === ".github") return false;
+  return /\.md$/i.test(path);
+}
 
 /** Spec PR 的分支名稱：`<產品>/spec/<檔名>-<亂數>`。 */
 export function repoSpecBranchName(path: string, suffix: string): string {
@@ -93,6 +112,13 @@ export async function commitRepoSpec(
   }
   const spec = await deps.getRepoSpec(input.repoSpecId);
   if (!spec) return { ok: false, reason: "spec_not_found", message: "Repo Spec 不存在" };
+  if (!isCommittableSpecPath(spec.path)) {
+    return {
+      ok: false,
+      reason: "invalid_path",
+      message: `只能提交 repo 內 .github/ 以外的 .md 檔：${spec.path}`,
+    };
+  }
   const record = await ctx.domain.getRepo(spec.repoId);
   if (!record) return { ok: false, reason: "spec_not_found", message: "Repo Spec 的 Repo 不存在" };
 

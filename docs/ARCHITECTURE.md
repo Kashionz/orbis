@@ -435,7 +435,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **技術**：Yjs、TipTap，經由 Server 的 WebSocket 同步；顯示其他人的游標與在線狀態。Yjs 文件的快照存在 Postgres。
 - **Repo 內的 Spec**：在 UI 中共同編輯一份草稿，按下「提交到 repo」後才變成 commit。Agent 要修改時，以 PR 的形式提出，不直接覆蓋草稿。
   - **提交到 repo**：
-    - 從 default branch 開新的分支，以 GitHub App 身分 commit 草稿（`Co-authored-by` 提交者），再開 PR。提交者要能在該 Project 編輯 Task。
+    - 從 default branch 開新的分支，以 GitHub App 身分 commit 草稿（`Co-authored-by` 提交者），再開 PR。提交者要能在該 Project 編輯 Task。只能提交 repo 內 `.github/` 以外的 `.md` 檔。
     - 同一份 Spec 已經有開著的 PR 時，在同一個分支上再 commit 一次並沿用 PR。內容沒變時不 commit。
     - repo 中的檔案在上一次提交之後被別人改過時照常開 PR，但在 PR 與回應中警告會覆蓋那些修改。
   - **版本**：Repo Spec 有一個整數版本，從 Orbis 提交的 PR 每 merge 一次 +1，並記錄 merge commit。PR 沒有 merge 就關閉時，版本不變。
