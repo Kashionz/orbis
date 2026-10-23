@@ -1,0 +1,6 @@
+# 額度用完、恢復時間很久以後（測試 Credential 層級的暫停：期間不接受新的 Dispatch）。
+description: 長時間的 rate limit
+turns:
+  - steps:
+      - rate_limit:
+          retry_after_ms: 600000

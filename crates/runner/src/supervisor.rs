@@ -50,6 +50,8 @@ pub struct Supervisor {
     learned: Arc<LearnedAgents>,
     /// AgentAvailability 的內容改變了（並行數、能力旗標），連線要重送一次完整清單。
     availability_changed: Arc<tokio::sync::Notify>,
+    /// 各組 Credential 的 rate limit（issue #33）。
+    rate_limits: Arc<crate::rate_limit::RateLimits>,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -83,6 +85,7 @@ impl Supervisor {
             detected: tokio::sync::Mutex::new(None),
             learned: Arc::new(LearnedAgents::default()),
             availability_changed: Arc::new(tokio::sync::Notify::new()),
+            rate_limits: Arc::new(crate::rate_limit::RateLimits::default()),
         });
         supervisor.recover();
         // 在背景探測各 Agent 的能力旗標，不拖慢第一次的 AgentAvailability（每個 Agent 最多等
@@ -285,6 +288,17 @@ impl Supervisor {
                     (d.available, d.version.clone(), d.unavailable_reason.clone())
                 });
             let learned = self.learned.get(&profile.id).unwrap_or_default();
+            // 同一組 Credential 撞到 rate limit：到恢復時間之前不接受這個 Agent 的 Dispatch。
+            let (available, reason) = match self.rate_limits.active(&profile.credential) {
+                Some(until) if available => (
+                    false,
+                    Some(format!(
+                        "額度用完，預計 {} 恢復",
+                        crate::rate_limit::display_time(until)
+                    )),
+                ),
+                _ => (available, reason),
+            };
             agents.push(AgentInfo {
                 id: profile.id.clone(),
                 version: version.or(learned.version),
@@ -344,6 +358,7 @@ impl Supervisor {
                         previews: self.previews.clone(),
                         learned: self.learned.clone(),
                         availability_changed: self.availability_changed.clone(),
+                        rate_limits: self.rate_limits.clone(),
                     },
                 );
                 lock(&self.runs).insert(handle.run_id.clone(), handle);
@@ -400,6 +415,16 @@ impl Supervisor {
                     "Agent {} 無法使用：{}",
                     profile.id,
                     d.unavailable_reason.clone().unwrap_or_default()
+                ),
+            ));
+        }
+        if let Some(until) = self.rate_limits.active(&profile.credential) {
+            return Err((
+                DispatchRejectReason::ConcurrencyLimit,
+                format!(
+                    "Credential {} 的額度用完，預計 {} 恢復",
+                    profile.credential,
+                    crate::rate_limit::display_time(until)
                 ),
             ));
         }

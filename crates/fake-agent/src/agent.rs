@@ -612,12 +612,14 @@ impl TurnRunner<'_> {
                 self.notify(SessionUpdate::Plan(Plan::new(entries)))?;
             }
             Step::Usage(usage) => {
-                let update = UsageUpdate::new(usage.used, usage.size).cost(
-                    usage
-                        .cost
-                        .as_ref()
-                        .map(|cost| Cost::new(cost.amount, cost.currency.clone())),
-                );
+                let update = UsageUpdate::new(usage.used, usage.size)
+                    .cost(
+                        usage
+                            .cost
+                            .as_ref()
+                            .map(|cost| Cost::new(cost.amount, cost.currency.clone())),
+                    )
+                    .meta(usage.meta.clone());
                 self.notify(SessionUpdate::UsageUpdate(update))?;
             }
             Step::McpCall(call) => return self.run_mcp_call(call).await,
@@ -665,10 +667,13 @@ impl TurnRunner<'_> {
                         rate_limit.retry_after_ms
                     )
                 });
-                return Err(acp::Error::new(rate_limit.code, message).data(json!({
-                    "type": RATE_LIMIT_ERROR_TYPE,
-                    "retry_after_ms": rate_limit.retry_after_ms,
-                })));
+                let data = rate_limit.data.clone().unwrap_or_else(|| {
+                    json!({
+                        "type": RATE_LIMIT_ERROR_TYPE,
+                        "retry_after_ms": rate_limit.retry_after_ms,
+                    })
+                });
+                return Err(acp::Error::new(rate_limit.code, message).data(data));
             }
             Step::Stop(reason) => return Ok(Flow::Stop(*reason)),
         }

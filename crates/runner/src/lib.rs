@@ -13,6 +13,7 @@ pub mod paths;
 pub mod policy;
 pub mod preview;
 pub mod process;
+pub mod rate_limit;
 pub mod repo_config;
 pub mod run;
 pub mod secrets;

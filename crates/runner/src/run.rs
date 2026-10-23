@@ -47,8 +47,10 @@ use crate::worktree::{Worktree, WorktreeManager, WorktreeRequest};
 
 /// 送出 `session/cancel` 後等 Agent 自己結束回合的時間，超過就直接結束程序樹。
 const CANCEL_GRACE: Duration = Duration::from_secs(10);
-/// rate limit 沒有提供重試時間時的等待時間。
+/// rate limit 沒有提供恢復時間時的等待時間。
 const DEFAULT_RATE_LIMIT_WAIT: Duration = Duration::from_secs(60);
+/// 恢復時間已經過了（或很快就到）時，至少等這麼久再繼續。
+const MIN_RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
 /// rate limit 恢復後送給 Agent 的 prompt。
 pub const RESUME_PROMPT: &str = "額度已恢復，請繼續剛才的工作。";
 /// session 中途 Agent 的設定檔被改、人處理完之後送給 Agent 的 prompt。
@@ -72,6 +74,8 @@ pub struct RunContext {
     pub learned: Arc<crate::agent::LearnedAgents>,
     /// 通知連線重送 AgentAvailability（能力旗標或並行數改變時）。
     pub availability_changed: Arc<tokio::sync::Notify>,
+    /// 各組 Credential 的 rate limit（到恢復時間之前不接受新的 Dispatch）。
+    pub rate_limits: Arc<crate::rate_limit::RateLimits>,
 }
 
 /// 送給 Run 的訊息。
@@ -125,6 +129,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         settings_baseline: HashMap::new(),
         preview: None,
         approved_settings_writes: HashMap::new(),
+        rate_limit_hint: None,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -178,7 +183,7 @@ enum TurnEnd {
     /// Runner 中止了這個回合，要先問人（issue #52）。
     SettingsChanged,
     RateLimited {
-        retry_after: Option<Duration>,
+        resets_at: Option<std::time::SystemTime>,
         message: String,
     },
 }
@@ -202,6 +207,8 @@ struct Run {
     /// 經權限請求允許（人或政策）、會寫入受保護設定檔的 tool call：tool call ID → 設定檔。
     /// 這些 tool call 結束時的寫入視為已接受，不算 session 中途被改（issue #52）。
     approved_settings_writes: HashMap<String, Vec<String>>,
+    /// 這個回合中 Agent 以事件回報過額度用完（Claude Code 的 rate limit 事件）。
+    rate_limit_hint: Option<crate::rate_limit::RateLimit>,
 }
 
 impl Run {
@@ -726,7 +733,7 @@ impl Run {
         };
         let wt_path = self.wt().path.clone();
         for path in paths {
-            match read_protected(&wt_path.join(&path)) {
+            match read_protected(&wt_path, &path) {
                 Some(Protected::File(content)) => {
                     self.settings_baseline.insert(path, Some(content));
                 }
@@ -748,14 +755,25 @@ impl Run {
         let mut paths: std::collections::BTreeSet<String> =
             self.settings_baseline.keys().cloned().collect();
         for entry in &self.profile.protected_paths {
-            if let Some(dir) = entry.strip_suffix('/') {
-                paths.extend(files_under(&wt.path, dir));
+            let entry = entry.trim_end_matches('/');
+            // 受保護的位置本身（或它的上層）是連結時，把它本身也列進來：連結指向空目錄時
+            // 底下沒有檔案可以比對。
+            if read_protected(&wt.path, entry) == Some(Protected::Link) {
+                paths.insert(entry.to_owned());
+            }
+            if self
+                .profile
+                .protected_paths
+                .iter()
+                .any(|p| p == &format!("{entry}/"))
+            {
+                paths.extend(files_under(&wt.path, entry));
             }
         }
         paths
             .into_iter()
             .filter_map(|path| {
-                let current = read_protected(&wt.path.join(&path));
+                let current = read_protected(&wt.path, &path);
                 let accepted = self.settings_baseline.get(&path).cloned().flatten();
                 let same = match &current {
                     None => accepted.is_none(),
@@ -886,11 +904,8 @@ impl Run {
         let mut prompt = normalize::prompt_to_acp(&self.offer.prompt);
         loop {
             match self.turn(prompt).await? {
-                TurnEnd::RateLimited {
-                    retry_after,
-                    message,
-                } => {
-                    self.wait_rate_limit(retry_after, message).await?;
+                TurnEnd::RateLimited { resets_at, message } => {
+                    self.wait_rate_limit(resets_at, message).await?;
                     prompt = vec![acp::ContentBlock::from(RESUME_PROMPT.to_owned())];
                 }
                 TurnEnd::SettingsChanged => {
@@ -923,6 +938,7 @@ impl Run {
     async fn turn(&mut self, prompt: Vec<acp::ContentBlock>) -> Result<TurnEnd, Stop> {
         self.check_agent_settings(SettingsCheck::BeforePrompt)
             .await?;
+        self.rate_limit_hint = None;
         self.set_status(RunStatus::Running, None, None);
         let session = self.session.as_ref().expect("Agent 已啟動");
         let mut closed = session.closed();
@@ -996,11 +1012,21 @@ impl Run {
         if canceling.is_some() {
             return Err(Stop::Canceled);
         }
+        // Claude Code 以 rate limit 事件回報額度用完，回合本身可能照常結束。
+        if let Some(limit) = self.rate_limit_hint.take() {
+            return Ok(TurnEnd::RateLimited {
+                resets_at: limit.resets_at,
+                message: match &result {
+                    Err(error) => error.message.clone(),
+                    Ok(_) => "Agent 回報額度用完".to_owned(),
+                },
+            });
+        }
         match result {
             Ok(reason) => Ok(TurnEnd::Done(reason)),
-            Err(error) => match rate_limit(&error) {
-                Some(retry_after) => Ok(TurnEnd::RateLimited {
-                    retry_after,
+            Err(error) => match crate::rate_limit::from_error(&error) {
+                Some(limit) => Ok(TurnEnd::RateLimited {
+                    resets_at: limit.resets_at,
                     message: error.message.clone(),
                 }),
                 None => Err(Stop::failed(
@@ -1110,6 +1136,14 @@ impl Run {
     fn on_notice(&mut self, notice: AgentNotice) -> bool {
         match notice {
             AgentNotice::Update(update) => {
+                if let acp::SessionUpdate::UsageUpdate(usage) = &update
+                    && let Some(limit) = usage
+                        .meta
+                        .as_ref()
+                        .and_then(crate::rate_limit::from_claude_meta)
+                {
+                    self.rate_limit_hint = Some(limit);
+                }
                 let finished = tool_call_finished(&update);
                 if let Some(id) = &finished {
                     self.accept_approved_settings_write(id);
@@ -1231,20 +1265,34 @@ impl Run {
         }
     }
 
+    /// rate limit：回報 Event、暫停到額度恢復（同一組 Credential 期間不接受新的 Dispatch），
+    /// 之後由呼叫端在同一個 session 繼續。
     async fn wait_rate_limit(
         &mut self,
-        retry_after: Option<Duration>,
+        resets_at: Option<std::time::SystemTime>,
         message: String,
     ) -> Result<(), Stop> {
-        let wait = retry_after.unwrap_or(DEFAULT_RATE_LIMIT_WAIT);
-        let resets_at = std::time::SystemTime::now() + wait;
+        let now = std::time::SystemTime::now();
+        let wait = match resets_at {
+            Some(at) => at
+                .duration_since(now)
+                .unwrap_or_default()
+                .max(MIN_RATE_LIMIT_WAIT),
+            None => DEFAULT_RATE_LIMIT_WAIT,
+        };
+        let until = resets_at.unwrap_or(now + wait);
         self.emit(EventKind::RateLimited {
             resets_at: Some(Timestamp(
-                humantime::format_rfc3339_millis(resets_at).to_string(),
+                humantime::format_rfc3339_millis(until).to_string(),
             )),
             message: self.redactor.redact(&message),
         });
         self.set_status(RunStatus::RateLimited, None, None);
+        self.ctx.rate_limits.set(
+            &self.profile.credential,
+            now + wait,
+            self.ctx.availability_changed.clone(),
+        );
         self.interruptible(tokio::time::sleep(wait)).await
     }
 
@@ -1432,11 +1480,17 @@ fn restore_protected_file(
     content: Option<&[u8]>,
 ) -> Result<(), String> {
     let file = worktree.join(path);
-    if std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
-        // 目錄連結（Windows 的 junction、目錄 symlink）要用 remove_dir 移除連結本身。
-        std::fs::remove_file(&file)
-            .or_else(|_| std::fs::remove_dir(&file))
-            .map_err(|e| e.to_string())?;
+    // 從 Worktree 根目錄往下，第一個是連結的那一層（可能是 `.claude` 本身）：移除連結本身。
+    // 目錄連結（Windows 的 junction、目錄 symlink）要用 remove_dir。
+    let mut current = worktree.to_path_buf();
+    for part in path.split('/').filter(|p| !p.is_empty()) {
+        current.push(part);
+        if std::fs::symlink_metadata(&current).is_ok_and(|m| m.file_type().is_symlink()) {
+            std::fs::remove_file(&current)
+                .or_else(|_| std::fs::remove_dir(&current))
+                .map_err(|e| e.to_string())?;
+            break;
+        }
     }
     let parent = file.parent().unwrap_or(worktree);
     if !crate::paths::is_within(
@@ -1488,13 +1542,19 @@ enum Protected {
     Link,
 }
 
-/// 受保護設定的目前狀態；不存在時為 `None`。不跟著連結。
-fn read_protected(path: &std::path::Path) -> Option<Protected> {
-    let meta = std::fs::symlink_metadata(path).ok()?;
-    if meta.file_type().is_symlink() {
-        return Some(Protected::Link);
+/// `worktree/<rel>` 的目前狀態；不存在時為 `None`。不跟著連結：從 Worktree 根目錄往下，
+/// 任何一層（例如 `.claude` 本身）是 symlink／junction 就是 [`Protected::Link`]。
+fn read_protected(worktree: &std::path::Path, rel: &str) -> Option<Protected> {
+    let mut path = worktree.to_path_buf();
+    for part in rel.split('/').filter(|p| !p.is_empty() && *p != ".") {
+        path.push(part);
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => return Some(Protected::Link),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
     }
-    std::fs::read(path).ok().map(Protected::File)
+    std::fs::read(&path).ok().map(Protected::File)
 }
 
 /// 什麼時候檢查 Agent 的設定檔。
@@ -1540,26 +1600,6 @@ fn stop_reason_text(reason: acp::StopReason) -> String {
         .unwrap_or_else(|| format!("{reason:?}"))
 }
 
-/// 辨識 rate limit 錯誤，回傳建議的等待時間。
-/// 目前認得 `data.type == "rate_limit"`（含 `retry_after_ms`）與訊息中的 rate limit／429。
-/// 各 Agent 的格式在 A2 補齊。
-fn rate_limit(error: &agent_client_protocol::Error) -> Option<Option<Duration>> {
-    let data = error.data.as_ref();
-    let typed = data
-        .and_then(|d| d.get("type"))
-        .and_then(|t| t.as_str())
-        .is_some_and(|t| t == "rate_limit");
-    let lower = error.message.to_ascii_lowercase();
-    if !(typed || lower.contains("rate limit") || lower.contains("429")) {
-        return None;
-    }
-    Some(
-        data.and_then(|d| d.get("retry_after_ms"))
-            .and_then(serde_json::Value::as_u64)
-            .map(Duration::from_millis),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1597,12 +1637,12 @@ mod tests {
         files.sort();
         assert_eq!(files, [".gemini/extensions", ".gemini/settings.json"]);
         assert_eq!(
-            read_protected(&wt.join(".gemini/extensions")),
+            read_protected(&wt, ".gemini/extensions"),
             Some(Protected::Link),
             "不跟著連結讀"
         );
         assert_eq!(
-            read_protected(&wt.join(".gemini/settings.json")),
+            read_protected(&wt, ".gemini/settings.json"),
             Some(Protected::File(b"{}".to_vec()))
         );
         restore_protected_file(&wt, ".gemini/extensions", None).unwrap();
@@ -1626,7 +1666,30 @@ mod tests {
         restore_protected_file(&wt, ".claude/settings.json", None).unwrap();
     }
 
-    /// `.claude` 被換成指向 Worktree 外的連結時，不可以跟著寫到外面（安全審查的發現）。
+    /// 上層目錄（`.claude` 本身）是連結時，底下的設定也算連結（安全審查的發現）。
+    #[test]
+    fn 上層目錄是連結時算作連結() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("wt");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("settings.json"), "外面").unwrap();
+        link_dir(&outside, &wt.join(".claude"));
+        assert_eq!(
+            read_protected(&wt, ".claude/settings.json"),
+            Some(Protected::Link)
+        );
+        assert_eq!(
+            read_protected(&wt, ".claude/missing.json"),
+            Some(Protected::Link)
+        );
+        assert_eq!(read_protected(&wt, ".claude"), Some(Protected::Link));
+        assert_eq!(read_protected(&wt, "nothing/here"), None);
+    }
+
+    /// `.claude` 被換成指向 Worktree 外的連結時：還原只移除連結本身，不跟著寫到外面
+    /// （安全審查的發現）。
     #[test]
     fn 還原設定檔_不跟著目錄連結寫到_worktree_外() {
         let dir = tempfile::tempdir().unwrap();
@@ -1636,17 +1699,31 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("settings.json"), "外面的檔案").unwrap();
         link_dir(&outside, &wt.join(".claude"));
-        let error = restore_protected_file(&wt, ".claude/settings.json", Some(b"x")).unwrap_err();
-        assert!(error.contains("Worktree 以外"), "{error}");
+        restore_protected_file(&wt, ".claude/settings.json", Some(b"x")).unwrap();
         assert_eq!(
             std::fs::read_to_string(outside.join("settings.json")).unwrap(),
-            "外面的檔案"
+            "外面的檔案",
+            "不可以寫到外面"
         );
-        restore_protected_file(&wt, ".claude/settings.json", None).unwrap_err();
+        assert!(
+            !std::fs::symlink_metadata(wt.join(".claude"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "連結本身被移除，換成 Worktree 內真正的目錄"
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".claude").join("settings.json")).unwrap(),
+            "x"
+        );
+
+        link_dir(&outside, &wt.join(".codex"));
+        restore_protected_file(&wt, ".codex/settings.json", None).unwrap();
         assert!(
             outside.join("settings.json").exists(),
             "不可以刪除外面的檔案"
         );
+        assert!(std::fs::symlink_metadata(wt.join(".codex")).is_err());
     }
 
     /// 設定檔本身是指向外面的 symlink：移除連結本身再寫入，外面的檔案不受影響。

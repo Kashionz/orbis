@@ -265,6 +265,9 @@ pub struct UsageStep {
     /// 累計花費。
     #[serde(default)]
     pub cost: Option<CostStep>,
+    /// `_meta`（模擬 Agent 附帶的資訊，例如 Claude Code 的 `_claude/rateLimit`）。
+    #[serde(default)]
+    pub meta: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// 花費。
@@ -354,6 +357,10 @@ pub struct RateLimitStep {
     /// 自訂錯誤訊息；省略時為 `Rate limit exceeded: retry after <n> ms`。
     #[serde(default)]
     pub message: Option<String>,
+    /// 自訂錯誤的 `data`（模擬各 Agent 的格式，例如 Codex 的 `codexErrorInfo`）；
+    /// 省略時為 `{ "type": "rate_limit", "retry_after_ms": <n> }`。
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
 }
 
 /// 劇本載入失敗。

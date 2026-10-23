@@ -321,7 +321,9 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - Team Runner **共用一個 Claude 訂閱**，Credential 存放在 Runner 主機的 Docker secret 中。設定頁會顯示條款風險警告。
 - **並行與額度**：
   - 每組 Credential 的並行上限**預設 30**，超過的 Run 進佇列排隊。
-  - 偵測到 rate limit 時，該 Run 暫停，等額度恢復後再繼續。**不會自動改用其他 Agent。**
+  - 偵測到 rate limit 時，該 Run 暫停，等額度恢復後在同一個 session 繼續。**不會自動改用其他 Agent。**
+    - 恢復前，同一組 Credential 的新 Dispatch 一律以 `concurrency_limit` 拒絕，AgentAvailability 中使用這組 Credential 的 Agent 回報無法使用，原因寫上預計恢復的時間。
+    - 各 Agent 的格式：Claude Code 以 `usage_update` 的 `_meta["_claude/rateLimit"]`（`status` 為 `rejected`、`resetsAt`）回報，回合本身可能照常結束；Codex 的回合以錯誤結束，`codexErrorInfo` 是 `usageLimitExceeded`／`rateLimitExceeded`；Gemini CLI 與其他 Agent 從錯誤訊息辨識（`RESOURCE_EXHAUSTED`、quota、429、rate limit），恢復時間從「retry in …」之類的文字讀出。讀不出恢復時間時等 60 秒。
   - UI 顯示各組 Credential 的用量與排隊數。
   - Server 依 Credential 排隊：派工時選定 Credential（放在 `dispatch_offer`），佔用名額的是 `dispatched` 到 `awaiting_gate`、`rate_limited` 的 Run（含 Child Run）。有效上限＝Admin 在 Server 的覆寫 ?? Runner 回報。
   - 一組 Credential 回報 rate limit 後，到恢復時間之前不派新的 Run 給它；Agent 沒有提供恢復時間時暫停 5 分鐘。

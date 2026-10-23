@@ -1,0 +1,16 @@
+# Codex 的額度用完：回合以 JSON-RPC 錯誤結束，data.codexErrorInfo 是 usageLimitExceeded，
+# 訊息附「try again in 1s」。Runner 暫停到恢復時間，之後在同一個 session 繼續。
+description: Codex 格式的 rate limit
+turns:
+  - steps:
+      - message: 開始工作。
+      - rate_limit:
+          retry_after_ms: 0
+          message: Internal error
+          data:
+            message: "You've hit your usage limit. Try again in 1s."
+            codexErrorInfo: usageLimitExceeded
+  - expect_prompt_contains: 額度已恢復
+    steps:
+      - message: 額度恢復後繼續完成。
+      - stop: end_turn
