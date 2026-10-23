@@ -130,6 +130,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         preview: None,
         approved_settings_writes: HashMap::new(),
         rate_limit_hint: None,
+        rate_limit_set: None,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -209,6 +210,8 @@ struct Run {
     approved_settings_writes: HashMap<String, Vec<String>>,
     /// 這個回合中 Agent 以事件回報過額度用完（Claude Code 的 rate limit 事件）。
     rate_limit_hint: Option<crate::rate_limit::RateLimit>,
+    /// 這個 Run 設下的 Credential 暫停（恢復時間），結束時解除。
+    rate_limit_set: Option<std::time::SystemTime>,
 }
 
 impl Run {
@@ -1136,7 +1139,9 @@ impl Run {
     fn on_notice(&mut self, notice: AgentNotice) -> bool {
         match notice {
             AgentNotice::Update(update) => {
+                // 只接受 Claude Code 的 rate limit 事件（其他 Agent 送同樣的 `_meta` 不算數）。
                 if let acp::SessionUpdate::UsageUpdate(usage) = &update
+                    && self.profile.id == crate::agent::CLAUDE_CODE
                     && let Some(limit) = usage
                         .meta
                         .as_ref()
@@ -1277,7 +1282,7 @@ impl Run {
             Some(at) => at
                 .duration_since(now)
                 .unwrap_or_default()
-                .max(MIN_RATE_LIMIT_WAIT),
+                .clamp(MIN_RATE_LIMIT_WAIT, crate::rate_limit::MAX_RATE_LIMIT_WAIT),
             None => DEFAULT_RATE_LIMIT_WAIT,
         };
         let until = resets_at.unwrap_or(now + wait);
@@ -1288,12 +1293,28 @@ impl Run {
             message: self.redactor.redact(&message),
         });
         self.set_status(RunStatus::RateLimited, None, None);
+        let limit_until = now + wait;
         self.ctx.rate_limits.set(
             &self.profile.credential,
-            now + wait,
+            limit_until,
             self.ctx.availability_changed.clone(),
         );
-        self.interruptible(tokio::time::sleep(wait)).await
+        self.rate_limit_set = Some(limit_until);
+        let result = self.interruptible(tokio::time::sleep(wait)).await;
+        // 等完了（或 Run 被中止）：解除這個 Run 設的暫停。中止 Run 就能解除被 Agent 回報的
+        // 恢復時間鎖住的 Credential。
+        self.clear_rate_limit();
+        result
+    }
+
+    fn clear_rate_limit(&mut self) {
+        if let Some(until) = self.rate_limit_set.take() {
+            self.ctx.rate_limits.clear(
+                &self.profile.credential,
+                until,
+                &self.ctx.availability_changed,
+            );
+        }
     }
 
     async fn send_run_diff(&mut self) {

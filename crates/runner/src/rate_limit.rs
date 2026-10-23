@@ -17,6 +17,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
 
+/// 恢復時間最多算到這麼久以後：Agent 回報的值不可信（可能讓整組 Credential 一直被鎖住），
+/// 而且太大的值會讓時間運算溢位。真的還沒恢復時，下次再撞到 rate limit 會再暫停一次。
+pub const MAX_RATE_LIMIT_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// 現在加上 `wait`（最多 [`MAX_RATE_LIMIT_WAIT`]）。
+fn from_now(wait: Duration) -> Option<SystemTime> {
+    SystemTime::now().checked_add(wait.min(MAX_RATE_LIMIT_WAIT))
+}
+
+/// 把恢復時間限制在 [`MAX_RATE_LIMIT_WAIT`] 以內。
+pub fn clamp(at: SystemTime) -> SystemTime {
+    match from_now(MAX_RATE_LIMIT_WAIT) {
+        Some(max) if at > max => max,
+        _ => at,
+    }
+}
+
 /// 偵測到的 rate limit。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RateLimit {
@@ -49,7 +66,7 @@ pub fn from_error(error: &agent_client_protocol::Error) -> Option<RateLimit> {
     }
     let explicit = field("retry_after_ms")
         .and_then(serde_json::Value::as_u64)
-        .map(|ms| SystemTime::now() + Duration::from_millis(ms))
+        .and_then(|ms| from_now(Duration::from_millis(ms)))
         .or_else(|| {
             ["resets_at", "resetsAt"]
                 .into_iter()
@@ -57,7 +74,9 @@ pub fn from_error(error: &agent_client_protocol::Error) -> Option<RateLimit> {
                 .and_then(epoch)
         });
     Some(RateLimit {
-        resets_at: explicit.or_else(|| texts.iter().find_map(|t| resets_at_in_text(t))),
+        resets_at: explicit
+            .or_else(|| texts.iter().find_map(|t| resets_at_in_text(t)))
+            .map(clamp),
     })
 }
 
@@ -71,7 +90,8 @@ pub fn from_claude_meta(meta: &serde_json::Map<String, serde_json::Value>) -> Op
         resets_at: info
             .get("resetsAt")
             .and_then(serde_json::Value::as_u64)
-            .and_then(epoch),
+            .and_then(epoch)
+            .map(clamp),
     })
 }
 
@@ -118,7 +138,7 @@ fn resets_at_in_text(text: &str) -> Option<SystemTime> {
             .expect("固定的正規表示式")
     });
     let caps = after_re.captures(text)?;
-    parse_duration(&caps[1]).map(|d| SystemTime::now() + d)
+    parse_duration(&caps[1]).and_then(from_now)
 }
 
 /// `2 hours 5 minutes`、`1h 5m`、`12.3s`、`1500ms`。讀不到任何單位時回傳 `None`。
@@ -144,7 +164,10 @@ fn parse_duration(text: &str) -> Option<Duration> {
         total += secs;
         found = true;
     }
-    found.then(|| Duration::from_secs_f64(total))
+    if !found {
+        return None;
+    }
+    Duration::try_from_secs_f64(total.min(MAX_RATE_LIMIT_WAIT.as_secs_f64())).ok()
 }
 
 /// 各組 Credential 的 rate limit：到恢復時間之前不接受新的 Dispatch。
@@ -182,6 +205,17 @@ impl RateLimits {
             tokio::time::sleep(wait).await;
             changed.notify_one();
         });
+    }
+
+    /// 解除 `credential` 的 rate limit（設下它的 Run 被中止或結束時）：只在恢復時間仍是
+    /// `until` 時解除，其他 Run 之後設的較晚時間保留。
+    pub fn clear(&self, credential: &str, until: SystemTime, changed: &tokio::sync::Notify) {
+        let mut map = self.lock();
+        if map.get(credential) == Some(&until) {
+            map.remove(credential);
+            drop(map);
+            changed.notify_one();
+        }
     }
 
     /// `credential` 目前是否在 rate limit 中；是的話回傳恢復時間。
@@ -299,6 +333,41 @@ mod tests {
         assert_eq!(parse_duration("soon"), None);
         assert!(resets_at_in_text("Please retry after 30 seconds").is_some());
         assert!(resets_at_in_text("no hint here").is_none());
+    }
+
+    /// Agent 回報的恢復時間不可信：最多 24 小時，太大的值不會讓時間運算溢位。
+    #[test]
+    fn 恢復時間有上限() {
+        let huge = from_error(&error(
+            "rate limit",
+            json!({ "type": "rate_limit", "retry_after_ms": u64::MAX }),
+        ))
+        .unwrap();
+        assert!(secs_from_now(&huge) <= MAX_RATE_LIMIT_WAIT.as_secs());
+        let far = from_error(&error(
+            "You've hit your usage limit. Try again in 99999999999 days.",
+            serde_json::Value::Null,
+        ))
+        .unwrap();
+        assert!(secs_from_now(&far) <= MAX_RATE_LIMIT_WAIT.as_secs());
+        let meta = json!({ "_claude/rateLimit": { "status": "rejected", "resetsAt": 99_999_999_999_u64 } });
+        let claude = from_claude_meta(meta.as_object().unwrap()).unwrap();
+        assert!(secs_from_now(&claude) <= MAX_RATE_LIMIT_WAIT.as_secs());
+    }
+
+    #[test]
+    fn 解除_credential_的_rate_limit() {
+        let limits = Arc::new(RateLimits::default());
+        let changed = tokio::sync::Notify::new();
+        let until = SystemTime::now() + Duration::from_secs(600);
+        limits.lock().insert("c".into(), until);
+        limits.clear("c", until + Duration::from_secs(1), &changed);
+        assert!(
+            limits.active("c").is_some(),
+            "時間不同（別的 Run 設的）不解除"
+        );
+        limits.clear("c", until, &changed);
+        assert!(limits.active("c").is_none());
     }
 
     #[tokio::test]

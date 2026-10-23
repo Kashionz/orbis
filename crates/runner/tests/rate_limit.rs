@@ -13,12 +13,21 @@ use support::server::{RunnerSide, fake_agent_toml, offer, result_outcome, send_o
 
 /// 跑劇本到 rate limit，回傳 `rate_limited` Event；之後確認在同一個 session 繼續並完成。
 async fn rate_limited_then_resumed(script: &str) -> Value {
+    rate_limited_then_resumed_as("fake", script).await
+}
+
+/// 同上，指定 Agent（`claude-code` 時把內建的 Claude Code 換成 Fake Agent）。
+async fn rate_limited_then_resumed_as(agent: &str, script: &str) -> Value {
     let mut env = Env::new(&[("README.md", "a\n")], |wt| {
-        fake_agent_toml(wt, &runner_script(script))
+        if agent == "fake" {
+            fake_agent_toml(wt, &runner_script(script))
+        } else {
+            support::flow::claude_code_as_fake(wt, &runner_script(script))
+        }
     })
     .await;
     let _runner = env.spawn();
-    let mut conn = env.dispatch("r1", "fake", "做事").await;
+    let mut conn = env.dispatch("r1", agent, "做事").await;
     let limited = conn.wait_event("rate_limited").await;
     conn.wait_status("rate_limited").await;
     // 第二個回合要求 prompt 含「額度已恢復」：確認是同一個 session 的接續，而不是重來。
@@ -56,7 +65,7 @@ async fn codex_格式的_rate_limit_暫停後在同一個_session_繼續() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn claude_code_的_rate_limit_事件_暫停後在同一個_session_繼續() {
-    let limited = rate_limited_then_resumed("rate-limit-claude.yaml").await;
+    let limited = rate_limited_then_resumed_as("claude-code", "rate-limit-claude.yaml").await;
     assert_eq!(
         limited["resets_at"], "2023-11-14T22:13:20.000Z",
         "恢復時間來自 _claude/rateLimit 的 resetsAt"
@@ -137,7 +146,17 @@ async fn rate_limit_期間同一組_credential_不接受新的_dispatch() {
         "{reply}"
     );
 
+    // 中止設下暫停的 Run：Credential 的暫停解除（人可以用這個方式解鎖）。
     cancel(&mut conn, "r1").await;
+    conn.wait_for("解除後的 agent_availability", |v| {
+        v["type"] == "agent_availability"
+            && v["agents"].as_array().is_some_and(|agents| {
+                agents
+                    .iter()
+                    .any(|a| a["id"] == "fake" && a["available"] == true)
+            })
+    })
+    .await;
 }
 
 async fn cancel(conn: &mut RunnerSide, run: &str) {
