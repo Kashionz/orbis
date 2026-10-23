@@ -172,11 +172,10 @@ async fn 接不回原本的_session_時開新_session_並附上目前的變更()
     let ready = wait_run(&mut conn, "r2", "worktree_ready").await;
     let rebuilt = PathBuf::from(ready["worktree_path"].as_str().unwrap());
     assert_eq!(rebuilt, worktree, "在原本的位置重建");
+    // 看 HEAD 的內容：讀到檔案之前，修正的 Agent 可能已經把工作目錄中的 fl.txt 改掉了。
     assert_eq!(
-        std::fs::read_to_string(rebuilt.join("fl.txt"))
-            .unwrap()
-            .replace("\r\n", "\n"),
-        "v1\n",
+        support::git(&rebuilt, &["show", "HEAD:fl.txt"]).trim(),
+        "v1",
         "重建的 Worktree 在原本的分支上"
     );
     let error = wait_run(&mut conn, "r2", "error").await;
