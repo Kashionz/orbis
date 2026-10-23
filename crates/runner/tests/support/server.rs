@@ -383,6 +383,12 @@ pub fn offer(
         plan_gate: false,
         delegation: None,
         last_event_seq: 0,
+        acceptance_criteria: None,
+        credential: None,
+        origin: None,
+        consult_of_run_id: None,
+        continuation: None,
+        prompt_source: None,
     }
 }
 

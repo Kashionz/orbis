@@ -44,6 +44,8 @@ wire_enum! {
         /// Runner 已接受，正在建立 Worktree、執行 setup、啟動 Agent。
         Starting => "starting",
         Running => "running",
+        /// 正在執行 Server 要求的 Verification（RunControl `verify`），結束後回到 `awaiting_gate`（review）。
+        Verifying => "verifying",
         /// 等待人回覆權限請求，Run 暫停。
         AwaitingPermission => "awaiting_permission",
         /// 偵測到 rate limit，暫停到額度恢復。
@@ -108,6 +110,56 @@ wire_enum! {
     }
 }
 
+wire_enum! {
+    /// Run 為什麼產生。Server 與 UI（Child Run 樹）沿用同一組值。
+    RunOrigin {
+        /// 人派工。
+        Dispatch => "dispatch",
+        /// Agent 透過 Orbis MCP 的 `delegate` 產生的 Child Run（ARCHITECTURE §9）。
+        Delegation => "delegation",
+        /// 判定 `agent`／`browser` 類型 Acceptance Criterion 的 `consult` Child Run（§5.1）。
+        Verification => "verification",
+        /// 留言中的 @agent 產生的 `consult` Run（§12.3）。
+        Mention => "mention",
+        /// Feedback Loop 的修正：送回原 Run 的 session 的新 Run（§5.2）。
+        FeedbackLoop => "feedback_loop",
+    }
+}
+
+wire_enum! {
+    /// 送給 Agent 的 prompt 的來源，UI 與 log 用來標示。
+    PromptSource {
+        /// 人直接送出的 prompt（派工的第一個 prompt、@agent 等）。
+        User => "user",
+        /// Plan Gate 退回時附的意見。
+        PlanGate => "plan_gate",
+        /// Review Gate 退回時打包的留言（diff 行內留言與 Preview 留言）。
+        ReviewGate => "review_gate",
+        /// Verification 失敗的原因（§5.1 的自動重試）。
+        VerificationRetry => "verification_retry",
+        /// PR 上的 review 留言（Feedback Loop）。
+        FeedbackReview => "feedback_review",
+        /// PR 的 CI 失敗（Feedback Loop）。
+        FeedbackCi => "feedback_ci",
+        /// Child Run 以 `ask_parent` 提出、由人在 Needs You 回答的問題。
+        ChildQuestion => "child_question",
+    }
+}
+
+wire_enum! {
+    /// Acceptance Criterion 的類型（ARCHITECTURE §5.1）。
+    AcceptanceCriterionKind {
+        /// 在 Worktree 執行指令，exit code 為 0 就算通過。
+        Command => "command",
+        /// `consult` Run 讀 diff 與 Spec 後判定。
+        Agent => "agent",
+        /// Agent 透過 Playwright MCP 操作 Preview 後判定。
+        Browser => "browser",
+        /// 在 Review Gate 由人工打勾，不送給 Runner。
+        Manual => "manual",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,12 +175,13 @@ mod tests {
             | RunStatus::Dispatched
             | RunStatus::Starting
             | RunStatus::Running
+            | RunStatus::Verifying
             | RunStatus::AwaitingPermission
             | RunStatus::RateLimited
             | RunStatus::AwaitingGate
             | RunStatus::Completed
             | RunStatus::Failed
-            | RunStatus::Canceled => 10,
+            | RunStatus::Canceled => 11,
         };
         check(RunStatus::ALL, run_status_count(RunStatus::Queued));
         let policy_count = |p: PermissionPolicy| match p {
@@ -151,6 +204,34 @@ mod tests {
             GateDecision::Approved | GateDecision::Rejected => 2,
         };
         check(GateDecision::ALL, decision_count(GateDecision::Approved));
+        let origin_count = |o: RunOrigin| match o {
+            RunOrigin::Dispatch
+            | RunOrigin::Delegation
+            | RunOrigin::Verification
+            | RunOrigin::Mention
+            | RunOrigin::FeedbackLoop => 5,
+        };
+        check(RunOrigin::ALL, origin_count(RunOrigin::Dispatch));
+        let source_count = |p: PromptSource| match p {
+            PromptSource::User
+            | PromptSource::PlanGate
+            | PromptSource::ReviewGate
+            | PromptSource::VerificationRetry
+            | PromptSource::FeedbackReview
+            | PromptSource::FeedbackCi
+            | PromptSource::ChildQuestion => 7,
+        };
+        check(PromptSource::ALL, source_count(PromptSource::User));
+        let criterion_count = |k: AcceptanceCriterionKind| match k {
+            AcceptanceCriterionKind::Command
+            | AcceptanceCriterionKind::Agent
+            | AcceptanceCriterionKind::Browser
+            | AcceptanceCriterionKind::Manual => 4,
+        };
+        check(
+            AcceptanceCriterionKind::ALL,
+            criterion_count(AcceptanceCriterionKind::Manual),
+        );
     }
 
     #[test]
@@ -172,6 +253,15 @@ mod tests {
         }
         for d in GateDecision::ALL {
             assert_eq!(serde_json::to_value(d).unwrap(), d.as_str());
+        }
+        for o in RunOrigin::ALL {
+            assert_eq!(serde_json::to_value(o).unwrap(), o.as_str());
+        }
+        for p in PromptSource::ALL {
+            assert_eq!(serde_json::to_value(p).unwrap(), p.as_str());
+        }
+        for k in AcceptanceCriterionKind::ALL {
+            assert_eq!(serde_json::to_value(k).unwrap(), k.as_str());
         }
     }
 

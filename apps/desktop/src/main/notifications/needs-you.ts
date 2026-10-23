@@ -42,6 +42,8 @@ export function needsYouNotification(item: NeedsYouItem): NotificationContent {
       };
     case "stopped_run":
       return { title: `${item.taskKey} 的 Run 停下來了`, body: item.reason, href };
+    case "child_question":
+      return { title: `${item.taskKey} 的 Child Run 有問題要問`, body: item.question, href };
   }
 }
 

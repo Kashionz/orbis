@@ -76,6 +76,8 @@ function kindLabel(item: NeedsYouItem): string {
       return item.gateKind === "plan" ? "Plan Gate" : "Review Gate";
     case "stopped_run":
       return "Run 已停下";
+    case "child_question":
+      return "Child Run 的問題";
   }
 }
 
@@ -87,6 +89,8 @@ function summary(item: NeedsYouItem): string {
       return item.gateKind === "plan" ? "等待核准 plan" : "等待 review diff";
     case "stopped_run":
       return item.reason;
+    case "child_question":
+      return item.question;
   }
 }
 

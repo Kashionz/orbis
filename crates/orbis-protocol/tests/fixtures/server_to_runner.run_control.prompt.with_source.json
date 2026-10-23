@@ -1,0 +1,14 @@
+{
+  "type": "run_control",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "action": "prompt",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "`pnpm test` 失敗：src/login.test.ts。"
+    }
+  ],
+  "source": "verification_retry"
+}

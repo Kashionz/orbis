@@ -3,9 +3,15 @@ import type { DispatchOffer } from "./DispatchOffer";
 import type { EventAck } from "./EventAck";
 import type { HelloAck } from "./HelloAck";
 import type { HelloRejected } from "./HelloRejected";
+import type { PreviewEnd } from "./PreviewEnd";
+import type { PreviewOpen } from "./PreviewOpen";
+import type { PreviewReset } from "./PreviewReset";
+import type { PreviewWindow } from "./PreviewWindow";
+import type { PreviewWsClose } from "./PreviewWsClose";
 import type { RunControl } from "./RunControl";
+import type { ToolResultFrame } from "./ToolResultFrame";
 
 /**
  * Server 送給 Runner 的 frame。
  */
-export type ServerToRunner = { "type": "hello_ack" } & HelloAck | { "type": "hello_rejected" } & HelloRejected | { "type": "dispatch_offer" } & DispatchOffer | { "type": "run_control" } & RunControl | { "type": "event_ack" } & EventAck;
+export type ServerToRunner = { "type": "hello_ack" } & HelloAck | { "type": "hello_rejected" } & HelloRejected | { "type": "dispatch_offer" } & DispatchOffer | { "type": "run_control" } & RunControl | { "type": "event_ack" } & EventAck | { "type": "tool_result" } & ToolResultFrame | { "type": "preview_open" } & PreviewOpen | { "type": "preview_window" } & PreviewWindow | { "type": "preview_end" } & PreviewEnd | { "type": "preview_reset" } & PreviewReset | { "type": "preview_ws_close" } & PreviewWsClose;

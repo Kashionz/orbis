@@ -16,8 +16,11 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::enums::{GateKind, RunStatus, wire_enum};
-use crate::ids::{BlobId, DispatchId, PermissionRequestId, RunId, Timestamp, ToolCallId};
+use crate::enums::{GateKind, PromptSource, RunStatus, wire_enum};
+use crate::ids::{
+    BlobId, DispatchId, PermissionRequestId, RunId, Timestamp, ToolCallId, VerificationId,
+};
+use crate::verification::{VerificationOutcome, VerificationResult};
 
 /// Runner 送給 Server 的一筆 Event 的 frame（`event`）：[`EventEnvelope`] 再加上產生它的 Dispatch。
 /// Server 拒絕不是該 Run 目前 Dispatch 的 Event（ARCHITECTURE §6.1），
@@ -123,9 +126,59 @@ pub enum EventKind {
         branch: Option<String>,
         /// 開出 Worktree 時的 commit SHA（40 個十六進位字元）。
         base_commit: String,
+        /// 分配給這個 Worktree 的 Preview port（協定版本 2）。Repo 設定檔沒有 `[preview].command` 時
+        /// 缺少或為 `null`，Server 據此把 Preview 顯示為「沒有設定」；有值但還沒收到 `preview_ready`
+        /// 時顯示為「啟動中」。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        preview_port: Option<u16>,
     },
     /// Run 目前相對於 base commit 的完整 diff，見 [`RunDiff`]。
     RunDiff(RunDiff),
+    /// Planning 產出的 plan 全文，送審 Plan Gate（ARCHITECTURE §5）。Runner 接著送
+    /// `status_changed(awaiting_gate, plan)`。既有的 `plan`（待辦清單）照舊送。
+    PlanProposed {
+        /// plan 的 markdown 全文：Agent plan 模式交出的內容，或回合最後一則訊息的全文。
+        body: TextBody,
+        source: PlanSource,
+    },
+    /// 一條 Acceptance Criterion 的 Verification 結果，見 [`VerificationResult`]。
+    VerificationResult(VerificationResult),
+    /// 一輪 Verification 結束。Runner 接著送 `status_changed(awaiting_gate, review)`。
+    VerificationCompleted {
+        verification_id: VerificationId,
+        attempt: u32,
+        /// 全部通過為 `passed`；有任何一條 `failed` 為 `failed`；否則有 `error` 時為 `error`。
+        outcome: VerificationOutcome,
+    },
+    /// `merge_child` 在父 Worktree merge 子分支的結果（ARCHITECTURE §9）。
+    /// 有衝突時保留衝突狀態交給父 Agent；回合結束時仍未解決，Runner 另送
+    /// `error(merge_child_conflict)`。
+    ChildMerged {
+        child_run_id: RunId,
+        outcome: MergeOutcome,
+        /// merge 成功後父分支的 HEAD；有衝突時為 `null`。
+        commit_sha: Option<String>,
+        /// 有衝突的檔案（相對於 Worktree 根目錄、以 `/` 分隔），沒有衝突時為空陣列。
+        conflicted_paths: Vec<String>,
+    },
+    /// Agent 結束回合時的最後回覆。Server 用於 `wait_run` 的結果與 @agent 的回覆。
+    FinalMessage { text: TextBody },
+    /// Runner 建立或恢復 ACP session 後回報 session id。Feedback Loop 的新 Run 以此 resume。
+    AgentSession { session_id: String },
+    /// Runner 把一個 prompt 交給 Agent（包含第一個 prompt），Run 頁用來重播。
+    PromptSubmitted {
+        prompt: Vec<ContentBlock>,
+        source: PromptSource,
+    },
+    /// Preview 的 dev server 停止了（ARCHITECTURE §13）。Run 結束時一併停止不會送這個 Event。
+    PreviewStopped {
+        reason: PreviewStopReason,
+        /// 程序的 exit code；沒有啟動成功或被訊號結束時為 `null`。
+        exit_code: Option<i32>,
+        /// 輸出的最後一段（已遮蔽 secret）。
+        output: String,
+    },
 }
 
 wire_enum! {
@@ -144,6 +197,14 @@ wire_enum! {
         PreviewReady => "preview_ready",
         WorktreeReady => "worktree_ready",
         RunDiff => "run_diff",
+        PlanProposed => "plan_proposed",
+        VerificationResult => "verification_result",
+        VerificationCompleted => "verification_completed",
+        ChildMerged => "child_merged",
+        FinalMessage => "final_message",
+        AgentSession => "agent_session",
+        PromptSubmitted => "prompt_submitted",
+        PreviewStopped => "preview_stopped",
     }
 }
 
@@ -164,7 +225,45 @@ impl EventKind {
             Self::PreviewReady { .. } => EventKindName::PreviewReady,
             Self::WorktreeReady { .. } => EventKindName::WorktreeReady,
             Self::RunDiff(_) => EventKindName::RunDiff,
+            Self::PlanProposed { .. } => EventKindName::PlanProposed,
+            Self::VerificationResult(_) => EventKindName::VerificationResult,
+            Self::VerificationCompleted { .. } => EventKindName::VerificationCompleted,
+            Self::ChildMerged { .. } => EventKindName::ChildMerged,
+            Self::FinalMessage { .. } => EventKindName::FinalMessage,
+            Self::AgentSession { .. } => EventKindName::AgentSession,
+            Self::PromptSubmitted { .. } => EventKindName::PromptSubmitted,
+            Self::PreviewStopped { .. } => EventKindName::PreviewStopped,
         }
+    }
+}
+
+wire_enum! {
+    /// `plan_proposed` 的 plan 是怎麼產生的。
+    PlanSource {
+        /// Agent 的 plan 模式。
+        PlanMode => "plan_mode",
+        /// Agent 沒有可靠的 plan 模式，改用「只產出 plan、不修改檔案」的 prompt。
+        PromptFallback => "prompt_fallback",
+    }
+}
+
+wire_enum! {
+    /// `child_merged` 的結果。
+    MergeOutcome {
+        Merged => "merged",
+        Conflict => "conflict",
+    }
+}
+
+wire_enum! {
+    /// Preview 停止的原因。
+    PreviewStopReason {
+        /// dev server 自己結束了。
+        Exited => "exited",
+        /// 超過時間還沒有就緒（`ready_path` 沒有回 2xx／3xx），Runner 結束了程序。
+        ReadyTimeout => "ready_timeout",
+        /// 程序無法啟動。
+        SpawnFailed => "spawn_failed",
     }
 }
 
@@ -395,6 +494,10 @@ wire_enum! {
         GitFailed => "git_failed",
         /// Git for Windows 的 path too long 錯誤，UI 要提示縮短路徑（ARCHITECTURE §6.4）。
         PathTooLong => "path_too_long",
+        /// `merge_child` 的衝突在 Agent 結束回合時仍未解決，Run 停下來等人處理（ARCHITECTURE §9）。
+        MergeChildConflict => "merge_child_conflict",
+        /// Feedback Loop 的新 Run 無法 resume 原本的 session，改開新的 session（非 fatal）。
+        SessionResumeFailed => "session_resume_failed",
         Internal => "internal",
     }
 }

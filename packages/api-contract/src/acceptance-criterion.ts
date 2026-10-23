@@ -30,6 +30,12 @@ export const AcceptanceCriterion = z
     result: AcceptanceCriterionResult,
     /** 結果最後更新的時間；尚未判定時為 null。 */
     resultUpdatedAt: Timestamp.nullable(),
+    /** 最近一次判定的摘要（失敗原因、Agent 的判定理由）；尚未判定時為 null。 */
+    resultSummary: z.string().nullable(),
+    /** `agent`、`browser` 類型由哪個 Run 判定；其他類型或尚未判定時為 null。 */
+    checkedByRunId: Id.nullable(),
+    /** `manual` 類型由哪位 Member 打勾；其他類型或尚未打勾時為 null。 */
+    checkedByMemberId: Id.nullable(),
     createdAt: Timestamp,
     updatedAt: Timestamp,
   })
@@ -68,3 +74,11 @@ export const UpdateAcceptanceCriterionInput = z
     path: ["command"],
   });
 export type UpdateAcceptanceCriterionInput = z.input<typeof UpdateAcceptanceCriterionInput>;
+
+/**
+ * 在 Review Gate 為 `manual` 類型的條件打勾或取消（`POST` acceptanceCriterionCheck）。
+ * 其他類型回 422；所有 `manual` 條件都打勾後才能核准 Review Gate（否則 409）。
+ * 回應是更新後的 `AcceptanceCriterion`；取消打勾時 `result` 回到 `pending`。
+ */
+export const CheckAcceptanceCriterionInput = z.object({ checked: z.boolean() }).strict();
+export type CheckAcceptanceCriterionInput = z.infer<typeof CheckAcceptanceCriterionInput>;

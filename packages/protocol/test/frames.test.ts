@@ -48,12 +48,28 @@ describe("frame 的 type", () => {
       | "dispatch_reject"
       | "event"
       | "run_control_result"
+      | "tool_call"
+      | "preview_response"
+      | "preview_window"
+      | "preview_end"
+      | "preview_reset"
+      | "preview_ws_close"
     >();
   });
 
   it("Server→Runner 涵蓋所有 frame", () => {
     expectTypeOf<ServerToRunner["type"]>().toEqualTypeOf<
-      "hello_ack" | "hello_rejected" | "dispatch_offer" | "run_control" | "event_ack"
+      | "hello_ack"
+      | "hello_rejected"
+      | "dispatch_offer"
+      | "run_control"
+      | "event_ack"
+      | "tool_result"
+      | "preview_open"
+      | "preview_window"
+      | "preview_end"
+      | "preview_reset"
+      | "preview_ws_close"
     >();
   });
 });
@@ -81,6 +97,7 @@ describe("Event", () => {
       | "dispatched"
       | "starting"
       | "running"
+      | "verifying"
       | "awaiting_permission"
       | "rate_limited"
       | "awaiting_gate"

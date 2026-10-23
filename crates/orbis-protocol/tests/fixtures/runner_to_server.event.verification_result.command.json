@@ -1,0 +1,26 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 30,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "verification_result",
+  "verification_id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "attempt": 1,
+  "criterion_id": "0192f3a0-0000-7000-8000-0000000000a1",
+  "outcome": "failed",
+  "summary": "`pnpm test` 有 2 個測試失敗。",
+  "evidence": [
+    {
+      "type": "command_output",
+      "command": "pnpm test",
+      "exit_code": 1,
+      "output": {
+        "type": "inline",
+        "text": "FAIL src/login.test.ts\n  ✕ token 過期時導回登入頁"
+      },
+      "truncated": true
+    }
+  ],
+  "judged_by_run_id": null
+}

@@ -17,8 +17,10 @@ import {
   delegationModeEnum,
   dispatchStatusEnum,
   permissionPolicyEnum,
+  promptSourceEnum,
   runControlActionEnum,
   runnerKindEnum,
+  runOriginEnum,
   runStatusEnum,
 } from "./enums";
 import { runners } from "./runner";
@@ -64,6 +66,28 @@ export const runs = pgTable(
     baseCommit: text("base_commit"),
     /** 累計用量（tokens、費用等），格式依協定的 `usage` Event 保留彈性。 */
     usage: jsonb("usage").notNull().default(sql`'{}'::jsonb`),
+    /** Run 為什麼產生（協定的 RunOrigin）。 */
+    origin: runOriginEnum("origin").notNull().default("dispatch"),
+    /** 派工時 Server 選定的 Credential（Runner 上的名稱）；還沒派工時為 null。 */
+    credential: text("credential"),
+    /** 沒有父 Run 的 `consult` Run（@agent）唯讀讀取哪個 Run 的 Worktree。 */
+    consultOfRunId: uuid("consult_of_run_id").references((): AnyPgColumn => runs.id, {
+      onDelete: "set null",
+    }),
+    /** Feedback Loop 的 Run 接續的前一個 Run（同一個 Worktree、分支與 session）。 */
+    resumesRunId: uuid("resumes_run_id").references((): AnyPgColumn => runs.id, {
+      onDelete: "set null",
+    }),
+    /** Runner 以 `agent_session` Event 回報的 ACP session id，Feedback Loop 的新 Run 以此 resume。 */
+    agentSessionId: text("agent_session_id"),
+    /**
+     * 第一個 prompt（協定的 `ContentBlock[]`）；null 表示由 Task 組出。Child Run（`delegate` 的 prompt）、
+     * @agent 的 consult Run、Feedback Loop 的 Run 的 prompt 不是 Task，存在這裡，排隊、改派、
+     * Server 重新啟動後派工都拿得到。
+     */
+    prompt: jsonb("prompt"),
+    /** `prompt` 的來源（協定的 PromptSource）；null 表示 `user` 或由 Task 組出。改派或重新啟動後原樣帶回 DispatchOffer。 */
+    promptSource: promptSourceEnum("prompt_source"),
     startedAt: timestamptz("started_at"),
     finishedAt: timestamptz("finished_at"),
     createdAt: createdAt(),
@@ -73,6 +97,7 @@ export const runs = pgTable(
     index("runs_task_id_idx").on(t.taskId),
     index("runs_parent_run_id_idx").on(t.parentRunId),
     index("runs_status_idx").on(t.status),
+    index("runs_resumes_run_id_idx").on(t.resumesRunId),
     check(
       "runs_child_has_delegation_mode",
       sql`${t.parentRunId} IS NULL OR ${t.delegationMode} IS NOT NULL`,

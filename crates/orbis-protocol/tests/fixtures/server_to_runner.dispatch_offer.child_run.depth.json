@@ -1,0 +1,38 @@
+{
+  "type": "dispatch_offer",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d5",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000ab",
+  "expires_at": "2026-10-23T08:00:30.000Z",
+  "task": {
+    "task_id": "0192f3a0-0000-7000-8000-0000000000f1",
+    "task_key": "ORB-12",
+    "title": "新增登入頁"
+  },
+  "run_seq": 2,
+  "repo": {
+    "name": "web",
+    "clone_url": "https://github.com/acme/web.git",
+    "default_branch": "main",
+    "base_ref": "origin/main"
+  },
+  "branch": "orbis/ORB-12-login-fix--c1",
+  "agent": "codex",
+  "model": null,
+  "permission_policy": "manual",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "把 session 處理改成用 refresh token。"
+    }
+  ],
+  "plan_gate": false,
+  "delegation": {
+    "parent_run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+    "mode": "branch",
+    "depth": 1,
+    "child_seq": 1
+  },
+  "last_event_seq": 0,
+  "credential": "default",
+  "origin": "delegation"
+}

@@ -26,6 +26,8 @@ export const project = {
     memberCanDispatchToTeamRunner: true,
     defaultPermissionPolicy: "auto",
     autoCreateIssues: true,
+    verificationMaxRetries: 3,
+    feedbackBotAllowlist: ["coderabbitai[bot]"],
   },
   viewerRole: "member",
   createdAt: NOW,
@@ -70,6 +72,9 @@ export const acceptanceCriterion = {
   position: 0,
   result: "pending",
   resultUpdatedAt: null,
+  resultSummary: null,
+  checkedByRunId: null,
+  checkedByMemberId: null,
   createdAt: NOW,
   updatedAt: NOW,
 } satisfies AcceptanceCriterion;
@@ -99,6 +104,10 @@ export const run = {
     cost: { amount: 0.02, currency: "USD" },
   },
   startedByMemberId: task.createdByMemberId,
+  origin: "dispatch",
+  credential: "default",
+  consultOfRunId: null,
+  resumesRunId: null,
   createdAt: NOW,
   startedAt: NOW,
   endedAt: null,
@@ -112,6 +121,7 @@ export const childRun = {
   delegationMode: "consult",
   agent: "codex",
   startedByMemberId: null,
+  origin: "delegation",
 } satisfies Run;
 
 export const runEvent = {
@@ -155,4 +165,13 @@ export const needsYouStoppedRun = {
   id: "0195f0a0-0000-7000-8000-00000000000c",
   kind: "stopped_run",
   reason: "Verification 失敗 3 次",
+} satisfies NeedsYouItem;
+
+export const needsYouChildQuestion = {
+  ...needsYouBase,
+  id: "0195f0a0-0000-7000-8000-00000000000d",
+  kind: "child_question",
+  questionId: "0195f0a0-0000-7000-8000-00000000000e",
+  childRunId: childRun.id,
+  question: "refresh token 要存在 cookie 還是 localStorage？",
 } satisfies NeedsYouItem;

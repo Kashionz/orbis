@@ -17,6 +17,8 @@ const policy: ProjectPolicy = {
   memberCanDispatchToTeamRunner: true,
   defaultPermissionPolicy: "auto",
   autoCreateIssues: false,
+  verificationMaxRetries: 3,
+  feedbackBotAllowlist: [],
 };
 
 /** ARCHITECTURE §12.2 的表格（Project 採預設政策：Member 可以派工到 Team Runner、可以核准自己的 Task）。 */

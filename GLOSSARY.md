@@ -123,7 +123,7 @@ _Avoid_: Permission mode、Sandbox mode
 ### 回饋與協作
 
 **Feedback Loop**：
-PR 上的 review 留言或 CI 失敗自動送回原 Run，由 Agent 修正並 push。
+PR 上的 review 留言或 CI 失敗自動送回原 Run 的 session（開一個新的 Run 接續），由 Agent 修正並 push。
 _Avoid_: Auto-fix loop、Bounce-back
 
 **Preview**：

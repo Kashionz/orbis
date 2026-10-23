@@ -78,3 +78,20 @@ string_id!(
     /// 一次 RunControl 的 ID，由 Server 產生（UUID v7），用來對應 Runner 回報的結果。
     RunControlId
 );
+string_id!(
+    /// 一輪 Verification 的 ID，由 Server 產生（UUID v7），即 DB `verifications.id`。
+    VerificationId
+);
+string_id!(
+    /// Acceptance Criterion 的 ID（UUID v7）。
+    AcceptanceCriterionId
+);
+string_id!(
+    /// 一次 Orbis MCP 工具呼叫轉給 Server 的 ID，由 Runner 產生（UUID v7）。
+    /// 重新連線後以同一個 ID 重送，Server 依此去除重複。
+    OrbisCallId
+);
+string_id!(
+    /// Child Run 以 `ask_parent` 提出的問題的 ID，由 Server 產生（UUID v7）。
+    ChildQuestionId
+);

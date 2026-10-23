@@ -1,0 +1,44 @@
+{
+  "type": "run_control",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "action": "verify",
+  "verification_id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "attempt": 2,
+  "criteria": [
+    {
+      "criterion_id": "0192f3a0-0000-7000-8000-0000000000a1",
+      "kind": "command",
+      "description": "單元測試通過",
+      "command": "pnpm test"
+    },
+    {
+      "criterion_id": "0192f3a0-0000-7000-8000-0000000000a2",
+      "kind": "command",
+      "description": "lint 通過",
+      "command": null
+    },
+    {
+      "criterion_id": "0192f3a0-0000-7000-8000-0000000000a3",
+      "kind": "browser",
+      "description": "登入後顯示使用者名稱",
+      "command": null
+    }
+  ],
+  "judge": {
+    "agent": "claude-code",
+    "model": null
+  },
+  "context": [
+    {
+      "type": "text",
+      "text": "Task ORB-12：新增登入頁"
+    },
+    {
+      "type": "resource_link",
+      "uri": "docs/specs/auth.md",
+      "name": "auth.md"
+    }
+  ]
+}

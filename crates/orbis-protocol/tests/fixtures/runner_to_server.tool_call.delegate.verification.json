@@ -1,0 +1,16 @@
+{
+  "type": "tool_call",
+  "call_id": "0192f3a0-0000-7000-8000-000000000102",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "call": {
+    "tool": "delegate",
+    "agent": "claude-code",
+    "model": null,
+    "mode": "consult",
+    "prompt": "逐條判定以下 Acceptance Criterion。",
+    "permission_policy": null,
+    "purpose": "verification",
+    "verification_id": "0192f3a0-0000-7000-8000-0000000000e1"
+  }
+}

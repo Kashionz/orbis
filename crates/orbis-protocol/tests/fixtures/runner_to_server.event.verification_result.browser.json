@@ -1,0 +1,39 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 31,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "verification_result",
+  "verification_id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "attempt": 1,
+  "criterion_id": "0192f3a0-0000-7000-8000-0000000000a3",
+  "outcome": "passed",
+  "summary": "登入後顯示使用者名稱。",
+  "evidence": [
+    {
+      "type": "screenshot",
+      "image": {
+        "blob_id": "0192f3a0-0000-7000-8000-0000000000b1",
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "size": 48213,
+        "media_type": "image/png"
+      },
+      "caption": "登入後的首頁",
+      "url": "http://localhost:4123/"
+    },
+    {
+      "type": "action_log",
+      "steps": [
+        "開啟 /login",
+        "輸入帳號與密碼",
+        "按下登入"
+      ]
+    },
+    {
+      "type": "text",
+      "text": "右上角顯示 octocat。"
+    }
+  ],
+  "judged_by_run_id": "0192f3a0-0000-7000-8000-0000000000ab"
+}

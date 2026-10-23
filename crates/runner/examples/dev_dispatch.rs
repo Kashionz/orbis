@@ -113,6 +113,12 @@ async fn main() -> anyhow::Result<()> {
         plan_gate: false,
         delegation: None,
         last_event_seq: 0,
+        acceptance_criteria: None,
+        credential: None,
+        origin: None,
+        consult_of_run_id: None,
+        continuation: None,
+        prompt_source: None,
     })));
 
     let mut reviews = 0;
@@ -167,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
                                 prompt: vec![ContentBlock::Text {
                                     text: args.followup.clone(),
                                 }],
+                                source: None,
                             }));
                         } else {
                             summary.push("  → Review Gate 核准、push_branch".into());

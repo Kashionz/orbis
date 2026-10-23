@@ -205,6 +205,7 @@ async fn 領取到完成_退回後再次完成並_push() {
                 prompt: vec![ContentBlock::Text {
                     text: "請改成第二版".into(),
                 }],
+                source: None,
             },
         )
         .await;
@@ -327,6 +328,7 @@ async fn m1_劇本在_manual_政策下走完並_push_回本機_bare_repo() {
                 prompt: vec![ContentBlock::Text {
                     text: "m1.txt 第 1 行：請改成第二版".into(),
                 }],
+                source: None,
             },
         ),
     ] {
@@ -625,6 +627,7 @@ async fn agent_設定檔的防護() {
             prompt: vec![ContentBlock::Text {
                 text: "繼續".into(),
             }],
+            source: None,
         },
     )
     .await;

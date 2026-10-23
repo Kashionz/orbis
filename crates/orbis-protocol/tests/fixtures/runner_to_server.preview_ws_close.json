@@ -1,0 +1,6 @@
+{
+  "type": "preview_ws_close",
+  "stream_id": 18,
+  "code": 1001,
+  "reason": "dev server 已停止"
+}

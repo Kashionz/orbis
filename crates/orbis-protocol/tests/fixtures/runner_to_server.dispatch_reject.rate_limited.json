@@ -1,0 +1,6 @@
+{
+  "type": "dispatch_reject",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "reason": "rate_limited",
+  "message": "claude-subscription 在 2026-10-23T09:00:00Z 之前都在 rate limit 中。"
+}

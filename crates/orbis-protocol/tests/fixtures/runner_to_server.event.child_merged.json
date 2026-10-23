@@ -1,0 +1,12 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 40,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "child_merged",
+  "child_run_id": "0192f3a0-0000-7000-8000-0000000000ab",
+  "outcome": "merged",
+  "commit_sha": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+  "conflicted_paths": []
+}

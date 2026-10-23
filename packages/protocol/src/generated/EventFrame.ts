@@ -2,18 +2,26 @@
 import type { ContentBlock } from "./ContentBlock";
 import type { DispatchId } from "./DispatchId";
 import type { GateKind } from "./GateKind";
+import type { MergeOutcome } from "./MergeOutcome";
 import type { PermissionOption } from "./PermissionOption";
 import type { PermissionPurpose } from "./PermissionPurpose";
 import type { PermissionRequestId } from "./PermissionRequestId";
 import type { PlanEntry } from "./PlanEntry";
+import type { PlanSource } from "./PlanSource";
+import type { PreviewStopReason } from "./PreviewStopReason";
+import type { PromptSource } from "./PromptSource";
 import type { RunDiff } from "./RunDiff";
 import type { RunErrorCode } from "./RunErrorCode";
 import type { RunId } from "./RunId";
 import type { RunStatus } from "./RunStatus";
+import type { TextBody } from "./TextBody";
 import type { Timestamp } from "./Timestamp";
 import type { ToolCall } from "./ToolCall";
 import type { ToolCallId } from "./ToolCallId";
 import type { Usage } from "./Usage";
+import type { VerificationId } from "./VerificationId";
+import type { VerificationOutcome } from "./VerificationOutcome";
+import type { VerificationResult } from "./VerificationResult";
 
 /**
  * Runner 送給 Server 的一筆 Event 的 frame（`event`）：[`EventEnvelope`] 再加上產生它的 Dispatch。
@@ -82,4 +90,34 @@ branch: string | null,
 /**
  * 開出 Worktree 時的 commit SHA（40 個十六進位字元）。
  */
-base_commit: string, } | { "kind": "run_diff" } & RunDiff);
+base_commit: string, 
+/**
+ * 分配給這個 Worktree 的 Preview port（協定版本 2）。Repo 設定檔沒有 `[preview].command` 時
+ * 缺少或為 `null`，Server 據此把 Preview 顯示為「沒有設定」；有值但還沒收到 `preview_ready`
+ * 時顯示為「啟動中」。
+ */
+preview_port?: number, } | { "kind": "run_diff" } & RunDiff | { "kind": "plan_proposed", 
+/**
+ * plan 的 markdown 全文：Agent plan 模式交出的內容，或回合最後一則訊息的全文。
+ */
+body: TextBody, source: PlanSource, } | { "kind": "verification_result" } & VerificationResult | { "kind": "verification_completed", verification_id: VerificationId, attempt: number, 
+/**
+ * 全部通過為 `passed`；有任何一條 `failed` 為 `failed`；否則有 `error` 時為 `error`。
+ */
+outcome: VerificationOutcome, } | { "kind": "child_merged", child_run_id: RunId, outcome: MergeOutcome, 
+/**
+ * merge 成功後父分支的 HEAD；有衝突時為 `null`。
+ */
+commit_sha: string | null, 
+/**
+ * 有衝突的檔案（相對於 Worktree 根目錄、以 `/` 分隔），沒有衝突時為空陣列。
+ */
+conflicted_paths: Array<string>, } | { "kind": "final_message", text: TextBody, } | { "kind": "agent_session", session_id: string, } | { "kind": "prompt_submitted", prompt: Array<ContentBlock>, source: PromptSource, } | { "kind": "preview_stopped", reason: PreviewStopReason, 
+/**
+ * 程序的 exit code；沒有啟動成功或被訊號結束時為 `null`。
+ */
+exit_code: number | null, 
+/**
+ * 輸出的最後一段（已遮蔽 secret）。
+ */
+output: string, });

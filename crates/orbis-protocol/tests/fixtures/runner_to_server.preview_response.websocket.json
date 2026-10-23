@@ -1,0 +1,11 @@
+{
+  "type": "preview_response",
+  "stream_id": 18,
+  "status": 101,
+  "headers": [
+    [
+      "sec-websocket-protocol",
+      "vite-hmr"
+    ]
+  ]
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "name": "HTTP body",
+    "kind": "body",
+    "stream_id": 17,
+    "payload_hex": "636f6e736f6c652e6c6f672831293b",
+    "bytes_hex": "0000000011636f6e736f6c652e6c6f672831293b"
+  },
+  {
+    "name": "WebSocket 文字訊息（UTF-8）",
+    "kind": "ws_text",
+    "stream_id": 4294967295,
+    "payload_hex": "7b2274797065223a22e69bb4e696b0227d",
+    "bytes_hex": "01ffffffff7b2274797065223a22e69bb4e696b0227d"
+  },
+  {
+    "name": "WebSocket binary 訊息",
+    "kind": "ws_binary",
+    "stream_id": 16909060,
+    "payload_hex": "00ff10",
+    "bytes_hex": "020102030400ff10"
+  },
+  {
+    "name": "WebSocket 訊息的片段（後面還有）",
+    "kind": "ws_fragment",
+    "stream_id": 18,
+    "payload_hex": "68656c",
+    "bytes_hex": "030000001268656c"
+  },
+  {
+    "name": "空的 body（例如 0 byte 的回應）",
+    "kind": "body",
+    "stream_id": 1,
+    "payload_hex": "",
+    "bytes_hex": "0000000001"
+  }
+]

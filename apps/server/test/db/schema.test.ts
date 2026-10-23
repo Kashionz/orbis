@@ -5,21 +5,35 @@ import {
   acceptanceCriteria,
   agentAvailabilities,
   blobs,
+  childQuestions,
+  collabDocuments,
   dispatches,
   draftTasks,
+  feedbackBatches,
+  feedbackFixes,
   gates,
   members,
+  mentions,
   needsYouItems,
+  notificationPreferences,
+  notifications,
+  orbisToolCalls,
   projectMemberRoles,
   projects,
   repoSpecs,
   repos,
+  reviewComments,
   runEvents,
+  runnerCredentials,
   runners,
   runs,
+  taskComments,
   taskDependencies,
+  taskNotes,
   tasks,
   teams,
+  verificationResults,
+  verifications,
 } from "../../src/db/schema";
 import {
   createEmptyTestDatabase,
@@ -57,28 +71,42 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
           "acceptance_criteria",
           "agent_availabilities",
           "blobs",
+          "child_questions",
+          "collab_documents",
           "dispatches",
           "draft_tasks",
+          "feedback_batches",
+          "feedback_fixes",
           "gates",
           "github_webhook_deliveries",
           "members",
+          "mentions",
           "needs_you_items",
+          "notification_preferences",
+          "notifications",
+          "orbis_tool_calls",
           "project_member_roles",
           "projects",
           "pull_requests",
+          "repo_spec_pull_requests",
           "repo_specs",
           "repos",
           "review_comments",
           "run_controls",
           "run_events",
+          "runner_credentials",
           "runner_pairing_tokens",
           "runners",
           "runs",
           "sessions",
+          "task_comments",
           "task_dependencies",
           "task_issue_links",
+          "task_notes",
           "tasks",
           "teams",
+          "verification_results",
+          "verifications",
         ]);
       } finally {
         await database.drop();
@@ -487,6 +515,293 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
         kind: "command",
         description: "沿用 verify",
       });
+    });
+
+    it("W5–7 的資料表：可以寫入，CHECK 限制擋下不合法的資料", async () => {
+      const { team, project } = await createTeamAndProject("W5");
+      const [member] = await db
+        .insert(members)
+        .values({ teamId: team.id, githubUserId: 5001, githubLogin: "w5", role: "member" })
+        .returning();
+      const [task] = await db
+        .insert(tasks)
+        .values({ projectId: project.id, number: 1, key: "W5-1", title: "t" })
+        .returning();
+      if (!member || !task) throw new Error("unreachable");
+      const [criterion] = await db
+        .insert(acceptanceCriteria)
+        .values({ taskId: task.id, position: 0, kind: "command", description: "測試通過" })
+        .returning();
+      const [parent] = await db
+        .insert(runs)
+        .values({ taskId: task.id, agent: "claude-code", permissionPolicy: "auto", target: "team" })
+        .returning();
+      if (!criterion || !parent) throw new Error("unreachable");
+      expect(parent.origin).toBe("dispatch");
+      const [child] = await db
+        .insert(runs)
+        .values({
+          taskId: task.id,
+          parentRunId: parent.id,
+          delegationMode: "consult",
+          origin: "verification",
+          agent: "codex",
+          permissionPolicy: "auto",
+          target: "team",
+        })
+        .returning();
+      const [fix] = await db
+        .insert(runs)
+        .values({
+          taskId: task.id,
+          origin: "feedback_loop",
+          resumesRunId: parent.id,
+          agent: "claude-code",
+          permissionPolicy: "auto",
+          target: "team",
+          status: "verifying",
+        })
+        .returning();
+      if (!child || !fix) throw new Error("unreachable");
+
+      // Verification
+      const [verification] = await db
+        .insert(verifications)
+        .values({ runId: parent.id, taskId: task.id, attempt: 1 })
+        .returning();
+      if (!verification) throw new Error("unreachable");
+      expect(verification.status).toBe("running");
+      await db.insert(verificationResults).values({
+        verificationId: verification.id,
+        criterionId: criterion.id,
+        outcome: "failed",
+        summary: "pnpm test 失敗",
+        evidence: [{ type: "text", text: "x" }],
+        judgedByRunId: child.id,
+      });
+      await expectPgError(
+        db.insert(verificationResults).values({
+          verificationId: verification.id,
+          criterionId: criterion.id,
+          outcome: "passed",
+          summary: "重複",
+        }),
+        PG.uniqueViolation,
+      );
+
+      // Orbis MCP 工具呼叫與 Child Run 的問題
+      await expectPgError(
+        db.insert(orbisToolCalls).values({
+          callId: "0195f0a0-0000-7000-8000-000000000101",
+          runId: parent.id,
+          tool: "list_runs",
+          input: { tool: "list_runs" },
+          result: { outcome: "ok" },
+        }),
+        PG.checkViolation,
+      );
+      const [question] = await db
+        .insert(childQuestions)
+        .values({ childRunId: child.id, parentRunId: parent.id, question: "存在哪裡？" })
+        .returning();
+      if (!question) throw new Error("unreachable");
+      await expectPgError(
+        db.insert(needsYouItems).values({
+          projectId: project.id,
+          kind: "child_question",
+          taskId: task.id,
+          runId: parent.id,
+        }),
+        PG.checkViolation,
+      );
+      await db.insert(needsYouItems).values({
+        projectId: project.id,
+        kind: "child_question",
+        taskId: task.id,
+        runId: parent.id,
+        childQuestionId: question.id,
+      });
+
+      // Review Gate 的留言：diff 與 preview 各自的欄位
+      const [gate] = await db.insert(gates).values({ taskId: task.id, kind: "review" }).returning();
+      if (!gate) throw new Error("unreachable");
+      await db.insert(reviewComments).values([
+        { gateId: gate.id, path: "a.ts", line: 1, side: "new", body: "diff" },
+        { gateId: gate.id, kind: "preview", url: "https://x.example.com/", body: "preview" },
+      ]);
+      await expectPgError(
+        db.insert(reviewComments).values({ gateId: gate.id, kind: "diff", body: "沒有路徑" }),
+        PG.checkViolation,
+      );
+      await expectPgError(
+        db.insert(reviewComments).values({
+          gateId: gate.id,
+          kind: "preview",
+          url: "https://x.example.com/",
+          path: "a.ts",
+          body: "preview 不能有路徑",
+        }),
+        PG.checkViolation,
+      );
+
+      // 留言、Task note、@mention
+      const [comment] = await db
+        .insert(taskComments)
+        .values({
+          taskId: task.id,
+          authorMemberId: member.id,
+          body: "@[claude](agent:claude-code)",
+        })
+        .returning();
+      if (!comment) throw new Error("unreachable");
+      await expectPgError(
+        db.insert(taskComments).values({
+          taskId: task.id,
+          authorMemberId: member.id,
+          authorRunId: parent.id,
+          body: "兩個作者",
+        }),
+        PG.checkViolation,
+      );
+      await db
+        .insert(taskNotes)
+        .values({ taskId: task.id, runId: fix.id, source: "feedback_loop", body: "第 1 次" });
+      await db.insert(mentions).values({
+        taskId: task.id,
+        sourceKind: "task_comment",
+        sourceId: comment.id,
+        nodeId: "0",
+        agent: "claude-code",
+        consultRunId: child.id,
+      });
+      await expectPgError(
+        db.insert(mentions).values({
+          taskId: task.id,
+          sourceKind: "task_comment",
+          sourceId: comment.id,
+          nodeId: "0",
+          memberId: member.id,
+        }),
+        PG.uniqueViolation,
+      );
+      await expectPgError(
+        db.insert(mentions).values({
+          taskId: task.id,
+          sourceKind: "task_comment",
+          sourceId: comment.id,
+          nodeId: "1",
+          memberId: member.id,
+          agent: "codex",
+        }),
+        PG.checkViolation,
+      );
+      // Repo Spec 草稿中的 mention 沒有 Task；只有共同編輯文件可以沒有 Task
+      await db.insert(mentions).values({
+        sourceKind: "collab_document",
+        sourceId: "repo-spec-draft:0195f0a0-0000-7000-8000-000000000201",
+        nodeId: "0195f0a0-0000-7000-8000-000000000202",
+        memberId: member.id,
+      });
+      await expectPgError(
+        db.insert(mentions).values({
+          sourceKind: "task_comment",
+          sourceId: comment.id,
+          nodeId: "2",
+          memberId: member.id,
+        }),
+        PG.checkViolation,
+      );
+
+      // 通知與設定
+      await db
+        .insert(notifications)
+        .values({ memberId: member.id, kind: "feedback_limit_reached", title: "x", desktop: true });
+      await db.insert(notificationPreferences).values({
+        memberId: member.id,
+        disabledKinds: ["task_assigned"],
+        quietHoursStartMinute: 22 * 60,
+        quietHoursEndMinute: 8 * 60,
+        timeZone: "Asia/Taipei",
+      });
+      const [prefs] = await db
+        .select()
+        .from(notificationPreferences)
+        .where(eq(notificationPreferences.memberId, member.id));
+      expect(prefs?.disabledKinds).toEqual(["task_assigned"]);
+      await expectPgError(
+        db
+          .update(notificationPreferences)
+          .set({ quietHoursEndMinute: null })
+          .where(eq(notificationPreferences.memberId, member.id)),
+        PG.checkViolation,
+      );
+
+      // 共同編輯的文件只屬於一個對象
+      await db.insert(collabDocuments).values({
+        name: `task-description:${task.id}`,
+        taskId: task.id,
+        state: new Uint8Array([1, 2, 3]),
+      });
+      const [doc] = await db
+        .select()
+        .from(collabDocuments)
+        .where(eq(collabDocuments.taskId, task.id));
+      expect(Array.from(doc?.state ?? [])).toEqual([1, 2, 3]);
+      await expectPgError(
+        db.insert(collabDocuments).values({
+          name: `acceptance-criterion:${criterion.id}`,
+          taskId: task.id,
+          acceptanceCriterionId: criterion.id,
+          state: new Uint8Array(),
+        }),
+        PG.checkViolation,
+      );
+
+      // Credential 的覆寫
+      const [runner] = await db
+        .insert(runners)
+        .values({
+          teamId: team.id,
+          kind: "team",
+          name: "team-1",
+          runnerVersion: "0",
+          os: "linux",
+          arch: "x86_64",
+          tokenHash: "hash-w5",
+        })
+        .returning();
+      if (!runner) throw new Error("unreachable");
+      await db
+        .insert(runnerCredentials)
+        .values({ runnerId: runner.id, credential: "default", maxConcurrentRunsOverride: 10 });
+      await expectPgError(
+        db
+          .insert(runnerCredentials)
+          .values({ runnerId: runner.id, credential: "other", maxConcurrentRunsOverride: 0 }),
+        PG.checkViolation,
+      );
+
+      // Feedback Loop 的紀錄連到修正用的 Run；CI 的批次一定要有 head_sha
+      await db.insert(feedbackFixes).values({
+        taskId: task.id,
+        previousRunId: parent.id,
+        runId: fix.id,
+        prCommentId: 1234567890123,
+        githubRepoId: 1,
+        prNumber: 3,
+        source: "ci",
+        trigger: { source: "ci", headSha: "a".repeat(40), items: [] },
+        status: "sent",
+      });
+      await expectPgError(
+        db.insert(feedbackBatches).values({
+          githubRepoId: 1,
+          prNumber: 3,
+          source: "ci",
+          dueAt: new Date(),
+        }),
+        PG.checkViolation,
+      );
     });
   });
 });

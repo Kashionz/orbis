@@ -1,0 +1,19 @@
+{
+  "type": "preview_open",
+  "stream_id": 17,
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "kind": "http",
+  "method": "GET",
+  "path": "/src/main.ts?t=1761206400000",
+  "headers": [
+    [
+      "accept",
+      "*/*"
+    ],
+    [
+      "accept-encoding",
+      "gzip"
+    ]
+  ],
+  "window": 262144
+}

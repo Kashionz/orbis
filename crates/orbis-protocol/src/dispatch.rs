@@ -6,9 +6,11 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::enums::{DelegationMode, PermissionPolicy, wire_enum};
+use crate::enums::{
+    AcceptanceCriterionKind, DelegationMode, PermissionPolicy, PromptSource, RunOrigin, wire_enum,
+};
 use crate::event::ContentBlock;
-use crate::ids::{DispatchId, RunId, TaskId, Timestamp};
+use crate::ids::{AcceptanceCriterionId, DispatchId, RunId, TaskId, Timestamp};
 
 /// Server 把一個 Run 指派給 Runner（Server→Runner）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -41,6 +43,61 @@ pub struct DispatchOffer {
     /// Server 已收到這個 Run 的最後 seq。新 Run 為 0；Run 被改派時，新的 Dispatch
     /// 從 `last_event_seq + 1` 接續編號。
     pub last_event_seq: u64,
+
+    // 以下是協定版本 2（W5–7）新增的欄位，缺少時視為括號中的值。
+    /// Task 的 Acceptance Criterion（結構化），Runner 用來組 prompt（缺少＝沒有）。
+    /// 實際的 Verification 由 Server 以 RunControl `verify` 要求。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub acceptance_criteria: Option<Vec<DispatchCriterion>>,
+    /// Server 選定的 Credential（[`crate::availability::CredentialInfo::label`]）；
+    /// 缺少時由 Runner 依 Agent 的設定決定。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub credential: Option<String>,
+    /// Run 為什麼產生（缺少＝`dispatch`）。`mention` 而且沒有 `delegation` 與
+    /// `consult_of_run_id` 時，Runner 從 `base_ref` 開出唯讀的 Worktree。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub origin: Option<RunOrigin>,
+    /// 沒有父 Run 的 `consult` Run（@agent）要唯讀讀取哪個 Run 的 Worktree；
+    /// Server 只會派給那個 Run 所在的 Runner。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub consult_of_run_id: Option<RunId>,
+    /// Feedback Loop 的新 Run：沿用前一個 Run 的 Worktree 與 session（ARCHITECTURE §5.2）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub continuation: Option<DispatchContinuation>,
+    /// `prompt` 的來源（缺少＝`user`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub prompt_source: Option<PromptSource>,
+}
+
+/// DispatchOffer 中的一條 Acceptance Criterion。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct DispatchCriterion {
+    pub criterion_id: AcceptanceCriterionId,
+    pub kind: AcceptanceCriterionKind,
+    pub description: String,
+    /// `command` 類型要執行的指令；`null` 表示沿用 Repo 設定檔的 `[verify].commands`。
+    /// 其他類型一律為 `null`。
+    pub command: Option<String>,
+}
+
+/// Feedback Loop 的新 Run 要接續的前一個 Run（ARCHITECTURE §5.2）。
+/// Server 只會把這種 Run 派給前一個 Run 所在的 Runner；`branch` 與前一個 Run 相同。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct DispatchContinuation {
+    /// 前一個 Run。Runner 沿用它的 Worktree；Worktree 已經不在時，從 remote 的分支重建。
+    pub previous_run_id: RunId,
+    /// 前一個 Run 回報的 ACP session id（`agent_session` Event）。有值而且 Agent 支援時以
+    /// `session/resume`（或 `session/load`）恢復；沒有或恢復失敗時開新的 session，
+    /// 並送 `error(session_resume_failed)`（非 fatal）。
+    pub session_id: Option<String>,
+    /// 前一個 Run 的 base commit。這個 Run 的 `worktree_ready` 與 review diff 都以它為基準。
+    pub base_commit: String,
 }
 
 /// DispatchOffer 中 Task 的資訊。
@@ -71,6 +128,15 @@ pub struct DispatchRepo {
 pub struct DispatchDelegation {
     pub parent_run_id: RunId,
     pub mode: DelegationMode,
+    /// Child Run 的深度：父 Run 是頂層 Run 時為 1（協定版本 2 新增，缺少時由 Runner 自己計算）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub depth: Option<u32>,
+    /// 這是父 Run 的第幾個 Child Run，從 1 開始，即分支名稱 `--c<n>` 的 n
+    /// （協定版本 2 新增）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub child_seq: Option<u32>,
 }
 
 /// Runner 接受 Dispatch（Runner→Server）。
@@ -93,6 +159,9 @@ wire_enum! {
     DispatchRejectReason {
         /// 該 Agent 使用的 Credential 已達並行上限（ARCHITECTURE §7）。
         ConcurrencyLimit => "concurrency_limit",
+        /// 該 Agent 使用的 Credential 正在 rate limit 中（ARCHITECTURE §7）。Server 本來就不會派，
+        /// 這是 Runner 端的保護。
+        RateLimited => "rate_limited",
         /// 這台 Runner 沒有這個 Agent，或 Agent 目前無法使用（未安裝、未登入）。
         AgentUnavailable => "agent_unavailable",
         /// 收到時已超過 `expires_at`。

@@ -20,18 +20,27 @@ use crate::control::{
 };
 use crate::dispatch::DispatchRejectReason;
 use crate::enums::{
-    DelegationMode, GateDecision, GateKind, PermissionPolicy, RunStatus, RunnerKind,
+    AcceptanceCriterionKind, DelegationMode, GateDecision, GateKind, PermissionPolicy,
+    PromptSource, RunOrigin, RunStatus, RunnerKind,
 };
 use crate::event::{
-    EventEnvelope, EventKind, EventKindName, FileChange, PermissionOptionKind, PermissionPurpose,
-    PlanEntryStatus, RunErrorCode, ToolCallStatus, ToolKind,
+    EventEnvelope, EventKind, EventKindName, FileChange, MergeOutcome, PermissionOptionKind,
+    PermissionPurpose, PlanEntryStatus, PlanSource, PreviewStopReason, RunErrorCode,
+    ToolCallStatus, ToolKind,
 };
 use crate::frame::{RunnerToServer, ServerToRunner};
 use crate::names::Names;
+use crate::preview::{
+    PREVIEW_DATA_HEADER_LEN, PREVIEW_INITIAL_WINDOW, PREVIEW_MAX_CHUNK,
+    PREVIEW_MAX_STREAMS_PER_RUN, PREVIEW_MAX_WS_MESSAGE, PreviewDataKind, PreviewResetReason,
+    PreviewStreamKind,
+};
 use crate::sidecar::{
     SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SIDECAR_FLAG, SidecarCommand,
     SidecarConnectionState, SidecarOutput,
 };
+use crate::tool::{DelegationPurpose, OrbisToolErrorCode, OrbisToolName};
+use crate::verification::{VerificationEvidence, VerificationKind, VerificationOutcome};
 
 const HEADER: &str = "// 由 crates/orbis-protocol 產生（cargo gen-protocol），不可手改。\n";
 
@@ -85,6 +94,13 @@ fn export_roots(cfg: &Config) -> Result<(), ts_rs::ExportError> {
     RunnerKind::export_all(cfg)?;
     GateKind::export_all(cfg)?;
     GateDecision::export_all(cfg)?;
+    RunOrigin::export_all(cfg)?;
+    PromptSource::export_all(cfg)?;
+    AcceptanceCriterionKind::export_all(cfg)?;
+    VerificationKind::export_all(cfg)?;
+    VerificationOutcome::export_all(cfg)?;
+    VerificationEvidence::export_all(cfg)?;
+    OrbisToolName::export_all(cfg)?;
     // `#[serde(flatten)]` 的型別會被 ts-rs 內嵌到外層，不會自己產生檔案，所以要列在這裡。
     EventEnvelope::export_all(cfg)?;
     EventKind::export_all(cfg)?;
@@ -241,6 +257,84 @@ fn value_lists() -> Vec<ValueList> {
             RunErrorCode::ALL.iter().copied(),
             RunErrorCode::as_str,
         ),
+        list(
+            "RUN_ORIGINS",
+            "RunOrigin",
+            RunOrigin::ALL.iter().copied(),
+            RunOrigin::as_str,
+        ),
+        list(
+            "PROMPT_SOURCES",
+            "PromptSource",
+            PromptSource::ALL.iter().copied(),
+            PromptSource::as_str,
+        ),
+        list(
+            "ACCEPTANCE_CRITERION_KINDS",
+            "AcceptanceCriterionKind",
+            AcceptanceCriterionKind::ALL.iter().copied(),
+            AcceptanceCriterionKind::as_str,
+        ),
+        list(
+            "VERIFICATION_KINDS",
+            "VerificationKind",
+            VerificationKind::ALL.iter().copied(),
+            VerificationKind::as_str,
+        ),
+        list(
+            "VERIFICATION_OUTCOMES",
+            "VerificationOutcome",
+            VerificationOutcome::ALL.iter().copied(),
+            VerificationOutcome::as_str,
+        ),
+        list(
+            "PLAN_SOURCES",
+            "PlanSource",
+            PlanSource::ALL.iter().copied(),
+            PlanSource::as_str,
+        ),
+        list(
+            "MERGE_OUTCOMES",
+            "MergeOutcome",
+            MergeOutcome::ALL.iter().copied(),
+            MergeOutcome::as_str,
+        ),
+        list(
+            "PREVIEW_STOP_REASONS",
+            "PreviewStopReason",
+            PreviewStopReason::ALL.iter().copied(),
+            PreviewStopReason::as_str,
+        ),
+        list(
+            "MCP_TOOLS",
+            "OrbisToolName",
+            OrbisToolName::ALL.iter().copied(),
+            OrbisToolName::as_str,
+        ),
+        list(
+            "MCP_TOOL_ERROR_CODES",
+            "OrbisToolErrorCode",
+            OrbisToolErrorCode::ALL.iter().copied(),
+            OrbisToolErrorCode::as_str,
+        ),
+        list(
+            "DELEGATION_PURPOSES",
+            "DelegationPurpose",
+            DelegationPurpose::ALL.iter().copied(),
+            DelegationPurpose::as_str,
+        ),
+        list(
+            "PREVIEW_STREAM_KINDS",
+            "PreviewStreamKind",
+            PreviewStreamKind::ALL.iter().copied(),
+            PreviewStreamKind::as_str,
+        ),
+        list(
+            "PREVIEW_RESET_REASONS",
+            "PreviewResetReason",
+            PreviewResetReason::ALL.iter().copied(),
+            PreviewResetReason::as_str,
+        ),
     ]
 }
 
@@ -280,6 +374,12 @@ export const DEFAULT_MAX_CONCURRENT_RUNS = {DEFAULT_MAX_CONCURRENT_RUNS};"
         crate::RUNNER_BLOB_PATH
     )
     .unwrap();
+    writeln!(
+        out,
+        "\nexport const RUNNER_BLOB_ROUTE = \"{}\";",
+        crate::RUNNER_BLOB_ROUTE
+    )
+    .unwrap();
     writeln!(out, "\nexport const SIDECAR_FLAG = \"{SIDECAR_FLAG}\";").unwrap();
     writeln!(
         out,
@@ -289,6 +389,48 @@ export const DEFAULT_MAX_CONCURRENT_RUNS = {DEFAULT_MAX_CONCURRENT_RUNS};"
     writeln!(
         out,
         "\nexport const SIDECAR_EXIT_VERSION_MISMATCH = {SIDECAR_EXIT_VERSION_MISMATCH};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const PREVIEW_INITIAL_WINDOW = {PREVIEW_INITIAL_WINDOW};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const PREVIEW_MAX_CHUNK = {PREVIEW_MAX_CHUNK};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const PREVIEW_MAX_STREAMS_PER_RUN = {PREVIEW_MAX_STREAMS_PER_RUN};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const PREVIEW_DATA_HEADER_LEN = {PREVIEW_DATA_HEADER_LEN};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const PREVIEW_MAX_WS_MESSAGE = {PREVIEW_MAX_WS_MESSAGE};"
+    )
+    .unwrap();
+    // Preview binary 訊息第一個 byte 的值（見 crates/orbis-protocol/src/preview.rs）。
+    let kinds: Vec<String> = PreviewDataKind::ALL
+        .iter()
+        .map(|k| format!("{}: {}", k.as_str(), *k as u8))
+        .collect();
+    writeln!(
+        out,
+        "
+export const PREVIEW_DATA_KINDS = {{ {} }} as const;",
+        kinds.join(", ")
     )
     .unwrap();
     for l in &lists {

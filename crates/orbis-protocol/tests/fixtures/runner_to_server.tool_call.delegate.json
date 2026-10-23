@@ -1,0 +1,16 @@
+{
+  "type": "tool_call",
+  "call_id": "0192f3a0-0000-7000-8000-000000000101",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "call": {
+    "tool": "delegate",
+    "agent": "codex",
+    "model": null,
+    "mode": "branch",
+    "prompt": "把 session 處理改成用 refresh token。",
+    "permission_policy": "manual",
+    "purpose": "tool",
+    "verification_id": null
+  }
+}

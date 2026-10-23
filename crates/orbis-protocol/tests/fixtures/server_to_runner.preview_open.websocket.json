@@ -1,0 +1,15 @@
+{
+  "type": "preview_open",
+  "stream_id": 18,
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "kind": "websocket",
+  "method": "GET",
+  "path": "/?token=hmr",
+  "headers": [
+    [
+      "sec-websocket-protocol",
+      "vite-hmr"
+    ]
+  ],
+  "window": 262144
+}

@@ -1,0 +1,16 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 21,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "plan_proposed",
+  "body": {
+    "type": "blob",
+    "blob_id": "0192f3a0-0000-7000-8000-0000000000b2",
+    "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+    "size": 182044,
+    "media_type": "text/plain; charset=utf-8"
+  },
+  "source": "prompt_fallback"
+}

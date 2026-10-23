@@ -97,8 +97,8 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 | Planning | 派工後 | Agent 以 plan 模式產出 plan |
 | Plan Gate | plan 產出 | 人工核准；可以依 Project 或 Task 關閉，關閉時直接進入 Running |
 | Running | plan 核准 | Agent 修改 Worktree |
-| Verifying | Agent 回報完成 | 自動檢查 `command`、`agent`、`browser` 類型的條件 |
-| Review Gate | Verification 全數通過 | 人工 review diff；行內留言可以退回 Running（**同一個 Worktree、同一個 session**） |
+| Verifying | Agent 回報完成 | Server 送 `verify` 給 Runner，自動檢查 `command`、`agent`、`browser` 類型的條件（§5.1） |
+| Review Gate | Verification 全數通過 | 人工 review diff；行內留言與 Preview 留言可以退回 Running（**同一個 Worktree、同一個 session**）；`manual` 條件全部打勾才能核准 |
 | PR Open | Review Gate 通過 | 自動 push 並開 PR |
 | Done | PR merge（webhook） | 自動轉換 |
 
@@ -118,7 +118,15 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 | `browser` | Agent 透過 Playwright MCP 操作 Preview，附上截圖與操作紀錄作為證據（§13） |
 | `manual` | 在 Review Gate 由人工打勾 |
 
-- **失敗重試**：Verification 失敗時，自動把失敗原因送回原 Run 重試，**預設最多 3 次**，超過就停下並加入 Needs You。
+- **流程**：主 Run 的 Agent 結束回合（`awaiting_gate`，review）後，沒有 `command`、`agent`、`browser` 類型的條件時直接進入 Review Gate；有的話 Server 送 RunControl `verify`，列出這一輪要檢查的條件。
+  - Runner 回報 `verifying`，逐條執行。`command` 在 Worktree 執行；`agent`、`browser` 以 Orbis MCP 的 `delegate`（`purpose = verification`）請 Server 建立 `consult` Child Run 判定，`browser` 另外注入 Playwright MCP。
+  - 每條條件一筆 `verification_result` Event（`passed`、`failed`，或無法判定的 `error`，附證據），全部結束送 `verification_completed`，再回到 `awaiting_gate`（review）。
+  - 結果與證據存在 `verifications` 與 `verification_results`，最新一次也寫回 Acceptance Criterion。
+- **失敗重試**：Verification 失敗時，Server 自動把失敗原因以 `prompt` 送回原 Run 重試，**預設最多 3 次**（Project 可以設定），超過就停在 Verifying 並加入 Needs You。人可以選擇：
+  - 附上意見再試一次（次數重新計算）。
+  - 略過失敗，進入 Review Gate（Review 時看得到失敗的結果）。
+  - 中止 Run，Task 回到 Ready。
+- **`manual`**：在 Review Gate 由人打勾，全部打勾後才能核准。
 
 ### 5.2 Feedback Loop（PR 開出之後）
 
@@ -128,7 +136,10 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - bot 留言預設不觸發，要在白名單中的 bot 才會觸發。
 - **合併再送**：等 review 送出後才觸發，或最後一則留言之後 2 分鐘才觸發；同一批留言合併成一次送出。
 - **次數上限**：每個 PR 自動修正最多 **5 次**，CI 與 review 分開計數。超過就停下並通知 Task 負責人。
-- **紀錄**：每次自動修正都在 Task 與 PR 上留言，註明是哪個來源觸發。
+- **紀錄**：每次自動修正都在 Task（Task note）與 PR 上留下紀錄，註明是哪個來源觸發。
+- **送回原 Run 的 session**：PR 開出後原 Run 已經 `completed`，所以每次修正都開一個**新的 Run**（`origin = feedback_loop`，以 `resumes_run_id` 連到前一個 Run）。
+  - 派回前一個 Run 的 Runner，沿用同一個 Worktree 與分支。`dispatch_offer` 的 `continuation` 帶上前一個 Run 回報的 ACP session id（`agent_session` Event），Runner 以 `session/resume`（或 `session/load`）恢復；Agent 不支援或恢復失敗時開新的 session，並附上 Task 與目前 diff 的摘要。
+  - 修正後經過 Verifying，通過就直接 push（不經過 Review Gate，PR 上的人類 review 就是 Gate），Task 回到 PR Open。
 
 ---
 
@@ -153,8 +164,15 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 
   | 方向 | frame |
   |---|---|
-  | Runner → Server | `hello`、`heartbeat`、`agent_availability`、`dispatch_accept`、`dispatch_reject`、`event`、`run_control_result` |
-  | Server → Runner | `hello_ack`、`hello_rejected`、`dispatch_offer`、`run_control`、`event_ack` |
+  | Runner → Server | `hello`、`heartbeat`、`agent_availability`、`dispatch_accept`、`dispatch_reject`、`event`、`run_control_result`、`tool_call`、`preview_response` |
+  | Server → Runner | `hello_ack`、`hello_rejected`、`dispatch_offer`、`run_control`、`event_ack`、`tool_result`、`preview_open` |
+  | 雙向 | `preview_window`、`preview_end`、`preview_reset`、`preview_ws_close` |
+
+  - 協定版本 2（W5–7）新增 `tool_call`／`tool_result`（Orbis MCP 工具呼叫，§9）與 `preview_*`（Preview 通道，§13）。Preview 的資料（HTTP body、WebSocket 訊息）走 WebSocket binary 訊息：`[kind u8][stream_id u32 big-endian][payload]`，以 credit 控制背壓。
+    - 單一訊息的 payload 最多 64 KiB。更大的 WebSocket 訊息切成多段，前面各段用 `ws_fragment`，最後一段用 `ws_text` 或 `ws_binary`；組回後最多 16 MiB，超過以 close code 1009 關閉。
+    - 初始 credit：Server→Runner 方向固定 256 KiB；Runner→Server 方向由 `preview_open` 的 `window` 指定。
+    - `worktree_ready` 帶 `preview_port`（沒有設定 `[preview]` 時缺少），Server 據此顯示 Preview 是「沒有設定」還是「啟動中」。
+  - `run_control` 的動作：取消、後續 prompt（帶來源，例如 Review Gate 退回、Verification 重試、Feedback Loop）、回覆權限請求、Gate 結果、push 分支、`verify`（§5.1）、`archive`（§6.2 的封存）、`restart_preview`。
 
   - 連線後 Runner 先送 `hello`（協定版本與 Pairing token，或已配對的 Runner token）。Server 回 `hello_ack`（Runner ID、第一次 Pairing 時發的 Runner token、心跳間隔、各 Run 已收到的最後 seq），或回 `hello_rejected` 並附上原因。
   - Runner 收到 `hello_ack` 後，先送 `agent_availability`，接著依間隔送 `heartbeat`。
@@ -333,9 +351,13 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 | `list_runs()` | 列出目前 Run 的所有 Child Run |
 | `merge_child(run_id)` | 把 `branch` 模式的子分支 merge 進父分支；有衝突時交給父 Agent 解決 |
 | `ask_parent(question)` | Child Run 向父 Run 提問，阻塞等待回答 |
+| `answer_child(run_id, question_id, answer)` | 父 Agent 回答 Child Run 的問題 |
 | `propose_tasks(spec, tasks[])` | 提出 Draft Task（含 Acceptance Criterion 與相依關係） |
 | `update_task_note(task_id, note)` | 在 Task 上留下進度或決策紀錄 |
 
+- **工具呼叫的轉送**：Runner 把 Agent 的呼叫轉成 `tool_call` 送給 Server，Server 以 `tool_result` 回覆；防護規則一律以 Server 為準。斷線重連後 Runner 以同一個 `call_id` 重送，Server 依此去除重複。`wait_run`、`ask_parent` 在 Server 端阻塞到有結果為止。
+- **`ask_parent` 的回答**：父 Agent 在 `wait_run`、`get_run`、`list_runs` 的結果中看到待回答的問題，以 `answer_child` 回答。父 Run 的回合已經結束時，問題加入 Needs You，由人回答。
+- **派工**：Child Run 一律派給父 Run 所在的 Runner；那台 Runner 沒有這個 Agent 時拒絕 `delegate`。
 - **模式**：
   - `consult`：在父 Run 的 Worktree 中以唯讀模式執行。
   - `branch`：開出子 Worktree 與子分支。
@@ -436,8 +458,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **@mention 可以用在**：Task 留言、Spec 共同編輯、diff 行內留言。
 - **@agent**：觸發一個 `consult` Run。
 - **個人設定**：可以依事件類型關閉通知，也可以設定勿擾時段。
-- **Phase 1 的即時更新**：Needs You 的數量、桌面通知與看板都以輪詢取得（每 5 秒），之後再換成推送。即時推送只用於 Run 的 Event。
+  - 依事件類型關閉時，App 內與桌面都不送。
+  - 勿擾時段只抑制桌面推送，App 內照常記錄，結束後也不補推。
+- **送達**：Web 經由 `/api/ws` 的 `notification` 訊息即時收到 App 內的通知（不需要訂閱，送到該 Member 的所有連線）；Electron 每 5 秒輪詢桌面通知 feed（已套用個人設定與勿擾時段）。
+- **Phase 1 的即時更新**：Needs You 的數量、桌面通知與看板都以輪詢取得（每 5 秒），之後再換成推送。即時推送只用於 Run 的 Event 與 App 內的通知。
   - Web 的 WebSocket 是 `/api/ws`，以 session cookie 認證，而且 Origin 必須是 Web 的 origin。訊息定義在 `packages/api-contract` 的 `ws.ts`。
+  - Server 以 `notification { notification }` 推送新的 App 內通知。
   - Web 送 `subscribe_run { runId, afterSeq }`，Server 先從資料庫重播 `afterSeq` 之後的 Event，再接上即時串流，只送連續的 seq，不漏也不重。不再需要時送 `unsubscribe_run`。
   - Server 以 `run_events { runId, events }` 批次送出：重播時一則最多 500 筆，即時推送時通常一則一筆。
   - 每條連線最多訂閱 50 個 Run，超過時回 `limit_exceeded`。其他錯誤：訊息格式不對（`invalid_message`）、Run 不存在或不屬於這個 Team（`not_found`）、沒有權限（`forbidden`）。
@@ -465,6 +491,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - 同一個 `blob_id` 重送相同內容視為成功，可以安全地重試；內容不同回 409。
     - Web 以 `GET /api/blobs/<blob_id>` 下載，需要能查看該 Run。只有圖片直接顯示，其他內容一律以附件下載；過期回 410。
   - 上傳成功後，Runner 才送出參照它的 Event。
+  - 同一個路徑也支援 `GET /api/runner/blobs/<blob_id>`：Runner 下載 blob（同樣以 Runner token 認證），例如 Review Gate 退回時附上的 Preview 截圖。只能下載掛在這台 Runner 正在執行的 Run 上的 blob，其他回 404，過期回 410。
   - 到期的 blob 會被清除（Server 每小時檢查一次），但 **`run_events` 不刪**：Run 永遠可以完整重播，到期的內容顯示為已過期。
   - Review 用的完整 diff（§10）也存在 `run_events` 中。**超過 90 天的 Run，review diff 中放在 blob 的大檔案無法顯示**，只剩檔案清單與內嵌的小檔案。
 - **斷線處理**：Runner 斷線時，Event 先暫存在本機，重新連上後以 seq 補送。UI 可以從 Event 重播整個 Run。

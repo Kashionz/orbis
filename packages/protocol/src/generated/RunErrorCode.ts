@@ -4,4 +4,4 @@
  * `error` Event 的錯誤代碼。
  * 彈性：A1／A2 實作時可能增加代碼，接收端遇到不認得的值要當成 `internal` 處理。
  */
-export type RunErrorCode = "agent_start_failed" | "agent_crashed" | "agent_error" | "worktree_failed" | "setup_failed" | "git_failed" | "path_too_long" | "internal";
+export type RunErrorCode = "agent_start_failed" | "agent_crashed" | "agent_error" | "worktree_failed" | "setup_failed" | "git_failed" | "path_too_long" | "merge_child_conflict" | "session_resume_failed" | "internal";

@@ -120,6 +120,8 @@ export class EventSocket {
       for (const s of this.subscriptions.get(parsed.runId) ?? []) s.onEvents(parsed.events);
       return;
     }
+    // 通知由通知中心（C2）處理，Run 的 Event 訂閱不需要。
+    if (parsed.type === "notification") return;
     const targets = parsed.runId
       ? (this.subscriptions.get(parsed.runId) ?? [])
       : [...this.subscriptions.values()].flatMap((set) => [...set]);

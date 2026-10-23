@@ -290,6 +290,8 @@ impl Run {
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
         self.emit(EventKind::WorktreeReady {
+            // Preview 的 port 由 E2 填入。
+            preview_port: None,
             worktree_path: wt.path.to_string_lossy().into_owned(),
             branch: wt.branch.clone(),
             base_commit: wt.base_commit.clone(),
@@ -976,7 +978,7 @@ impl Run {
                     }
                     return Ok(None);
                 }
-                RunControlAction::Prompt { prompt } => {
+                RunControlAction::Prompt { prompt, .. } => {
                     self.applied(&control);
                     return Ok(Some(normalize::prompt_to_acp(prompt)));
                 }
@@ -997,6 +999,14 @@ impl Run {
                     &control,
                     RunControlRejectReason::UnknownPermissionRequest,
                     "沒有等待中的權限請求",
+                ),
+                // 協定版本 2 的動作，由 A2（verify、archive）與 E2（restart_preview）實作。
+                RunControlAction::Verify(_)
+                | RunControlAction::Archive
+                | RunControlAction::RestartPreview => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "這個 Runner 還不支援這個動作",
                 ),
             }
         }

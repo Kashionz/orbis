@@ -288,6 +288,8 @@ async fn validates_dispatch_offers() {
             o.delegation = Some(DispatchDelegation {
                 parent_run_id: "p".into(),
                 mode: DelegationMode::Consult,
+                depth: None,
+                child_seq: None,
             });
             o
         }),
@@ -346,7 +348,10 @@ async fn validates_dispatch_offers() {
             "r4",
             "d4",
             "c3",
-            RunControlAction::Prompt { prompt: Vec::new() },
+            RunControlAction::Prompt {
+                prompt: Vec::new(),
+                source: None,
+            },
         )
         .await;
     assert_eq!(busy["reason"], "invalid_state");

@@ -3,12 +3,18 @@ import type { ContentBlock } from "./ContentBlock";
 import type { GateDecision } from "./GateDecision";
 import type { GateKind } from "./GateKind";
 import type { PermissionRequestId } from "./PermissionRequestId";
+import type { PromptSource } from "./PromptSource";
+import type { VerificationRequest } from "./VerificationRequest";
 
 /**
  * RunControl 的動作，以 `action` 區分。
  */
-export type RunControlAction = { "action": "cancel" } | { "action": "prompt", prompt: Array<ContentBlock>, } | { "action": "permission_response", request_id: PermissionRequestId, 
+export type RunControlAction = { "action": "cancel" } | { "action": "prompt", prompt: Array<ContentBlock>, 
+/**
+ * prompt 的來源；缺少時視為 `user`（W5–7 之前的 Server 不會送這個欄位）。
+ */
+source?: PromptSource, } | { "action": "permission_response", request_id: PermissionRequestId, 
 /**
  * 被選擇的 [`crate::event::PermissionOption::option_id`]。
  */
-option_id: string, } | { "action": "gate_result", gate: GateKind, decision: GateDecision, } | { "action": "push_branch" };
+option_id: string, } | { "action": "gate_result", gate: GateKind, decision: GateDecision, } | { "action": "push_branch" } | { "action": "verify" } & VerificationRequest | { "action": "archive" } | { "action": "restart_preview" };

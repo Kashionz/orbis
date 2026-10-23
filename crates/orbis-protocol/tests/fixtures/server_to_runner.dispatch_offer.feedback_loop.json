@@ -1,0 +1,53 @@
+{
+  "type": "dispatch_offer",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d3",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000ac",
+  "expires_at": "2026-10-23T08:00:30.000Z",
+  "task": {
+    "task_id": "0192f3a0-0000-7000-8000-0000000000f1",
+    "task_key": "ORB-12",
+    "title": "新增登入頁"
+  },
+  "run_seq": 3,
+  "repo": {
+    "name": "web",
+    "clone_url": "https://github.com/acme/web.git",
+    "default_branch": "main",
+    "base_ref": "origin/main"
+  },
+  "branch": "orbis/ORB-12-login-fix",
+  "agent": "claude-code",
+  "model": null,
+  "permission_policy": "auto",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "PR 上的 review 留言：src/login.ts:12 要處理 token 過期。"
+    }
+  ],
+  "plan_gate": false,
+  "delegation": null,
+  "last_event_seq": 0,
+  "acceptance_criteria": [
+    {
+      "criterion_id": "0192f3a0-0000-7000-8000-0000000000a1",
+      "kind": "command",
+      "description": "單元測試通過",
+      "command": "pnpm test"
+    },
+    {
+      "criterion_id": "0192f3a0-0000-7000-8000-0000000000a3",
+      "kind": "manual",
+      "description": "設計 review",
+      "command": null
+    }
+  ],
+  "credential": "claude-subscription",
+  "origin": "feedback_loop",
+  "continuation": {
+    "previous_run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+    "session_id": "0f9c2a4e-7d1b-4c55-9e0a-3b6f5d2c1a90",
+    "base_commit": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+  },
+  "prompt_source": "feedback_review"
+}
