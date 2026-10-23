@@ -2,12 +2,11 @@ import { getDesktopBridge } from "@orbis/desktop/bridge";
 import { TERMINAL_RUN_STATUSES } from "@orbis/protocol";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   cancelRun,
   projectsQuery,
   queryKeys,
-  respondToPermission,
   runQuery,
   taskGatesQuery,
   taskQuery,
@@ -21,11 +20,10 @@ import {
   RUN_STATUS_LABELS,
   RUNNER_KIND_LABELS,
 } from "../../lib/labels";
-import { canRespondToPermission } from "../../lib/permissions";
 import { usePermissions } from "../auth/use-permissions";
 import { PlanGatePanel } from "../gate/PlanGatePanel";
 import { VerificationPanel } from "../verification/VerificationPanel";
-import type { ItemControls } from "./TimelineItemView";
+import { useRunControls } from "./use-run-controls";
 import { useRunTimeline } from "./use-run-timeline";
 import { VirtualTimeline } from "./VirtualTimeline";
 
@@ -43,7 +41,6 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const project = projects.find((p) => p.id === task?.projectId);
   const permissions = usePermissions(project, task);
   const { timeline, connected, error: streamError } = useRunTimeline(runId);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [tab, setTab] = useState<RunTab>("timeline");
 
   const status = timeline.status ?? run.status;
@@ -73,29 +70,8 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
     void queryClient.invalidateQueries({ queryKey: queryKeys.needsYou });
   }, [timeline.status, queryClient, runId]);
 
-  const respond = useMutation({
-    mutationFn: ({ requestId, optionId }: { requestId: string; optionId: string }) =>
-      respondToPermission(runId, requestId, { optionId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
-  });
   const cancel = useMutation({ mutationFn: () => cancelRun(runId) });
-
-  const toggle = useCallback((key: string) => {
-    setExpanded((previous) => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
-  const controls: ItemControls = {
-    isExpanded: (key) => expanded.has(key),
-    toggle,
-    canRespond: (purpose) => canRespondToPermission(run, purpose, permissions.ctx),
-    respondingRequestId: respond.isPending ? (respond.variables?.requestId ?? null) : null,
-    respond: (requestId, optionId) => respond.mutate({ requestId, optionId }),
-  };
+  const { controls, error: respondError } = useRunControls(run, permissions);
 
   return (
     <main className="run-page">
@@ -163,7 +139,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
         )}
       </header>
       {run.worktreePath && <DesktopActions worktreePath={run.worktreePath} />}
-      <ErrorText error={streamError ?? respond.error ?? cancel.error} />
+      <ErrorText error={streamError ?? respondError ?? cancel.error} />
       {planGate && (
         <PlanGatePanel
           gate={planGate}

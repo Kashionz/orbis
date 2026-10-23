@@ -76,14 +76,14 @@ test.describe("Task 頁", () => {
     await expect(dependency).toHaveCount(0);
   });
 
-  test("Run 歷史連到 Run 即時檢視", async ({ page }) => {
+  test("Run 樹連到 Run 即時檢視", async ({ page }) => {
     await page.goto("/tasks/ORB-4");
-    const rows = page.locator(".run-table tbody tr");
+    const rows = page.getByRole("treeitem");
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText("claude-code");
     await expect(rows.first()).toContainText("我的電腦");
     await expect(rows.first()).toContainText("等待 Gate");
-    await rows.first().getByRole("link").click();
+    await rows.first().getByRole("link", { name: "開啟 Run 頁" }).click();
     await expect(page).toHaveURL(/\/runs\/run-\d+$/);
   });
 

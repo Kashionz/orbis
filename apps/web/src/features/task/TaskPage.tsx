@@ -21,7 +21,7 @@ import { AcceptanceCriteriaSection } from "./AcceptanceCriteriaSection";
 import { DependsOnField } from "./DependsOnField";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { ReadyPanel } from "./ReadyPanel";
-import { RunHistory } from "./RunHistory";
+import { RunTree } from "./RunTree";
 
 /** Task 頁（交付 2）：描述、Acceptance Criterion、depends_on、指派對象、Run 歷史。 */
 export function TaskPage({ taskKey }: { taskKey: string }) {
@@ -100,7 +100,7 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
             onSave={(description) => update.mutateAsync({ description })}
           />
           <AcceptanceCriteriaSection taskId={task.id} canEdit={canEdit} />
-          <RunHistory taskId={task.id} />
+          <RunTree taskId={task.id} permissions={permissions} />
         </div>
         <aside className="task-side">
           <ReadyPanel task={task} canEdit={canEdit} />

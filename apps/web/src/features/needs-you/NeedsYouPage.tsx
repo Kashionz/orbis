@@ -1,7 +1,13 @@
 import type { NeedsYouItem } from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { needsYouQuery, queryKeys, respondToPermission } from "../../api/resources";
+import { useState } from "react";
+import {
+  answerChildQuestion,
+  needsYouQuery,
+  queryKeys,
+  respondToPermission,
+} from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { formatTime } from "../../lib/format";
 import { PERMISSION_PURPOSE_LABELS } from "../../lib/labels";
@@ -61,6 +67,7 @@ export function NeedsYouPage() {
                 ))}
               <JumpLink item={item} />
             </div>
+            {item.kind === "child_question" && <ChildQuestionForm item={item} />}
           </li>
         ))}
       </ul>
@@ -103,7 +110,7 @@ function JumpLink({ item }: { item: NeedsYouItem }) {
       </Link>
     );
   }
-  // Plan Gate 的 UI 在 C2；先跳到 Run 頁
+  // Plan Gate 的面板、Verification 的決定都在 Run 頁
   const focus =
     item.kind === "permission_request" ? `permission-${item.permissionRequestId}` : undefined;
   return (
@@ -115,5 +122,39 @@ function JumpLink({ item }: { item: NeedsYouItem }) {
     >
       前往 Run
     </Link>
+  );
+}
+
+/** Child Run 以 `ask_parent` 提出、父 Run 的回合已經結束而改由人回答的問題（§9）。 */
+function ChildQuestionForm({ item }: { item: NeedsYouItem & { kind: "child_question" } }) {
+  const queryClient = useQueryClient();
+  const [answer, setAnswer] = useState("");
+  const send = useMutation({
+    mutationFn: () => answerChildQuestion(item.questionId, { answer: answer.trim() }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
+  });
+  return (
+    <form
+      className="child-question-form"
+      aria-label={`回答 ${item.taskKey} 的 Child Run`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (answer.trim() !== "") send.mutate();
+      }}
+    >
+      <Link to="/runs/$runId" params={{ runId: item.childRunId }}>
+        提問的 Child Run
+      </Link>
+      <textarea
+        aria-label="回答"
+        rows={2}
+        value={answer}
+        onChange={(event) => setAnswer(event.target.value)}
+      />
+      <ErrorText error={send.error} />
+      <button type="submit" className="primary" disabled={send.isPending || answer.trim() === ""}>
+        回答
+      </button>
+    </form>
   );
 }

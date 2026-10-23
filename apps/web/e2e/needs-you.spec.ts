@@ -63,7 +63,7 @@ test.describe("設定的信任核准", () => {
       await expect(page.locator('.needs-you-item[data-purpose="config_trust"]')).toHaveCount(0);
 
       await page.goto("/tasks/ORB-8");
-      await page.getByRole("link", { name: /^run-/ }).click();
+      await page.getByRole("link", { name: "開啟 Run 頁" }).click();
       const request = page.locator('.event-permission[data-purpose="config_trust"]');
       await expect(request).toContainText("設定的信任核准");
       await expect(request).toContainText("等待 Admin 以上的 Member 回覆");

@@ -12,6 +12,7 @@ import { AuthedLayout } from "./features/auth/AuthedLayout";
 import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
 import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
+import { DraftTasksPage } from "./features/draft-tasks/DraftTasksPage";
 import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
 import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
 import { RunPage } from "./features/run/RunPage";
@@ -87,6 +88,16 @@ const projectSettingsRoute = createRoute({
   errorComponent: PageError,
 });
 
+const draftTasksRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/projects/$projectId/draft-tasks",
+  component: function DraftTasksRouteComponent() {
+    const { projectId } = draftTasksRoute.useParams();
+    return <DraftTasksPage key={projectId} projectId={projectId} />;
+  },
+  errorComponent: PageError,
+});
+
 const taskRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/tasks/$taskKey",
@@ -155,6 +166,7 @@ const routeTree = rootRoute.addChildren([
   authedRoute.addChildren([
     boardRoute,
     projectSettingsRoute,
+    draftTasksRoute,
     taskRoute,
     runRoute,
     reviewRoute,

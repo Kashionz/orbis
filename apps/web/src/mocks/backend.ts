@@ -14,6 +14,7 @@ import {
   type CreateTaskInput,
   canTransitionManually,
   type DispatchOptions,
+  type DraftTask,
   formatTaskKey,
   type Gate,
   type GateDecisionInput,
@@ -32,6 +33,7 @@ import {
   type Task,
   type TaskStatus,
   type UpdateAcceptanceCriterionInput,
+  type UpdateDraftTaskInput,
   type UpdateProjectInput,
   type UpdateTaskInput,
   type Verification,
@@ -98,6 +100,7 @@ export interface MockState {
   verificationPhase: Record<string, "running" | "done">;
   /** 每個 Run 跑過幾輪 Verification（決定 `verificationFailures` 的哪幾輪失敗）。 */
   verificationRounds: Record<string, number>;
+  draftTasks: DraftTask[];
 }
 
 /** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
@@ -170,6 +173,7 @@ export class MockBackend {
     this.state.verifications ??= [];
     this.state.verificationPhase ??= {};
     this.state.verificationRounds ??= {};
+    this.state.draftTasks ??= [];
     this.save();
   }
 
@@ -345,6 +349,7 @@ export class MockBackend {
       verifications: [],
       verificationPhase: {},
       verificationRounds: {},
+      draftTasks: [],
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -403,6 +408,8 @@ export class MockBackend {
     this.settle();
     this.respondToPermission(reviewRun.id, "perm-write-config", "allow");
     this.settle();
+    if (this.config.childRuns) this.seedChildRuns(reviewRun);
+    this.seedDraftTasks(reviewRun);
 
     seedTask("升級相依套件", "done", { assigneeMemberId: "member-bob", doneReason: "completed" });
 
@@ -453,6 +460,7 @@ export class MockBackend {
         needsYou: [],
         gates: [],
         simulations: {},
+        draftTasks: [],
       });
     }
     return this.state;
@@ -1193,6 +1201,165 @@ export class MockBackend {
     return gate;
   }
 
+  // ---------- Draft Task（ARCHITECTURE §9；Agent 以 propose_tasks 提出） ----------
+
+  private seedDraftTasks(run: Run): void {
+    const time = now();
+    const draft = (
+      position: number,
+      title: string,
+      acceptanceCriteria: DraftTask["acceptanceCriteria"],
+      dependsOn: string[],
+    ): DraftTask => ({
+      id: `draft-${position}`,
+      projectId: "project-1",
+      batchId: "batch-1",
+      position,
+      proposedByRunId: run.id,
+      repoId: "repo-1",
+      spec: "docs/specs/login.md",
+      title,
+      description: `${title}（由 Agent 依 Spec 拆出）`,
+      acceptanceCriteria,
+      dependsOn,
+      createdAt: time,
+      updatedAt: time,
+    });
+    this.state.draftTasks = [
+      draft(
+        1,
+        "建立登入 API",
+        [
+          { kind: "command", description: "API 測試通過", command: "pnpm test" },
+          { kind: "agent", description: "API 文件符合 Spec", command: null },
+        ],
+        [],
+      ),
+      draft(2, "登入頁 UI", [{ kind: "browser", description: "可以登入", command: null }], ["#1"]),
+      draft(
+        3,
+        "登入流程的 e2e",
+        [{ kind: "command", description: "e2e 通過", command: null }],
+        ["#2", "ORB-1"],
+      ),
+    ];
+  }
+
+  draftTasks(projectId: string): DraftTask[] {
+    this.project(projectId);
+    return this.state.draftTasks
+      .filter((d) => d.projectId === projectId)
+      .sort((a, b) => a.batchId.localeCompare(b.batchId) || a.position - b.position);
+  }
+
+  private draftTask(id: string): DraftTask {
+    const draft = this.state.draftTasks.find((d) => d.id === id);
+    if (!draft) throw new MockError(404, "not_found", "找不到這個 Draft Task");
+    return draft;
+  }
+
+  updateDraftTask(id: string, input: UpdateDraftTaskInput): DraftTask {
+    this.requireEditor();
+    const draft = this.draftTask(id);
+    Object.assign(draft, input, { updatedAt: now() });
+    this.save();
+    return draft;
+  }
+
+  /** 確認一個 Draft Task：建立 Task（Backlog）與 Acceptance Criterion，同批指向它的 `#n` 改寫成 Task Key。 */
+  private confirmOne(draft: DraftTask): Task {
+    const dependsOn = draft.dependsOn.map((dep) => {
+      if (dep.startsWith("#")) {
+        throw new MockError(409, "conflict", `「${draft.title}」依賴的 Draft Task ${dep} 還沒確認`);
+      }
+      const target = this.state.tasks.find((t) => t.key === dep);
+      if (!target) throw new MockError(422, "invalid_input", `找不到 Task ${dep}`);
+      return target.id;
+    });
+    if (draft.repoId === null) {
+      throw new MockError(422, "invalid_input", `「${draft.title}」還沒有指定 Repo`);
+    }
+    const task = this.createTask(draft.projectId, {
+      repoId: draft.repoId,
+      title: draft.title,
+      description: draft.description,
+      dependsOn,
+    });
+    task.createdByMemberId = null;
+    for (const criterion of draft.acceptanceCriteria) {
+      this.createAcceptanceCriterion(task.id, criterion);
+    }
+    this.removeDraft(draft, task.key);
+    return task;
+  }
+
+  /** 移除 Draft Task；同批其他草稿指向它的 `#n` 改寫成 `replacement`，沒有時直接移除。 */
+  private removeDraft(draft: DraftTask, replacement: string | null): void {
+    this.state.draftTasks = this.state.draftTasks.filter((d) => d.id !== draft.id);
+    const ref = `#${draft.position}`;
+    for (const other of this.state.draftTasks) {
+      if (other.batchId !== draft.batchId || !other.dependsOn.includes(ref)) continue;
+      other.dependsOn = replacement
+        ? other.dependsOn.map((d) => (d === ref ? replacement : d))
+        : other.dependsOn.filter((d) => d !== ref);
+    }
+  }
+
+  confirmDraftTask(id: string): Task {
+    this.requireEditor();
+    const task = this.confirmOne(this.draftTask(id));
+    this.save();
+    return task;
+  }
+
+  dismissDraftTask(id: string): void {
+    this.requireEditor();
+    this.removeDraft(this.draftTask(id), null);
+    this.save();
+  }
+
+  /** 批次確認：依相依順序建立（被依賴的先）。依賴的草稿不在這一批又還沒確認時回 409，整批不建立。 */
+  confirmDraftTasks(projectId: string, ids: string[]): { draftTaskId: string; task: Task }[] {
+    this.requireEditor();
+    const drafts = ids.map((id) => this.draftTask(id));
+    if (drafts.some((d) => d.projectId !== projectId)) {
+      throw new MockError(404, "not_found", "Draft Task 不在這個 Project");
+    }
+    const selected = new Set(drafts.map((d) => `${d.batchId}#${d.position}`));
+    for (const draft of drafts) {
+      for (const dep of draft.dependsOn) {
+        if (dep.startsWith("#") && !selected.has(`${draft.batchId}${dep}`)) {
+          throw new MockError(
+            409,
+            "conflict",
+            `「${draft.title}」依賴的 Draft Task ${dep} 還沒確認`,
+          );
+        }
+      }
+    }
+    const created = new Map<string, Task>();
+    let remaining = [...drafts];
+    while (remaining.length > 0) {
+      const ready = remaining.filter((d) => !d.dependsOn.some((dep) => dep.startsWith("#")));
+      if (ready.length === 0) throw new MockError(409, "conflict", "Draft Task 的相依關係有循環");
+      for (const draft of ready) created.set(draft.id, this.confirmOne(draft));
+      remaining = remaining.filter((d) => !created.has(d.id));
+    }
+    this.save();
+    return ids.map((id) => ({ draftTaskId: id, task: created.get(id) as Task }));
+  }
+
+  dismissDraftTasks(projectId: string, ids: string[]): void {
+    this.requireEditor();
+    for (const draft of ids.map((id) => this.draftTask(id))) {
+      if (draft.projectId !== projectId) {
+        throw new MockError(404, "not_found", "Draft Task 不在這個 Project");
+      }
+      this.removeDraft(draft, null);
+    }
+    this.save();
+  }
+
   // ---------- Verification（ARCHITECTURE §5.1；真實系統中由 Server 發起） ----------
 
   verifications(runId: string): Verification[] {
@@ -1482,17 +1649,115 @@ export class MockBackend {
   cancelRun(runId: string): Run {
     this.requireEditor();
     const run = this.run(runId);
-    delete this.state.simulations[runId];
-    this.state.needsYou = this.state.needsYou.filter((i) => i.runId !== run.id);
-    this.append(runId, [
-      { kind: "status_changed", status: "canceled", gate: null, message: "已中止" },
-    ]);
-    // Run 被中止後 Task 回到 Ready，可以重新派工（§5）
-    const task = this.task(run.taskId);
-    task.status = "ready";
-    task.updatedAt = now();
+    this.cancelTree(run);
+    // 頂層的 Run 被中止後 Task 回到 Ready，可以重新派工（§5）；Child Run 被中止不影響 Task
+    if (run.parentRunId === null && run.origin === "dispatch") {
+      const task = this.task(run.taskId);
+      task.status = "ready";
+      task.updatedAt = now();
+    }
     this.save();
     return run;
+  }
+
+  /** 中止 Run，連同還沒結束的 Child Run（§6.2「父 Run 被中止時連同 Child Run 一起處理」）。 */
+  private cancelTree(run: Run): void {
+    for (const child of this.state.runs.filter((r) => r.parentRunId === run.id)) {
+      this.cancelTree(child);
+    }
+    if (["completed", "failed", "canceled"].includes(run.status)) return;
+    delete this.state.simulations[run.id];
+    this.state.needsYou = this.state.needsYou.filter(
+      (i) => i.runId !== run.id && !(i.kind === "child_question" && i.childRunId === run.id),
+    );
+    this.append(run.id, [
+      { kind: "status_changed", status: "canceled", gate: null, message: "已中止" },
+    ]);
+  }
+
+  /** 人回答 Child Run 的 `ask_parent`（父 Run 的回合已經結束時，§9）。 */
+  answerChildQuestion(questionId: string, answer: string): void {
+    this.requireEditor();
+    const item = this.state.needsYou.find(
+      (i) => i.kind === "child_question" && i.questionId === questionId,
+    );
+    if (item?.kind !== "child_question") {
+      throw new MockError(409, "conflict", "這個問題已經回答過了");
+    }
+    this.state.needsYou = this.state.needsYou.filter((i) => i !== item);
+    this.append(item.childRunId, [
+      {
+        kind: "prompt_submitted",
+        source: "child_question",
+        prompt: [{ type: "text", text: answer }],
+      },
+      { kind: "status_changed", status: "running", gate: null, message: null },
+    ]);
+    this.save();
+  }
+
+  /**
+   * `childRuns` 設定的種子：在等待 Review Gate 的 Run 底下建立 Child Run 樹——branch 模式的
+   * Child Run（執行中，底下還有一層 consult）、已完成的 consult，以及一個向人提問的 Child Run。
+   */
+  private seedChildRuns(parent: Run): void {
+    const child = (
+      id: string,
+      parentRun: Run,
+      mode: "consult" | "branch",
+      agent: string,
+      status: Run["status"],
+    ): Run => {
+      const run = this.newRun(parentRun.taskId, id, {
+        agent,
+        model: agent === "codex" ? "gpt-5" : "claude-sonnet-5-5",
+        runnerKind: parentRun.runnerKind,
+        permissionPolicy: parentRun.permissionPolicy,
+      });
+      Object.assign(run, {
+        parentRunId: parentRun.id,
+        delegationMode: mode,
+        origin: "delegation",
+        startedByMemberId: null,
+        runnerId: parentRun.runnerId,
+      });
+      this.state.runs.push(run);
+      this.state.events[run.id] = [];
+      this.append(run.id, [
+        {
+          kind: "worktree_ready",
+          worktree_path: `C:/wt/demo/${id}`,
+          branch: mode === "branch" ? `feature/${id}` : null,
+          base_commit: BASE_COMMIT,
+        },
+        { kind: "status_changed", status: "running", gate: null, message: null },
+        { kind: "message_chunk", content: { type: "text", text: `${id}：開始處理。` } },
+      ]);
+      if (status !== "running") {
+        this.append(run.id, [
+          { kind: "message_chunk", content: { type: "text", text: `${id}：完成了。` } },
+          { kind: "status_changed", status, gate: null, message: null },
+        ]);
+      }
+      return run;
+    };
+    const api = child("run-child-api", parent, "branch", "codex", "running");
+    child("run-child-api-review", api, "consult", "claude-code", "completed");
+    child("run-child-docs", parent, "consult", "claude-code", "completed");
+    const asking = child("run-child-ask", parent, "consult", "gemini-cli", "running");
+    const task = this.task(parent.taskId);
+    this.state.needsYou.push({
+      id: this.newId("needs-you"),
+      kind: "child_question",
+      memberId: ME_ID,
+      taskId: task.id,
+      taskKey: task.key,
+      runId: parent.id,
+      questionId: "question-1",
+      childRunId: asking.id,
+      question: "README 要用中文還是英文？",
+      createdAt: now(),
+    });
   }
 
   // ---------- Event 的副作用（真實系統中由 Server 處理） ----------
@@ -1521,6 +1786,11 @@ export class MockBackend {
         return;
       case "status_changed":
         run.status = event.status;
+        // Child Run 的狀態不影響 Task
+        if (run.parentRunId !== null) {
+          if (["completed", "failed", "canceled"].includes(event.status)) run.endedAt = now();
+          return;
+        }
         if (event.status === "running") {
           run.startedAt ??= now();
           if (task.status !== "planning") task.status = "running";

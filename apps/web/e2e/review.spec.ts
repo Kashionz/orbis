@@ -108,7 +108,7 @@ test.describe("Diff review", () => {
       await page.goto("/tasks/ORB-4");
       await page.getByLabel("指派對象").selectOption({ label: "@octocat（The Octocat）" });
       await expect(page.getByLabel("指派對象")).toHaveValue("member-me");
-      await page.getByRole("link", { name: /^run-/ }).click();
+      await page.getByRole("link", { name: "開啟 Run 頁" }).click();
       await page.getByRole("link", { name: "Diff review" }).click();
       await expect(page.getByRole("button", { name: /退回並附上留言/ })).toBeVisible();
       await expect(page.getByRole("button", { name: "核准並開 PR" })).toHaveCount(0);
@@ -122,7 +122,7 @@ test.describe("Diff review", () => {
       await page.goto("/tasks/ORB-4");
       await page.getByLabel("指派對象").selectOption({ label: "@octocat（The Octocat）" });
       await expect(page.getByLabel("指派對象")).toHaveValue("member-me");
-      await page.getByRole("link", { name: /^run-/ }).click();
+      await page.getByRole("link", { name: "開啟 Run 頁" }).click();
       await page.getByRole("link", { name: "Diff review" }).click();
       await expect(page.getByRole("button", { name: "核准並開 PR" })).toBeVisible();
     });

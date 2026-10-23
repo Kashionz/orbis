@@ -2,6 +2,7 @@
 // 回應與錯誤的形狀和 Server 相同。
 
 import {
+  AnswerChildQuestionInput,
   API_ROUTES,
   CheckAcceptanceCriterionInput,
   CreateAcceptanceCriterionInput,
@@ -9,10 +10,12 @@ import {
   CreateRepoInput,
   CreateRunInput,
   CreateTaskInput,
+  DraftTaskBatchInput,
   GateDecisionInput,
   PermissionResponseInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
+  UpdateDraftTaskInput,
   UpdateProjectInput,
   UpdateTaskInput,
   VerificationDecisionInput,
@@ -195,6 +198,44 @@ export function createHandlers(backend: MockBackend) {
       ),
     ),
     http.get(
+      API_ROUTES.projectDraftTasks,
+      handle((_, p) => backend.draftTasks(p.projectId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.projectDraftTasksConfirm,
+      handle(async (request, p) =>
+        backend.confirmDraftTasks(
+          p.projectId ?? "",
+          (await parse(request, DraftTaskBatchInput)).draftTaskIds,
+        ),
+      ),
+    ),
+    http.post(
+      API_ROUTES.projectDraftTasksDismiss,
+      handle(async (request, p) => {
+        backend.dismissDraftTasks(
+          p.projectId ?? "",
+          (await parse(request, DraftTaskBatchInput)).draftTaskIds,
+        );
+      }),
+    ),
+    http.patch(
+      API_ROUTES.draftTask,
+      handle(async (request, p) =>
+        backend.updateDraftTask(p.draftTaskId ?? "", await parse(request, UpdateDraftTaskInput)),
+      ),
+    ),
+    http.post(
+      API_ROUTES.draftTaskConfirm,
+      handle((_, p) => backend.confirmDraftTask(p.draftTaskId ?? ""), 201),
+    ),
+    http.post(
+      API_ROUTES.draftTaskDismiss,
+      handle((_, p) => {
+        backend.dismissDraftTask(p.draftTaskId ?? "");
+      }),
+    ),
+    http.get(
       API_ROUTES.projectDispatchOptions,
       handle((_, p) => backend.dispatchOptions(p.projectId ?? "")),
     ),
@@ -312,6 +353,13 @@ export function createHandlers(backend: MockBackend) {
           (await parse(request, CheckAcceptanceCriterionInput)).checked,
         ),
       ),
+    ),
+    http.post(
+      API_ROUTES.childQuestionAnswer,
+      handle(async (request, p) => {
+        const { answer } = await parse(request, AnswerChildQuestionInput);
+        backend.answerChildQuestion(p.questionId ?? "", answer);
+      }),
     ),
     http.post(
       API_ROUTES.gateDecision,

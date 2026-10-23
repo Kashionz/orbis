@@ -37,6 +37,8 @@ export interface MockConfig {
   repoMismatch?: string[];
   /** 每個 Run 的前幾輪 Verification 中，command 類型的條件失敗；預設 0（全部通過）。 */
   verificationFailures?: number;
+  /** 在等待 Review Gate 的 Run（ORB-4）底下建立 Child Run 樹與一個向人提問的 Child Run。 */
+  childRuns?: boolean;
 }
 
 declare global {
