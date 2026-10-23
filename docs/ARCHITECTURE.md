@@ -415,6 +415,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 | 查看與留言 | ✅ | ✅ | ✅ | ✅ |
 
 - Project 可以覆寫個別 Member 的 Role，但不能覆寫成 Owner。
+  - API 回傳的 Project 帶有目前登入者在這個 Project 的有效 Role（有覆寫時用覆寫），Web UI 依它隱藏操作，實際權限以 Server 為準。
 - 建立與修改 Project、登記 Repo、設定 Project 的 Role 覆寫與政策：Admin 以上。
 - 只有 Owner 能指派或移除 Owner；不能移除或降級最後一位 Owner。
 - 新增 Member 時，先以 GitHub login 查出數字 user id 再保存，之後一律以 user id 比對，因為 login 可以改名。

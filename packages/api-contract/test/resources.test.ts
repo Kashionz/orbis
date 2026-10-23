@@ -54,6 +54,8 @@ describe("Project", () => {
     ["空白名稱", "name", ""],
     ["數字 ID", "id", 1],
     ["缺少 policy", "policy", undefined],
+    ["缺少 viewerRole", "viewerRole", undefined],
+    ["不存在的 viewerRole", "viewerRole", "guest"],
   ])("拒絕%s", (_, key, value) => {
     expectInvalid(Project, withField(fixtures.project, key, value));
   });

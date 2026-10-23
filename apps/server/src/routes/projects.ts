@@ -13,7 +13,13 @@ import {
 } from "@orbis/api-contract";
 import { and, asc, count, eq, notInArray } from "drizzle-orm";
 import { Hono } from "hono";
-import { loadProjectScope, requireProjectCapability, requireTeamCapability } from "../authz/scope";
+import { effectiveRole } from "../authz/capabilities";
+import {
+  actorProjectRoles,
+  loadProjectScope,
+  requireProjectCapability,
+  requireTeamCapability,
+} from "../authz/scope";
 import { isUniqueViolation } from "../db/errors";
 import { members, projectMemberRoles, projects, repos, runs, tasks } from "../db/schema";
 import { TERMINAL_RUN_STATUSES } from "../domain/run-status";
@@ -66,7 +72,8 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
       .from(projects)
       .where(eq(projects.teamId, actor.teamId))
       .orderBy(asc(projects.createdAt), asc(projects.id));
-    return c.json(rows.map(toProject));
+    const roles = await actorProjectRoles(db, actor);
+    return c.json(rows.map((row) => toProject(row, roles(row.id))));
   });
 
   app.post(API_ROUTES.projects, auth, async (c) => {
@@ -85,7 +92,8 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
         })
         .returning();
       if (!project) throw new Error("建立 Project 失敗");
-      return c.json(toProject(project), 201);
+      // 新的 Project 還沒有任何 Role 覆寫，有效 Role 就是 Team 的 Role。
+      return c.json(toProject(project, effectiveRole(actor.teamRole, null)), 201);
     } catch (error) {
       if (isUniqueViolation(error)) throw conflict(`Task Key 前綴 ${input.keyPrefix} 已被使用`);
       throw error;
@@ -96,7 +104,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     const actor = c.get("actor");
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "view");
-    return c.json(toProject(scope.project));
+    return c.json(toProject(scope.project, scope.role));
   });
 
   app.patch(API_ROUTES.project, auth, async (c) => {
@@ -117,7 +125,7 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
       .where(eq(projects.id, scope.project.id))
       .returning();
     if (!project) throw notFound("Project");
-    return c.json(toProject(project));
+    return c.json(toProject(project, scope.role));
   });
 
   app.delete(API_ROUTES.project, auth, async (c) => {
