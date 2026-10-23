@@ -726,7 +726,7 @@ impl Run {
         };
         let wt_path = self.wt().path.clone();
         for path in paths {
-            let current = std::fs::read(wt_path.join(&path)).ok();
+            let current = read_protected(&wt_path.join(&path));
             self.settings_baseline.insert(path, current);
         }
     }
@@ -747,7 +747,7 @@ impl Run {
         paths
             .into_iter()
             .filter_map(|path| {
-                let current = std::fs::read(wt.path.join(&path)).ok();
+                let current = read_protected(&wt.path.join(&path));
                 let accepted = self.settings_baseline.get(&path).cloned().flatten();
                 (current != accepted).then_some((path, current))
             })
@@ -1398,7 +1398,10 @@ fn restore_protected_file(
 ) -> Result<(), String> {
     let file = worktree.join(path);
     if std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
-        std::fs::remove_file(&file).map_err(|e| e.to_string())?;
+        // 目錄連結（Windows 的 junction、目錄 symlink）要用 remove_dir 移除連結本身。
+        std::fs::remove_file(&file)
+            .or_else(|_| std::fs::remove_dir(&file))
+            .map_err(|e| e.to_string())?;
     }
     let parent = file.parent().unwrap_or(worktree);
     if !crate::paths::is_within(
@@ -1419,8 +1422,8 @@ fn restore_protected_file(
     result.map_err(|e| e.to_string())
 }
 
-/// `worktree/<dir>` 之下的所有檔案（相對於 Worktree、`/` 分隔）。不跟著目錄連結走進去；
-/// 連結本身當成一個檔案（讀取時的內容是連結指向的檔案）。
+/// `worktree/<dir>` 之下的所有檔案（相對於 Worktree、`/` 分隔）。不跟著連結走進去：
+/// symlink／junction 本身當成一個項目（內容見 [`read_protected`]）。
 fn files_under(worktree: &std::path::Path, dir: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut pending = vec![dir.to_owned()];
@@ -1432,13 +1435,26 @@ fn files_under(worktree: &std::path::Path, dir: &str) -> Vec<String> {
             let name = entry.file_name().to_string_lossy().into_owned();
             let child = format!("{rel}/{name}");
             match entry.file_type() {
-                Ok(t) if t.is_dir() => pending.push(child),
+                Ok(t) if t.is_dir() && !t.is_symlink() => pending.push(child),
                 Ok(_) => out.push(child),
                 Err(_) => {}
             }
         }
     }
     out
+}
+
+/// 受保護設定的目前內容（不存在時為 `None`）。symlink／junction 不跟著讀，內容是
+/// 「連結到哪裡」：新增或改指向的連結一定和基準不同（指向目錄的連結也一樣，安全審查的發現）。
+fn read_protected(path: &std::path::Path) -> Option<Vec<u8>> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(path)
+            .map(|t| t.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return Some(format!("symlink -> {target}").into_bytes());
+    }
+    std::fs::read(path).ok()
 }
 
 /// 什麼時候檢查 Agent 的設定檔。
@@ -1524,6 +1540,27 @@ mod tests {
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    /// 受保護目錄中的連結（例如 `.gemini/extensions` 換成指向別處的 junction）也算一個項目，
+    /// 新增的連結和「不存在」的基準不同。
+    #[test]
+    fn 受保護目錄中的連結算作變更() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("wt");
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(wt.join(".gemini")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(wt.join(".gemini/settings.json"), "{}").unwrap();
+        link_dir(&elsewhere, &wt.join(".gemini").join("extensions"));
+        let mut files = files_under(&wt, ".gemini");
+        files.sort();
+        assert_eq!(files, [".gemini/extensions", ".gemini/settings.json"]);
+        let link = read_protected(&wt.join(".gemini/extensions")).unwrap();
+        assert!(String::from_utf8(link).unwrap().starts_with("symlink -> "));
+        restore_protected_file(&wt, ".gemini/extensions", None).unwrap();
+        assert!(std::fs::symlink_metadata(wt.join(".gemini/extensions")).is_err());
+        assert!(elsewhere.exists(), "只移除連結本身");
     }
 
     #[test]

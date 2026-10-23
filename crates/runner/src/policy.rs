@@ -223,8 +223,16 @@ fn is_protected(path: &Path, ctx: &PolicyContext<'_>) -> bool {
     } else {
         ctx.worktree.join(path)
     };
-    paths::relative_slash(&resolved, ctx.worktree)
-        .is_some_and(|rel| ctx.protected_paths.iter().any(|p| protected_match(p, &rel)))
+    let matches = |path: &Path, base: &Path| {
+        paths::relative_slash(path, base)
+            .is_some_and(|rel| ctx.protected_paths.iter().any(|p| protected_match(p, &rel)))
+    };
+    // 字面路徑，以及解開 symlink／junction 之後的實際位置（經由連結寫進受保護的目錄）。
+    matches(&resolved, ctx.worktree)
+        || matches(
+            &paths::resolve_existing(&resolved),
+            &paths::canonical(ctx.worktree),
+        )
 }
 
 /// 相對路徑 `rel` 是否符合受保護的項目 `entry`（檔案相同，或在以 `/` 結尾的目錄之下）。
@@ -1247,6 +1255,28 @@ mod tests {
         assert_eq!(kind(&decide(&cmd("pnpm exec ls .gemini"), &ctx)), "ask");
         assert!(protected_match(".gemini/", ".gemini"));
         assert!(!protected_match(".gemini/", ".gemini-backup/x"));
+    }
+
+    /// 經由 Worktree 內的連結寫進受保護的目錄，也要問人。
+    #[test]
+    fn 經由連結寫進受保護的目錄也要問人() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("wt");
+        std::fs::create_dir_all(wt.join(".gemini")).unwrap();
+        link_dir(&wt.join(".gemini"), &wt.join("cfg"));
+        let allow = allow();
+        let protected = [".gemini/".to_owned()];
+        let ctx = PolicyContext {
+            policy: PermissionPolicy::Auto,
+            worktree: &wt,
+            allow_commands: &allow,
+            default_branch: "main",
+            protected_paths: &protected,
+        };
+        let write = PermissionSubject::Write {
+            paths: vec![wt.join("cfg").join("settings.json")],
+        };
+        assert_eq!(kind(&decide(&write, &ctx)), "ask");
     }
 
     #[test]

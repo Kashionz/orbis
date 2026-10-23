@@ -213,6 +213,11 @@ async fn main() -> anyhow::Result<()> {
                 );
                 eprintln!("{line}");
                 summary.push(line);
+                // push 失敗時 Run 會一直等下一個 push_branch：結束，讓測試者看摘要。
+                if reviews >= 2 && frame["outcome"] == "rejected" {
+                    summary.push("  → push_branch 失敗，結束".into());
+                    break;
+                }
             }
             other => {
                 let line = format!("{other}：{}", short(&frame.to_string(), 300));
