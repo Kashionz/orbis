@@ -2,6 +2,7 @@
 // （同一個 GitHub repo 可能登記在多個 Project，自動匯入不知道要放到哪裡）。
 
 import { type ConnectedRepo, connectedRepo, type IntegrationContext } from "../context";
+import { IssueAlreadyLinkedError } from "../ports";
 import { normalizeBody, normalizeLabels } from "./fields";
 import { linkImportedIssue, mapAssignee } from "./sync";
 
@@ -91,7 +92,21 @@ export async function importIssues(
       assigneeMemberId: assignee?.id ?? null,
       createdByMemberId: input.importedByMemberId,
     });
-    await linkImportedIssue(ctx, task, repo, issue, assignee);
+    try {
+      await linkImportedIssue(ctx, task, repo, issue, assignee);
+    } catch (error) {
+      if (!(error instanceof IssueAlreadyLinkedError)) throw error;
+      // 兩個人同時匯入同一個 Issue：DB 的唯一性擋下後到的一方。剛建立的 Task 會留下，但沒有對應的 Issue。
+      const winner = (await ctx.store.findIssueLinks(repo.githubRepoId, issueNumber)).find(
+        (link) => link.repoId === input.repoId,
+      );
+      ctx.logger.warn(
+        { taskId: task.id, issue: issue.htmlUrl, linkedTaskId: winner?.taskId },
+        "同一個 Issue 同時被匯入，這個 Task 沒有建立對應",
+      );
+      results.push({ issueNumber, status: "already_linked", taskId: winner?.taskId ?? task.id });
+      continue;
+    }
     ctx.logger.info({ taskId: task.id, issue: issue.htmlUrl }, "已從 GitHub Issue 匯入 Task");
     results.push({ issueNumber, status: "imported", taskId: task.id });
   }

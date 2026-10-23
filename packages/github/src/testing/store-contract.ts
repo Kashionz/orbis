@@ -6,7 +6,12 @@
 // 傳入的 makeStore 每次都要回傳一個空的 store。
 
 import { describe, expect, it } from "vitest";
-import type { GitHubStore, IssueLink, PullRequestLink } from "../ports";
+import {
+  type GitHubStore,
+  IssueAlreadyLinkedError,
+  type IssueLink,
+  type PullRequestLink,
+} from "../ports";
 
 const T0 = new Date("2026-10-23T08:00:00.000Z");
 const later = (ms: number) => new Date(T0.getTime() + ms);
@@ -126,6 +131,15 @@ export function describeGitHubStoreContract(
         await store.saveIssueLink(issueLink({ taskId: "task-2", repoId: "repo-2" }));
         const links = await store.findIssueLinks(100, 7);
         expect(links.map((l) => l.taskId).sort()).toEqual(["task-1", "task-2"]);
+      });
+
+      it("同一個 Repo 中一個 Issue 只能對應一個 Task", async () => {
+        const store = await makeStore();
+        await store.saveIssueLink(issueLink());
+        await expect(store.saveIssueLink(issueLink({ taskId: "task-2" }))).rejects.toBeInstanceOf(
+          IssueAlreadyLinkedError,
+        );
+        expect((await store.findIssueLinks(100, 7)).map((l) => l.taskId)).toEqual(["task-1"]);
       });
 
       it("刪除後查不到", async () => {

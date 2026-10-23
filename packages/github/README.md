@@ -93,7 +93,7 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
   - Task 已經是 Done 時，GitHub 上改了關閉原因，會以 `updateTaskFields(taskId, { doneReason })` 寫回。
   - `pr_open` 轉 `review_gate`：PR 沒有 merge 就被關閉。
   - `review_gate` 轉 `pr_open`：PR 重新打開。
-- **`GitHubStore`**：Issue 對應與同步快照、webhook delivery 去重、PR 對應。Drizzle 的實作要通過 `@orbis/github/testing/store-contract` 的契約測試。
+- **`GitHubStore`**：Issue 對應與同步快照、webhook delivery 去重、PR 對應。資料表在 `apps/server/src/db/schema/github.ts`。同一個 Repo 中一個 Issue 只能對應一個 Task，違反時 `saveIssueLink` 丟出 `IssueAlreadyLinkedError`（兩人同時匯入時，後到的一方回傳 `already_linked`）。Drizzle 的實作要通過 `@orbis/github/testing/store-contract` 的契約測試。
 - **`Notifier`**：PR merge、PR 沒有 merge 就被關閉、開 PR 失敗時通知 Task 負責人；沒有負責人時通知建立者。
 - **`taskUrl(task)`**：Task 在 Web UI 上的網址。
 

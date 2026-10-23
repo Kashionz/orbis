@@ -108,6 +108,27 @@ describe("從 Issue 匯入", () => {
     expect(w.domain.createdFromIssue).toEqual([]);
   });
 
+  it("兩個人同時匯入同一個 Issue：只建立一個對應，後到的一方回傳 already_linked", async () => {
+    const w = createWorld();
+    const issue = w.github.humanOpenIssue(w.repo.id, { title: "同時匯入" });
+    const input = { repoId: REPO_ID, issueNumbers: [issue.number] };
+    const [first, second] = await Promise.all([
+      w.integration.importIssues({ ...input, importedByMemberId: w.alice.id }),
+      w.integration.importIssues({ ...input, importedByMemberId: w.bob.id }),
+    ]);
+    const statuses = [first?.[0]?.status, second?.[0]?.status].sort();
+    expect(statuses).toEqual(["already_linked", "imported"]);
+    const links = await w.store.findIssueLinks(w.repo.id, issue.number);
+    expect(links).toHaveLength(1);
+    // 兩個請求都通過了「還沒匯入」的檢查，由 store 的唯一性擋下後到的一方
+    expect(w.logger.entries.map((e) => e.msg)).toContain(
+      "同一個 Issue 同時被匯入，這個 Task 沒有建立對應",
+    );
+    expect(
+      [first?.[0], second?.[0]].every((r) => r && "taskId" in r && r.taskId === links[0]?.taskId),
+    ).toBe(true);
+  });
+
   it("Project 關閉「自動建立 Issue」時仍然可以匯入，並留下摘要留言", async () => {
     const w = createWorld();
     w.domain.autoCreateDisabledProjectIds.add(PROJECT_ID);

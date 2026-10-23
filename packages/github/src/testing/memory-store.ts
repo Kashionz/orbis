@@ -1,6 +1,12 @@
 // GitHubStore 的 in-memory 實作：測試與 dev harness 使用。
 
-import type { DeliveryClaim, GitHubStore, IssueLink, PullRequestLink } from "../ports";
+import {
+  type DeliveryClaim,
+  type GitHubStore,
+  IssueAlreadyLinkedError,
+  type IssueLink,
+  type PullRequestLink,
+} from "../ports";
 
 interface DeliveryRow {
   event: string;
@@ -56,6 +62,15 @@ export class InMemoryGitHubStore implements GitHubStore {
   }
 
   async saveIssueLink(link: IssueLink): Promise<void> {
+    for (const other of this.issueLinks.values()) {
+      if (
+        other.taskId !== link.taskId &&
+        other.repoId === link.repoId &&
+        other.issueNumber === link.issueNumber
+      ) {
+        throw new IssueAlreadyLinkedError(link.repoId, link.issueNumber);
+      }
+    }
     this.issueLinks.set(link.taskId, clone(link));
   }
 

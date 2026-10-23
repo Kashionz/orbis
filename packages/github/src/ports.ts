@@ -1,21 +1,21 @@
 // 這個套件需要 Server（B 軌）提供的介面。Server 用 Drizzle 與 Task 狀態機實作；
 // 測試用 src/testing/ 中的 fake 實作。
 //
-// TODO(contract): GitHubStore 需要的資料表（task_issue_links、github_webhook_deliveries、
-// pull_requests、repos.github_installation_id）由協調者的契約 PR `contract/db` 加入。
-// TODO(contract): `tasks.done_reason` 與 `projects.auto_create_issues` 也在同一個契約 PR；
-// 合併後 `TaskDoneReason` 改用 `@orbis/api-contract` 的定義。
+// GitHubStore 的資料表定義在 apps/server/src/db/schema/github.ts（task_issue_links、
+// github_webhook_deliveries、pull_requests），另外用到 repos.github_installation_id、
+// tasks.done_reason、projects.auto_create_issues。
 
 import type {
   AcceptanceCriterionKind,
   AcceptanceCriterionResult,
+  PullRequestState,
+  TaskDoneReason,
   TaskStatus,
 } from "@orbis/api-contract";
 
-// ── Server 提供的領域資料 ─────────────────────────────────────
+export type { PullRequestState, TaskDoneReason };
 
-/** Task 轉為 Done 的原因（ARCHITECTURE §11），取自 GitHub Issue 關閉時的 `state_reason`。 */
-export type TaskDoneReason = "completed" | "not_planned";
+// ── Server 提供的領域資料 ─────────────────────────────────────
 
 /** Task 中與 GitHub 有關的欄位。 */
 export interface TaskRecord {
@@ -43,7 +43,7 @@ export interface RepoRecord {
   name: string;
   githubRepoId: number | null;
   defaultBranch: string | null;
-  /** TODO(contract): `repos.github_installation_id`。 */
+  /** `repos.github_installation_id`；沒有安裝 App 時為 null。 */
   installationId: number | null;
 }
 
@@ -198,8 +198,6 @@ export interface IssueLink {
   snapshot: IssueSnapshot;
 }
 
-export type PullRequestState = "open" | "closed" | "merged";
-
 /** 以 App 身分開出的 PR 與 Task 的對應。 */
 export interface PullRequestLink {
   taskId: string;
@@ -240,13 +238,27 @@ export interface GitHubStore {
   getIssueLinkByTask(taskId: string): Promise<IssueLink | null>;
   /** 同一個 Issue 可能對應不同 Project 的 Task。 */
   findIssueLinks(githubRepoId: number, issueNumber: number): Promise<IssueLink[]>;
-  /** 以 taskId 新增或覆蓋。 */
+  /**
+   * 以 taskId 新增或覆蓋。同一個 Repo（`repoId`）中，這個 Issue 已經對應到別的 Task 時丟出
+   * `IssueAlreadyLinkedError`（DB 的 `unique(repo_id, issue_number)`）。
+   */
   saveIssueLink(link: IssueLink): Promise<void>;
   deleteIssueLink(taskId: string): Promise<void>;
 
   findPullRequestLink(githubRepoId: number, number: number): Promise<PullRequestLink | null>;
   /** 以 (githubRepoId, number) 新增或覆蓋。 */
   savePullRequestLink(link: PullRequestLink): Promise<void>;
+}
+
+/** 同一個 Repo 中，這個 Issue 已經對應到別的 Task。 */
+export class IssueAlreadyLinkedError extends Error {
+  override name = "IssueAlreadyLinkedError";
+  constructor(
+    readonly repoId: string,
+    readonly issueNumber: number,
+  ) {
+    super(`Repo ${repoId} 的 Issue #${issueNumber} 已經對應到別的 Task`);
+  }
 }
 
 /** 結構化 log，與 pino 相容。 */
