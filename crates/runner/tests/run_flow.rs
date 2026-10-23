@@ -581,12 +581,32 @@ async fn allow_commands_中的指令自動允許() {
 
 /// runner.toml：用內建 claude-code profile 的修補與受保護路徑，但啟動指令換成 Fake Agent。
 fn claude_code_as_fake(wt: &Path, script: &Path) -> String {
+    claude_code_as_fake_with(wt, script, &[])
+}
+
+/// 同 [`claude_code_as_fake`]，另外加上 Fake Agent 的參數。
+fn claude_code_as_fake_with(wt: &Path, script: &Path, extra: &[String]) -> String {
+    let mut args = vec![
+        toml_string("--script"),
+        toml_string(&script.to_string_lossy()),
+    ];
+    args.extend(extra.iter().map(|a| toml_string(a)));
     format!(
-        "worktree_root = {}\n[agents.claude-code]\ncommand = {}\nargs = [\"--script\", {}]\n",
+        "worktree_root = {}\n[agents.claude-code]\ncommand = {}\nargs = [{}]\n",
         toml_string(&wt.to_string_lossy()),
         toml_string(&support::fake_agent_bin().to_string_lossy()),
-        toml_string(&script.to_string_lossy()),
+        args.join(", "),
     )
+}
+
+/// Fake Agent 的 session 保存目錄參數（讓重新啟動的 Agent 能接續 session）。
+fn agent_state_args(wt: &Path, load_only: bool) -> Vec<String> {
+    let dir = wt.parent().unwrap().join("agent-state");
+    let mut args = vec!["--state-dir".to_owned(), dir.to_string_lossy().into_owned()];
+    if load_only {
+        args.push("--no-resume".to_owned());
+    }
+    args
 }
 
 /// 回覆權限請求，確認被接受。
@@ -607,11 +627,30 @@ async fn answer(conn: &mut RunnerSide, control_id: &str, request: &Value, option
 
 /// Agent 修改自己的設定檔（issue #52）：經權限請求寫入時問人，人允許的寫入視為已接受；
 /// 不經過權限請求的寫入在 session 中途就被發現 → 中止回合並問人，選「還原」後檔案還原、
-/// 同一個 session 繼續。
+/// 重新啟動 Agent（讓它重新讀取設定）並以 `session/resume` 接續同一個 session。
 #[tokio::test(flavor = "multi_thread")]
 async fn agent_設定檔在_session_中途被改時中止回合並問人_還原後繼續() {
+    restore_settings_flow(false).await;
+}
+
+/// 同上，但 Agent 只支援 `session/load`：load 重播的對話不會再以 Event 送出。
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_設定檔還原後以_session_load_接續_重播的對話不重送() {
+    let conn = restore_settings_flow(true).await;
+    let replayed = conn.events.iter().any(|e| {
+        e["kind"] == "message_chunk"
+            && e["content"]["text"] == orbis_fake_agent::agent::LOADED_SESSION_TEXT
+    });
+    assert!(!replayed, "session/load 重播的對話不可以再送成 Event");
+}
+
+async fn restore_settings_flow(load_only: bool) -> RunnerSide {
     let mut env = Env::new(&[("README.md", "a\n")], |wt| {
-        claude_code_as_fake(wt, &runner_script("agent-settings.yaml"))
+        claude_code_as_fake_with(
+            wt,
+            &runner_script("agent-settings.yaml"),
+            &agent_state_args(wt, load_only),
+        )
     })
     .await;
     let _runner = env.spawn();
@@ -666,6 +705,7 @@ async fn agent_設定檔在_session_中途被改時中止回合並問人_還原�
         .map(|f| f["path"].as_str().unwrap())
         .collect();
     assert_eq!(paths, [".claude/settings.json"], "{diff}");
+    conn
 }
 
 /// session 中途被改，人選「接受」：保留變更並繼續，之後的回合不再為同一份內容問人。

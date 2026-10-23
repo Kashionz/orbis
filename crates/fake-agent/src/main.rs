@@ -17,6 +17,15 @@ struct Cli {
     /// 不講 ACP，只是一直執行到被結束（劇本的 `spawn_child` 步驟用來模擬背景程序）。
     #[arg(long, hide = true)]
     hold: bool,
+
+    /// session 保存目錄：指定時支援 `session/load`（與 `session/resume`），
+    /// 讓另一個 Fake Agent 程序從同一個 session 的下一個回合接續。
+    #[arg(long, value_name = "DIR")]
+    state_dir: Option<PathBuf>,
+
+    /// 有保存目錄時不宣告 `session/resume`，只支援 `session/load`。
+    #[arg(long)]
+    no_resume: bool,
 }
 
 #[tokio::main]
@@ -35,7 +44,11 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match agent::serve_stdio(script).await {
+    let options = agent::Options {
+        state_dir: cli.state_dir,
+        resume: !cli.no_resume,
+    };
+    match agent::serve_stdio_with(script, options).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("ACP 連線錯誤：{error:?}");

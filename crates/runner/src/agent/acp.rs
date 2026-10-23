@@ -13,10 +13,10 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::Implementation;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, NewSessionRequest,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SessionId, SessionModeId, SessionNotification, SessionUpdate, SetSessionModeRequest,
-    StopReason,
+    CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, LoadSessionRequest,
+    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, ResumeSessionRequest, SessionId, SessionModeId, SessionModeState,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{self as acp, Agent, ByteStreams, ConnectionTo};
 use anyhow::Context;
@@ -56,6 +56,8 @@ pub struct AcpSession {
     session_id: SessionId,
     capabilities: Vec<AgentCapability>,
     agent_info: Option<Implementation>,
+    /// 是否接續了之前的 session（`session/resume` 或 `session/load`），而不是開新的。
+    resumed: bool,
     tree: ProcessTree,
     shutdown: Option<oneshot::Sender<()>>,
     driver: tokio::task::JoinHandle<()>,
@@ -74,11 +76,16 @@ impl std::fmt::Debug for AcpSession {
 
 impl AcpSession {
     /// 啟動 Agent、完成 `initialize` 與 `session/new`，並套用 profile 的修補。
+    ///
+    /// `resume` 指定之前的 session ID 時，Agent 支援就以 `session/resume`（不重播對話）或
+    /// `session/load`（會重播對話，重播的 update 照樣送進 `notices`，由呼叫端丟棄）接續；
+    /// 都不支援時開新的 session，[`Self::resumed`] 為 `false`。
     pub async fn start(
         profile: &AgentProfile,
         spec: ProcessSpec,
         cwd: &Path,
         notices: mpsc::UnboundedSender<AgentNotice>,
+        resume: Option<&str>,
     ) -> Result<Self, AgentError> {
         let mut tree = ProcessTree::spawn(&spec.cwd(cwd), Pipes::ALL).map_err(AgentError::Start)?;
         let stdin = tree
@@ -161,13 +168,14 @@ impl AcpSession {
             session_id: SessionId::new(""),
             capabilities: Vec::new(),
             agent_info: None,
+            resumed: false,
             tree,
             shutdown: Some(shutdown_tx),
             driver,
             closed,
             stderr_tail,
         };
-        if let Err(error) = session.handshake(profile, cwd).await {
+        if let Err(error) = session.handshake(profile, cwd, resume).await {
             let tail = session.stderr_tail();
             session.shutdown().await;
             return Err(match error {
@@ -180,7 +188,12 @@ impl AcpSession {
         Ok(session)
     }
 
-    async fn handshake(&mut self, profile: &AgentProfile, cwd: &Path) -> Result<(), AgentError> {
+    async fn handshake(
+        &mut self,
+        profile: &AgentProfile,
+        cwd: &Path,
+        resume: Option<&str>,
+    ) -> Result<(), AgentError> {
         let init: InitializeResponse = self
             .cx
             .send_request(InitializeRequest::new(ProtocolVersion::V1).client_info(
@@ -192,16 +205,51 @@ impl AcpSession {
         self.capabilities = profile.capabilities(&init);
         self.agent_info = init.agent_info.clone();
 
-        let new_session = self
-            .cx
-            .send_request(NewSessionRequest::new(cwd))
-            .block_task()
-            .await
-            .map_err(AgentError::Acp)?;
-        self.session_id = new_session.session_id.clone();
+        let caps = &init.agent_capabilities;
+        let modes = match resume {
+            Some(id) if caps.session_capabilities.resume.is_some() => {
+                let response = self
+                    .cx
+                    .send_request(ResumeSessionRequest::new(id.to_owned(), cwd))
+                    .block_task()
+                    .await
+                    .map_err(AgentError::Acp)?;
+                self.session_id = SessionId::new(id.to_owned());
+                self.resumed = true;
+                response.modes
+            }
+            Some(id) if caps.load_session => {
+                let response = self
+                    .cx
+                    .send_request(LoadSessionRequest::new(id.to_owned(), cwd))
+                    .block_task()
+                    .await
+                    .map_err(AgentError::Acp)?;
+                self.session_id = SessionId::new(id.to_owned());
+                self.resumed = true;
+                response.modes
+            }
+            _ => {
+                let response = self
+                    .cx
+                    .send_request(NewSessionRequest::new(cwd))
+                    .block_task()
+                    .await
+                    .map_err(AgentError::Acp)?;
+                self.session_id = response.session_id.clone();
+                response.modes
+            }
+        };
+        self.apply_session_mode(profile, modes.as_ref()).await
+    }
 
-        // 修補：切到會詢問權限的模式（使用者設定可能預設 bypass）。
-        if let (Some(wanted), Some(modes)) = (profile.session_mode, new_session.modes.as_ref())
+    /// 修補：切到會詢問權限的模式（使用者設定可能預設 bypass）。
+    async fn apply_session_mode(
+        &mut self,
+        profile: &AgentProfile,
+        modes: Option<&SessionModeState>,
+    ) -> Result<(), AgentError> {
+        if let (Some(wanted), Some(modes)) = (profile.session_mode, modes)
             && modes.current_mode_id.0.as_ref() != wanted
             && modes
                 .available_modes
@@ -227,6 +275,16 @@ impl AcpSession {
 
     pub fn capabilities(&self) -> &[AgentCapability] {
         &self.capabilities
+    }
+
+    /// ACP session ID（Feedback Loop 與重新啟動 Agent 時用來接續）。
+    pub fn session_id(&self) -> &str {
+        &self.session_id.0
+    }
+
+    /// 是否接續了之前的 session。
+    pub fn resumed(&self) -> bool {
+        self.resumed
     }
 
     /// `initialize` 回報的 Agent 名稱與版本。

@@ -182,8 +182,11 @@ fn decide_command(command: &str, ctx: &PolicyContext<'_>) -> Decision {
     Decision::Allow
 }
 
-/// 這個權限請求會動到哪些受保護的設定檔（`protected_paths` 中的項目）。
-/// 指令只能字面判斷，提到受保護的設定檔（或它們的目錄）時視為全部都可能被改。
+/// 這個權限請求明確要寫入或刪除哪些受保護的設定檔（`protected_paths` 中的項目）。
+/// 允許這個請求後，它對這些檔案的修改視為已接受。
+///
+/// 指令只能字面判斷、不知道實際寫了什麼，一律回傳空清單：人允許了指令，指令之後對設定檔的
+/// 修改仍會在 session 中途被發現並另外問人。
 pub fn protected_targets(subject: &PermissionSubject, ctx: &PolicyContext<'_>) -> Vec<String> {
     match subject {
         PermissionSubject::Write { paths } | PermissionSubject::Delete { paths } => ctx
@@ -202,19 +205,9 @@ pub fn protected_targets(subject: &PermissionSubject, ctx: &PolicyContext<'_>) -
             })
             .cloned()
             .collect(),
-        PermissionSubject::Command { command } => {
-            let mentioned = analyze(command)
-                .segments
-                .iter()
-                .flatten()
-                .any(|word| mentions_protected(word, ctx));
-            if mentioned {
-                ctx.protected_paths.to_vec()
-            } else {
-                Vec::new()
-            }
-        }
-        PermissionSubject::Read { .. } | PermissionSubject::Other { .. } => Vec::new(),
+        PermissionSubject::Command { .. }
+        | PermissionSubject::Read { .. }
+        | PermissionSubject::Other { .. } => Vec::new(),
     }
 }
 

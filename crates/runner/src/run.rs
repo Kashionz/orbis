@@ -53,6 +53,8 @@ const DEFAULT_RATE_LIMIT_WAIT: Duration = Duration::from_secs(60);
 pub const RESUME_PROMPT: &str = "額度已恢復，請繼續剛才的工作。";
 /// session 中途 Agent 的設定檔被改、人處理完之後送給 Agent 的 prompt。
 pub const SETTINGS_RESUME_PROMPT: &str = "Agent 的設定檔已依 Orbis 的決定處理（接受或還原），請繼續剛才的工作，不要修改 Agent 的設定檔。";
+/// 還原設定檔後 Agent 重新啟動、但無法接續原本的 session 時，接在原本的 prompt 後面的說明。
+pub const SETTINGS_RESTART_NOTE: &str = "（Agent 因為修改了自己的設定檔而被重新啟動，設定檔已還原。之前的修改都還在 Worktree 中，請先檢查目前的狀態再繼續，不要修改 Agent 的設定檔。）";
 /// setup 的 tool call ID（Runner 自己產生）。
 const SETUP_TOOL_CALL: &str = "orbis-setup";
 
@@ -338,7 +340,7 @@ impl Run {
         self.load_settings_baseline().await;
         self.check_agent_settings(SettingsCheck::BeforePrompt)
             .await?;
-        self.start_agent().await
+        self.start_agent(None).await.map(|_| ())
     }
 
     /// 信任核准（§6.2）：設定檔中的腳本第一次執行前、或內容改變後，要人核准。
@@ -509,7 +511,8 @@ impl Run {
         ));
     }
 
-    async fn start_agent(&mut self) -> Result<(), Stop> {
+    /// 啟動 Agent。`resume` 是要接續的 session ID；回傳是否真的接續了（Agent 不支援時開新的）。
+    async fn start_agent(&mut self, resume: Option<String>) -> Result<bool, Stop> {
         let wt = self.wt().clone();
         let agents_dir = self.ctx.home.agents_dir();
         let profile = self.profile.clone();
@@ -531,7 +534,7 @@ impl Run {
                 .map_err(AgentError::Start)?
                 .envs(wt.env())
                 .unattended_git();
-            AcpSession::start(&profile, spec, &wt.path, tx).await
+            AcpSession::start(&profile, spec, &wt.path, tx, resume.as_deref()).await
         };
         let session = self
             .interruptible(start)
@@ -544,9 +547,39 @@ impl Run {
             capabilities = ?session.capabilities(),
             "Agent 已啟動"
         );
+        let resumed = session.resumed();
         self.session = Some(session);
+        let mut rx = rx;
+        if resumed {
+            // `session/load` 重播的對話已經以 Event 送過了，丟棄。
+            while rx.try_recv().is_ok() {}
+        }
         self.notices = Some(rx);
-        Ok(())
+        Ok(resumed)
+    }
+
+    /// 結束 Agent 再重新啟動，盡量接續同一個 session。回傳接下來要送的 prompt。
+    async fn restart_agent(&mut self) -> Result<Vec<acp::ContentBlock>, Stop> {
+        let previous = self.session.take().map(|session| {
+            let id = session.session_id().to_owned();
+            (id, session)
+        });
+        let resume = match previous {
+            Some((id, session)) => {
+                session.shutdown().await;
+                Some(id)
+            }
+            None => None,
+        };
+        tracing::info!(run_id = %self.run_id(), ?resume, "重新啟動 Agent");
+        if self.start_agent(resume).await? {
+            return Ok(vec![acp::ContentBlock::from(
+                SETTINGS_RESUME_PROMPT.to_owned(),
+            )]);
+        }
+        let mut prompt = normalize::prompt_to_acp(&self.offer.prompt);
+        prompt.push(acp::ContentBlock::from(SETTINGS_RESTART_NOTE.to_owned()));
+        Ok(prompt)
     }
 
     /// 執行一個不會碰到 Run 狀態的長時間工作，期間仍處理 cancel 與其他 RunControl。
@@ -690,11 +723,13 @@ impl Run {
     /// （`agent_settings_changed`）。
     ///
     /// - 送出 prompt 前（含啟動 session 前）：允許才繼續，拒絕就停止 Run。
-    /// - session 中途被改（issue #52）：接受變更，或把檔案還原成已接受的內容，兩者都繼續 session。
-    async fn check_agent_settings(&mut self, when: SettingsCheck) -> Result<(), Stop> {
+    /// - session 中途被改（issue #52）：接受變更，或把檔案還原成已接受的內容，兩者都繼續 Run。
+    ///
+    /// 回傳 `true` 表示檔案被還原了（呼叫端要重新啟動 Agent）。
+    async fn check_agent_settings(&mut self, when: SettingsCheck) -> Result<bool, Stop> {
         let changed = self.changed_agent_settings();
         if changed.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let list = changed
             .iter()
@@ -745,30 +780,26 @@ impl Run {
             for (path, current) in changed {
                 self.settings_baseline.insert(path, current);
             }
-            return Ok(());
+            return Ok(false);
         }
         match when {
             SettingsCheck::BeforePrompt => Err(Stop::failed(
                 RunErrorCode::AgentError,
                 format!("Agent 設定檔的變更（{list}）沒有被允許"),
             )),
-            SettingsCheck::MidSession => self.restore_agent_settings(&changed),
+            SettingsCheck::MidSession => self.restore_agent_settings(&changed).map(|()| true),
         }
     }
 
     /// 把被修改的設定檔還原成已接受的內容（原本不存在的就刪除）。
+    ///
+    /// 不跟著連結寫：設定檔本身是 symlink 時先移除連結；所在目錄（例如 `.claude`）解開
+    /// symlink／junction 後不在 Worktree 內時拒絕還原，避免寫到 Worktree 外。
     fn restore_agent_settings(&self, changed: &[(String, Option<Vec<u8>>)]) -> Result<(), Stop> {
         let wt_path = self.wt().path.clone();
         for (path, _) in changed {
-            let file = wt_path.join(path);
-            let result = match self.settings_baseline.get(path).cloned().flatten() {
-                Some(content) => std::fs::write(&file, content),
-                None => match std::fs::remove_file(&file) {
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    other => other,
-                },
-            };
-            result.map_err(|e| {
+            let accepted = self.settings_baseline.get(path).cloned().flatten();
+            restore_protected_file(&wt_path, path, accepted.as_deref()).map_err(|e| {
                 Stop::failed(
                     RunErrorCode::AgentError,
                     format!("無法還原 Agent 的設定檔 {path}：{e}"),
@@ -792,8 +823,14 @@ impl Run {
                     prompt = vec![acp::ContentBlock::from(RESUME_PROMPT.to_owned())];
                 }
                 TurnEnd::SettingsChanged => {
-                    self.check_agent_settings(SettingsCheck::MidSession).await?;
-                    prompt = vec![acp::ContentBlock::from(SETTINGS_RESUME_PROMPT.to_owned())];
+                    let restored = self.check_agent_settings(SettingsCheck::MidSession).await?;
+                    prompt = if restored {
+                        // Agent 可能已經把新的設定載入記憶體（例如 Claude Code 的「永遠允許」同時
+                        // 更新 session 中的規則），只還原檔案不夠：重新啟動 Agent 讓它重新讀取。
+                        self.restart_agent().await?
+                    } else {
+                        vec![acp::ContentBlock::from(SETTINGS_RESUME_PROMPT.to_owned())]
+                    };
                 }
                 TurnEnd::Done(reason) => {
                     self.send_run_diff().await;
@@ -1315,6 +1352,36 @@ impl Run {
     }
 }
 
+/// 把 Worktree 中的一個設定檔還原成 `content`（`None` 表示刪除）。不跟著連結寫：
+/// 檔案本身是 symlink 時先移除連結；所在目錄解開 symlink／junction 後不在 Worktree 內時拒絕。
+fn restore_protected_file(
+    worktree: &std::path::Path,
+    path: &str,
+    content: Option<&[u8]>,
+) -> Result<(), String> {
+    let file = worktree.join(path);
+    if std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
+        std::fs::remove_file(&file).map_err(|e| e.to_string())?;
+    }
+    let parent = file.parent().unwrap_or(worktree);
+    if !crate::paths::is_within(
+        &crate::paths::canonical(parent),
+        &crate::paths::canonical(worktree),
+    ) {
+        return Err("所在的目錄經由連結指向 Worktree 以外".into());
+    }
+    let result = match content {
+        Some(content) => {
+            std::fs::create_dir_all(parent).and_then(|()| std::fs::write(&file, content))
+        }
+        None => match std::fs::remove_file(&file) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        },
+    };
+    result.map_err(|e| e.to_string())
+}
+
 /// 什麼時候檢查 Agent 的設定檔。
 #[derive(Debug, Clone, Copy)]
 enum SettingsCheck {
@@ -1376,4 +1443,86 @@ fn rate_limit(error: &agent_client_protocol::Error) -> Option<Option<Duration>> 
             .and_then(serde_json::Value::as_u64)
             .map(Duration::from_millis),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 建立目錄連結：Windows 用 junction（不需要權限），其他平台用 symlink。
+    fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd.exe")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "{status:?}");
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[test]
+    fn 還原設定檔_寫回內容或刪除() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("wt");
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        std::fs::write(wt.join(".claude/settings.json"), "改過").unwrap();
+        restore_protected_file(&wt, ".claude/settings.json", Some("原本".as_bytes())).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".claude/settings.json")).unwrap(),
+            "原本"
+        );
+        restore_protected_file(&wt, ".claude/settings.json", None).unwrap();
+        assert!(!wt.join(".claude/settings.json").exists());
+        restore_protected_file(&wt, ".claude/settings.json", None).unwrap();
+    }
+
+    /// `.claude` 被換成指向 Worktree 外的連結時，不可以跟著寫到外面（安全審查的發現）。
+    #[test]
+    fn 還原設定檔_不跟著目錄連結寫到_worktree_外() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("wt");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("settings.json"), "外面的檔案").unwrap();
+        link_dir(&outside, &wt.join(".claude"));
+        let error = restore_protected_file(&wt, ".claude/settings.json", Some(b"x")).unwrap_err();
+        assert!(error.contains("Worktree 以外"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(outside.join("settings.json")).unwrap(),
+            "外面的檔案"
+        );
+        restore_protected_file(&wt, ".claude/settings.json", None).unwrap_err();
+        assert!(
+            outside.join("settings.json").exists(),
+            "不可以刪除外面的檔案"
+        );
+    }
+
+    /// 設定檔本身是指向外面的 symlink：移除連結本身再寫入，外面的檔案不受影響。
+    #[cfg(unix)]
+    #[test]
+    fn 還原設定檔_檔案本身是連結時移除連結() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("wt");
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        let outside = dir.path().join("secret.json");
+        std::fs::write(&outside, "外面的檔案").unwrap();
+        std::os::unix::fs::symlink(&outside, wt.join(".claude/settings.json")).unwrap();
+        restore_protected_file(&wt, ".claude/settings.json", Some("原本".as_bytes())).unwrap();
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "外面的檔案");
+        assert!(
+            !std::fs::symlink_metadata(wt.join(".claude/settings.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
 }
