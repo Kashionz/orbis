@@ -14,14 +14,26 @@ import {
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { formatUsage, toRunUsage } from "../../lib/format";
-import { PERMISSION_POLICY_LABELS, RUN_STATUS_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
+import {
+  DELEGATION_MODE_LABELS,
+  PERMISSION_POLICY_LABELS,
+  RUN_ORIGIN_LABELS,
+  RUN_STATUS_LABELS,
+  RUNNER_KIND_LABELS,
+} from "../../lib/labels";
 import { canRespondToPermission } from "../../lib/permissions";
 import { usePermissions } from "../auth/use-permissions";
+import { PlanGatePanel } from "../gate/PlanGatePanel";
+import { VerificationPanel } from "../verification/VerificationPanel";
 import type { ItemControls } from "./TimelineItemView";
 import { useRunTimeline } from "./use-run-timeline";
 import { VirtualTimeline } from "./VirtualTimeline";
 
-/** Run 即時檢視（交付 4）。`focus` 是要捲到的時間軸項目 key。 */
+type RunTab = "timeline" | "verification";
+
+/**
+ * Run 即時檢視：時間軸、Verification 結果、等待中的 Plan Gate。`focus` 是要捲到的時間軸項目 key。
+ */
 export function RunPage({ runId, focus }: { runId: string; focus: string | undefined }) {
   const queryClient = useQueryClient();
   const { data: run } = useSuspenseQuery(runQuery(runId));
@@ -32,6 +44,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const permissions = usePermissions(project, task);
   const { timeline, connected, error: streamError } = useRunTimeline(runId);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [tab, setTab] = useState<RunTab>("timeline");
 
   const status = timeline.status ?? run.status;
   const usage = timeline.usage ? toRunUsage(timeline.usage) : run.usage;
@@ -40,6 +53,17 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const awaitingReview = gates.some(
     (g) => g.runId === runId && g.kind === "review" && g.decision === null,
   );
+  const planGate =
+    gates.find((g) => g.runId === runId && g.kind === "plan" && g.decision === null) ?? null;
+  const verificationEvents = timeline.items.filter(
+    (i) => i.type === "verification_result" || i.type === "verification_completed",
+  ).length;
+
+  // 每收到一筆 Verification 的 Event，就重新取得保存的結果
+  useEffect(() => {
+    if (verificationEvents === 0) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.verifications(runId) });
+  }, [verificationEvents, queryClient, runId]);
 
   // 狀態改變時，Run、Task 與 Needs You 的資料也跟著變了
   useEffect(() => {
@@ -90,6 +114,17 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
             Run <code>{run.id}</code>
           </h1>
           <div className="run-meta">
+            {run.origin !== "dispatch" && (
+              <span className="tag">{RUN_ORIGIN_LABELS[run.origin]}</span>
+            )}
+            {run.delegationMode && (
+              <span className="tag">{DELEGATION_MODE_LABELS[run.delegationMode]}</span>
+            )}
+            {run.parentRunId && (
+              <Link to="/runs/$runId" params={{ runId: run.parentRunId }}>
+                父 Run
+              </Link>
+            )}
             <span>{run.agent}</span>
             {run.model && <span>{run.model}</span>}
             <span>{RUNNER_KIND_LABELS[run.runnerKind]}</span>
@@ -129,7 +164,44 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
       </header>
       {run.worktreePath && <DesktopActions worktreePath={run.worktreePath} />}
       <ErrorText error={streamError ?? respond.error ?? cancel.error} />
-      <VirtualTimeline items={timeline.items} controls={controls} focusKey={focus} />
+      {planGate && (
+        <PlanGatePanel
+          gate={planGate}
+          runId={runId}
+          canApprove={permissions.can("gate.approve")}
+          canReject={permissions.can("gate.reject")}
+          canAbort={permissions.can("run.control")}
+        />
+      )}
+      <div className="tabs run-tabs" role="tablist" aria-label="Run 的內容">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "timeline"}
+          onClick={() => setTab("timeline")}
+        >
+          時間軸
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "verification"}
+          onClick={() => setTab("verification")}
+        >
+          Verification
+        </button>
+      </div>
+      {tab === "timeline" && (
+        <VirtualTimeline items={timeline.items} controls={controls} focusKey={focus} />
+      )}
+      {tab === "verification" && (
+        <VerificationPanel
+          runId={runId}
+          taskId={run.taskId}
+          maxRetries={project?.policy.verificationMaxRetries ?? 3}
+          canDecide={permissions.can("run.control")}
+        />
+      )}
     </main>
   );
 }

@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tansta
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import {
+  acceptanceCriteriaQuery,
   blobTextQuery,
   cancelRun,
   decideGate,
@@ -26,6 +27,7 @@ import { ErrorText } from "../../components/ErrorText";
 import { DIFF_CHANGE_LABELS } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
 import { DiffEditor } from "./DiffEditor";
+import { ReviewCriteria, uncheckedManualCriteria } from "./ReviewCriteria";
 import { loadDraft, type ReviewDraft, saveDraft, sortComments } from "./review-drafts";
 
 type Side = ReviewCommentInput["side"];
@@ -88,6 +90,8 @@ function Review({
   const canReject = awaitingReview && permissions.can("gate.reject");
   const canApprove = awaitingReview && permissions.can("gate.approve");
   const canComment = canReject;
+  const { data: criteria = [] } = useQuery(acceptanceCriteriaQuery(task.id));
+  const unchecked = uncheckedManualCriteria(criteria);
 
   function setDraft(next: ReviewDraft) {
     setDraftState(next);
@@ -262,6 +266,8 @@ function Review({
         </section>
       </div>
 
+      <ReviewCriteria taskId={task.id} runId={run.id} canCheck={canComment} />
+
       {(canReject || canApprove) && (
         <footer className="review-actions">
           {canReject && (
@@ -290,11 +296,16 @@ function Review({
               <button
                 type="button"
                 className="primary"
-                disabled={decision.isPending}
+                disabled={decision.isPending || unchecked.length > 0}
                 onClick={() => decision.mutate("approve")}
               >
                 核准並開 PR
               </button>
+            )}
+            {canApprove && unchecked.length > 0 && (
+              <span className="hint" role="note">
+                還有 {unchecked.length} 條 manual 條件沒有打勾，全部打勾後才能核准
+              </span>
             )}
             {permissions.can("run.control") && (
               <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate()}>

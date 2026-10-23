@@ -190,6 +190,57 @@ export function m1RevisionTurn(): ScriptStep[] {
   ];
 }
 
+export const PLAN_V1 = "## Plan\n\n1. 新增 `hello.txt`\n2. 在 README.md 說明用途\n";
+export const PLAN_V2 =
+  "## Plan（修訂）\n\n1. 新增 `hello.txt`\n2. 在 README.md 說明用途\n3. 補上測試\n";
+
+/** 開啟 Plan Gate 時的 Planning 回合：Agent 以 plan 模式提出 plan，等待 Plan Gate。 */
+export function planTurn(branch: string): ScriptStep[] {
+  return [
+    event({
+      kind: "worktree_ready",
+      worktree_path: "C:/wt/demo/run",
+      branch,
+      base_commit: BASE_COMMIT,
+    }),
+    event({ kind: "status_changed", status: "running", gate: null, message: null }),
+    say("我先擬定 plan。"),
+    event({ kind: "plan_proposed", body: { type: "inline", text: PLAN_V1 }, source: "plan_mode" }),
+    event({ kind: "status_changed", status: "awaiting_gate", gate: "plan", message: null }),
+  ];
+}
+
+/** Plan Gate 退回後依意見修訂 plan。 */
+export function planRevisionTurn(): ScriptStep[] {
+  return [
+    event({ kind: "status_changed", status: "running", gate: null, message: "Plan Gate 退回" }),
+    say("收到意見，我修訂 plan。"),
+    event({ kind: "plan_proposed", body: { type: "inline", text: PLAN_V2 }, source: "plan_mode" }),
+    event({ kind: "status_changed", status: "awaiting_gate", gate: "plan", message: null }),
+  ];
+}
+
+/** plan 核准後的實作回合：同 M1 第一回合，但 Worktree 已經建好。 */
+export function implementTurn(branch: string): ScriptStep[] {
+  return m1FirstTurn(branch).slice(1);
+}
+
+/** Verification 失敗後，Server 把失敗原因送回 Agent 的修正回合。 */
+export function verificationFixTurn(): ScriptStep[] {
+  return [
+    event({
+      kind: "status_changed",
+      status: "running",
+      gate: null,
+      message: "Verification 失敗，重試",
+    }),
+    say("依 Verification 的失敗原因修正。"),
+    usage(1800, 0.02),
+    say("已修正。"),
+    event({ kind: "status_changed", status: "awaiting_gate", gate: "review", message: null }),
+  ];
+}
+
 /** Repo 設定檔相對於 repo 根目錄的路徑（ARCHITECTURE §6.3）。 */
 export const CONFIG_PATH = `${NAMES.configDir}/${NAMES.configFile}`;
 

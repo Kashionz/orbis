@@ -47,3 +47,43 @@ export async function mockState<T = Record<string, unknown>>(page: Page): Promis
     MOCK_STATE_STORAGE_KEY,
   );
 }
+
+/** 從 Task 頁派工（預設選項），等到進入 Run 頁。 */
+export async function dispatchTask(page: Page, taskKey: string): Promise<void> {
+  await page.goto(`/tasks/${taskKey}`);
+  await page.getByRole("button", { name: "派工" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "派工" }).click();
+  await expect(page).toHaveURL(/\/runs\/run-\d+$/);
+}
+
+/** 在頁面中呼叫 API（經過 MSW 假後端），用來準備測試資料。 */
+export async function apiCall(
+  page: Page,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<unknown> {
+  // MSW 的 service worker 接管頁面之後，fetch 才會進到假後端
+  await page.waitForFunction(() => navigator.serviceWorker?.controller != null);
+  return page.evaluate(
+    async ({ method, path, body }) => {
+      const response = await fetch(path, {
+        method,
+        headers: body === undefined ? {} : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`${method} ${path}：HTTP ${response.status}`);
+      return response.status === 204 ? null : response.json();
+    },
+    { method, path, body },
+  );
+}
+
+/** 允許時間軸上等待中的權限請求。 */
+export async function allowPermission(page: Page): Promise<void> {
+  await page
+    .getByTestId("timeline")
+    .locator('.event-permission[data-resolved="false"]')
+    .getByRole("button", { name: "允許" })
+    .click();
+}

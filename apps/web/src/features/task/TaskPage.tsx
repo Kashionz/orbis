@@ -118,6 +118,12 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
             canEdit={canEdit}
             onSave={(dependsOn) => update.mutate({ dependsOn })}
           />
+          <PlanGateField
+            task={task}
+            project={project}
+            canEdit={canEdit}
+            onSave={(planGateEnabled) => update.mutate({ planGateEnabled })}
+          />
         </aside>
       </div>
 
@@ -212,6 +218,47 @@ function AssigneeField({
           </select>
         ) : (
           <span id="assignee">{assignee ? `@${assignee.githubLogin}` : "未指派"}</span>
+        )}
+      </dd>
+    </dl>
+  );
+}
+
+/** Task 層級的 Plan Gate 設定：沿用 Project，或在這個 Task 開啟、關閉（§5）。 */
+function PlanGateField({
+  task,
+  project,
+  canEdit,
+  onSave,
+}: {
+  task: Task;
+  project: Project;
+  canEdit: boolean;
+  onSave: (planGateEnabled: boolean | null) => void;
+}) {
+  const inherited = `沿用 Project（${project.policy.planGateEnabled ? "開啟" : "關閉"}）`;
+  const value = task.planGateEnabled === null ? "inherit" : task.planGateEnabled ? "on" : "off";
+  const labels = { inherit: inherited, on: "開啟", off: "關閉" } as const;
+  return (
+    <dl>
+      <dt>
+        <label htmlFor="plan-gate">Plan Gate</label>
+      </dt>
+      <dd>
+        {canEdit ? (
+          <select
+            id="plan-gate"
+            value={value}
+            onChange={(event) =>
+              onSave(event.target.value === "inherit" ? null : event.target.value === "on")
+            }
+          >
+            <option value="inherit">{labels.inherit}</option>
+            <option value="on">{labels.on}</option>
+            <option value="off">{labels.off}</option>
+          </select>
+        ) : (
+          <span id="plan-gate">{labels[value]}</span>
         )}
       </dd>
     </dl>

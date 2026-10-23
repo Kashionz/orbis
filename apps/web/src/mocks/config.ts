@@ -35,6 +35,8 @@ export interface MockConfig {
   githubAppOwnersOnRefresh?: string[];
   /** 重新檢查時 GitHub 上同名 repo 的 id 已經不同（`owner/name`），回 409 `repo_mismatch`。 */
   repoMismatch?: string[];
+  /** 每個 Run 的前幾輪 Verification 中，command 類型的條件失敗；預設 0（全部通過）。 */
+  verificationFailures?: number;
 }
 
 declare global {

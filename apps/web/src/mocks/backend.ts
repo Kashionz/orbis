@@ -34,17 +34,31 @@ import {
   type UpdateAcceptanceCriterionInput,
   type UpdateProjectInput,
   type UpdateTaskInput,
+  type Verification,
+  type VerificationDecisionInput,
 } from "@orbis/api-contract";
-import type { EventKind, PermissionPurpose, RunDiff, RunDiffFile, TextBody } from "@orbis/protocol";
+import type {
+  EventKind,
+  GateKind,
+  PermissionPurpose,
+  RunDiff,
+  RunDiffFile,
+  TextBody,
+  VerificationEvidence,
+} from "@orbis/protocol";
 import { MOCK_STATE_STORAGE_KEY, type MockConfig, mockConfig } from "./config";
 import {
   BASE_COMMIT,
   BASE_FILES,
   configTrustTurn,
   generateLargeRun,
+  implementTurn,
   m1FirstTurn,
   m1RevisionTurn,
+  planRevisionTurn,
+  planTurn,
   type ScriptStep,
+  verificationFixTurn,
 } from "./scripts";
 
 export const ME_ID = "member-me";
@@ -73,10 +87,22 @@ export interface MockState {
   reviews: Record<string, GateDecisionInput[]>;
   /** 已登出：之後 `/api/auth/me` 回 401。 */
   loggedOut: boolean;
-  /** blob 的內容（review diff 中放在 blob 的大檔）。 */
+  /** blob 的內容（review diff 中放在 blob 的大檔；`data:` 開頭的是圖片）。 */
   blobs: Record<string, string>;
   nextId: number;
+  verifications: Verification[];
+  /**
+   * 正在 Verification 的 Run：`running`＝已送 verify；`done`＝已收到 verification_completed，
+   * 接著的 awaiting_gate(review) 是 Verification 結束的回報，不再開始新的一輪。
+   */
+  verificationPhase: Record<string, "running" | "done">;
+  /** 每個 Run 跑過幾輪 Verification（決定 `verificationFailures` 的哪幾輪失敗）。 */
+  verificationRounds: Record<string, number>;
 }
+
+/** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
+const SCREENSHOT_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 /** 以契約 ApiError 的形狀回應的錯誤。 */
 export class MockError extends Error {
@@ -141,6 +167,9 @@ export class MockBackend {
       : sessionStorage,
   ) {
     this.state = this.load() ?? this.seed();
+    this.state.verifications ??= [];
+    this.state.verificationPhase ??= {};
+    this.state.verificationRounds ??= {};
     this.save();
   }
 
@@ -313,6 +342,9 @@ export class MockBackend {
       loggedOut: false,
       blobs: {},
       nextId: 100,
+      verifications: [],
+      verificationPhase: {},
+      verificationRounds: {},
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -345,21 +377,29 @@ export class MockBackend {
 
     // 等待權限請求的 Run
     const waiting = seedTask("寫入 config.json", "ready");
-    this.dispatch(waiting.id, {
-      agent: "claude-code",
-      model: null,
-      runnerKind: "local",
-      permissionPolicy: "manual",
-    });
+    this.dispatch(
+      waiting.id,
+      {
+        agent: "claude-code",
+        model: null,
+        runnerKind: "local",
+        permissionPolicy: "manual",
+      },
+      true,
+    );
 
     // 等待 Review Gate 的 Run（劇本跑完第一回合，允許權限請求）
     const review = seedTask("整理 README", "ready", { assigneeMemberId: "member-alice" });
-    const reviewRun = this.dispatch(review.id, {
-      agent: "claude-code",
-      model: null,
-      runnerKind: "local",
-      permissionPolicy: "auto",
-    });
+    const reviewRun = this.dispatch(
+      review.id,
+      {
+        agent: "claude-code",
+        model: null,
+        runnerKind: "local",
+        permissionPolicy: "auto",
+      },
+      true,
+    );
     this.settle();
     this.respondToPermission(reviewRun.id, "perm-write-config", "allow");
     this.settle();
@@ -382,12 +422,16 @@ export class MockBackend {
     // 等待設定的信任核准的 Run（只在指定時建立，避免影響其他測試的項目數）
     if (this.config.configTrust) {
       const trust = seedTask("執行 setup 腳本", "ready");
-      const trustRun = this.dispatch(trust.id, {
-        agent: "claude-code",
-        model: null,
-        runnerKind: "local",
-        permissionPolicy: "auto",
-      });
+      const trustRun = this.dispatch(
+        trust.id,
+        {
+          agent: "claude-code",
+          model: null,
+          runnerKind: "local",
+          permissionPolicy: "auto",
+        },
+        true,
+      );
       this.state.simulations[trustRun.id] = {
         queue: configTrustTurn(`feature/${trust.key.toLowerCase()}`),
         waiting: null,
@@ -969,8 +1013,11 @@ export class MockBackend {
     };
   }
 
-  /** 派工：建立 Run，Task 進入 Running（Planning 在 B1 是直接通過）。 */
-  dispatch(taskId: string, input: CreateRunInput): Run {
+  /**
+   * 派工：建立 Run。Plan Gate 開啟時 Task 進入 Planning，否則直接 Running。
+   * 種子資料的 Run 一律略過 Plan Gate（`seeding`），不受測試設定的政策影響。
+   */
+  dispatch(taskId: string, input: CreateRunInput, seeding = false): Run {
     const task = this.task(taskId);
     if (task.status !== "ready") {
       throw new MockError(409, "invalid_transition", "只有 Ready 的 Task 可以派工");
@@ -987,14 +1034,21 @@ export class MockBackend {
     run.runnerId = input.runnerKind === "local" ? "runner-local" : "runner-team";
     this.state.runs.push(run);
     this.state.events[run.id] = [];
+    const branch = `feature/${task.key.toLowerCase()}`;
+    const planGate = !seeding && this.planGateEnabled(task);
     this.state.simulations[run.id] = {
-      queue: m1FirstTurn(`feature/${task.key.toLowerCase()}`),
+      queue: planGate ? planTurn(branch) : m1FirstTurn(branch),
       waiting: null,
     };
-    task.status = "running";
+    task.status = planGate ? "planning" : "running";
     task.updatedAt = now();
     this.save();
     return run;
+  }
+
+  /** Task 的覆寫優先，否則沿用 Project 的設定（§5）。 */
+  private planGateEnabled(task: Task): boolean {
+    return task.planGateEnabled ?? this.project(task.projectId).policy.planGateEnabled;
   }
 
   dispatchAsMember(taskId: string, input: CreateRunInput): Run {
@@ -1044,6 +1098,25 @@ export class MockBackend {
     if (input.action === "approve" && !this.mayApprove(task)) {
       throw new MockError(403, "forbidden", "這個 Project 不允許核准指派給自己的 Task");
     }
+    if (
+      gate.kind === "plan" &&
+      input.action === "reject" &&
+      ((input.reviewComments ?? []).length > 0 || (input.previewComments ?? []).length > 0)
+    ) {
+      throw new MockError(422, "invalid_input", "Plan Gate 只接受整體說明");
+    }
+    if (gate.kind === "review" && input.action === "approve") {
+      const unchecked = this.acceptanceCriteria(task.id).filter(
+        (c) => c.kind === "manual" && c.result !== "passed",
+      );
+      if (unchecked.length > 0) {
+        throw new MockError(
+          409,
+          "manual_criteria_unchecked",
+          `還有 ${unchecked.length} 條 manual 條件沒有打勾`,
+        );
+      }
+    }
     const runId = gate.runId ?? "";
     this.state.reviews[runId] = [...(this.state.reviews[runId] ?? []), input];
     const time = now();
@@ -1064,12 +1137,49 @@ export class MockBackend {
               updatedAt: time,
             }))
           : [],
+      previewComments:
+        input.action === "reject"
+          ? (input.previewComments ?? []).map((c) => ({
+              body: c.body,
+              url: c.url,
+              selector: c.selector ?? null,
+              screenshotBlobId: c.screenshotBlobId ?? null,
+              id: this.newId("preview-comment"),
+              gateId: gate.id,
+              authorMemberId: ME_ID,
+              createdAt: time,
+              updatedAt: time,
+            }))
+          : [],
     });
     this.state.needsYou = this.state.needsYou.filter(
       (i) => !(i.kind === "gate" && i.runId === runId),
     );
-    if (input.action === "reject") {
-      this.state.simulations[runId] = { queue: m1RevisionTurn(), waiting: null };
+    const prompt = (source: "plan_gate" | "review_gate", text: string): ScriptStep => ({
+      type: "event",
+      event: { kind: "prompt_submitted", source, prompt: [{ type: "text", text }] },
+    });
+    if (gate.kind === "plan" && input.action !== "abort") {
+      const approved = input.action === "approve";
+      const branch = this.run(runId).branch ?? `feature/${task.key.toLowerCase()}`;
+      this.state.simulations[runId] = {
+        queue: approved
+          ? [prompt("plan_gate", "plan 已核准，開始實作。"), ...implementTurn(branch)]
+          : [prompt("plan_gate", input.comment ?? ""), ...planRevisionTurn()],
+        waiting: null,
+      };
+      task.status = approved ? "running" : "planning";
+    } else if (input.action === "reject") {
+      const lines = [
+        input.comment ?? "",
+        ...(input.reviewComments ?? []).map((c) => `${c.path}:${c.line} ${c.body}`),
+        ...(input.previewComments ?? []).map((c) => `${c.url} ${c.body}`),
+      ];
+      this.state.simulations[runId] = {
+        queue: [prompt("review_gate", lines.filter(Boolean).join("\n")), ...m1RevisionTurn()],
+        waiting: null,
+      };
+      task.status = "running";
     } else if (input.action === "approve") {
       this.append(runId, [
         { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
@@ -1081,6 +1191,292 @@ export class MockBackend {
     task.updatedAt = now();
     this.save();
     return gate;
+  }
+
+  // ---------- Verification（ARCHITECTURE §5.1；真實系統中由 Server 發起） ----------
+
+  verifications(runId: string): Verification[] {
+    this.run(runId);
+    return this.state.verifications.filter((v) => v.runId === runId);
+  }
+
+  /** Verification 超過重試上限後人的決定。 */
+  decideVerification(runId: string, input: VerificationDecisionInput): void {
+    this.requireEditor();
+    const run = this.run(runId);
+    const latest = this.verifications(runId).at(-1);
+    if (!latest?.awaitingDecision) {
+      throw new MockError(409, "conflict", "這個 Run 沒有在等待 Verification 的決定");
+    }
+    Object.assign(latest, {
+      awaitingDecision: false,
+      resolution: input.action,
+      resolvedByMemberId: ME_ID,
+      comment: input.action === "retry" ? (input.comment ?? null) : null,
+    });
+    this.state.needsYou = this.state.needsYou.filter(
+      (i) => !(i.kind === "stopped_run" && i.runId === runId),
+    );
+    const task = this.task(run.taskId);
+    if (input.action === "retry") {
+      const reason = latest.results
+        .filter((r) => r.outcome !== "passed")
+        .map((r) => r.summary)
+        .join("\n");
+      this.state.simulations[runId] = {
+        queue: [
+          {
+            type: "event",
+            event: {
+              kind: "prompt_submitted",
+              source: "verification_retry",
+              prompt: [{ type: "text", text: [input.comment, reason].filter(Boolean).join("\n") }],
+            },
+          },
+          ...verificationFixTurn(),
+        ],
+        waiting: null,
+      };
+    } else if (input.action === "skip") {
+      this.createGate(run, task, "review");
+    } else {
+      this.cancelRun(runId);
+    }
+    task.updatedAt = now();
+    this.save();
+  }
+
+  /** 在 Review Gate 為 `manual` 條件打勾或取消。 */
+  checkAcceptanceCriterion(criterionId: string, checked: boolean): AcceptanceCriterion {
+    this.requireEditor();
+    const criterion = this.state.acceptanceCriteria.find((c) => c.id === criterionId);
+    if (!criterion) throw new MockError(404, "not_found", "找不到這條 Acceptance Criterion");
+    if (criterion.kind !== "manual") {
+      throw new MockError(422, "invalid_input", "只有 manual 類型的條件可以打勾");
+    }
+    const pending = this.state.gates.some(
+      (g) => g.taskId === criterion.taskId && g.kind === "review" && g.decision === null,
+    );
+    if (!pending) throw new MockError(409, "conflict", "只能在 Review Gate 中打勾");
+    const time = now();
+    Object.assign(criterion, {
+      result: checked ? "passed" : "pending",
+      resultUpdatedAt: checked ? time : null,
+      resultSummary: null,
+      checkedByMemberId: checked ? ME_ID : null,
+      updatedAt: time,
+    });
+    this.save();
+    return criterion;
+  }
+
+  /** 送 verify：列出非 manual 的條件，依 `verificationFailures` 決定這一輪的 command 條件是否失敗。 */
+  private startVerification(run: Run, task: Task): void {
+    const criteria = this.acceptanceCriteria(task.id).filter((c) => c.kind !== "manual");
+    const previous = this.verifications(run.id).at(-1);
+    // 連續失敗才累加；通過、人選擇再試或略過之後從 1 重新算
+    const attempt =
+      previous && previous.resolution === null && previous.status !== "passed"
+        ? previous.attempt + 1
+        : 1;
+    const round = (this.state.verificationRounds[run.id] ?? 0) + 1;
+    this.state.verificationRounds[run.id] = round;
+    const fail = round <= (this.config.verificationFailures ?? 0);
+    const verification: Verification = {
+      id: this.newId("verification"),
+      runId: run.id,
+      taskId: task.id,
+      attempt,
+      status: "running",
+      resolution: null,
+      resolvedByMemberId: null,
+      comment: null,
+      awaitingDecision: false,
+      results: [],
+      startedAt: now(),
+      completedAt: null,
+    };
+    this.state.verifications.push(verification);
+    task.status = "verifying";
+    const steps: EventKind[] = [
+      { kind: "status_changed", status: "verifying", gate: null, message: null },
+    ];
+    for (const criterion of criteria) {
+      const failed = fail && criterion.kind === "command";
+      let judgedBy: string | null = null;
+      if (criterion.kind !== "command") {
+        // agent／browser 以 consult Child Run 判定（§5.1）
+        const child = this.newRun(task.id, this.newId("run"), {
+          agent: "claude-code",
+          model: "claude-sonnet-5-5",
+          runnerKind: run.runnerKind,
+          permissionPolicy: run.permissionPolicy,
+        });
+        Object.assign(child, {
+          parentRunId: run.id,
+          delegationMode: "consult",
+          origin: "verification",
+          startedByMemberId: null,
+          runnerId: run.runnerId,
+          status: "completed",
+          startedAt: now(),
+          endedAt: now(),
+        });
+        this.state.runs.push(child);
+        this.state.events[child.id] = [];
+        judgedBy = child.id;
+      }
+      steps.push({
+        kind: "verification_result",
+        verification_id: verification.id,
+        attempt,
+        criterion_id: criterion.id,
+        outcome: failed ? "failed" : "passed",
+        summary: failed
+          ? `${criterion.command ?? "pnpm test"} 失敗：exit code 1`
+          : `${criterion.description}：通過`,
+        evidence: this.evidenceFor(criterion, failed),
+        judged_by_run_id: judgedBy,
+      });
+    }
+    steps.push(
+      {
+        kind: "verification_completed",
+        verification_id: verification.id,
+        attempt,
+        outcome: fail && criteria.some((c) => c.kind === "command") ? "failed" : "passed",
+      },
+      { kind: "status_changed", status: "awaiting_gate", gate: "review", message: null },
+    );
+    const simulation = this.state.simulations[run.id] ?? { queue: [], waiting: null };
+    simulation.queue.unshift(...steps.map((event): ScriptStep => ({ type: "event", event })));
+    this.state.simulations[run.id] = simulation;
+  }
+
+  private evidenceFor(criterion: AcceptanceCriterion, failed: boolean): VerificationEvidence[] {
+    switch (criterion.kind) {
+      case "command":
+        return [
+          {
+            type: "command_output",
+            command: criterion.command ?? "pnpm test",
+            exit_code: failed ? 1 : 0,
+            output: {
+              type: "inline",
+              text: failed ? "✗ 1 個測試失敗：hello.txt 不存在\n" : "✓ 3 個測試通過\n",
+            },
+            truncated: false,
+          },
+        ];
+      case "agent":
+        return [{ type: "text", text: "Agent 判定：diff 符合 Spec 的描述。" }];
+      case "browser": {
+        const blobId = this.newId("blob");
+        this.state.blobs[blobId] = SCREENSHOT_DATA_URL;
+        return [
+          {
+            type: "screenshot",
+            image: {
+              blob_id: blobId,
+              sha256: "0".repeat(64),
+              size: 68,
+              media_type: "image/png",
+            },
+            caption: "首頁",
+            url: "http://localhost:4123/",
+          },
+          { type: "action_log", steps: ["開啟首頁", "點擊「開始」", "看到歡迎訊息"] },
+        ];
+      }
+      default:
+        return [];
+    }
+  }
+
+  /** Verification 的一輪結束（Server 收到 verification_completed）：通過就進 Review Gate，失敗就重試或等人決定。 */
+  private finishVerification(run: Run, task: Task, verificationId: string, outcome: string): void {
+    const verification = this.state.verifications.find((v) => v.id === verificationId);
+    if (!verification) return;
+    verification.status =
+      outcome === "passed" ? "passed" : outcome === "error" ? "error" : "failed";
+    verification.completedAt = now();
+    this.state.verificationPhase[run.id] = "done";
+    if (verification.status === "passed") {
+      this.createGate(run, task, "review");
+      return;
+    }
+    const maxRetries = this.project(task.projectId).policy.verificationMaxRetries;
+    if (verification.attempt <= maxRetries) {
+      const reason = verification.results
+        .filter((r) => r.outcome !== "passed")
+        .map((r) => r.summary)
+        .join("\n");
+      const simulation = this.state.simulations[run.id] ?? { queue: [], waiting: null };
+      simulation.queue.push(
+        {
+          type: "event",
+          event: {
+            kind: "prompt_submitted",
+            source: "verification_retry",
+            prompt: [{ type: "text", text: reason }],
+          },
+        },
+        ...verificationFixTurn(),
+      );
+      this.state.simulations[run.id] = simulation;
+      return;
+    }
+    verification.awaitingDecision = true;
+    this.state.needsYou.push({
+      id: this.newId("needs-you"),
+      kind: "stopped_run",
+      reason: `Verification 連續失敗 ${verification.attempt} 輪，超過重試上限`,
+      memberId: ME_ID,
+      taskId: task.id,
+      taskKey: task.key,
+      runId: run.id,
+      createdAt: now(),
+    });
+  }
+
+  /** 建立等待決定的 Gate，並加入 Needs You。 */
+  private createGate(run: Run, task: Task, kind: GateKind): void {
+    const planSeq =
+      kind === "plan"
+        ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "plan_proposed")
+            ?.seq ?? null)
+        : null;
+    const reviewDiffSeq =
+      kind === "review"
+        ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "run_diff")?.seq ??
+          null)
+        : null;
+    task.status = kind === "plan" ? "plan_gate" : "review_gate";
+    this.state.gates.push({
+      id: this.newId("gate"),
+      taskId: task.id,
+      runId: run.id,
+      kind,
+      decision: null,
+      decidedByMemberId: null,
+      decidedAt: null,
+      comment: null,
+      reviewComments: [],
+      previewComments: [],
+      planSeq,
+      reviewDiffSeq,
+      createdAt: now(),
+    });
+    this.state.needsYou.push({
+      id: this.newId("needs-you"),
+      kind: "gate",
+      gateKind: kind,
+      memberId: ME_ID,
+      taskId: task.id,
+      taskKey: task.key,
+      runId: run.id,
+      createdAt: now(),
+    });
   }
 
   cancelRun(runId: string): Run {
@@ -1127,37 +1523,52 @@ export class MockBackend {
         run.status = event.status;
         if (event.status === "running") {
           run.startedAt ??= now();
-          task.status = "running";
+          if (task.status !== "planning") task.status = "running";
+        }
+        if (event.status === "verifying") task.status = "verifying";
+        if (event.status === "awaiting_gate" && event.gate === "plan") {
+          this.createGate(run, task, "plan");
+          return;
         }
         if (["completed", "failed", "canceled"].includes(event.status)) run.endedAt = now();
         if (event.status === "awaiting_gate" && event.gate === "review") {
-          task.status = "review_gate";
-          this.state.gates.push({
-            id: this.newId("gate"),
-            taskId: task.id,
-            runId: run.id,
-            kind: "review",
-            decision: null,
-            decidedByMemberId: null,
-            decidedAt: null,
-            comment: null,
-            reviewComments: [],
-            previewComments: [],
-            planSeq: null,
-            reviewDiffSeq: null,
-            createdAt: now(),
-          });
-          this.state.needsYou.push({
-            id: this.newId("needs-you"),
-            kind: "gate",
-            gateKind: "review",
-            memberId: ME_ID,
-            taskId: task.id,
-            taskKey: task.key,
-            runId: run.id,
-            createdAt: now(),
+          if (this.state.verificationPhase[run.id] === "done") {
+            // Verification 結束的回報；結果已在 verification_completed 處理
+            delete this.state.verificationPhase[run.id];
+            return;
+          }
+          const verifiable = this.acceptanceCriteria(task.id).some((c) => c.kind !== "manual");
+          if (verifiable) {
+            this.state.verificationPhase[run.id] = "running";
+            this.startVerification(run, task);
+          } else {
+            this.createGate(run, task, "review");
+          }
+        }
+        return;
+      case "verification_result": {
+        const verification = this.state.verifications.find((v) => v.id === event.verification_id);
+        verification?.results.push({
+          criterionId: event.criterion_id,
+          outcome: event.outcome,
+          summary: event.summary,
+          evidence: event.evidence,
+          judgedByRunId: event.judged_by_run_id,
+          createdAt: now(),
+        });
+        const criterion = this.state.acceptanceCriteria.find((c) => c.id === event.criterion_id);
+        if (criterion) {
+          Object.assign(criterion, {
+            result: event.outcome === "passed" ? "passed" : "failed",
+            resultSummary: event.summary,
+            resultUpdatedAt: now(),
+            checkedByRunId: event.judged_by_run_id,
           });
         }
+        return;
+      }
+      case "verification_completed":
+        this.finishVerification(run, task, event.verification_id, event.outcome);
         return;
       case "permission_request":
         run.status = "awaiting_permission";

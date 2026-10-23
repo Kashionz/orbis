@@ -3,6 +3,7 @@
 
 import {
   API_ROUTES,
+  CheckAcceptanceCriterionInput,
   CreateAcceptanceCriterionInput,
   CreateProjectInput,
   CreateRepoInput,
@@ -14,6 +15,7 @@ import {
   UpdateAcceptanceCriterionInput,
   UpdateProjectInput,
   UpdateTaskInput,
+  VerificationDecisionInput,
   WEB_WS_MAX_SUBSCRIPTIONS,
   WebClientMessage,
   type WebServerMessage,
@@ -292,6 +294,25 @@ export function createHandlers(backend: MockBackend) {
       API_ROUTES.runCancel,
       handle((_, p) => backend.cancelRun(p.runId ?? ""), 202),
     ),
+    http.get(
+      API_ROUTES.runVerifications,
+      handle((_, p) => backend.verifications(p.runId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.runVerificationDecision,
+      handle(async (request, p) => {
+        backend.decideVerification(p.runId ?? "", await parse(request, VerificationDecisionInput));
+      }),
+    ),
+    http.post(
+      API_ROUTES.acceptanceCriterionCheck,
+      handle(async (request, p) =>
+        backend.checkAcceptanceCriterion(
+          p.criterionId ?? "",
+          (await parse(request, CheckAcceptanceCriterionInput)).checked,
+        ),
+      ),
+    ),
     http.post(
       API_ROUTES.gateDecision,
       handle(async (request, p) =>
@@ -301,7 +322,14 @@ export function createHandlers(backend: MockBackend) {
 
     http.get(API_ROUTES.blob, ({ params }) => {
       try {
-        return new HttpResponse(backend.blob(String(params.blobId ?? "")), {
+        const content = backend.blob(String(params.blobId ?? ""));
+        // 圖片（Verification 的截圖）以 data URL 保存
+        if (content.startsWith("data:")) {
+          const [meta = "", data = ""] = content.slice("data:".length).split(",");
+          const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+          return new HttpResponse(bytes, { headers: { "content-type": meta.split(";")[0] ?? "" } });
+        }
+        return new HttpResponse(content, {
           headers: { "content-type": "text/plain" },
         });
       } catch (error) {

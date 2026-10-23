@@ -22,6 +22,7 @@ import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
 import { appInstallUrl } from "../../lib/github";
 import { PERMISSION_POLICY_LABELS } from "../../lib/labels";
+import { type PolicyFormValues, policyFormValues, validatePolicyForm } from "../../lib/policy-form";
 import { type RepoFormValues, validateRepoForm } from "../../lib/project-forms";
 import { usePermissions } from "../auth/use-permissions";
 
@@ -55,6 +56,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
         <PolicySection
           project={project}
           canEditPermissionPolicy={permissions.can("policy.manage")}
+          canEditPolicies={permissions.can("project.manage")}
         />
       </div>
     </main>
@@ -307,9 +309,11 @@ function RegisterRepoForm({ project }: { project: Project }) {
 function PolicySection({
   project,
   canEditPermissionPolicy,
+  canEditPolicies,
 }: {
   project: Project;
   canEditPermissionPolicy: boolean;
+  canEditPolicies: boolean;
 }) {
   const { policy } = project;
   const yesNo = (value: boolean) => (value ? "是" : "否");
@@ -327,28 +331,106 @@ function PolicySection({
           </dd>
         </dl>
       )}
-      <dl className="settings-list" aria-label="其他政策">
-        <dt>Plan Gate</dt>
-        <dd>{policy.planGateEnabled ? "開啟" : "關閉"}</dd>
-        <dt>允許 Delegation</dt>
-        <dd>{yesNo(policy.delegationEnabled)}</dd>
-        {policy.delegationEnabled && (
-          <>
-            <dt>可以分派的 Agent</dt>
-            <dd>{policy.delegationAgents?.join("、") ?? "不限制"}</dd>
-          </>
-        )}
-        <dt>禁止 Member 核准自己的 Task</dt>
-        <dd>{yesNo(policy.forbidSelfApproval)}</dd>
-        <dt>Member 可以派工到 Team Runner</dt>
-        <dd>{yesNo(policy.memberCanDispatchToTeamRunner)}</dd>
-        <dt>自動建立 GitHub Issue</dt>
-        <dd>{yesNo(policy.autoCreateIssues)}</dd>
-      </dl>
-      <p className="hint">其他政策目前只能查看。</p>
+      {canEditPolicies ? (
+        <OtherPoliciesForm key={project.updatedAt} project={project} />
+      ) : (
+        <dl className="settings-list" aria-label="其他政策">
+          <dt>Plan Gate</dt>
+          <dd>{policy.planGateEnabled ? "開啟" : "關閉"}</dd>
+          <dt>允許 Delegation</dt>
+          <dd>{yesNo(policy.delegationEnabled)}</dd>
+          {policy.delegationEnabled && (
+            <>
+              <dt>可以分派的 Agent</dt>
+              <dd>{policy.delegationAgents?.join("、") ?? "不限制"}</dd>
+            </>
+          )}
+          <dt>禁止 Member 核准自己的 Task</dt>
+          <dd>{yesNo(policy.forbidSelfApproval)}</dd>
+          <dt>Member 可以派工到 Team Runner</dt>
+          <dd>{yesNo(policy.memberCanDispatchToTeamRunner)}</dd>
+          <dt>自動建立 GitHub Issue</dt>
+          <dd>{yesNo(policy.autoCreateIssues)}</dd>
+          <dt>Verification 自動重試上限</dt>
+          <dd>{policy.verificationMaxRetries} 次</dd>
+          <dt>會觸發 Feedback Loop 的 bot</dt>
+          <dd>{policy.feedbackBotAllowlist.join("、") || "（沒有）"}</dd>
+        </dl>
+      )}
     </section>
   );
 }
+
+/** 預設 Permission Policy 以外的政策（Admin 以上，§12.2）。 */
+function OtherPoliciesForm({ project }: { project: Project }) {
+  const [values, setValues] = useState(() => policyFormValues(project.policy));
+  const [errors, setErrors] = useState<Partial<Record<keyof PolicyFormValues, string>>>({});
+  const update = useUpdateProject(project);
+  const set = <K extends keyof PolicyFormValues>(field: K, value: PolicyFormValues[K]) =>
+    setValues((current) => ({ ...current, [field]: value }));
+  const checkbox = (field: BooleanPolicyField, label: string) => (
+    <label className="field-inline">
+      <input
+        type="checkbox"
+        checked={values[field]}
+        onChange={(event) => set(field, event.target.checked)}
+      />
+      {label}
+    </label>
+  );
+
+  return (
+    <form
+      className="settings-form"
+      aria-label="其他政策"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = validatePolicyForm(values);
+        setErrors(result.ok ? {} : result.errors);
+        if (result.ok) update.mutate({ policy: result.policy });
+      }}
+    >
+      {checkbox("planGateEnabled", "需要 Plan Gate（Task 可以個別覆寫）")}
+      <TextField
+        label="Verification 自動重試上限"
+        value={values.verificationMaxRetries}
+        onChange={(value) => set("verificationMaxRetries", value)}
+        error={errors.verificationMaxRetries}
+        hint="第一輪之後最多自動重試幾次（1–10），超過就停下來等人決定。"
+      />
+      {checkbox("delegationEnabled", "允許 Delegation")}
+      {values.delegationEnabled && (
+        <TextField
+          label="可以分派的 Agent"
+          value={values.delegationAgents}
+          onChange={(value) => set("delegationAgents", value)}
+          error={errors.delegationAgents}
+          hint="以逗號分隔，例如 claude-code, codex；留空表示不限制。"
+        />
+      )}
+      {checkbox("forbidSelfApproval", "禁止 Member 核准自己的 Task")}
+      {checkbox("memberCanDispatchToTeamRunner", "Member 可以派工到 Team Runner")}
+      {checkbox("autoCreateIssues", "自動建立 GitHub Issue")}
+      <TextField
+        label="會觸發 Feedback Loop 的 bot"
+        value={values.feedbackBotAllowlist}
+        onChange={(value) => set("feedbackBotAllowlist", value)}
+        error={errors.feedbackBotAllowlist}
+        multiline
+        hint="GitHub login，一行一個，例如 coderabbitai[bot]。其他 bot 的留言不觸發。"
+      />
+      <ErrorText error={update.error} />
+      <button type="submit" className="primary" disabled={update.isPending}>
+        儲存其他政策
+      </button>
+    </form>
+  );
+}
+
+type BooleanPolicyField = {
+  [K in keyof PolicyFormValues]: PolicyFormValues[K] extends boolean ? K : never;
+}[keyof PolicyFormValues];
 
 function PermissionPolicyForm({ project }: { project: Project }) {
   const current = project.policy.defaultPermissionPolicy;

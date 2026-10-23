@@ -138,9 +138,12 @@ test.describe("Project 設定頁", () => {
     await expect(save).toBeDisabled();
     await expect(page.getByRole("link", { name: "核心產品 v2" })).toBeVisible();
 
-    // 其他政策只顯示
-    const others = page.getByRole("definition").filter({ hasText: /^(開啟|關閉)$/ });
-    await expect(others).toHaveText("關閉");
+    // 其他政策另有表單（plan-gate.spec.ts 測修改）
+    await expect(
+      page
+        .getByRole("form", { name: "其他政策" })
+        .getByLabel("需要 Plan Gate（Task 可以個別覆寫）"),
+    ).not.toBeChecked();
 
     await page.getByLabel("預設 Permission Policy").selectOption("manual");
     await page.getByRole("button", { name: "儲存政策" }).click();
