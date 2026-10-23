@@ -24,8 +24,31 @@ const MENTION_ID = /^(member|agent):[A-Za-z0-9._-]+$/;
  * 描述會同步到 GitHub、也會顯示在 Web，不在源頭留下危險的連結。
  */
 export function isSafeHref(href: string): boolean {
-  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(href.trim())?.[1]?.toLowerCase();
-  return scheme === undefined || scheme === "http" || scheme === "https" || scheme === "mailto";
+  // 含控制字元、空白、角括號、括號或引號的一律不收：瀏覽器解析時會略過或改寫這些字元，
+  // 也可能讓 markdown 的連結語法提早結束。
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 刻意比對控制字元
+  if (/[\u0000- \u007f<>()"'`\\]/.test(href) || href === "") return false;
+  try {
+    // 以瀏覽器的方式解析；相對路徑會以 placeholder 的 https 為基準。
+    const { protocol } = new URL(href, "https://placeholder.invalid/");
+    return protocol === "http:" || protocol === "https:" || protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 文字中會改變 markdown 結構、或組出連結與 HTML 的字元前面加上 `\`
+ * （marked 解析時會還原成原本的字元）。
+ */
+function escapeText(text: string): string {
+  return text.replace(/[\\`[\]<>]/g, "\\$&");
+}
+
+/** 不會和內容中的反引號衝突的 code fence（比內容中最長的連續反引號多一個）。 */
+function fenceFor(content: string, minimum: number): string {
+  const longest = Math.max(0, ...[...content.matchAll(/`+/g)].map((m) => m[0].length));
+  return "`".repeat(Math.max(minimum, longest + 1));
 }
 
 type Marks = Record<string, Record<string, unknown>>;
@@ -86,7 +109,9 @@ function blockToMarkdown(element: Y.XmlElement): string {
       const code = children
         .map((child) => (child instanceof Y.XmlText ? child.toString() : ""))
         .join("");
-      return `\`\`\`${typeof language === "string" ? language : ""}\n${code}\n\`\`\``;
+      const fence = fenceFor(code, 3);
+      const info = typeof language === "string" ? language.replace(/[^\w+.-]/g, "") : "";
+      return `${fence}${info}\n${code}\n${fence}`;
     }
     case "horizontalRule":
       return "---";
@@ -116,7 +141,8 @@ function inlineToMarkdown(nodes: (Y.XmlElement | Y.XmlText | Y.XmlHook)[]): stri
       else if (node.nodeName === "mention") {
         const id = String(node.getAttribute("id") ?? "");
         const label = String(node.getAttribute("label") ?? id);
-        out += MENTION_ID.test(id) ? `@[${label}](${id})` : `@${label}`;
+        const safeLabel = label.replace(/[[\]\r\n]/g, "");
+        out += MENTION_ID.test(id) ? `@[${safeLabel}](${id})` : `@${escapeText(safeLabel)}`;
       } else out += inlineToMarkdown(node.toArray());
     }
   }
@@ -124,8 +150,12 @@ function inlineToMarkdown(nodes: (Y.XmlElement | Y.XmlText | Y.XmlHook)[]): stri
 }
 
 function applyMarks(text: string, marks: Marks): string {
-  if (marks.code) return `\`${text}\``;
-  let out = text;
+  if (marks.code) {
+    const fence = fenceFor(text, 1);
+    const padded = text.startsWith("`") || text.endsWith("`") ? ` ${text} ` : text;
+    return `${fence}${padded}${fence}`;
+  }
+  let out = escapeText(text);
   if (marks.bold) out = `**${out}**`;
   if (marks.italic) out = `*${out}*`;
   if (marks.strike) out = `~~${out}~~`;
