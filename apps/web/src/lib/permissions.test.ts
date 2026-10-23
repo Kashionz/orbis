@@ -15,6 +15,8 @@ const policy: ProjectPolicy = {
   delegationAgents: null,
   forbidSelfApproval: false,
   memberCanDispatchToTeamRunner: true,
+  defaultPermissionPolicy: "auto",
+  autoCreateIssues: false,
 };
 
 /** ARCHITECTURE §12.2 的表格（Project 採預設政策：Member 可以派工到 Team Runner、可以核准自己的 Task）。 */
@@ -53,16 +55,25 @@ describe("can：Project 政策", () => {
     expect(can("run.dispatchTeam", { role: "member", memberId: "me" })).toBe(false);
   });
 
-  it("禁止核准自己的 Task 時，指派對象是自己就不能核准，但仍可以退回", () => {
+  it("禁止核准自己的 Task 時，Member 是指派對象就不能核准，但仍可以退回", () => {
     const strict = { ...policy, forbidSelfApproval: true };
-    for (const role of ["owner", "admin", "member"] as const) {
+    const mine = {
+      role: "member" as const,
+      memberId: "me",
+      policy: strict,
+      task: { assigneeMemberId: "me" },
+    };
+    expect(can("gate.approve", mine)).toBe(false);
+    expect(can("gate.reject", mine)).toBe(true);
+    expect(can("gate.approve", { ...mine, task: { assigneeMemberId: "someone" } })).toBe(true);
+    expect(can("gate.approve", { ...mine, task: { assigneeMemberId: null } })).toBe(true);
+  });
+
+  it("禁止核准自己的 Task 只限制 Member，Owner／Admin 仍可以核准（同 Server）", () => {
+    const strict = { ...policy, forbidSelfApproval: true };
+    for (const role of ["owner", "admin"] as const) {
       const mine = { role, memberId: "me", policy: strict, task: { assigneeMemberId: "me" } };
-      expect(can("gate.approve", mine)).toBe(false);
-      expect(can("gate.reject", mine)).toBe(true);
-      const others = { ...mine, task: { assigneeMemberId: "someone" } };
-      expect(can("gate.approve", others)).toBe(true);
-      const unassigned = { ...mine, task: { assigneeMemberId: null } };
-      expect(can("gate.approve", unassigned)).toBe(true);
+      expect(can("gate.approve", mine)).toBe(true);
     }
   });
 
@@ -99,15 +110,16 @@ describe("canRespondToPermission", () => {
   const owner = { role: "member" as const, memberId: "me", policy };
 
   it("Local Runner 上的權限請求只有派工的人能回覆", () => {
-    expect(canRespondToPermission({ runnerKind: "local", startedByMemberId: "me" }, owner)).toBe(
-      true,
-    );
     expect(
-      canRespondToPermission({ runnerKind: "local", startedByMemberId: "someone" }, owner),
+      canRespondToPermission({ runnerKind: "local", startedByMemberId: "me" }, "tool", owner),
+    ).toBe(true);
+    expect(
+      canRespondToPermission({ runnerKind: "local", startedByMemberId: "someone" }, "tool", owner),
     ).toBe(false);
     expect(
       canRespondToPermission(
         { runnerKind: "local", startedByMemberId: "someone" },
+        "agent_settings_changed",
         { ...owner, role: "owner" },
       ),
     ).toBe(false);
@@ -116,14 +128,29 @@ describe("canRespondToPermission", () => {
   it("Team Runner 上的權限請求，Member 以上都能回覆，Viewer 不行", () => {
     const run = { runnerKind: "team" as const, startedByMemberId: "someone" };
     for (const role of ROLES) {
-      expect(canRespondToPermission(run, { ...owner, role })).toBe(role !== "viewer");
+      expect(canRespondToPermission(run, "tool", { ...owner, role })).toBe(role !== "viewer");
+    }
+  });
+
+  it("設定的信任核准只有 Admin 以上能回覆，Local Runner 的擁有者是 Member 也不行", () => {
+    const mine = { runnerKind: "local" as const, startedByMemberId: "me" };
+    const team = { runnerKind: "team" as const, startedByMemberId: "someone" };
+    for (const role of ROLES) {
+      const allowed = role === "owner" || role === "admin";
+      expect(canRespondToPermission(mine, "config_trust", { ...owner, role })).toBe(allowed);
+      expect(canRespondToPermission(team, "config_trust", { ...owner, role })).toBe(allowed);
     }
   });
 });
 
 describe("defaultPermissionPolicy", () => {
-  it("預設 auto，Team Runner 也是", () => {
-    expect(defaultPermissionPolicy({ policy }, "local")).toBe("auto");
-    expect(defaultPermissionPolicy({ policy }, "team")).toBe("auto");
+  it("用 Project 的預設政策", () => {
+    expect(defaultPermissionPolicy("manual", "local")).toBe("manual");
+    expect(defaultPermissionPolicy("manual", "team")).toBe("manual");
+    expect(defaultPermissionPolicy("yolo", "local")).toBe("yolo");
+  });
+
+  it("Project 預設 yolo 而派到 Team Runner 時改用 auto", () => {
+    expect(defaultPermissionPolicy("yolo", "team")).toBe("auto");
   });
 });

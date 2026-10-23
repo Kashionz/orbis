@@ -1,4 +1,6 @@
 import {
+  type AgentOption,
+  type DispatchOptions,
   type PermissionPolicy,
   type Project,
   RUNNER_KINDS,
@@ -9,7 +11,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { dispatchOptionsQuery, dispatchRun, queryKeys } from "../../api/resources";
-import type { AgentOption, DispatchOptions } from "../../api/schemas";
 import { Dialog } from "../../components/Dialog";
 import { ErrorText } from "../../components/ErrorText";
 import { PERMISSION_POLICY_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
@@ -50,7 +51,7 @@ function firstAvailable(agents: readonly AgentOption[]): string {
 }
 
 function DispatchForm({ task, project, onClose, onDispatched }: Omit<DispatchDialogProps, "open">) {
-  const { data: options, error: loadError, isPending } = useQuery(dispatchOptionsQuery);
+  const { data: options, error: loadError, isPending } = useQuery(dispatchOptionsQuery(project.id));
   const { ctx } = usePermissions(project, task);
 
   if (isPending) return <p>正在讀取可用的 Agent…</p>;
@@ -75,7 +76,6 @@ function DispatchForm({ task, project, onClose, onDispatched }: Omit<DispatchDia
   return (
     <DispatchFields
       task={task}
-      project={project}
       options={options}
       kinds={kinds}
       onClose={onClose}
@@ -86,21 +86,13 @@ function DispatchForm({ task, project, onClose, onDispatched }: Omit<DispatchDia
 
 interface DispatchFieldsProps {
   task: Task;
-  project: Project;
   options: DispatchOptions;
   kinds: RunnerKind[];
   onClose: () => void;
   onDispatched: (run: Run) => void;
 }
 
-function DispatchFields({
-  task,
-  project,
-  options,
-  kinds,
-  onClose,
-  onDispatched,
-}: DispatchFieldsProps) {
+function DispatchFields({ task, options, kinds, onClose, onDispatched }: DispatchFieldsProps) {
   const queryClient = useQueryClient();
   const initialKind = kinds[0] ?? "local";
   const [runnerKind, setRunnerKind] = useState<RunnerKind>(initialKind);
@@ -109,7 +101,7 @@ function DispatchFields({
   const [agentId, setAgentId] = useState(() => firstAvailable(options[initialKind]?.agents ?? []));
   const [model, setModel] = useState("");
   const [policy, setPolicy] = useState<PermissionPolicy>(() =>
-    defaultPermissionPolicy(project, initialKind),
+    defaultPermissionPolicy(options.defaultPermissionPolicy, initialKind),
   );
   const agent = agents.find((a) => a.id === agentId && a.available);
 
@@ -135,7 +127,7 @@ function DispatchFields({
     setAgentId(firstAvailable(options[kind]?.agents ?? []));
     setModel("");
     if (!permissionPoliciesFor(kind).includes(policy)) {
-      setPolicy(defaultPermissionPolicy(project, kind));
+      setPolicy(defaultPermissionPolicy(options.defaultPermissionPolicy, kind));
     }
   }
 
@@ -228,8 +220,17 @@ function DispatchFields({
               onChange={() => setPolicy(value)}
             />
             {PERMISSION_POLICY_LABELS[value]}
+            {value === options.defaultPermissionPolicy && (
+              <span className="hint">（Project 預設）</span>
+            )}
           </label>
         ))}
+        {!permissionPoliciesFor(runnerKind).includes(options.defaultPermissionPolicy) && (
+          <p className="hint" role="note">
+            Project 預設是 {options.defaultPermissionPolicy}，但
+            {RUNNER_KIND_LABELS[runnerKind]}不提供，請另外選擇。
+          </p>
+        )}
       </fieldset>
       {policy === "yolo" && (
         <div className="warning" role="alert">

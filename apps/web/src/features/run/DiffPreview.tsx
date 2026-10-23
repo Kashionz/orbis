@@ -1,6 +1,6 @@
 import type { TextBody } from "@orbis/protocol";
 import { structuredPatch } from "diff";
-import { API_PATHS } from "../../api/paths";
+import { blobUrl } from "../../api/resources";
 
 /** 預設顯示的行數，超過時要展開才看得到全部。 */
 const COLLAPSED_LINES = 40;
@@ -14,11 +14,10 @@ interface DiffPreviewProps {
 }
 
 function BlobNotice({ body }: { body: Extract<TextBody, { type: "blob" }> }) {
-  // TODO(api): blob 的下載端點待 B 軌確定
   return (
     <p className="hint">
       內容較大，存在 blob（{body.size.toLocaleString()} bytes）。
-      <a href={API_PATHS.blob(body.blob_id)} target="_blank" rel="noreferrer">
+      <a href={blobUrl(body.blob_id)} target="_blank" rel="noreferrer">
         開啟完整內容
       </a>
     </p>

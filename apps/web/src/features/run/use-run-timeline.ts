@@ -2,9 +2,7 @@
 
 import type { RunEvent } from "@orbis/api-contract";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { apiRequest } from "../../api/client";
-import { API_PATHS } from "../../api/paths";
-import { RunEventsResponse } from "../../api/schemas";
+import { fetchRunEvents } from "../../api/resources";
 import { type EventSocket, sharedEventSocket } from "./event-socket";
 import { applyEvents, EMPTY_TIMELINE, missingSeq, type Timeline } from "./timeline";
 
@@ -26,7 +24,7 @@ export class RunTimelineStore {
   constructor(
     readonly runId: string,
     private readonly fetchAfter: (afterSeq: number) => Promise<RunEvent[]> = (afterSeq) =>
-      apiRequest(API_PATHS.runEvents(runId, afterSeq, GAP_FILL_PAGE_SIZE), RunEventsResponse),
+      fetchRunEvents(runId, afterSeq, GAP_FILL_PAGE_SIZE),
   ) {}
 
   getSnapshot = (): Timeline => this.timeline;
@@ -36,8 +34,8 @@ export class RunTimelineStore {
     return () => this.listeners.delete(listener);
   };
 
-  /** 下一個需要的 seq（重新訂閱時從這裡續傳）。 */
-  nextSeq = (): number => this.timeline.lastSeq + 1;
+  /** 已連續套用的最後一個 seq（重新訂閱時從它之後續傳）。 */
+  afterSeq = (): number => this.timeline.lastSeq;
 
   push = (events: readonly RunEvent[]): void => {
     this.queue.push(...events);
@@ -104,7 +102,7 @@ export function useRunTimeline(
   useEffect(() => {
     if (store.runId !== runId) return;
     const unsubscribe = socket.subscribe(runId, {
-      nextSeq: store.nextSeq,
+      afterSeq: store.afterSeq,
       onEvents: store.push,
       onError: setError,
       onConnectionChange: setConnected,

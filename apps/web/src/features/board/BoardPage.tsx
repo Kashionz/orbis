@@ -9,7 +9,14 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { type Project, TASK_STATUSES, type Task, type TaskStatus } from "@orbis/api-contract";
+import {
+  canTransitionManually,
+  type Member,
+  type Project,
+  TASK_STATUSES,
+  type Task,
+  type TaskStatus,
+} from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
@@ -20,7 +27,7 @@ import {
   tasksQuery,
   transitionTask,
 } from "../../api/resources";
-import { MANUAL_TASK_TRANSITIONS, type Member } from "../../api/schemas";
+import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { ErrorText } from "../../components/ErrorText";
 import { unfinishedDependencies } from "../../lib/dependencies";
 import { TASK_STATUS_LABELS } from "../../lib/labels";
@@ -47,7 +54,7 @@ function canDrop(
       (permissions.can("run.dispatchLocal") || permissions.can("run.dispatchTeam"))
     );
   }
-  return MANUAL_TASK_TRANSITIONS[task.status].includes(to);
+  return canTransitionManually(task.status, to);
 }
 
 function isDraggable(task: Task, tasks: readonly Task[], permissions: Permissions): boolean {
@@ -271,6 +278,7 @@ function TaskCard({
         {task.key}
       </Link>
       <div className="task-title">{task.title}</div>
+      <DoneReasonBadge task={task} />
       {assignee && <div className="task-assignee">@{assignee.githubLogin}</div>}
     </article>
   );

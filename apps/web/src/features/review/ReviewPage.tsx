@@ -1,41 +1,60 @@
-import type { Project, Run, Task } from "@orbis/api-contract";
-import type { TextBody } from "@orbis/protocol";
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import type {
+  Gate,
+  Project,
+  ReviewCommentInput,
+  ReviewDiff,
+  ReviewDiffFile,
+  Run,
+  Task,
+  TextBody,
+} from "@orbis/api-contract";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type RefObject, useEffect, useRef, useState } from "react";
 import {
+  blobTextQuery,
   cancelRun,
-  decideReview,
+  decideGate,
   projectsQuery,
   queryKeys,
   reviewDiffQuery,
   runQuery,
+  taskGatesQuery,
   taskQuery,
 } from "../../api/resources";
-import type { ReviewComment, ReviewDiff, ReviewDiffFile } from "../../api/schemas";
 import { ErrorText } from "../../components/ErrorText";
 import { DIFF_CHANGE_LABELS } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
 import { DiffEditor } from "./DiffEditor";
 import { loadDraft, type ReviewDraft, saveDraft, sortComments } from "./review-drafts";
 
-type Side = ReviewComment["side"];
+type Side = ReviewCommentInput["side"];
 
 /** Diff review（交付 6）：依檔案切換的 Monaco diff、行內留言、退回並附上留言、核准。 */
 export function ReviewPage({ runId }: { runId: string }) {
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: diff } = useSuspenseQuery(reviewDiffQuery(runId));
   const { data: task } = useSuspenseQuery(taskQuery(run.taskId));
+  const { data: gates } = useSuspenseQuery(taskGatesQuery(run.taskId));
   const { data: projects } = useSuspenseQuery(projectsQuery);
   const project = projects.find((p) => p.id === task.projectId);
   if (!project) throw new Error("找不到 Task 所在的 Project");
-  return <Review run={run} diff={diff} task={task} project={project} />;
+  // 這個 Run 還在等待決定的 Review Gate；沒有時只能檢視
+  const gate =
+    gates.find((g) => g.runId === run.id && g.kind === "review" && g.decision === null) ?? null;
+  return <Review run={run} diff={diff} task={task} project={project} gate={gate} />;
 }
 
-function textOf(body: TextBody | null): string | null {
-  if (body === null) return "";
-  // TODO(api): blob 的內容要從 blob 端點取得；端點確定前先不顯示
-  return body.type === "inline" ? body.text : null;
+/**
+ * 檔案某一側的內容：內嵌的直接用，放在 blob 的向 Server 取得。
+ * 不存在的一側（新增或刪除的檔案）為空字串；還在讀取或讀取失敗時 `text` 為 null。
+ */
+function useTextBody(body: TextBody | null): { text: string | null; error: unknown } {
+  const blobId = body?.type === "blob" ? body.blob_id : null;
+  const blob = useQuery({ ...blobTextQuery(blobId ?? ""), enabled: blobId !== null });
+  if (body === null) return { text: "", error: null };
+  if (body.type === "inline") return { text: body.text, error: null };
+  return { text: blob.data ?? null, error: blob.error };
 }
 
 interface CommentTarget {
@@ -48,11 +67,13 @@ function Review({
   diff,
   task,
   project,
+  gate,
 }: {
   run: Run;
   diff: ReviewDiff;
   task: Task;
   project: Project;
+  gate: Gate | null;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -63,7 +84,7 @@ function Review({
   const [body, setBody] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const file = diff.files.find((f) => f.path === selectedPath) ?? null;
-  const awaitingReview = run.status === "awaiting_gate";
+  const awaitingReview = gate !== null;
   const canReject = awaitingReview && permissions.can("gate.reject");
   const canApprove = awaitingReview && permissions.can("gate.approve");
   const canComment = canReject;
@@ -77,31 +98,41 @@ function Review({
     if (target) bodyRef.current?.focus();
   }, [target]);
 
+  async function afterDecision() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.run(run.id) }),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
+    ]);
+    await navigate({ to: "/runs/$runId", params: { runId: run.id } });
+  }
+
   const decision = useMutation({
-    mutationFn: (kind: "approved" | "rejected") =>
-      decideReview(
-        run.id,
-        kind === "approved"
-          ? { decision: "approved" }
+    mutationFn: async (action: "approve" | "reject") => {
+      if (!gate) throw new Error("這個 Run 目前沒有在等待 Review Gate");
+      await decideGate(
+        gate.id,
+        action === "approve"
+          ? { action: "approve" }
           : {
-              decision: "rejected",
+              action: "reject",
               comment: draft.summary.trim() === "" ? null : draft.summary.trim(),
-              comments: sortComments(draft.comments),
+              reviewComments: sortComments(draft.comments),
             },
-      ),
+      );
+    },
     onSuccess: async () => {
       setDraft({ comments: [], summary: "" });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.run(run.id) }),
-        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
-      ]);
-      await navigate({ to: "/runs/$runId", params: { runId: run.id } });
+      await afterDecision();
     },
   });
+  // 在 Review Gate 中止：以 Gate 的 abort 決定送出（Task 回到 Ready）；沒有 Gate 時直接中止 Run
   const cancel = useMutation({
-    mutationFn: () => cancelRun(run.id),
-    onSuccess: () => navigate({ to: "/runs/$runId", params: { runId: run.id } }),
+    mutationFn: async () => {
+      if (gate) await decideGate(gate.id, { action: "abort" });
+      else await cancelRun(run.id);
+    },
+    onSuccess: afterDecision,
   });
 
   function addComment() {
@@ -117,13 +148,14 @@ function Review({
     setBody("");
   }
 
-  function removeComment(comment: ReviewComment) {
+  function removeComment(comment: ReviewCommentInput) {
     setDraft({ ...draft, comments: draft.comments.filter((c) => c !== comment) });
   }
 
   const fileComments = file ? draft.comments.filter((c) => c.path === file.path) : [];
-  const original = file ? textOf(file.old) : null;
-  const modified = file ? textOf(file.new) : null;
+  const original = useTextBody(file && !file.binary ? file.old : null);
+  const modified = useTextBody(file && !file.binary ? file.new : null);
+  const contentError = original.error ?? modified.error;
   const canSendRejection = draft.comments.length > 0 || draft.summary.trim() !== "";
 
   return (
@@ -170,22 +202,29 @@ function Review({
         </nav>
 
         <section className="review-main">
-          {file && original !== null && modified !== null && (
+          {file && !file.binary && original.text !== null && modified.text !== null && (
             <DiffEditor
               path={file.path}
-              original={original}
-              modified={modified}
+              original={original.text}
+              modified={modified.text}
               comments={fileComments}
               onLineClick={(line, side) => {
                 if (canComment) setTarget({ line, side });
               }}
             />
           )}
-          {file && (original === null || modified === null) && (
-            <p className="hint">這個檔案的內容較大，存在 blob 中，目前無法在 diff 中顯示。</p>
+          {file?.binary && <p className="hint">二進位檔案，只顯示有變更，無法檢視內容。</p>}
+          {file && !file.binary && contentError ? (
+            <ErrorText error={contentError} />
+          ) : (
+            file &&
+            !file.binary &&
+            (original.text === null || modified.text === null) && (
+              <p className="hint">正在讀取檔案內容…</p>
+            )
           )}
 
-          {file && canComment && (
+          {file && !file.binary && canComment && (
             <CommentForm
               target={target}
               body={body}
@@ -242,7 +281,7 @@ function Review({
                 type="button"
                 className="danger"
                 disabled={!canSendRejection || decision.isPending}
-                onClick={() => decision.mutate("rejected")}
+                onClick={() => decision.mutate("reject")}
               >
                 退回並附上留言（{draft.comments.length}）
               </button>
@@ -252,7 +291,7 @@ function Review({
                 type="button"
                 className="primary"
                 disabled={decision.isPending}
-                onClick={() => decision.mutate("approved")}
+                onClick={() => decision.mutate("approve")}
               >
                 核准並開 PR
               </button>

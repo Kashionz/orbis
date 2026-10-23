@@ -6,13 +6,23 @@
 
 import {
   type AcceptanceCriterion,
+  type ApiError,
   type CreateAcceptanceCriterionInput,
+  type CreateRunInput,
   type CreateTaskInput,
+  canTransitionManually,
+  type DispatchOptions,
   formatTaskKey,
+  type Gate,
+  type GateDecisionInput,
+  type Member,
   type MeResponse,
   type NeedsYouItem,
   type Project,
+  READY_REQUIREMENTS,
   type Repo,
+  type ReviewDiff,
+  type Role,
   type Run,
   type RunEvent,
   type RunUsage,
@@ -21,20 +31,12 @@ import {
   type UpdateAcceptanceCriterionInput,
   type UpdateTaskInput,
 } from "@orbis/api-contract";
-import type { EventKind } from "@orbis/protocol";
-import {
-  type CreateRunInput,
-  type DispatchOptions,
-  MANUAL_TASK_TRANSITIONS,
-  type Member,
-  type ReviewDecisionInput,
-  type ReviewDiff,
-  type ReviewDiffFile,
-} from "../api/schemas";
+import type { EventKind, PermissionPurpose, RunDiff, RunDiffFile, TextBody } from "@orbis/protocol";
 import { MOCK_STATE_STORAGE_KEY, type MockConfig, mockConfig } from "./config";
 import {
   BASE_COMMIT,
   BASE_FILES,
+  configTrustTurn,
   generateLargeRun,
   m1FirstTurn,
   m1RevisionTurn,
@@ -61,20 +63,40 @@ export interface MockState {
   runs: Run[];
   events: Record<string, RunEvent[]>;
   needsYou: NeedsYouItem[];
+  gates: Gate[];
   simulations: Record<string, Simulation>;
-  /** 收到的 Review Gate 決定，測試用來檢查送出的內容。 */
-  reviews: Record<string, ReviewDecisionInput[]>;
+  /** 收到的 Gate 決定（依 Run），測試用來檢查送出的內容。 */
+  reviews: Record<string, GateDecisionInput[]>;
+  /** 已登出：之後 `/api/auth/me` 回 401。 */
+  loggedOut: boolean;
+  /** blob 的內容（review diff 中放在 blob 的大檔）。 */
+  blobs: Record<string, string>;
   nextId: number;
 }
 
+/** 以契約 ApiError 的形狀回應的錯誤。 */
 export class MockError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: Pick<ApiError, "issues" | "missing"> = {},
   ) {
     super(message);
   }
+}
+
+const ROLE_ORDER: readonly Role[] = ["viewer", "member", "admin", "owner"];
+
+function roleAtLeast(role: Role, minimum: Role): boolean {
+  return ROLE_ORDER.indexOf(role) >= ROLE_ORDER.indexOf(minimum);
+}
+
+/** Server 的權限請求授權規則（ARCHITECTURE §8），假後端獨立實作一份。 */
+function mayRespond(role: Role, run: Run, purpose: PermissionPurpose): boolean {
+  if (purpose === "config_trust") return roleAtLeast(role, "admin");
+  if (!roleAtLeast(role, "member")) return false;
+  return run.runnerKind === "team" || run.startedByMemberId === ME_ID;
 }
 
 const EMPTY_USAGE: RunUsage = {
@@ -139,7 +161,15 @@ export class MockBackend {
       if (!step) continue;
       changed = true;
       if (step.type === "event") {
-        this.append(runId, [step.event]);
+        // 進入 Review Gate 前，Runner 送出完整 diff（協定的 run_diff）
+        const enteringReview =
+          step.event.kind === "status_changed" &&
+          step.event.status === "awaiting_gate" &&
+          step.event.gate === "review";
+        const diff: EventKind[] = enteringReview
+          ? [{ kind: "run_diff", ...this.computeDiff(runId) }]
+          : [];
+        this.append(runId, [...diff, step.event]);
       } else {
         simulation.waiting = step;
         this.append(runId, [
@@ -191,15 +221,9 @@ export class MockBackend {
   private seed(): MockState {
     this.state = {
       members: [
-        {
-          id: ME_ID,
-          githubLogin: "octocat",
-          name: "The Octocat",
-          avatarUrl: null,
-          role: this.config.role ?? "owner",
-        },
-        { id: "member-alice", githubLogin: "alice", name: "Alice", avatarUrl: null, role: "admin" },
-        { id: "member-bob", githubLogin: "bob", name: "Bob", avatarUrl: null, role: "member" },
+        member(ME_ID, 583231, "octocat", "The Octocat", this.config.role ?? "owner"),
+        member("member-alice", 2, "alice", "Alice", "admin"),
+        member("member-bob", 3, "bob", "Bob", "member"),
       ],
       projects: [
         {
@@ -214,6 +238,8 @@ export class MockBackend {
             delegationAgents: null,
             forbidSelfApproval: false,
             memberCanDispatchToTeamRunner: true,
+            defaultPermissionPolicy: "auto",
+            autoCreateIssues: false,
             ...this.config.policy,
           },
           createdAt: SEED_TIME,
@@ -231,6 +257,8 @@ export class MockBackend {
             delegationAgents: null,
             forbidSelfApproval: false,
             memberCanDispatchToTeamRunner: false,
+            defaultPermissionPolicy: "manual",
+            autoCreateIssues: false,
           },
           createdAt: SEED_TIME,
           updatedAt: SEED_TIME,
@@ -243,6 +271,7 @@ export class MockBackend {
           owner: "acme",
           name: "demo",
           defaultBranch: "main",
+          github: { installed: true, installUrl: null },
           createdAt: SEED_TIME,
           updatedAt: SEED_TIME,
         },
@@ -252,6 +281,7 @@ export class MockBackend {
           owner: "acme",
           name: "docs",
           defaultBranch: "main",
+          github: { installed: true, installUrl: null },
           createdAt: SEED_TIME,
           updatedAt: SEED_TIME,
         },
@@ -261,8 +291,11 @@ export class MockBackend {
       runs: [],
       events: {},
       needsYou: [],
+      gates: [],
       simulations: {},
       reviews: {},
+      loggedOut: false,
+      blobs: {},
       nextId: 100,
     };
 
@@ -315,7 +348,7 @@ export class MockBackend {
     this.respondToPermission(reviewRun.id, "perm-write-config", "allow");
     this.settle();
 
-    seedTask("升級相依套件", "done", { assigneeMemberId: "member-bob" });
+    seedTask("升級相依套件", "done", { assigneeMemberId: "member-bob", doneReason: "completed" });
 
     // 5,000 筆 Event 的 Run：Event 不存進 sessionStorage，載入時再產生
     const large = seedTask("大量 Event 的 Run", "running");
@@ -327,6 +360,23 @@ export class MockBackend {
     });
     largeRun.status = "running";
     this.state.runs.push(largeRun);
+
+    seedTask("改用另一套 CI", "done", { assigneeMemberId: null, doneReason: "not_planned" });
+
+    // 等待設定的信任核准的 Run（只在指定時建立，避免影響其他測試的項目數）
+    if (this.config.configTrust) {
+      const trust = seedTask("執行 setup 腳本", "ready");
+      const trustRun = this.dispatch(trust.id, {
+        agent: "claude-code",
+        model: null,
+        runnerKind: "local",
+        permissionPolicy: "auto",
+      });
+      this.state.simulations[trustRun.id] = {
+        queue: configTrustTurn(`feature/${trust.key.toLowerCase()}`),
+        waiting: null,
+      };
+    }
 
     this.settle();
     for (const run of this.state.runs) run.createdAt = SEED_TIME;
@@ -351,6 +401,11 @@ export class MockBackend {
 
   get snapshot(): Readonly<MockState> {
     return this.state;
+  }
+
+  logout(): void {
+    this.state.loggedOut = true;
+    this.save();
   }
 
   members(): Member[] {
@@ -417,13 +472,42 @@ export class MockBackend {
     return this.largeRun;
   }
 
+  /** 和 Server 相同：權限請求列出本人有權回覆的；Gate 列出指派給本人、本人能核准的。 */
   needsYou(): NeedsYouItem[] {
-    return this.state.needsYou.filter((item) => item.memberId === ME_ID);
+    const role = this.role;
+    return this.state.needsYou
+      .filter((item) => {
+        if (item.kind === "permission_request") {
+          return mayRespond(role, this.run(item.runId), item.purpose);
+        }
+        if (item.memberId !== ME_ID) return false;
+        return item.kind !== "gate" || this.mayApprove(this.task(item.taskId));
+      })
+      .map((item) => ({ ...item, memberId: ME_ID }));
   }
 
-  dispatchOptions(): DispatchOptions {
-    if (this.config.runners === "none") return { local: null, team: null };
+  private get role(): Role {
+    return this.config.role ?? "owner";
+  }
+
+  /** 核准 Gate（§12.2）：Member 以上；禁止核准自己的 Task 時，Member 不能核准指派給自己的。 */
+  private mayApprove(task: Task): boolean {
+    const role = this.role;
+    if (!roleAtLeast(role, "member")) return false;
+    const policy = this.project(task.projectId).policy;
+    return !(role === "member" && policy.forbidSelfApproval && task.assigneeMemberId === ME_ID);
+  }
+
+  taskGates(taskId: string): Gate[] {
+    this.task(taskId);
+    return this.state.gates.filter((g) => g.taskId === taskId);
+  }
+
+  dispatchOptions(projectId: string): DispatchOptions {
+    const { defaultPermissionPolicy } = this.project(projectId).policy;
+    if (this.config.runners === "none") return { local: null, team: null, defaultPermissionPolicy };
     return {
+      defaultPermissionPolicy,
       local: {
         online: true,
         agents: [
@@ -477,12 +561,33 @@ export class MockBackend {
     };
   }
 
-  /** base_commit 與 Worktree 目前內容的 diff：重播 Run 中已完成的編輯。 */
+  /** 最新一份 review diff（最後一筆 run_diff Event），還沒有時 404。 */
   reviewDiff(runId: string): ReviewDiff {
-    this.run(runId);
+    const latest = this.events(runId).findLast((e) => e.event.kind === "run_diff");
+    const diff = latest?.event;
+    if (latest === undefined || diff?.kind !== "run_diff") {
+      throw new MockError(404, "not_found", "找不到 review diff");
+    }
+    return {
+      runId,
+      seq: latest.seq,
+      baseCommit: diff.base_commit,
+      files: diff.files.map((file) => ({
+        path: file.path,
+        oldPath: file.old_path,
+        change: file.change,
+        binary: file.binary,
+        old: file.old,
+        new: file.new,
+      })),
+    };
+  }
+
+  /** base_commit 與 Worktree 目前內容的 diff（Runner 的 run_diff）：重播 Run 中已完成的編輯。 */
+  private computeDiff(runId: string): RunDiff {
     const contents = new Map<string, Extract<EventKind, { kind: "tool_call" }>["content"]>();
     const files = new Map<string, string | null>(Object.entries(BASE_FILES));
-    for (const { event } of this.events(runId)) {
+    for (const { event } of this.state.events[runId] ?? []) {
       if (event.kind !== "tool_call") continue;
       if (event.content) contents.set(event.tool_call_id, event.content);
       if (event.status !== "completed") continue;
@@ -491,25 +596,56 @@ export class MockBackend {
         files.set(content.path, content.new?.type === "inline" ? content.new.text : null);
       }
     }
-    const changed: ReviewDiffFile[] = [];
+    const changed: RunDiffFile[] = [];
     for (const [path, text] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
       const base = BASE_FILES[path] ?? null;
       if (base === text) continue;
       changed.push({
         path,
-        oldPath: null,
+        old_path: null,
         change: base === null ? "added" : text === null ? "deleted" : "modified",
+        binary: false,
         old: base === null ? null : { type: "inline", text: base },
-        new: text === null ? null : { type: "inline", text },
+        new: text === null ? null : this.textBody(path, text),
       });
     }
-    return { runId, baseCommit: BASE_COMMIT, files: changed };
+    if (this.config.blobDiff) {
+      changed.push({
+        path: "logo.png",
+        old_path: null,
+        change: "added",
+        binary: true,
+        old: null,
+        new: null,
+      });
+    }
+    return { base_commit: BASE_COMMIT, files: changed };
+  }
+
+  /** 設定 `blobDiff` 時，README.md 修改後的內容放在 blob（模擬大檔）。 */
+  private textBody(path: string, text: string): TextBody {
+    if (!this.config.blobDiff || path !== "README.md") return { type: "inline", text };
+    const blobId = this.newId("blob");
+    this.state.blobs[blobId] = text;
+    return {
+      type: "blob",
+      blob_id: blobId,
+      sha256: "0".repeat(64),
+      size: new TextEncoder().encode(text).length,
+      media_type: "text/plain; charset=utf-8",
+    };
+  }
+
+  blob(blobId: string): string {
+    const text = this.state.blobs[blobId];
+    if (text === undefined) throw new MockError(410, "gone", "blob 已超過保存期限");
+    return text;
   }
 
   // ---------- 寫入 ----------
 
   private requireEditor(): void {
-    if (this.config.forbidWrites || (this.config.role ?? "owner") === "viewer") {
+    if (this.config.forbidWrites || this.role === "viewer") {
       throw new MockError(403, "forbidden", "Viewer 不能修改");
     }
   }
@@ -526,6 +662,7 @@ export class MockBackend {
       title: input.title,
       description: input.description ?? "",
       status: "backlog",
+      doneReason: null,
       assigneeMemberId: input.assigneeMemberId ?? null,
       specPath: input.specPath ?? null,
       dependsOn: input.dependsOn ?? [],
@@ -555,18 +692,19 @@ export class MockBackend {
   transitionTask(taskId: string, status: TaskStatus): Task {
     this.requireEditor();
     const task = this.task(taskId);
-    if (!MANUAL_TASK_TRANSITIONS[task.status].includes(status)) {
+    if (!canTransitionManually(task.status, status)) {
       throw new MockError(409, "invalid_transition", `不能從 ${task.status} 轉換到 ${status}`);
     }
-    // 進入 Ready 的條件（§5）：描述不為空或有連結的 Spec、至少一條 Acceptance Criterion
+    // 進入 Ready 的條件（§5）：已指定 Repo、描述不為空或有連結的 Spec、至少一條 Acceptance Criterion
     if (status === "ready") {
-      const hasSpec = task.description.trim() !== "" || task.specPath !== null;
-      if (!hasSpec || this.acceptanceCriteria(task.id).length === 0) {
-        throw new MockError(
-          409,
-          "not_ready",
-          "進入 Ready 需要描述（或 Spec）與至少一條 Acceptance Criterion",
-        );
+      const satisfied = {
+        repo: task.repoId !== null,
+        description: task.description.trim() !== "" || task.specPath !== null,
+        acceptance_criteria: this.acceptanceCriteria(task.id).length > 0,
+      };
+      const missing = READY_REQUIREMENTS.filter((r) => !satisfied[r]);
+      if (missing.length > 0) {
+        throw new MockError(409, "invalid_transition", "還不能進入 Ready", { missing });
       }
     }
     task.status = status;
@@ -629,7 +767,11 @@ export class MockBackend {
     this.save();
   }
 
-  private newRun(taskId: string, id: string, input: CreateRunInput): Run {
+  private newRun(
+    taskId: string,
+    id: string,
+    input: CreateRunInput & { permissionPolicy: Run["permissionPolicy"] },
+  ): Run {
     const time = now();
     return {
       id,
@@ -637,7 +779,7 @@ export class MockBackend {
       parentRunId: null,
       delegationMode: null,
       agent: input.agent,
-      model: input.model,
+      model: input.model ?? null,
       permissionPolicy: input.permissionPolicy,
       runnerKind: input.runnerKind,
       runnerId: null,
@@ -661,8 +803,14 @@ export class MockBackend {
       throw new MockError(409, "invalid_transition", "只有 Ready 的 Task 可以派工");
     }
     const blocked = task.dependsOn.some((id) => this.task(id).status !== "done");
-    if (blocked) throw new MockError(409, "dependencies_not_done", "依賴的 Task 還沒有 Done");
-    const run = this.newRun(taskId, this.newId("run"), input);
+    if (blocked) throw new MockError(409, "conflict", "相依的 Task 還沒完成，不能派工");
+    // 省略時用 Project 的預設；Project 預設是 yolo 又派到 Team Runner 時回 422（同 Server）
+    const permissionPolicy =
+      input.permissionPolicy ?? this.project(task.projectId).policy.defaultPermissionPolicy;
+    if (permissionPolicy === "yolo" && input.runnerKind === "team") {
+      throw new MockError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
+    }
+    const run = this.newRun(taskId, this.newId("run"), { ...input, permissionPolicy });
     run.runnerId = input.runnerKind === "local" ? "runner-local" : "runner-team";
     this.state.runs.push(run);
     this.state.events[run.id] = [];
@@ -699,34 +847,69 @@ export class MockBackend {
   }
 
   respondToPermissionAsMember(runId: string, requestId: string, optionId: string): void {
-    this.requireEditor();
+    if (this.config.forbidWrites) throw new MockError(403, "forbidden", "沒有權限");
+    const run = this.run(runId);
+    const request = this.state.simulations[runId]?.waiting?.request;
+    if (request?.request_id === requestId && !mayRespond(this.role, run, request.purpose)) {
+      throw new MockError(
+        403,
+        "forbidden",
+        request.purpose === "config_trust"
+          ? "設定的信任核准需要 admin 以上的 Role"
+          : "只有這台 Local Runner 的擁有者能回覆它的權限請求",
+      );
+    }
     this.respondToPermission(runId, requestId, optionId);
   }
 
-  decideReview(runId: string, input: ReviewDecisionInput): void {
+  decideGate(gateId: string, input: GateDecisionInput): Gate {
     this.requireEditor();
-    const run = this.run(runId);
-    if (run.status !== "awaiting_gate") {
-      throw new MockError(409, "invalid_state", "這個 Run 沒有在等待 Review Gate");
+    const gate = this.state.gates.find((g) => g.id === gateId);
+    if (!gate) throw new MockError(404, "not_found", "找不到這個 Gate");
+    if (gate.decision !== null) throw new MockError(409, "conflict", "這個 Gate 已經有決定了");
+    const task = this.task(gate.taskId);
+    if (input.action === "approve" && !this.mayApprove(task)) {
+      throw new MockError(403, "forbidden", "這個 Project 不允許核准指派給自己的 Task");
     }
+    const runId = gate.runId ?? "";
     this.state.reviews[runId] = [...(this.state.reviews[runId] ?? []), input];
-    const task = this.task(run.taskId);
+    const time = now();
+    Object.assign(gate, {
+      decision: input.action === "approve" ? "approved" : "rejected",
+      decidedByMemberId: ME_ID,
+      decidedAt: time,
+      comment: input.action === "reject" ? (input.comment ?? null) : null,
+      reviewComments:
+        input.action === "reject"
+          ? (input.reviewComments ?? []).map((c) => ({
+              ...c,
+              id: this.newId("review-comment"),
+              gateId: gate.id,
+              authorMemberId: ME_ID,
+              createdAt: time,
+              updatedAt: time,
+            }))
+          : [],
+    });
     this.state.needsYou = this.state.needsYou.filter(
       (i) => !(i.kind === "gate" && i.runId === runId),
     );
-    if (input.decision === "rejected") {
+    if (input.action === "reject") {
       this.state.simulations[runId] = { queue: m1RevisionTurn(), waiting: null };
-    } else {
+    } else if (input.action === "approve") {
       this.append(runId, [
         { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
       ]);
       task.status = "pr_open";
+    } else {
+      this.cancelRun(runId);
     }
     task.updatedAt = now();
     this.save();
+    return gate;
   }
 
-  cancelRun(runId: string): void {
+  cancelRun(runId: string): Run {
     this.requireEditor();
     const run = this.run(runId);
     delete this.state.simulations[runId];
@@ -739,6 +922,7 @@ export class MockBackend {
     task.status = "ready";
     task.updatedAt = now();
     this.save();
+    return run;
   }
 
   // ---------- Event 的副作用（真實系統中由 Server 處理） ----------
@@ -774,6 +958,18 @@ export class MockBackend {
         if (["completed", "failed", "canceled"].includes(event.status)) run.endedAt = now();
         if (event.status === "awaiting_gate" && event.gate === "review") {
           task.status = "review_gate";
+          this.state.gates.push({
+            id: this.newId("gate"),
+            taskId: task.id,
+            runId: run.id,
+            kind: "review",
+            decision: null,
+            decidedByMemberId: null,
+            decidedAt: null,
+            comment: null,
+            reviewComments: [],
+            createdAt: now(),
+          });
           this.state.needsYou.push({
             id: this.newId("needs-you"),
             kind: "gate",
@@ -798,6 +994,7 @@ export class MockBackend {
           permissionRequestId: event.request_id,
           toolCallId: event.tool_call_id,
           title: event.title,
+          purpose: event.purpose,
           options: event.options.map((o) => ({
             optionId: o.option_id,
             name: o.name,
@@ -833,4 +1030,18 @@ export class MockBackend {
         return;
     }
   }
+}
+
+function member(id: string, githubUserId: number, login: string, name: string, role: Role): Member {
+  return {
+    id,
+    teamId: "team-1",
+    githubUserId,
+    githubLogin: login,
+    name,
+    avatarUrl: null,
+    role,
+    createdAt: SEED_TIME,
+    updatedAt: SEED_TIME,
+  };
 }

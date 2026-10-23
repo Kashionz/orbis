@@ -1,3 +1,4 @@
+import { getDesktopBridge } from "@orbis/desktop/bridge";
 import { TERMINAL_RUN_STATUSES } from "@orbis/protocol";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -45,7 +46,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
 
   const respond = useMutation({
     mutationFn: ({ requestId, optionId }: { requestId: string; optionId: string }) =>
-      respondToPermission(runId, { permissionRequestId: requestId, optionId }),
+      respondToPermission(runId, requestId, { optionId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
   });
   const cancel = useMutation({ mutationFn: () => cancelRun(runId) });
@@ -62,7 +63,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const controls: ItemControls = {
     isExpanded: (key) => expanded.has(key),
     toggle,
-    canRespond: canRespondToPermission(run, permissions.ctx),
+    canRespond: (purpose) => canRespondToPermission(run, purpose, permissions.ctx),
     respondingRequestId: respond.isPending ? (respond.variables?.requestId ?? null) : null,
     respond: (requestId, optionId) => respond.mutate({ requestId, optionId }),
   };
@@ -121,8 +122,39 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
           </button>
         )}
       </header>
+      {run.worktreePath && <DesktopActions worktreePath={run.worktreePath} />}
       <ErrorText error={streamError ?? respond.error ?? cancel.error} />
       <VirtualTimeline items={timeline.items} controls={controls} focusKey={focus} />
     </main>
+  );
+}
+
+/**
+ * 在 Desktop 中執行時，提供用編輯器或終端機開啟 Worktree（ARCHITECTURE §16.1）。
+ * 一般瀏覽器沒有 bridge，不顯示。
+ */
+export function DesktopActions({ worktreePath }: { worktreePath: string }) {
+  const [bridge] = useState(() => getDesktopBridge());
+  const open = useMutation({
+    mutationFn: async (target: "editor" | "terminal") => {
+      if (!bridge) return;
+      const result =
+        target === "editor"
+          ? await bridge.openWorktreeInEditor(worktreePath)
+          : await bridge.openWorktreeInTerminal(worktreePath);
+      if (!result.ok) throw new Error(result.message);
+    },
+  });
+  if (!bridge) return null;
+  return (
+    <div className="desktop-actions">
+      <button type="button" disabled={open.isPending} onClick={() => open.mutate("editor")}>
+        用編輯器開啟 Worktree
+      </button>
+      <button type="button" disabled={open.isPending} onClick={() => open.mutate("terminal")}>
+        在終端機開啟
+      </button>
+      <ErrorText error={open.error} />
+    </div>
   );
 }

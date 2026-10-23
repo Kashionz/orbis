@@ -2,7 +2,7 @@
 // 協定的 Event，讓開發與元件層級的測試看到和真實系統相同形狀的資料。
 // 也提供時間軸單元測試與效能測試用的 Event 產生器。
 
-import type { RunEvent } from "@orbis/api-contract";
+import { NAMES, type RunEvent } from "@orbis/api-contract";
 import type { EventKind, ToolCallContent } from "@orbis/protocol";
 
 export type ScriptStep =
@@ -105,6 +105,7 @@ export function m1FirstTurn(branch: string): ScriptStep[] {
       type: "await_permission",
       request: {
         kind: "permission_request",
+        purpose: "tool",
         request_id: "perm-write-config",
         tool_call_id: "write-config",
         title: "寫入 config.json",
@@ -186,6 +187,40 @@ export function m1RevisionTurn(): ScriptStep[] {
     usage(2400, 0.025),
     say("已依照留言修改。"),
     event({ kind: "status_changed", status: "awaiting_gate", gate: "review", message: null }),
+  ];
+}
+
+/** Repo 設定檔相對於 repo 根目錄的路徑（ARCHITECTURE §6.3）。 */
+export const CONFIG_PATH = `${NAMES.configDir}/${NAMES.configFile}`;
+
+/** 設定的信任核准（ARCHITECTURE §6.2）：Repo 設定檔的 setup 腳本第一次執行前要 Admin 以上核准。 */
+export function configTrustTurn(branch: string): ScriptStep[] {
+  return [
+    event({
+      kind: "worktree_ready",
+      worktree_path: "C:/wt/demo/trust",
+      branch,
+      base_commit: BASE_COMMIT,
+    }),
+    {
+      type: "await_permission",
+      request: {
+        kind: "permission_request",
+        purpose: "config_trust",
+        request_id: "perm-config-trust",
+        tool_call_id: null,
+        title: `執行 ${CONFIG_PATH} 的 setup：pnpm install`,
+        options: [
+          { option_id: "trust", name: "信任並執行", kind: "allow_once" },
+          { option_id: "skip", name: "不執行", kind: "reject_once" },
+        ],
+      },
+      allow: [
+        event({ kind: "status_changed", status: "running", gate: null, message: null }),
+        say("setup 已完成。"),
+      ],
+      reject: [say("沒有執行 setup。")],
+    },
   ];
 }
 
@@ -301,6 +336,7 @@ export function generateLargeRun(runId: string, count: number): RunEvent[] {
       kinds.push(
         {
           kind: "permission_request",
+          purpose: "tool",
           request_id: `perm-${round}`,
           tool_call_id: `call-${round}`,
           title: `執行 pnpm install（第 ${round} 輪）`,

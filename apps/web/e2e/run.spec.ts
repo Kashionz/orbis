@@ -1,3 +1,4 @@
+import { DESKTOP_BRIDGE_KEY } from "@orbis/desktop/bridge";
 import type { Page } from "@playwright/test";
 import { applyEvents, EMPTY_TIMELINE } from "../src/features/run/timeline";
 import { LARGE_RUN_ID } from "../src/mocks/backend";
@@ -150,5 +151,48 @@ test.describe("別人在自己電腦上派工的 Run", () => {
     await page.reload();
     await expect(permission(page)).toContainText("等待有權限的 Member 回覆");
     await expect(permission(page).getByRole("button")).toHaveCount(0);
+  });
+});
+
+test.describe("Desktop 的開啟本機工具", () => {
+  test("一般瀏覽器中沒有 bridge，不顯示", async ({ page }) => {
+    await page.goto("/tasks/ORB-3");
+    await page.getByRole("link", { name: /^run-/ }).click();
+    await expect(page.getByTestId("timeline")).toContainText("Worktree 已就緒");
+    await expect(page.getByRole("button", { name: "用編輯器開啟 Worktree" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "在終端機開啟" })).toHaveCount(0);
+  });
+
+  test("有 bridge 時以 Run 的 Worktree 路徑開啟，失敗時顯示 message", async ({ page }) => {
+    await page.addInitScript((key) => {
+      const calls: string[] = [];
+      Object.assign(window, { __bridgeCalls: calls });
+      Object.assign(window, {
+        [key]: {
+          getVersion: async () => "0.0.0",
+          openWorktreeInEditor: async (path: string) => {
+            calls.push(`editor:${path}`);
+            return { ok: true };
+          },
+          openWorktreeInTerminal: async (path: string) => {
+            calls.push(`terminal:${path}`);
+            return { ok: false, message: "找不到設定的終端機" };
+          },
+          beforeLogout: async () => ({ proceed: true }),
+        },
+      });
+    }, DESKTOP_BRIDGE_KEY);
+    await page.goto("/tasks/ORB-3");
+    await page.getByRole("link", { name: /^run-/ }).click();
+
+    await page.getByRole("button", { name: "用編輯器開啟 Worktree" }).click();
+    await page.getByRole("button", { name: "在終端機開啟" }).click();
+    await expect(page.locator(".desktop-actions").getByRole("alert")).toHaveText(
+      "找不到設定的終端機",
+    );
+    const calls = await page.evaluate(
+      () => (window as unknown as { __bridgeCalls: string[] }).__bridgeCalls,
+    );
+    expect(calls).toEqual(["editor:C:/wt/demo/run", "terminal:C:/wt/demo/run"]);
   });
 });

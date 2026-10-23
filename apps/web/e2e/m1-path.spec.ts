@@ -13,7 +13,7 @@ test("M1 路徑：建立 Task → 派工 → 即時 Event → 回覆權限請求
   await create.getByLabel("標題").fill("M1：新增 hello.txt");
   await create.getByLabel("描述（markdown）").fill("新增 `hello.txt`，並更新 README。");
   await create.getByRole("button", { name: "建立" }).click();
-  await expect(page).toHaveURL(/\/tasks\/ORB-7$/);
+  await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
 
   // 進入 Ready 需要至少一條 Acceptance Criterion
   await page.getByRole("button", { name: "新增 Acceptance Criterion" }).click();
@@ -23,13 +23,13 @@ test("M1 路徑：建立 Task → 派工 → 即時 Event → 回覆權限請求
 
   // Backlog → Ready → 拖到 Running 派工
   await page.getByRole("link", { name: "核心產品" }).click();
-  await dragTo(page, card(page, "ORB-7"), column(page, "ready"));
+  await dragTo(page, card(page, "ORB-8"), column(page, "ready"));
   await drop(page);
-  await expect(column(page, "ready").locator('[data-task-key="ORB-7"]')).toBeVisible();
-  await dragTo(page, card(page, "ORB-7"), column(page, "running"));
+  await expect(column(page, "ready").locator('[data-task-key="ORB-8"]')).toBeVisible();
+  await dragTo(page, card(page, "ORB-8"), column(page, "running"));
   await drop(page);
   await page
-    .getByRole("dialog", { name: "派工 ORB-7" })
+    .getByRole("dialog", { name: "派工 ORB-8" })
     .getByRole("button", { name: "派工" })
     .click();
 
@@ -64,5 +64,5 @@ test("M1 路徑：建立 Task → 派工 → 即時 Event → 回覆權限請求
   await expect(page.getByTestId("run-status")).toHaveText("已完成");
 
   await page.goto("/board");
-  await expect(column(page, "pr_open").locator('[data-task-key="ORB-7"]')).toBeVisible();
+  await expect(column(page, "pr_open").locator('[data-task-key="ORB-8"]')).toBeVisible();
 });

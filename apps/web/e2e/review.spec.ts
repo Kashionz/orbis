@@ -77,11 +77,12 @@ test.describe("Diff review", () => {
     await expect(page).toHaveURL(/\/runs\/run-\d+$/);
     const runId = page.url().split("/").pop() ?? "";
     const state = await mockState<MockState>(page);
+    // 契約的 Gate 決定：退回時連同行內留言一起送出
     expect(state.reviews[runId]).toEqual([
       {
-        decision: "rejected",
+        action: "reject",
         comment: "請修正後再送",
-        comments: [{ path: "hello.txt", line: 1, side: "new", body: "結尾不要換行" }],
+        reviewComments: [{ path: "hello.txt", line: 1, side: "new", body: "結尾不要換行" }],
       },
     ]);
     await expect(page.getByTestId("timeline")).toContainText("收到 review 留言");
@@ -97,8 +98,8 @@ test.describe("Diff review", () => {
     await expect(page.locator(".page-header .status-badge")).toHaveText("PR Open");
   });
 
-  test.describe("禁止核准自己的 Task", () => {
-    test.use({ mock: { policy: { forbidSelfApproval: true } } });
+  test.describe("禁止核准自己的 Task（Member）", () => {
+    test.use({ mock: { role: "member", policy: { forbidSelfApproval: true } } });
 
     test("指派給自己時不顯示核准，但可以退回", async ({ page }) => {
       // ORB-4 指派給 alice；先改成指派給自己
@@ -109,6 +110,45 @@ test.describe("Diff review", () => {
       await page.getByRole("link", { name: "Diff review" }).click();
       await expect(page.getByRole("button", { name: /退回並附上留言/ })).toBeVisible();
       await expect(page.getByRole("button", { name: "核准並開 PR" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("禁止核准自己的 Task（Owner）", () => {
+    test.use({ mock: { policy: { forbidSelfApproval: true } } });
+
+    test("只限制 Member，Owner 指派給自己仍可以核准", async ({ page }) => {
+      await page.goto("/tasks/ORB-4");
+      await page.getByLabel("指派對象").selectOption({ label: "@octocat（The Octocat）" });
+      await expect(page.getByLabel("指派對象")).toHaveValue("member-me");
+      await page.getByRole("link", { name: /^run-/ }).click();
+      await page.getByRole("link", { name: "Diff review" }).click();
+      await expect(page.getByRole("button", { name: "核准並開 PR" })).toBeVisible();
+    });
+  });
+
+  test("在 Review Gate 中止：以 Gate 的 abort 送出，Task 回到 Ready", async ({ page }) => {
+    await openReview(page);
+    await page.getByRole("button", { name: "中止 Run" }).click();
+    await expect(page).toHaveURL(/\/runs\/run-\d+$/);
+    const runId = page.url().split("/").pop() ?? "";
+    await expect(page.getByTestId("run-status")).toHaveText("已中止");
+    const state = await mockState<MockState>(page);
+    expect(state.reviews[runId]).toEqual([{ action: "abort" }]);
+    await page.getByRole("link", { name: /ORB-4/ }).click();
+    await expect(page.locator(".page-header .status-badge")).toHaveText("Ready");
+  });
+
+  test.describe("大檔與二進位檔案", () => {
+    test.use({ mock: { blobDiff: true } });
+
+    test("放在 blob 的內容向 Server 取得後顯示；二進位檔案只顯示有變更", async ({ page }) => {
+      await openReview(page);
+      await fileButton(page, "README.md").click();
+      await expect(page.getByTestId("diff-editor")).toContainText("已由 Fake Agent 更新");
+
+      await fileButton(page, "logo.png").click();
+      await expect(page.getByText("二進位檔案，只顯示有變更，無法檢視內容。")).toBeVisible();
+      await expect(page.getByTestId("diff-editor")).toHaveCount(0);
     });
   });
 });

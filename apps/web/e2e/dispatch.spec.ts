@@ -73,4 +73,36 @@ test.describe("派工對話框", () => {
     await expect(page.getByRole("heading", { name: /設定 CI 快取/ })).toBeVisible();
     await expect(page.getByRole("button", { name: "派工" })).toHaveCount(0);
   });
+
+  test.describe("Project 預設 Permission Policy 是 manual", () => {
+    test.use({ mock: { policy: { defaultPermissionPolicy: "manual" } } });
+
+    test("派工對話框預設選 Project 的政策", async ({ page }) => {
+      await page.goto("/tasks/ORB-2");
+      await page.getByRole("button", { name: "派工" }).click();
+      const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
+      await expect(dialog.getByRole("radio", { name: /^manual/ })).toBeChecked();
+      await expect(dialog.getByText("（Project 預設）")).toBeVisible();
+      await dialog.getByRole("button", { name: "派工" }).click();
+      await expect(page.locator(".run-meta")).toContainText("manual");
+    });
+  });
+
+  test.describe("Project 預設 Permission Policy 是 yolo", () => {
+    test.use({ mock: { policy: { defaultPermissionPolicy: "yolo" } } });
+
+    test("我的電腦預設 yolo；Team Runner 不提供時改用 auto 並說明", async ({ page }) => {
+      await page.goto("/tasks/ORB-2");
+      await page.getByRole("button", { name: "派工" }).click();
+      const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
+      await expect(dialog.getByRole("radio", { name: /^yolo/ })).toBeChecked();
+      await expect(dialog.getByRole("alert")).toContainText("yolo 會自動允許");
+
+      await dialog.getByRole("radio", { name: "Team Runner" }).check();
+      await expect(dialog.getByRole("radio", { name: /^auto/ })).toBeChecked();
+      await expect(dialog.getByRole("note")).toContainText(
+        "Project 預設是 yolo，但Team Runner不提供",
+      );
+    });
+  });
 });

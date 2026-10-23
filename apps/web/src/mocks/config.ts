@@ -20,6 +20,10 @@ export interface MockConfig {
   forbidWrites?: boolean;
   /** 派工對話框的情境：`none`＝沒有任何 Runner 完成 Pairing。 */
   runners?: "default" | "none";
+  /** 另外建立一個等待「設定的信任核准」的 Run。 */
+  configTrust?: boolean;
+  /** review diff 中 README.md 修改後的內容放在 blob，並多一個二進位檔案。 */
+  blobDiff?: boolean;
 }
 
 declare global {

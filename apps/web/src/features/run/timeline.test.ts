@@ -1,7 +1,7 @@
 import type { RunEvent } from "@orbis/api-contract";
 import type { EventKind } from "@orbis/protocol";
 import { describe, expect, it } from "vitest";
-import { generateLargeRun, m1FirstTurnEvents } from "../../mocks/scripts";
+import { CONFIG_PATH, generateLargeRun, m1FirstTurnEvents } from "../../mocks/scripts";
 import { applyEvents, EMPTY_TIMELINE, missingSeq, type Timeline } from "./timeline";
 
 function events(...kinds: EventKind[]): RunEvent[] {
@@ -145,6 +145,7 @@ describe("applyEvents：權限請求、狀態、用量與錯誤", () => {
             { option_id: "allow", name: "允許", kind: "allow_once" },
             { option_id: "reject", name: "拒絕", kind: "reject_once" },
           ],
+          purpose: "tool",
         },
         { kind: "permission_resolved", request_id: "p1", selected_option_id: "reject" },
         { kind: "permission_resolved", request_id: "不存在", selected_option_id: null },
@@ -155,6 +156,62 @@ describe("applyEvents：權限請求、狀態、用量與錯誤", () => {
       type: "permission",
       resolved: { selectedOptionId: "reject" },
     });
+  });
+
+  it("權限請求保留用途；沒有 purpose 的舊 Event 視為一般的 tool call", () => {
+    const options = [{ option_id: "ok", name: "核准", kind: "allow_once" as const }];
+    const legacy = {
+      kind: "permission_request",
+      request_id: "p2",
+      tool_call_id: null,
+      title: "舊的請求",
+      options,
+    } as unknown as EventKind;
+    const timeline = replay(
+      events(
+        {
+          kind: "permission_request",
+          request_id: "p1",
+          tool_call_id: null,
+          title: `${CONFIG_PATH} 的 setup`,
+          options,
+          purpose: "config_trust",
+        },
+        legacy,
+      ),
+    );
+    expect(timeline.items.map((item) => item.type === "permission" && item.purpose)).toEqual([
+      "config_trust",
+      "tool",
+    ]);
+  });
+
+  it("run_diff 在時間軸中只顯示變更的檔案數", () => {
+    const timeline = replay(
+      events({
+        kind: "run_diff",
+        base_commit: "a".repeat(40),
+        files: [
+          {
+            path: "README.md",
+            old_path: null,
+            change: "modified",
+            binary: false,
+            old: { type: "inline", text: "a" },
+            new: { type: "inline", text: "b" },
+          },
+          {
+            path: "logo.png",
+            old_path: null,
+            change: "added",
+            binary: true,
+            old: null,
+            new: null,
+          },
+        ],
+      }),
+    );
+    expect(timeline.items).toEqual([{ key: "run_diff-1", seq: 1, type: "run_diff", fileCount: 2 }]);
   });
 
   it("usage 取最新一筆、不出現在時間軸；status_changed 更新目前狀態", () => {

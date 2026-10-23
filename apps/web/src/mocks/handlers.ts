@@ -1,46 +1,54 @@
-// MSW 的 REST 與 WebSocket handler，依 src/api/paths.ts 的暫時端點模擬 Server。
-// TODO(api): 端點對齊 contract/web-api 後跟著修改。
+// MSW 的 REST 與 WebSocket handler：路徑取自契約的 API_ROUTES，輸入以契約的 schema 驗證，
+// 回應與錯誤的形狀和 Server 相同。
 
 import {
+  API_ROUTES,
   CreateAcceptanceCriterionInput,
+  CreateRunInput,
   CreateTaskInput,
+  GateDecisionInput,
+  PermissionResponseInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
   UpdateTaskInput,
+  WEB_WS_MAX_SUBSCRIPTIONS,
+  WebClientMessage,
+  type WebServerMessage,
 } from "@orbis/api-contract";
 import { HttpResponse, http, ws } from "msw";
-import type { z } from "zod";
-import { API_PATHS } from "../api/paths";
-import {
-  ClientFrame,
-  CreateRunInput,
-  PermissionResponseInput,
-  ReviewDecisionInput,
-  type ServerFrame,
-} from "../api/schemas";
+import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
 
-/** 重播時每個 frame 最多帶幾筆 Event。 */
+/** 重播時每則 `run_events` 最多帶幾筆 Event（同 Server）。 */
 const REPLAY_BATCH_SIZE = 500;
 
 type Resolver = (request: Request, params: Record<string, string>) => unknown | Promise<unknown>;
 
-/** 把 MockError 與 zod 錯誤轉成 Server 風格的錯誤回應。 */
-function handle(resolver: Resolver) {
+/** 把 MockError 與 zod 錯誤轉成契約 ApiError 形狀的錯誤回應。 */
+function handle(resolver: Resolver, status = 200) {
   return async ({ request, params }: { request: Request; params: Record<string, unknown> }) => {
     try {
       const body = await resolver(request, params as Record<string, string>);
-      return body === undefined ? new HttpResponse(null, { status: 204 }) : HttpResponse.json(body);
+      return body === undefined
+        ? new HttpResponse(null, { status: 204 })
+        : HttpResponse.json(body, { status });
     } catch (error) {
       if (error instanceof MockError) {
         return HttpResponse.json(
-          { error: error.code, message: error.message },
+          { error: error.code, message: error.message, ...error.details },
           { status: error.status },
         );
       }
-      if (error instanceof Error && error.name === "ZodError") {
+      if (error instanceof ZodError) {
         return HttpResponse.json(
-          { error: "invalid_input", message: error.message },
+          {
+            error: "invalid_input",
+            message: "輸入格式不正確",
+            issues: error.issues.map((issue) => ({
+              path: issue.path.map((key) => (typeof key === "symbol" ? String(key) : key)),
+              message: issue.message,
+            })),
+          },
           { status: 400 },
         );
       }
@@ -56,37 +64,51 @@ async function parse<S extends z.ZodType>(request: Request, schema: S): Promise<
 export function createHandlers(backend: MockBackend) {
   const session = backend.config.session ?? "ok";
 
-  const socketUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${API_PATHS.eventsSocket}`;
+  const socketUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${API_ROUTES.ws}`;
   const events = ws.link(socketUrl);
 
   const eventsHandler = events.addEventListener("connection", ({ client }) => {
     const subscribed = new Set<string>();
-    const send = (frame: ServerFrame) => client.send(JSON.stringify(frame));
+    const send = (message: WebServerMessage) => client.send(JSON.stringify(message));
     const unlisten = backend.onEvents((runId, appended) => {
-      if (subscribed.has(runId)) send({ type: "events", runId, events: appended });
+      if (subscribed.has(runId)) send({ type: "run_events", runId, events: appended });
     });
     client.addEventListener("message", (message) => {
-      const frame = ClientFrame.safeParse(JSON.parse(String(message.data)));
-      if (!frame.success) {
-        send({ type: "error", runId: null, message: "無法解析的 frame" });
+      const parsed = WebClientMessage.safeParse(JSON.parse(String(message.data)));
+      if (!parsed.success) {
+        send({ type: "error", code: "invalid_message", message: "無法解析的訊息", runId: null });
         return;
       }
-      if (frame.data.type === "unsubscribe") {
-        subscribed.delete(frame.data.runId);
+      if (parsed.data.type === "unsubscribe_run") {
+        subscribed.delete(parsed.data.runId);
         return;
       }
-      const { runId, fromSeq } = frame.data;
+      const { runId, afterSeq } = parsed.data;
+      if (!subscribed.has(runId) && subscribed.size >= WEB_WS_MAX_SUBSCRIPTIONS) {
+        send({
+          type: "error",
+          code: "limit_exceeded",
+          message: `每條連線最多訂閱 ${WEB_WS_MAX_SUBSCRIPTIONS} 個 Run`,
+          runId,
+        });
+        return;
+      }
       try {
-        const replay = backend.events(runId, fromSeq - 1);
+        const replay = backend.events(runId, afterSeq);
         subscribed.add(runId);
         for (let start = 0; start < replay.length; start += REPLAY_BATCH_SIZE) {
-          send({ type: "events", runId, events: replay.slice(start, start + REPLAY_BATCH_SIZE) });
+          send({
+            type: "run_events",
+            runId,
+            events: replay.slice(start, start + REPLAY_BATCH_SIZE),
+          });
         }
       } catch (error) {
         send({
           type: "error",
-          runId,
+          code: "not_found",
           message: error instanceof Error ? error.message : String(error),
+          runId,
         });
       }
     });
@@ -96,143 +118,169 @@ export function createHandlers(backend: MockBackend) {
   return [
     eventsHandler,
 
-    http.get("/api/auth/me", () => {
-      if (session === "unauthorized") {
-        return HttpResponse.json({ error: "unauthorized" }, { status: 401 });
+    http.get(API_ROUTES.authMe, () => {
+      if (session === "unauthorized" || backend.snapshot.loggedOut) {
+        return HttpResponse.json({ error: "unauthorized", message: "尚未登入" }, { status: 401 });
       }
-      if (session === "error") return HttpResponse.json({ error: "internal" }, { status: 500 });
+      if (session === "error") {
+        return HttpResponse.json({ error: "internal", message: "內部錯誤" }, { status: 500 });
+      }
       return HttpResponse.json(backend.me());
     }),
+    http.post(
+      API_ROUTES.authLogout,
+      handle(() => {
+        backend.logout();
+      }),
+    ),
 
     http.get(
-      API_PATHS.projects,
+      API_ROUTES.projects,
       handle(() => backend.projects()),
     ),
     http.get(
-      "/api/projects/:projectId/repos",
+      API_ROUTES.projectRepos,
       handle((_, p) => backend.repos(p.projectId ?? "")),
     ),
     http.get(
-      "/api/projects/:projectId/tasks",
+      API_ROUTES.projectTasks,
       handle((_, p) => backend.tasks(p.projectId ?? "")),
     ),
     http.post(
-      "/api/projects/:projectId/tasks",
-      handle(async (request, p) =>
-        backend.createTaskAsMember(p.projectId ?? "", await parse(request, CreateTaskInput)),
+      API_ROUTES.projectTasks,
+      handle(
+        async (request, p) =>
+          backend.createTaskAsMember(p.projectId ?? "", await parse(request, CreateTaskInput)),
+        201,
       ),
+    ),
+    http.get(
+      API_ROUTES.projectDispatchOptions,
+      handle((_, p) => backend.dispatchOptions(p.projectId ?? "")),
     ),
 
     http.get(
-      "/api/tasks/by-key/:taskKey",
+      API_ROUTES.taskByKey,
       handle((_, p) => backend.taskByKey(p.taskKey ?? "")),
     ),
     http.get(
-      "/api/tasks/:taskId",
+      API_ROUTES.task,
       handle((_, p) => backend.task(p.taskId ?? "")),
     ),
     http.patch(
-      "/api/tasks/:taskId",
+      API_ROUTES.task,
       handle(async (request, p) =>
         backend.updateTask(p.taskId ?? "", await parse(request, UpdateTaskInput)),
       ),
     ),
     http.post(
-      "/api/tasks/:taskId/transition",
+      API_ROUTES.taskTransition,
       handle(async (request, p) =>
         backend.transitionTask(p.taskId ?? "", (await parse(request, TransitionTaskInput)).status),
       ),
     ),
     http.get(
-      "/api/tasks/:taskId/acceptance-criteria",
+      API_ROUTES.taskAcceptanceCriteria,
       handle((_, p) => backend.acceptanceCriteria(p.taskId ?? "")),
     ),
     http.post(
-      "/api/tasks/:taskId/acceptance-criteria",
-      handle(async (request, p) =>
-        backend.createAcceptanceCriterionAsMember(
-          p.taskId ?? "",
-          await parse(request, CreateAcceptanceCriterionInput),
-        ),
+      API_ROUTES.taskAcceptanceCriteria,
+      handle(
+        async (request, p) =>
+          backend.createAcceptanceCriterionAsMember(
+            p.taskId ?? "",
+            await parse(request, CreateAcceptanceCriterionInput),
+          ),
+        201,
       ),
     ),
     http.patch(
-      "/api/acceptance-criteria/:id",
+      API_ROUTES.acceptanceCriterion,
       handle(async (request, p) =>
         backend.updateAcceptanceCriterion(
-          p.id ?? "",
+          p.criterionId ?? "",
           await parse(request, UpdateAcceptanceCriterionInput),
         ),
       ),
     ),
     http.delete(
-      "/api/acceptance-criteria/:id",
+      API_ROUTES.acceptanceCriterion,
       handle((_, p) => {
-        backend.deleteAcceptanceCriterion(p.id ?? "");
+        backend.deleteAcceptanceCriterion(p.criterionId ?? "");
       }),
+    ),
+    http.get(
+      API_ROUTES.taskGates,
+      handle((_, p) => backend.taskGates(p.taskId ?? "")),
     ),
 
     http.get(
-      "/api/tasks/:taskId/runs",
+      API_ROUTES.taskRuns,
       handle((_, p) => backend.taskRuns(p.taskId ?? "")),
     ),
     http.post(
-      "/api/tasks/:taskId/runs",
-      handle(async (request, p) =>
-        backend.dispatchAsMember(p.taskId ?? "", await parse(request, CreateRunInput)),
+      API_ROUTES.taskRuns,
+      handle(
+        async (request, p) =>
+          backend.dispatchAsMember(p.taskId ?? "", await parse(request, CreateRunInput)),
+        201,
       ),
     ),
     http.get(
-      "/api/runs/:runId",
+      API_ROUTES.run,
       handle((_, p) => backend.run(p.runId ?? "")),
     ),
     http.get(
-      "/api/runs/:runId/events",
+      API_ROUTES.runEvents,
       handle((request, p) => {
         const url = new URL(request.url);
         const afterSeq = Number(url.searchParams.get("afterSeq") ?? 0);
-        const limit = Number(url.searchParams.get("limit") ?? 1000);
+        const limit = Number(url.searchParams.get("limit") ?? 500);
         return backend.events(p.runId ?? "", afterSeq, limit);
       }),
     ),
     http.post(
-      "/api/runs/:runId/permission-responses",
+      API_ROUTES.runPermissionResponse,
       handle(async (request, p) => {
         const input = await parse(request, PermissionResponseInput);
-        backend.respondToPermissionAsMember(
-          p.runId ?? "",
-          input.permissionRequestId,
-          input.optionId,
-        );
+        backend.respondToPermissionAsMember(p.runId ?? "", p.requestId ?? "", input.optionId);
       }),
     ),
     http.get(
-      "/api/runs/:runId/review-diff",
+      API_ROUTES.runReviewDiff,
       handle((_, p) => backend.reviewDiff(p.runId ?? "")),
     ),
     http.post(
-      "/api/runs/:runId/review",
-      handle(async (request, p) => {
-        backend.decideReview(p.runId ?? "", await parse(request, ReviewDecisionInput));
-      }),
+      API_ROUTES.runCancel,
+      handle((_, p) => backend.cancelRun(p.runId ?? ""), 202),
     ),
     http.post(
-      "/api/runs/:runId/cancel",
-      handle((_, p) => {
-        backend.cancelRun(p.runId ?? "");
-      }),
+      API_ROUTES.gateDecision,
+      handle(async (request, p) =>
+        backend.decideGate(p.gateId ?? "", await parse(request, GateDecisionInput)),
+      ),
     ),
 
+    http.get(API_ROUTES.blob, ({ params }) => {
+      try {
+        return new HttpResponse(backend.blob(String(params.blobId ?? "")), {
+          headers: { "content-type": "text/plain" },
+        });
+      } catch (error) {
+        if (!(error instanceof MockError)) throw error;
+        return HttpResponse.json(
+          { error: error.code, message: error.message },
+          { status: error.status },
+        );
+      }
+    }),
+
     http.get(
-      API_PATHS.members,
+      API_ROUTES.members,
       handle(() => backend.members()),
     ),
     http.get(
-      API_PATHS.dispatchOptions,
-      handle(() => backend.dispatchOptions()),
-    ),
-    http.get(
-      API_PATHS.needsYou,
+      API_ROUTES.needsYou,
       handle(() => backend.needsYou()),
     ),
   ];

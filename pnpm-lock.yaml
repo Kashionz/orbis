@@ -133,6 +133,9 @@ importers:
       '@orbis/api-contract':
         specifier: workspace:*
         version: link:../../packages/api-contract
+      '@orbis/desktop':
+        specifier: workspace:*
+        version: link:../desktop
       '@orbis/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

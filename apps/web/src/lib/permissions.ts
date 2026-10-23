@@ -3,13 +3,13 @@
 
 import type {
   PermissionPolicy,
-  Project,
   ProjectPolicy,
   Role,
   Run,
   RunnerKind,
   Task,
 } from "@orbis/api-contract";
+import type { PermissionPurpose } from "@orbis/protocol";
 
 /** UI 上會依 Role 隱藏的操作。 */
 export type Action =
@@ -46,7 +46,8 @@ export interface PermissionContext {
 const EDITORS: readonly Role[] = ["owner", "admin", "member"];
 const ADMINS: readonly Role[] = ["owner", "admin"];
 
-// TODO(contract): Project 對 Member 的 Role 覆寫尚未建模，目前一律用 Team 的 Role。
+// TODO(contract): 一律用 Team 的 Role。契約沒有讓 Member 取得自己在 Project 的有效 Role（含覆寫）
+// 的端點；有覆寫時 UI 可能多顯示或少顯示操作，實際權限仍由 Server 判斷（403 時顯示原因）。
 export function can(action: Action, ctx: PermissionContext): boolean {
   const { role } = ctx;
   switch (action) {
@@ -65,8 +66,12 @@ export function can(action: Action, ctx: PermissionContext): boolean {
       return role === "member" && (ctx.policy?.memberCanDispatchToTeamRunner ?? false);
     case "gate.approve":
       if (!EDITORS.includes(role)) return false;
-      // 使用者決定：「自己的 Task」以 Task 的指派對象判斷
-      return !(ctx.policy?.forbidSelfApproval && ctx.task?.assigneeMemberId === ctx.memberId);
+      // 「禁止核准自己的 Task」只限制 Role 為 Member 的人；「自己的 Task」以指派對象判斷
+      return !(
+        role === "member" &&
+        ctx.policy?.forbidSelfApproval &&
+        ctx.task?.assigneeMemberId === ctx.memberId
+      );
   }
 }
 
@@ -83,32 +88,29 @@ export function permissionPoliciesFor(runnerKind: RunnerKind): readonly Permissi
   return runnerKind === "local" ? ["manual", "auto", "yolo"] : ["manual", "auto"];
 }
 
-export const DEFAULT_PERMISSION_POLICY: PermissionPolicy = "auto";
-
 /**
  * 派工對話框的預設 Permission Policy：Project 的預設政策（§8「派工時的選擇」）。
  * 這種 Runner 不提供該政策時（Team Runner 沒有 `yolo`）改用 `auto`。
  */
 export function defaultPermissionPolicy(
-  _project: Pick<Project, "policy">,
+  projectDefault: PermissionPolicy,
   runnerKind: RunnerKind,
 ): PermissionPolicy {
-  // TODO(contract): ProjectPolicy 還沒有預設 Permission Policy 的欄位，先一律用 auto
-  const projectDefault: PermissionPolicy = DEFAULT_PERMISSION_POLICY;
-  return permissionPoliciesFor(runnerKind).includes(projectDefault)
-    ? projectDefault
-    : DEFAULT_PERMISSION_POLICY;
+  return permissionPoliciesFor(runnerKind).includes(projectDefault) ? projectDefault : "auto";
 }
 
 /**
- * 可以回覆這個 Run 的權限請求嗎（§8「誰可以回覆」）：Local Runner 上的請求只有該 Runner 的
- * 擁有者（在自己電腦上派工的人）能回覆；Team Runner 上的，Role 至少是 Member 的人都能回覆。
+ * 可以回覆這個 Run 的權限請求嗎（§8「誰可以回覆」）：
+ * - 設定的信任核准：Admin 以上，不論 Runner 種類。
+ * - 其他用途：Local Runner 上的請求只有該 Runner 的擁有者（在自己電腦上派工的人）能回覆；
+ *   Team Runner 上的，Role 至少是 Member 的人都能回覆。
  */
-// TODO(contract): 設定的信任核准只有 Admin 以上能回覆，但權限請求還沒有欄位區分這種請求。
 export function canRespondToPermission(
   run: Pick<Run, "runnerKind" | "startedByMemberId">,
+  purpose: PermissionPurpose,
   ctx: PermissionContext,
 ): boolean {
+  if (purpose === "config_trust") return can("policy.manage", ctx);
   if (!can("run.control", ctx)) return false;
   return run.runnerKind === "team" || run.startedByMemberId === ctx.memberId;
 }

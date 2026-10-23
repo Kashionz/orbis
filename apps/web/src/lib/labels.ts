@@ -3,14 +3,16 @@
 import type {
   AcceptanceCriterionKind,
   AcceptanceCriterionResult,
+  DiffFileChange,
   PermissionPolicy,
+  READY_REQUIREMENTS,
   Role,
   RunnerKind,
   RunStatus,
+  TaskDoneReason,
   TaskStatus,
 } from "@orbis/api-contract";
-import type { RunErrorCode, ToolCallStatus, ToolKind } from "@orbis/protocol";
-import type { DiffFileChange } from "../api/schemas";
+import type { PermissionPurpose, RunErrorCode, ToolCallStatus, ToolKind } from "@orbis/protocol";
 
 /** 看板欄位標題，沿用 ARCHITECTURE §5 的狀態名稱。 */
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
@@ -23,6 +25,26 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   review_gate: "Review Gate",
   pr_open: "PR Open",
   done: "Done",
+};
+
+/** Done 的關閉原因（ARCHITECTURE §11），看板與 Task 頁以不同標記區分。 */
+export const TASK_DONE_REASON_LABELS: Record<TaskDoneReason, string> = {
+  completed: "已完成",
+  not_planned: "不處理",
+};
+
+/** Task 進入 Ready 的條件（ARCHITECTURE §5），Server 回 `missing` 時列出缺少的項目。 */
+export const READY_REQUIREMENT_LABELS: Record<(typeof READY_REQUIREMENTS)[number], string> = {
+  repo: "指定 Repo",
+  description: "描述或 Spec",
+  acceptance_criteria: "至少一條 Acceptance Criterion",
+};
+
+/** 權限請求的用途（ARCHITECTURE §6.2、§8）。 */
+export const PERMISSION_PURPOSE_LABELS: Record<PermissionPurpose, string> = {
+  tool: "權限請求",
+  config_trust: "設定的信任核准",
+  agent_settings_changed: "Agent 設定檔變更確認",
 };
 
 export const ROLE_LABELS: Record<Role, string> = {

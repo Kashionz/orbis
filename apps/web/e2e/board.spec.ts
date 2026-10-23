@@ -82,7 +82,7 @@ test.describe("看板", () => {
     await dialog.getByLabel("標題").fill("修正登入頁的錯字");
     await dialog.getByLabel("描述（markdown）").fill("把「登人」改成「登入」。");
     await dialog.getByRole("button", { name: "建立" }).click();
-    await expect(page).toHaveURL(/\/tasks\/ORB-7$/);
+    await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
     await expect(page.getByRole("heading", { name: /修正登入頁的錯字/ })).toBeVisible();
 
     await page.getByRole("link", { name: "核心產品" }).click();
@@ -96,11 +96,31 @@ test("不符合進入 Ready 的條件時顯示 Server 的錯誤並還原", async
   const dialog = page.getByRole("dialog", { name: "新增 Task" });
   await dialog.getByLabel("標題").fill("還沒寫好的 Task");
   await dialog.getByRole("button", { name: "建立" }).click();
-  await expect(page).toHaveURL(/\/tasks\/ORB-7$/);
+  await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
   await page.getByRole("link", { name: "核心產品" }).click();
 
-  await dragTo(page, card(page, "ORB-7"), column(page, "ready"));
+  await dragTo(page, card(page, "ORB-8"), column(page, "ready"));
   await drop(page);
-  await expect(page.getByRole("alert")).toContainText("至少一條 Acceptance Criterion");
-  await expect(column(page, "backlog").locator('[data-task-key="ORB-7"]')).toBeVisible();
+  // 依 Server 回的 missing 列出缺少的項目
+  await expect(page.getByRole("alert")).toContainText(
+    "還不能進入 Ready，缺少：描述或 Spec、至少一條 Acceptance Criterion",
+  );
+  await expect(column(page, "backlog").locator('[data-task-key="ORB-8"]')).toBeVisible();
+});
+
+test("Done 依關閉原因顯示不同標記", async ({ page }) => {
+  await page.goto("/board");
+  await expect(card(page, "ORB-5").locator("[data-done-reason]")).toHaveAttribute(
+    "data-done-reason",
+    "completed",
+  );
+  await expect(card(page, "ORB-5")).toContainText("已完成");
+  await expect(card(page, "ORB-7").locator("[data-done-reason]")).toHaveAttribute(
+    "data-done-reason",
+    "not_planned",
+  );
+  await expect(card(page, "ORB-7")).toContainText("不處理");
+
+  await page.goto("/tasks/ORB-7");
+  await expect(page.locator(".page-header [data-done-reason]")).toHaveText("不處理");
 });

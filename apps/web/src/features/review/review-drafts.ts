@@ -1,10 +1,10 @@
 // Diff review 的留言草稿：存在 sessionStorage，重新整理頁面不會遺失。
 
+import { ReviewCommentInput } from "@orbis/api-contract";
 import { z } from "zod";
-import { ReviewComment } from "../../api/schemas";
 
 export const ReviewDraft = z.object({
-  comments: z.array(ReviewComment),
+  comments: z.array(ReviewCommentInput),
   /** 整體說明。 */
   summary: z.string(),
 });
@@ -38,7 +38,7 @@ export function saveDraft(runId: string, draft: ReviewDraft): void {
 }
 
 /** 依檔案、行號排序留言，退回時送出的順序固定。 */
-export function sortComments(comments: readonly ReviewComment[]): ReviewComment[] {
+export function sortComments(comments: readonly ReviewCommentInput[]): ReviewCommentInput[] {
   return [...comments].sort(
     (a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.side.localeCompare(b.side),
   );

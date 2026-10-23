@@ -1,13 +1,13 @@
 // 登入狀態：`GET /api/auth/me`，回應以 api-contract 的 MeResponse 驗證。
 
-import { MeResponse } from "@orbis/api-contract";
+import { API_ROUTES, MeResponse } from "@orbis/api-contract";
 import { queryOptions } from "@tanstack/react-query";
 import { ApiError, apiRequest, UnauthorizedError } from "../../api/client";
 
 export { UnauthorizedError };
 
-export const ME_PATH = "/api/auth/me";
-export const GITHUB_LOGIN_PATH = "/api/auth/github/login";
+export const ME_PATH = API_ROUTES.authMe;
+export const GITHUB_LOGIN_PATH = API_ROUTES.authGithubLogin;
 
 export async function fetchMe(signal?: AbortSignal): Promise<MeResponse> {
   try {

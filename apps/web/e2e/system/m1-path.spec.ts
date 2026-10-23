@@ -7,7 +7,8 @@
 //   而且它的 Agent 以 Fake Agent 執行 M1 劇本：第一回合先請求寫檔權限再產生 diff，
 //   退回後的第二回合依留言修改。
 //
-// TODO(api): 端點與測試用的登入方式確定後，依 A1／B1 的實作調整前提。
+// B1 的 `e2e:stack`（啟動 Postgres、Server、Runner 並建立種子資料）合併後，改由 Playwright 啟動
+// 完整系統並讀取它印出的 session cookie；在那之前以上面兩個環境變數提供。
 
 import { envVar, NAMES } from "@orbis/api-contract/names";
 import { expect, test } from "@playwright/test";

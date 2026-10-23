@@ -44,11 +44,16 @@ for (const role of ROLES) {
 
     test("Run 頁與 Needs You：回覆權限請求、中止 Run", async ({ page }) => {
       await page.goto("/needs-you");
-      const item = page.locator(".needs-you-item", { hasText: "ORB-3" });
-      // 先等清單載入，否則「沒有按鈕」會在載入前就成立
-      await expect(item).toBeVisible();
-      await expect(item.getByRole("button", { name: "允許" })).toHaveCount(canEdit(role) ? 1 : 0);
-      await item.getByRole("link", { name: "前往 Run" }).click();
+      // Server 只列出本人有權處理的項目：Viewer 看不到權限請求
+      if (canEdit(role)) {
+        const item = page.locator(".needs-you-item", { hasText: "ORB-3" });
+        await expect(item.getByRole("button", { name: "允許" })).toBeVisible();
+        await item.getByRole("link", { name: "前往 Run" }).click();
+      } else {
+        await expect(page.getByText("目前沒有等待你處理的項目。")).toBeVisible();
+        await page.goto("/tasks/ORB-3");
+        await page.getByRole("link", { name: /^run-/ }).click();
+      }
 
       const request = page.locator(".event-permission");
       await expect(request).toBeVisible();
@@ -63,8 +68,9 @@ for (const role of ROLES) {
     });
 
     test("Diff review：留言、退回、核准", async ({ page }) => {
-      await page.goto("/needs-you");
-      await page.getByRole("link", { name: "前往 diff review" }).click();
+      await page.goto("/tasks/ORB-4");
+      await page.getByRole("link", { name: /^run-/ }).click();
+      await page.getByRole("link", { name: "Diff review" }).click();
       await expect(page.getByTestId("diff-editor")).toBeVisible();
       const count = canEdit(role) ? 1 : 0;
       await expect(page.getByRole("form", { name: "新增行內留言" })).toHaveCount(count);

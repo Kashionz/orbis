@@ -8,6 +8,7 @@ import {
   type ContentBlock,
   type GateKind,
   type PermissionOption,
+  type PermissionPurpose,
   type PlanEntry,
   RUN_ERROR_CODES,
   type RunErrorCode,
@@ -43,6 +44,8 @@ export type TimelineItem =
       requestId: string;
       toolCallId: string | null;
       title: string;
+      /** 用途：一般 tool call、設定的信任核准、Agent 設定檔被修改。 */
+      purpose: PermissionPurpose;
       options: PermissionOption[];
       /** 尚未回覆時為 null；`selectedOptionId` 為 null 表示請求被取消。 */
       resolved: { selectedOptionId: string | null } | null;
@@ -62,6 +65,11 @@ export type TimelineItem =
       worktreePath: string;
       branch: string | null;
       baseCommit: string;
+    })
+  | (ItemBase & {
+      type: "run_diff";
+      /** 有變更的檔案數。完整內容由 review diff 端點取得，不放進時間軸。 */
+      fileCount: number;
     });
 
 export interface Timeline {
@@ -181,6 +189,8 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
         requestId: event.request_id,
         toolCallId: event.tool_call_id,
         title: event.title,
+        // 協定加入 purpose 之前保存的 Event 沒有這個欄位，視為一般的 tool call
+        purpose: event.purpose ?? "tool",
         options: event.options,
         resolved: null,
       });
@@ -250,6 +260,10 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
         branch: event.branch,
         baseCommit: event.base_commit,
       });
+      return;
+
+    case "run_diff":
+      draft.items.push({ ...base, type: "run_diff", fileCount: event.files.length });
       return;
 
     default:

@@ -11,6 +11,7 @@ import {
   tasksQuery,
   updateTask,
 } from "../../api/resources";
+import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { ErrorText } from "../../components/ErrorText";
 import { unfinishedDependencies } from "../../lib/dependencies";
 import { TASK_STATUS_LABELS } from "../../lib/labels";
@@ -67,6 +68,7 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
         <span className="status-badge" data-status={task.status}>
           {TASK_STATUS_LABELS[task.status]}
         </span>
+        <DoneReasonBadge task={task} />
         <span className="spacer" />
         {task.status === "ready" && canDispatch && (
           <>
@@ -102,7 +104,7 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
         <aside className="task-side">
           <dl>
             <dt>Repo</dt>
-            <dd>{repo ? `${repo.owner}/${repo.name}` : "—"}</dd>
+            <dd>{repo ? `${repo.owner}/${repo.name}` : "尚未指定"}</dd>
           </dl>
           <AssigneeField
             task={task}

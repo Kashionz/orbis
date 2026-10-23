@@ -4,13 +4,15 @@ import { Link } from "@tanstack/react-router";
 import { needsYouQuery, queryKeys, respondToPermission } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { formatTime } from "../../lib/format";
-import { usePermissions } from "../auth/use-permissions";
+import { PERMISSION_PURPOSE_LABELS } from "../../lib/labels";
 
-/** Needs You 清單（交付 5）：等待自己處理的權限請求、Gate、停下來的 Run。 */
+/**
+ * Needs You 清單（交付 5）：等待自己處理的權限請求、Gate、停下來的 Run。
+ * Server 只列出本人有權處理的項目，所以權限請求一律顯示回覆按鈕。
+ */
 export function NeedsYouPage() {
   const queryClient = useQueryClient();
   const { data: items = [], error, isPending } = useQuery(needsYouQuery);
-  const permissions = usePermissions();
 
   const respond = useMutation({
     mutationFn: ({
@@ -19,8 +21,7 @@ export function NeedsYouPage() {
     }: {
       item: NeedsYouItem & { kind: "permission_request" };
       optionId: string;
-    }) =>
-      respondToPermission(item.runId, { permissionRequestId: item.permissionRequestId, optionId }),
+    }) => respondToPermission(item.runId, item.permissionRequestId, { optionId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
   });
 
@@ -31,7 +32,12 @@ export function NeedsYouPage() {
       {!isPending && items.length === 0 && <p className="empty">目前沒有等待你處理的項目。</p>}
       <ul className="needs-you-list">
         {items.map((item) => (
-          <li key={item.id} className="needs-you-item" data-kind={item.kind}>
+          <li
+            key={item.id}
+            className="needs-you-item"
+            data-kind={item.kind}
+            data-purpose={item.kind === "permission_request" ? item.purpose : undefined}
+          >
             <div className="needs-you-main">
               <span className="tag">{kindLabel(item)}</span>
               <Link to="/tasks/$taskKey" params={{ taskKey: item.taskKey }} className="task-key">
@@ -42,7 +48,6 @@ export function NeedsYouPage() {
             </div>
             <div className="needs-you-actions">
               {item.kind === "permission_request" &&
-                permissions.can("run.control") &&
                 item.options.map((option) => (
                   <button
                     key={option.optionId}
@@ -66,7 +71,7 @@ export function NeedsYouPage() {
 function kindLabel(item: NeedsYouItem): string {
   switch (item.kind) {
     case "permission_request":
-      return "權限請求";
+      return PERMISSION_PURPOSE_LABELS[item.purpose];
     case "gate":
       return item.gateKind === "plan" ? "Plan Gate" : "Review Gate";
     case "stopped_run":

@@ -1,3 +1,4 @@
+import { CONFIG_PATH } from "../src/mocks/scripts";
 import { expect, test } from "./fixtures";
 
 test.describe("Needs You", () => {
@@ -38,5 +39,35 @@ test.describe("Needs You", () => {
     await item.getByRole("button", { name: "允許" }).click();
     await expect(item).toHaveCount(0);
     await expect(page.getByTestId("needs-you-count")).toContainText("1");
+  });
+});
+
+test.describe("設定的信任核准", () => {
+  test.use({ mock: { configTrust: true } });
+
+  test("依 purpose 標示為設定的信任核准，Admin 以上可以在清單中回覆", async ({ page }) => {
+    await page.goto("/needs-you");
+    const item = page.locator('.needs-you-item[data-purpose="config_trust"]');
+    await expect(item).toContainText("設定的信任核准");
+    await expect(item).toContainText(`執行 ${CONFIG_PATH} 的 setup`);
+    await item.getByRole("button", { name: "信任並執行" }).click();
+    await expect(item).toHaveCount(0);
+  });
+
+  test.describe("Role 為 Member", () => {
+    test.use({ mock: { configTrust: true, role: "member" } });
+
+    test("清單中沒有這個項目，Run 頁顯示等待 Admin 以上回覆", async ({ page }) => {
+      await page.goto("/needs-you");
+      await expect(page.locator(".needs-you-item").first()).toBeVisible();
+      await expect(page.locator('.needs-you-item[data-purpose="config_trust"]')).toHaveCount(0);
+
+      await page.goto("/tasks/ORB-8");
+      await page.getByRole("link", { name: /^run-/ }).click();
+      const request = page.locator('.event-permission[data-purpose="config_trust"]');
+      await expect(request).toContainText("設定的信任核准");
+      await expect(request).toContainText("等待 Admin 以上的 Member 回覆");
+      await expect(request.getByRole("button")).toHaveCount(0);
+    });
   });
 });

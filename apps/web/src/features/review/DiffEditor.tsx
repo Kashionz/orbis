@@ -1,15 +1,15 @@
+import type { ReviewCommentInput } from "@orbis/api-contract";
 import { useEffect, useRef } from "react";
-import type { ReviewComment } from "../../api/schemas";
 import { languageOf, monaco } from "./monaco";
 
-type Side = ReviewComment["side"];
+type Side = ReviewCommentInput["side"];
 
 interface DiffEditorProps {
   path: string;
   original: string;
   modified: string;
   /** 這個檔案的留言，用來在對應的行加上標示。 */
-  comments: readonly ReviewComment[];
+  comments: readonly ReviewCommentInput[];
   /** 點擊行號時呼叫：要在這一行加入留言。 */
   onLineClick: (line: number, side: Side) => void;
 }
@@ -20,7 +20,7 @@ const LINE_TARGETS = new Set([
   monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS,
 ]);
 
-function decorationsFor(comments: readonly ReviewComment[], side: Side) {
+function decorationsFor(comments: readonly ReviewCommentInput[], side: Side) {
   return comments
     .filter((comment) => comment.side === side)
     .map((comment) => ({

@@ -1,7 +1,13 @@
-import type { ContentBlock, PermissionOption, PermissionOptionKind } from "@orbis/protocol";
+import type {
+  ContentBlock,
+  PermissionOption,
+  PermissionOptionKind,
+  PermissionPurpose,
+} from "@orbis/protocol";
 import Markdown from "react-markdown";
 import { formatTime } from "../../lib/format";
 import {
+  PERMISSION_PURPOSE_LABELS,
   RUN_ERROR_LABELS,
   RUN_STATUS_LABELS,
   TOOL_CALL_STATUS_LABELS,
@@ -14,8 +20,8 @@ export interface ItemControls {
   /** 這個項目（或其中的區塊）是否已展開。 */
   isExpanded: (key: string) => boolean;
   toggle: (key: string) => void;
-  /** 可以回覆權限請求嗎（依 Role）。 */
-  canRespond: boolean;
+  /** 可以回覆這種用途的權限請求嗎（依 Role 與 Runner 擁有者）。 */
+  canRespond: (purpose: PermissionPurpose) => boolean;
   /** 正在送出回覆的權限請求。 */
   respondingRequestId: string | null;
   respond: (requestId: string, optionId: string) => void;
@@ -181,10 +187,11 @@ export function TimelineItemView({
         <div
           className="event event-permission"
           data-resolved={item.resolved ? "true" : "false"}
+          data-purpose={item.purpose}
           id={item.key}
         >
           <div className="permission-title">
-            <strong>權限請求</strong> {item.title}
+            <strong>{PERMISSION_PURPOSE_LABELS[item.purpose]}</strong> {item.title}
           </div>
           {item.resolved ? (
             <div className="hint">
@@ -192,7 +199,7 @@ export function TimelineItemView({
                 ? "請求已取消"
                 : `已回覆：${selected?.name ?? item.resolved.selectedOptionId}`}
             </div>
-          ) : controls.canRespond ? (
+          ) : controls.canRespond(item.purpose) ? (
             <div className="permission-options">
               {item.options.map((option) => (
                 <button
@@ -207,7 +214,11 @@ export function TimelineItemView({
               ))}
             </div>
           ) : (
-            <div className="hint">等待有權限的 Member 回覆</div>
+            <div className="hint">
+              {item.purpose === "config_trust"
+                ? "等待 Admin 以上的 Member 回覆"
+                : "等待有權限的 Member 回覆"}
+            </div>
           )}
         </div>
       );
@@ -263,6 +274,11 @@ export function TimelineItemView({
           Worktree 已就緒：<code>{item.branch ?? "（無分支）"}</code>，base{" "}
           <code>{item.baseCommit.slice(0, 7)}</code>
         </div>
+      );
+
+    case "run_diff":
+      return (
+        <div className="event event-status">已產生 review diff：{item.fileCount} 個檔案有變更</div>
       );
   }
 }
