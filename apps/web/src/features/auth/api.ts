@@ -1,30 +1,23 @@
 // 登入狀態：`GET /api/auth/me`，回應以 api-contract 的 MeResponse 驗證。
 
-import { MeResponse } from "@orbis/api-contract";
+import { API_ROUTES, MeResponse } from "@orbis/api-contract";
 import { queryOptions } from "@tanstack/react-query";
+import { ApiError, apiRequest, UnauthorizedError } from "../../api/client";
 
-export const ME_PATH = "/api/auth/me";
-export const GITHUB_LOGIN_PATH = "/api/auth/github/login";
+export { UnauthorizedError };
 
-/** Server 回 401：尚未登入或 session 已失效。 */
-export class UnauthorizedError extends Error {
-  constructor() {
-    super("尚未登入");
-    this.name = "UnauthorizedError";
-  }
-}
+export const ME_PATH = API_ROUTES.authMe;
+export const GITHUB_LOGIN_PATH = API_ROUTES.authGithubLogin;
 
 export async function fetchMe(signal?: AbortSignal): Promise<MeResponse> {
-  const response = await fetch(ME_PATH, {
-    credentials: "same-origin",
-    headers: { accept: "application/json" },
-    signal,
-  });
-  if (response.status === 401) throw new UnauthorizedError();
-  if (!response.ok) {
-    throw new Error(`取得登入狀態失敗：HTTP ${response.status}`);
+  try {
+    return await apiRequest(ME_PATH, MeResponse, { signal });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw new Error(`取得登入狀態失敗：HTTP ${error.status}`);
+    }
+    throw error;
   }
-  return MeResponse.parse(await response.json());
 }
 
 export const meQueryOptions = queryOptions({
