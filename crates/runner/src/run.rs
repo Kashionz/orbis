@@ -445,8 +445,19 @@ impl Run {
             .interruptible(async move { manager.create(&request).await })
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
+        // 沿用父 Run 的信任核准，只在子 Worktree 的內容和核准時的 base commit 完全相同時：
+        // 父 Run 的 Agent 改過的檔案（例如 package.json 的 script）可能讓已核准的 setup 執行別的東西。
         if let Some((caller, _)) = &parent
             && caller.worktree.scripts_approved
+            && wt
+                .git()
+                .succeeds([
+                    "diff",
+                    "--quiet",
+                    &caller.worktree.base_commit,
+                    &wt.base_commit,
+                ])
+                .await
         {
             wt.scripts_approved = true;
         }
@@ -1610,31 +1621,29 @@ impl Run {
         }
         // Planning 中（plan 核准之前）不可以修改檔案；指令與其他操作可能間接修改，原本會自動
         // 允許的也改成問人（不論 Permission Policy 的等級）。
-        if self.read_only
-            && matches!(
-                subject,
-                crate::policy::PermissionSubject::Write { .. }
-                    | crate::policy::PermissionSubject::Delete { .. }
-            )
-        {
-            decision = Decision::Deny {
-                reason: "consult 模式的 Child Run 是唯讀的".into(),
-            };
-        }
-        if self.planning && !is_orbis_call {
+        // Planning 中（plan 核准之前）與 consult 模式的 Child Run（在父 Run 的 Worktree 中）不可以
+        // 修改檔案；指令與其他操作可能間接修改，原本會自動允許的也改成問人（不論 Permission
+        // Policy 的等級，也不採用 allow_commands）。
+        let restricted = if self.read_only {
+            Some("consult 模式的 Child Run 是唯讀的")
+        } else if self.planning {
+            Some("Planning 階段不可以修改檔案")
+        } else {
+            None
+        };
+        if let Some(why) = restricted {
             match subject {
+                // 寫入與刪除無條件拒絕（Orbis 工具一律是「其他」類，不會走到這裡）。
                 crate::policy::PermissionSubject::Write { .. }
                 | crate::policy::PermissionSubject::Delete { .. } => {
-                    decision = Decision::Deny {
-                        reason: "Planning 階段不可以修改檔案".into(),
-                    };
+                    decision = Decision::Deny { reason: why.into() };
                 }
                 crate::policy::PermissionSubject::Command { .. }
                 | crate::policy::PermissionSubject::Other { .. }
-                    if decision == Decision::Allow =>
+                    if decision == Decision::Allow && !is_orbis_call =>
                 {
                     decision = Decision::Ask {
-                        reason: "Planning 階段：確認這個操作不會修改檔案".into(),
+                        reason: format!("{why}：確認這個操作不會修改檔案"),
                     };
                 }
                 _ => {}

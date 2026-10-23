@@ -21,13 +21,14 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 10] = [
+const COVERED_SCRIPTS: [&str; 11] = [
     "cancel.yaml",
     "diff.yaml",
     "error.yaml",
     "m1.yaml",
     "mcp.yaml",
     "permission.yaml",
+    "plan-verify.yaml",
     "plan.yaml",
     "rate-limit.yaml",
     "spawn-child.yaml",
@@ -831,6 +832,37 @@ async fn m1_劇本_允許寫檔後完成_依退回的_prompt_改成第二版() {
     assert_eq!(second.stop_reason(), StopReason::EndTurn);
     assert!(second.permissions.is_empty());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "version 2\n");
+}
+
+/// plan-verify：Planning 回合只送出 plan；核准後寫入 fail；重試時改成 pass（C2 的完成條件 e2e 用）。
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_verify_劇本_plan_後寫入_fail_重試時改成_pass() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let file = dir.path().join("verify.txt");
+    let check = file.clone();
+    let (plan_exists, after_approve) = with_agent(
+        "plan-verify.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let plan = conn.prompt(&session, "請新增 verify.txt").await;
+            assert_eq!(plan.stop_reason(), StopReason::EndTurn);
+            let plan_exists = check.exists();
+            let approved = conn
+                .prompt(&session, "Plan 已核准，請依照核准的計畫開始實作。")
+                .await;
+            assert_eq!(approved.stop_reason(), StopReason::EndTurn);
+            let after_approve = std::fs::read_to_string(&check).unwrap();
+            let retry = conn.prompt(&session, "Verification 失敗").await;
+            assert_eq!(retry.stop_reason(), StopReason::EndTurn);
+            Ok((plan_exists, after_approve))
+        },
+    )
+    .await;
+    assert!(!plan_exists, "Planning 回合不寫檔");
+    assert_eq!(after_approve, "fail\n");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "pass\n");
 }
 
 #[tokio::test(flavor = "multi_thread")]
