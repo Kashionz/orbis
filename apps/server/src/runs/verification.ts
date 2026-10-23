@@ -234,8 +234,7 @@ export class VerificationService {
         ),
       );
     if (
-      !task ||
-      task.status !== "verifying" ||
+      task?.status !== "verifying" ||
       !verification ||
       verification.status === "running" ||
       verification.status === "passed" ||
