@@ -464,10 +464,13 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - log 一律走 stderr。
     - stdin 關閉也視為關閉指令，所以 Electron 當掉時 Runner 會自己結束。
   - Electron 把 Server 的 API origin 交給 Runner，Runner 直接連 `<server>/runner`。
+    - 取得方式：Desktop 用 Web 的 origin 呼叫 `/api/health`，回應中的 `apiOrigin` 是 Server 設定的公開網址。開發時這個請求經過 Vite 的 `/api` proxy；正式部署時兩者通常是同一個 origin。
+    - 使用者只要填一個網址。回應沒有 `apiOrigin` 時，退回使用 Web 的 origin。
   - **登入與登出**：
     - 偵測到 Web UI 登入後，Electron 取得 Local Runner 的 Pairing token 並啟動 Runner。
-    - 登出時，如果還有 Run 執行中，先詢問使用者。
-    - 確認後，先撤銷這台 Local Runner，再停止 Runner、清除本機狀態。
+    - 登出時，Web UI 先呼叫 Desktop 的 bridge（`beforeLogout()`）。不是在 Desktop 中執行時沒有 bridge，直接登出。
+    - 如果還有 Run 執行中，Desktop 先詢問使用者；使用者取消時不登出。
+    - 確認後，先撤銷這台 Local Runner，再停止 Runner、清除本機狀態，最後 Web UI 才真正登出。
     - Server 端也會撤銷：Pairing 時記下取得 Pairing token 的 session。登出或清除過期 session 時，Server 會撤銷由這個 session 配對的 Local Runner。所以 Desktop 當掉、或 session 自然過期時，Runner 也不會一直保持配對。
 - **Team Runner**：以 Docker image 發布。
 
