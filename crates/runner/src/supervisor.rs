@@ -58,6 +58,8 @@ pub struct Supervisor {
     blobs: Arc<crate::blobs::BlobFetcher>,
     /// Orbis MCP 的工具呼叫（ARCHITECTURE §9）。
     mcp: Arc<crate::orbis_mcp::hub::McpHub>,
+    /// 已經開始探測 Agent 的能力旗標（第一次連上 Server 後才開始）。
+    probing: std::sync::atomic::AtomicBool,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -96,12 +98,9 @@ impl Supervisor {
             rate_limits: Arc::new(crate::rate_limit::RateLimits::default()),
             blobs: Arc::new(crate::blobs::BlobFetcher::default()),
             mcp,
+            probing: std::sync::atomic::AtomicBool::new(false),
         });
         supervisor.recover();
-        // 在背景探測各 Agent 的能力旗標，不拖慢第一次的 AgentAvailability（每個 Agent 最多等
-        // PROBE_TIMEOUT）；探測完再重送一次。
-        let probing = supervisor.clone();
-        tokio::spawn(async move { probing.probe_all().await });
         Ok((supervisor, frames_rx))
     }
 
@@ -651,6 +650,14 @@ impl Supervisor {
 
     /// 新的連線完成交握：依 `resume` 補送 Event；Server 已不認得的 Run 一律中止（不再送 Event）。
     pub fn on_connected(&self, resume: &[orbis_protocol::connection::RunResume]) {
+        // 第一次被 Server 接受後，在背景探測各 Agent 的能力旗標：不拖慢第一次的 AgentAvailability
+        // （每個 Agent 最多等 PROBE_TIMEOUT），探測完再重送一次。連線被拒絕的 Runner 會馬上結束，
+        // 不啟動任何 Agent 程序（結束時還沒放進 Job Object 的子程序會留下來）。
+        if !self.probing.swap(true, std::sync::atomic::Ordering::SeqCst)
+            && let Some(me) = self.me.upgrade()
+        {
+            tokio::spawn(async move { me.probe_all().await });
+        }
         let orphaned = self.outbox.begin_connection(resume);
         self.mcp.resend_pending();
         let mut runs = lock(&self.runs);

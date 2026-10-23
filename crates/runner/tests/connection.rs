@@ -79,8 +79,14 @@ async fn reports_availability_and_heartbeats_after_hello_ack() {
     let credentials = availability["credentials"].as_array().unwrap();
     assert!(credentials.iter().all(|c| c["max_concurrent_runs"] == 30));
 
-    for _ in 0..2 {
+    let mut heartbeats = 0;
+    while heartbeats < 2 {
         let hb = conn.recv().await;
+        // 背景探測完 Agent 的能力旗標後會再送一次 agent_availability（issue #18）。
+        if hb["type"] == "agent_availability" {
+            continue;
+        }
+        heartbeats += 1;
         assert_eq!(hb["type"], "heartbeat", "{hb}");
         assert!(hb["ts"].as_str().unwrap().ends_with('Z'));
         assert_eq!(hb["active_run_ids"], serde_json::json!([]));
