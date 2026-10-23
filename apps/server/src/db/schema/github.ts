@@ -9,15 +9,22 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
-import { createdAt, timestamptz, updatedAt } from "./columns";
-import { githubWebhookDeliveryStatusEnum, pullRequestStateEnum } from "./enums";
-import { repos } from "./project";
+import { createdAt, id, timestamptz, updatedAt } from "./columns";
+import {
+  feedbackAttemptStatusEnum,
+  feedbackSourceEnum,
+  githubWebhookDeliveryStatusEnum,
+  pullRequestStateEnum,
+} from "./enums";
+import { repoSpecs, repos } from "./project";
 import { runs } from "./run";
 import { tasks } from "./task";
+import { members } from "./team";
 
 /**
  * Task 與 GitHub Issue 的對應。一個 Task 最多對應一個 Issue；同一個 Issue 可能對應
@@ -96,6 +103,8 @@ export const pullRequests = pgTable(
     ciFixCount: integer("ci_fix_count").notNull().default(0),
     /** review 留言觸發的自動修正次數（上限 5，與 CI 分開計數）。 */
     reviewFixCount: integer("review_fix_count").notNull().default(0),
+    /** 已處理過 CI 結果的 head SHA，同一個 commit 的 CI 結果不會重複觸發。 */
+    ciHandledSha: text("ci_handled_sha"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -106,5 +115,85 @@ export const pullRequests = pgTable(
       "pull_requests_fix_counts_nonnegative",
       sql`${t.ciFixCount} >= 0 AND ${t.reviewFixCount} >= 0`,
     ),
+  ],
+);
+
+/**
+ * Feedback Loop 待送的批次（ARCHITECTURE §5.2 的合併再送）。每個 PR 的每種來源最多一筆：
+ * 新的回饋併入 items，due_at 到了（或 review 送出）才組成修正 prompt 送出，送出後刪除。
+ */
+export const feedbackBatches = pgTable(
+  "feedback_batches",
+  {
+    id: id(),
+    githubRepoId: bigint("github_repo_id", { mode: "number" }).notNull(),
+    prNumber: integer("pr_number").notNull(),
+    source: feedbackSourceEnum("source").notNull(),
+    /** 收集到的留言或 check，格式由 packages/github 定義。 */
+    items: jsonb("items").notNull().default(sql`'[]'::jsonb`),
+    dueAt: timestamptz("due_at").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("feedback_batches_pr_source_unique").on(t.githubRepoId, t.prNumber, t.source),
+    index("feedback_batches_due_at_idx").on(t.dueAt),
+  ],
+);
+
+/**
+ * 每一次 Feedback Loop 自動修正的紀錄。run_id 是修正用的新 Run（origin = feedback_loop）。
+ * seq 是該 PR、該來源的第幾次（從 1 開始），送出成功才遞增 pull_requests 的計數。
+ * Task 上顯示的紀錄另外寫成 task_notes（source = feedback_loop）。
+ */
+export const feedbackAttempts = pgTable(
+  "feedback_attempts",
+  {
+    id: id(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+    githubRepoId: bigint("github_repo_id", { mode: "number" }).notNull(),
+    prNumber: integer("pr_number").notNull(),
+    source: feedbackSourceEnum("source").notNull(),
+    seq: integer("seq").notNull(),
+    /** 觸發的 review、留言或 check 與連結，格式由 packages/github 定義。 */
+    trigger: jsonb("trigger").notNull(),
+    status: feedbackAttemptStatusEnum("status").notNull(),
+    /** PR 上的紀錄留言。 */
+    prCommentId: bigint("pr_comment_id", { mode: "number" }),
+    /** 修正後 push 的 commit。 */
+    fixCommitSha: text("fix_commit_sha"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("feedback_attempts_pr_idx").on(t.githubRepoId, t.prNumber, t.source),
+    index("feedback_attempts_task_id_idx").on(t.taskId),
+    check("feedback_attempts_seq_positive", sql`${t.seq} >= 1`),
+  ],
+);
+
+/** 「提交到 repo」開出的 Repo Spec PR（ARCHITECTURE §12.1）。merge 後更新 repo_specs 的版本。 */
+export const repoSpecPullRequests = pgTable(
+  "repo_spec_pull_requests",
+  {
+    githubRepoId: bigint("github_repo_id", { mode: "number" }).notNull(),
+    number: integer("number").notNull(),
+    repoSpecId: uuid("repo_spec_id")
+      .notNull()
+      .references(() => repoSpecs.id, { onDelete: "cascade" }),
+    headBranch: text("head_branch").notNull(),
+    url: text("url").notNull(),
+    state: pullRequestStateEnum("state").notNull().default("open"),
+    createdByMemberId: uuid("created_by_member_id").references(() => members.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.githubRepoId, t.number] }),
+    index("repo_spec_pull_requests_repo_spec_id_idx").on(t.repoSpecId),
   ],
 );

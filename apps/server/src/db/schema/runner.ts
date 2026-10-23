@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   unique,
   uuid,
@@ -127,5 +128,33 @@ export const agentAvailabilities = pgTable(
       t.credential,
     ),
     check("agent_availabilities_max_concurrency_positive", sql`${t.maxConcurrency} >= 1`),
+  ],
+);
+
+/**
+ * 一組 Credential 在 Server 端的設定與狀態（ARCHITECTURE §7）。agent_availabilities 每次回報都會整批取代，
+ * 所以 Admin 的覆寫與 rate limit 的狀態另外存在這裡，不受重新回報影響。
+ * 有效並行上限＝max_concurrent_runs_override ?? agent_availabilities.max_concurrency（Runner 回報）。
+ */
+export const runnerCredentials = pgTable(
+  "runner_credentials",
+  {
+    runnerId: uuid("runner_id")
+      .notNull()
+      .references(() => runners.id, { onDelete: "cascade" }),
+    /** Runner 上的 Credential 名稱（agent_availabilities.credential）。 */
+    credential: text("credential").notNull(),
+    /** Admin 的覆寫；null 表示沿用 Runner 回報的值。 */
+    maxConcurrentRunsOverride: integer("max_concurrent_runs_override"),
+    /** rate limit 預估恢復的時間；到這個時間之前不派新的 Run 給這組 Credential。 */
+    rateLimitedUntil: timestamptz("rate_limited_until"),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.runnerId, t.credential] }),
+    check(
+      "runner_credentials_override_positive",
+      sql`${t.maxConcurrentRunsOverride} IS NULL OR ${t.maxConcurrentRunsOverride} >= 1`,
+    ),
   ],
 );

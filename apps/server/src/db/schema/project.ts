@@ -53,6 +53,11 @@ export const projects = pgTable(
     verificationMaxRetries: integer("verification_max_retries").notNull().default(3),
     /** 有 Repo 的 Task 是否自動建立對應的 GitHub Issue（ARCHITECTURE §11）。 */
     autoCreateIssues: boolean("auto_create_issues").notNull().default(true),
+    /** 會觸發 Feedback Loop 的 bot 的 GitHub login（ARCHITECTURE §5.2）。 */
+    feedbackBotAllowlist: text("feedback_bot_allowlist")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -106,7 +111,10 @@ export const repos = pgTable(
   ],
 );
 
-/** RepoSpec：Repo 內的 markdown Spec 檔，可以被多個 Task 連結。 */
+/**
+ * RepoSpec：Repo 內的 markdown Spec 檔，可以被多個 Task 連結。草稿在 collab_documents
+ * （`repo-spec-draft:<id>`）；提交到 repo 的 PR merge 後 version 加 1（ARCHITECTURE §12.1）。
+ */
 export const repoSpecs = pgTable(
   "repo_specs",
   {
@@ -117,6 +125,12 @@ export const repoSpecs = pgTable(
     /** Repo 內的相對路徑，一律用 `/` 分隔。 */
     path: text("path").notNull(),
     title: text("title"),
+    /** 每次 Spec PR merge 加 1；還沒有任何 merge 時為 0。 */
+    version: integer("version").notNull().default(0),
+    /** 最近一次 merge 的 commit SHA。 */
+    committedSha: text("committed_sha"),
+    /** 最近一次 merge 時這個檔案的 blob SHA，用來偵測 default branch 上被別人改過。 */
+    committedBlobSha: text("committed_blob_sha"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

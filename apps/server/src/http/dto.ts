@@ -76,6 +76,8 @@ export function toProject(row: typeof projects.$inferSelect, viewerRole: Role): 
       memberCanDispatchToTeamRunner: row.allowMemberTeamRunnerDispatch,
       defaultPermissionPolicy: row.defaultPermissionPolicy,
       autoCreateIssues: row.autoCreateIssues,
+      verificationMaxRetries: row.verificationMaxRetries,
+      feedbackBotAllowlist: row.feedbackBotAllowlist,
     },
     viewerRole,
     createdAt: iso(row.createdAt),
@@ -161,6 +163,9 @@ export function toAcceptanceCriterion(
     position: row.position,
     result: row.passed === null ? "pending" : row.passed ? "passed" : "failed",
     resultUpdatedAt: isoOrNull(row.checkedAt),
+    resultSummary: row.resultSummary,
+    checkedByRunId: row.checkedByRunId,
+    checkedByMemberId: row.checkedByMemberId,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -194,6 +199,10 @@ export function toRun(row: typeof runs.$inferSelect): Run {
     status: row.status,
     usage: { ...EMPTY_USAGE, ...(row.usage as Partial<RunUsage>) },
     startedByMemberId: row.requestedByMemberId,
+    origin: row.origin,
+    credential: row.credential,
+    consultOfRunId: row.consultOfRunId,
+    resumesRunId: row.resumesRunId,
     createdAt: iso(row.createdAt),
     startedAt: isoOrNull(row.startedAt),
     endedAt: isoOrNull(row.finishedAt),
@@ -213,13 +222,14 @@ export function toRunEvent(row: typeof runEvents.$inferSelect): RunEvent {
 type GateRow = typeof gates.$inferSelect;
 type ReviewCommentRow = typeof reviewComments.$inferSelect;
 
+/** `kind = diff` 的列（DB 的 check 保證 path、line、side 都有值）。 */
 export function toReviewComment(row: ReviewCommentRow): ReviewComment {
   return {
     id: row.id,
     gateId: row.gateId,
-    path: row.path,
-    line: row.line,
-    side: row.side,
+    path: row.path ?? "",
+    line: row.line ?? 1,
+    side: row.side ?? "new",
     body: row.body,
     authorMemberId: row.authorMemberId,
     createdAt: iso(row.createdAt),
@@ -237,7 +247,14 @@ export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
     decidedByMemberId: row.decidedByMemberId,
     decidedAt: isoOrNull(row.decidedAt),
     comment: row.comment,
-    reviewComments: comments.filter((c) => c.gateId === row.id).map(toReviewComment),
+    reviewComments: comments
+      .filter((c) => c.gateId === row.id && c.kind === "diff")
+      .map(toReviewComment),
+    // W5–7 契約新增；Preview 留言（`kind = preview`）由 B2／E2 寫入後在這裡轉換。
+    previewComments: [],
+    // W5–7 契約新增；Plan Gate 與送審內容的 seq 由 B2 寫入 gates.subject 後填入。
+    planSeq: null,
+    reviewDiffSeq: null,
     createdAt: iso(row.createdAt),
   };
 }
@@ -290,5 +307,14 @@ export function toNeedsYou(
       return { ...base, kind: "gate", gateKind: context.gateKind ?? "review" };
     case "stopped_run":
       return { ...base, kind: "stopped_run", reason: String(payload.reason ?? "") };
+    // W5–7 契約新增，B2 建立這種項目時把問題與 Child Run 放進 payload。
+    case "child_question":
+      return {
+        ...base,
+        kind: "child_question",
+        questionId: row.childQuestionId ?? "",
+        childRunId: String(payload.childRunId ?? ""),
+        question: String(payload.question ?? ""),
+      };
   }
 }

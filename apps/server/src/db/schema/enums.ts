@@ -4,19 +4,29 @@ import {
   ACCEPTANCE_CRITERION_KINDS,
   DELEGATION_MODES,
   DISPATCH_STATUSES,
+  FEEDBACK_ATTEMPT_STATUSES,
+  FEEDBACK_SOURCES,
   GATE_DECISIONS,
   GATE_KINDS,
   GITHUB_WEBHOOK_DELIVERY_STATUSES,
+  MENTION_SOURCES,
   NEEDS_YOU_KINDS,
+  NOTIFICATION_KINDS,
   PERMISSION_POLICIES,
   PULL_REQUEST_STATES,
+  REVIEW_COMMENT_KINDS,
   REVIEW_COMMENT_SIDES,
   ROLES,
   RUN_CONTROL_ACTIONS,
+  RUN_ORIGINS,
   RUN_STATUSES,
   RUNNER_KINDS,
   TASK_DONE_REASONS,
+  TASK_NOTE_SOURCES,
   TASK_STATUSES,
+  VERIFICATION_OUTCOMES,
+  VERIFICATION_RESOLUTIONS,
+  VERIFICATION_STATUSES,
 } from "@orbis/api-contract";
 import { pgEnum } from "drizzle-orm/pg-core";
 
@@ -44,3 +54,21 @@ export const githubWebhookDeliveryStatusEnum = pgEnum(
   "github_webhook_delivery_status",
   GITHUB_WEBHOOK_DELIVERY_STATUSES,
 );
+
+// W5–7
+export const runOriginEnum = pgEnum("run_origin", RUN_ORIGINS);
+export const verificationStatusEnum = pgEnum("verification_status", VERIFICATION_STATUSES);
+export const verificationOutcomeEnum = pgEnum("verification_outcome", VERIFICATION_OUTCOMES);
+export const verificationResolutionEnum = pgEnum(
+  "verification_resolution",
+  VERIFICATION_RESOLUTIONS,
+);
+export const notificationKindEnum = pgEnum("notification_kind", NOTIFICATION_KINDS);
+export const mentionSourceEnum = pgEnum("mention_source", MENTION_SOURCES);
+export const taskNoteSourceEnum = pgEnum("task_note_source", TASK_NOTE_SOURCES);
+export const feedbackSourceEnum = pgEnum("feedback_source", FEEDBACK_SOURCES);
+export const feedbackAttemptStatusEnum = pgEnum(
+  "feedback_attempt_status",
+  FEEDBACK_ATTEMPT_STATUSES,
+);
+export const reviewCommentKindEnum = pgEnum("review_comment_kind", REVIEW_COMMENT_KINDS);

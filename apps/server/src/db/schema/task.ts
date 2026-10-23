@@ -110,6 +110,8 @@ export const acceptanceCriteria = pgTable(
     /** `command` 類型要執行的指令；null 表示沿用 Repo 設定檔（§6.3）的 `verify`。其他類型一律為 null。 */
     command: text("command"),
     passed: boolean("passed"),
+    /** 最近一次判定的摘要（失敗原因、Agent 的判定理由）。 */
+    resultSummary: text("result_summary"),
     /** 判定的證據，格式保留彈性（例如 `{ exit_code, output_blob }`、`{ screenshots: [...] }`）。 */
     evidence: jsonb("evidence"),
     checkedAt: timestamptz("checked_at"),
@@ -143,6 +145,10 @@ export const draftTasks = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    /** 同一次 `propose_tasks` 的批次（同一批共用一個值，由應用層產生）。 */
+    batchId: uuid("batch_id").notNull().default(sql`gen_random_uuid()`),
+    /** 在批次中的順序，從 1 開始；`depends_on` 的 `#<n>` 指這個值。 */
+    position: integer("position").notNull().default(1),
     /** 提出這個 Draft Task 的 Run。 */
     proposedByRunId: uuid("proposed_by_run_id").references(() => runs.id, {
       onDelete: "set null",
@@ -154,7 +160,7 @@ export const draftTasks = pgTable(
     description: text("description").notNull().default(""),
     /** 提議的 Acceptance Criterion：`[{ kind, description, command? }]`。 */
     acceptanceCriteria: jsonb("acceptance_criteria").notNull().default(sql`'[]'::jsonb`),
-    /** 提議的相依關係：同一批 Draft Task 的 id，或既有 Task 的 id。格式保留彈性。 */
+    /** 提議的相依關係：同一批的 `#<n>`，或既有的 Task Key（字串陣列）。 */
     dependsOn: jsonb("depends_on").notNull().default(sql`'[]'::jsonb`),
     confirmedTaskId: uuid("confirmed_task_id").references(() => tasks.id, {
       onDelete: "set null",
@@ -169,6 +175,8 @@ export const draftTasks = pgTable(
   },
   (t) => [
     index("draft_tasks_project_id_idx").on(t.projectId),
+    index("draft_tasks_batch_id_idx").on(t.batchId, t.position),
+    check("draft_tasks_position_positive", sql`${t.position} >= 1`),
     check(
       "draft_tasks_confirmed_or_dismissed",
       sql`${t.confirmedAt} IS NULL OR ${t.dismissedAt} IS NULL`,

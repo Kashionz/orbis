@@ -59,6 +59,7 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   dispatched: "已派工",
   starting: "啟動中",
   running: "執行中",
+  verifying: "Verification 中",
   awaiting_permission: "等待權限回覆",
   rate_limited: "Rate limit",
   awaiting_gate: "等待 Gate",
@@ -118,6 +119,8 @@ export const RUN_ERROR_LABELS: Record<RunErrorCode, string> = {
   setup_failed: "Worktree 設定失敗",
   git_failed: "git 操作失敗",
   path_too_long: "路徑太長",
+  merge_child_conflict: "merge_child 的衝突未解決",
+  session_resume_failed: "無法恢復原本的 session",
   internal: "內部錯誤",
 };
 
