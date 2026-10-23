@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type KeyboardEvent, type Ref, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type Ref, useId, useLayoutEffect, useRef, useState } from "react";
 import { mentionCandidatesQuery } from "../../api/resources";
 import {
   activeMentionQuery,
@@ -40,6 +40,15 @@ export function MentionTextarea({
   const local = useRef<HTMLTextAreaElement | null>(null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
   const [active, setActive] = useState(0);
+  // 插入 mention 後要放的游標位置：新的值渲染到 textarea 後立刻設定，下一個按鍵才會打在正確的位置
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const element = local.current;
+    if (pendingCaret.current === null || !element || element.value !== value) return;
+    element.focus();
+    element.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  }, [value]);
   const { data: candidates } = useQuery(mentionCandidatesQuery(projectId));
   const options =
     query && candidates ? mentionOptions(candidates, query.query).slice(0, MAX_OPTIONS) : [];
@@ -54,12 +63,9 @@ export function MentionTextarea({
     const element = local.current;
     if (!query || !element) return;
     const result = insertMention(value, query, element.selectionStart, option);
+    pendingCaret.current = result.caret;
     onChange(result.text);
     setQuery(null);
-    requestAnimationFrame(() => {
-      element.focus();
-      element.setSelectionRange(result.caret, result.caret);
-    });
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {

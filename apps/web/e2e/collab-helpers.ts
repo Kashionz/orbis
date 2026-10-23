@@ -12,7 +12,10 @@ export async function placeCaretAtEnd(editor: Locator): Promise<void> {
     const box = await last.boundingBox();
     if (!box) throw new Error("找不到最後一段");
     await last.click({ position: { x: box.width - 2, y: box.height / 2 } });
-    const atEnd = await last.evaluate((element) => {
+    const atEnd = await last.evaluate(async (element) => {
+      // ProseMirror 在 selectionchange 之後才更新自己的選取；等它處理完（必要時它會把 DOM 選取改回去）
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
       const selection = window.getSelection();
       if (!selection?.isCollapsed || !selection.focusNode) return false;
       if (!element.contains(selection.focusNode)) return false;

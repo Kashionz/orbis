@@ -39,7 +39,7 @@ test("清空描述後 Ready 條件即時顯示還缺描述", async ({ page }) =>
   await page.goto("/tasks/ORB-1");
   await ready(page);
   await description(page).click();
-  await page.keyboard.press("Control+A");
+  await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.press("Delete");
   await expect(page.locator(".ready-checklist li").nth(1)).toHaveAttribute("data-met", "true");
   // ORB-1 連結了 Spec，所以描述是空的也算滿足

@@ -6,7 +6,7 @@ test.describe("Task 頁", () => {
     const description = page.getByRole("textbox", { name: "描述" });
     await expect(page.getByTestId("collab-status")).toHaveText("已同步");
     await description.click();
-    await page.keyboard.press("Control+A");
+    await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.type("## 背景");
     await page.keyboard.press("Enter");
     await page.keyboard.type("- 第一點");
