@@ -9,6 +9,7 @@
 //   Running，同一個 session 繼續）、中止（cancel，Task → Ready）。
 
 import {
+  AnswerChildQuestionInput,
   API_ROUTES,
   CheckAcceptanceCriterionInput,
   GateDecisionInput,
@@ -33,6 +34,7 @@ import {
 import {
   acceptanceCriteria,
   blobs,
+  childQuestions,
   gates,
   needsYouItems,
   projects,
@@ -46,6 +48,7 @@ import { toAcceptanceCriterion, toGates, toNeedsYou } from "../http/dto";
 import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
 import type { Services } from "../services";
+import { answerQuestion, questionKey } from "../tools/delegation-tools";
 
 /** needs_you_items.payload 中權限請求的內容（runs/event-ingest.ts 寫入）。 */
 interface PermissionRequestPayload {
@@ -364,6 +367,38 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     });
     const [gateView] = await toGates(db, [updated]);
     return c.json(gateView);
+  });
+
+  /**
+   * 人回答 Child Run 以 `ask_parent` 提出、父 Run 的回合已經結束而加入 Needs You 的問題（ARCHITECTURE §9）。
+   * 答案交給 Child Run 阻塞中的 `ask_parent`。需要能編輯 Task 的權限。
+   */
+  app.post(API_ROUTES.childQuestionAnswer, auth, async (c) => {
+    const actor = c.get("actor");
+    const questionId = readId(c, "questionId", "問題");
+    const [question] = await db
+      .select({ question: childQuestions, taskId: runs.taskId })
+      .from(childQuestions)
+      .innerJoin(runs, eq(runs.id, childQuestions.childRunId))
+      .where(eq(childQuestions.id, questionId));
+    if (!question) throw notFound("問題");
+    const scope = await loadTaskScope(db, actor, question.taskId);
+    requireProjectCapability(actor, scope, "edit_task");
+    const input = await readJson(c, AnswerChildQuestionInput);
+    const answered = await inTransaction(db, (uow) =>
+      answerQuestion(
+        uow,
+        questionId,
+        null,
+        input.answer,
+        { memberId: actor.memberId },
+        s.clock.now(),
+      ),
+    );
+    if (!answered) throw conflict("這個問題已經回答過了");
+    s.watch.changed(questionKey(questionId));
+    s.watch.changed(question.question.childRunId);
+    return c.body(null, 204);
   });
 
   /** 在 Review Gate 為 manual 類型的條件打勾或取消（核准 Review Gate 前要全部打勾）。 */

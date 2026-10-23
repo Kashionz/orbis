@@ -18,15 +18,19 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
-import { dispatches, needsYouItems, runs, tasks } from "../db/schema";
+import { childQuestions, dispatches, needsYouItems, runs, tasks } from "../db/schema";
 import { inTransaction, type UnitOfWork } from "../db/tx";
 import { isPrimaryRun, isTerminalRunStatus } from "../domain/run-status";
 import type { TaskLifecycleService } from "../domain/task-lifecycle";
 import { isInFlight } from "../domain/task-state-machine";
 import type { Logger } from "../logger";
 import type { Notify } from "../notifications/types";
+import { addQuestionToNeedsYou } from "../tools/delegation-tools";
+import type { RunWatch } from "../tools/run-watch";
+import { cancelChildren } from "./children";
 import type { EventStore } from "./event-store";
 import { gateRecipients, openGate } from "./gates";
+import type { RunControlService } from "./run-control";
 import type { VerificationService } from "./verification";
 
 /** event frame 的外層；各 kind 的內容只在套用副作用時才驗證。 */
@@ -118,6 +122,8 @@ export interface EventIngestDeps {
   store: EventStore;
   lifecycle: TaskLifecycleService;
   verification: VerificationService;
+  runControls: RunControlService;
+  watch: RunWatch;
   notify: Notify;
   clock: Clock;
   logger: Logger;
@@ -181,7 +187,11 @@ export class EventIngest {
       );
       return { ok: false, reason: "stale_dispatch" };
     }
-    if (inserted) this.store.notifyAppended(run_id);
+    if (inserted) {
+      this.store.notifyAppended(run_id);
+      // 喚醒等待這個 Run 的工具呼叫（父 Run 的 wait_run）。
+      this.deps.watch.changed(run_id);
+    }
     const last = await this.store.lastContiguousSeq(run_id);
     return { ok: true, inserted, ack: { run_id, seq: last } };
   }
@@ -362,6 +372,11 @@ export class EventIngest {
 
     const primary = isPrimaryRun(run);
 
+    if (status === "awaiting_gate") {
+      // 回合結束：還沒回答的 Child Run 問題改由人在 Needs You 回答。
+      await this.moveOpenQuestionsToNeedsYou(uow, run, task);
+    }
+
     if (status === "awaiting_gate" && gate === "review" && primary) {
       // Agent 結束回合：開始 Verification（Verification 結束後 Runner 再送一次，那時不做事）。
       await this.deps.verification.onTurnEnded(uow, run, task, run.status);
@@ -377,6 +392,11 @@ export class EventIngest {
       .update(dispatches)
       .set({ status: "completed" })
       .where(and(eq(dispatches.runId, runId), eq(dispatches.status, "accepted")));
+    // 父 Run 結束時連同 Child Run 一起結束。
+    const canceled = await cancelChildren(uow, runId, this.deps.runControls, now);
+    uow.afterCommit(() => {
+      for (const id of canceled) this.deps.watch.changed(id);
+    });
     // Run 結束後，還沒回覆的權限請求與等待中的 Gate 都不必再處理。
     await tx
       .update(needsYouItems)
@@ -390,6 +410,27 @@ export class EventIngest {
       );
     if (status !== "completed" && primary && isInFlight(task.status)) {
       await this.lifecycle.transition(uow, task.id, "ready", "run_stopped");
+    }
+  }
+
+  private async moveOpenQuestionsToNeedsYou(
+    uow: UnitOfWork,
+    run: RunRow,
+    task: TaskRow,
+  ): Promise<void> {
+    const open = await uow.tx
+      .select()
+      .from(childQuestions)
+      .where(and(eq(childQuestions.parentRunId, run.id), isNull(childQuestions.answeredAt)));
+    for (const question of open) {
+      await addQuestionToNeedsYou(
+        uow,
+        { task },
+        run,
+        question.id,
+        question.question,
+        this.deps.notify,
+      );
     }
   }
 

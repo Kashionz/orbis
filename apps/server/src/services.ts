@@ -29,6 +29,8 @@ import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
 import { RunControlService } from "./runs/run-control";
 import { VerificationService } from "./runs/verification";
+import { delegationToolHandlers } from "./tools/delegation-tools";
+import { RunWatch } from "./tools/run-watch";
 import { OrbisToolService } from "./tools/service";
 import { taskToolHandlers } from "./tools/task-tools";
 
@@ -54,6 +56,8 @@ export interface Services {
   verification: VerificationService;
   /** Orbis MCP 工具呼叫的處理。 */
   tools: OrbisToolService;
+  /** Run 狀態變化的程序內通知（阻塞的工具呼叫在這裡等）。 */
+  watch: RunWatch;
   notify: Notify;
   /** Preview 子網域的網域（`<run-id>.preview.<domain>` 的 domain）；未設定時只檢查前綴。 */
   previewDomain: string | null;
@@ -133,8 +137,10 @@ export function createServices(options: ServicesOptions): Services {
   const notify = NO_NOTIFY;
   const runControls = new RunControlService(db, hub, clock, logger, github.pullRequestOpener);
   const verification = new VerificationService({ lifecycle, runControls, notify, clock, logger });
+  const watch = new RunWatch();
   const tools = new OrbisToolService({ db, hub, clock, logger });
   tools.register(taskToolHandlers(db));
+  tools.register(delegationToolHandlers({ db, dispatcher, watch, notify, clock }));
   return {
     db,
     logger,
@@ -152,6 +158,8 @@ export function createServices(options: ServicesOptions): Services {
       store: eventStore,
       lifecycle,
       verification,
+      runControls,
+      watch,
       notify,
       clock,
       logger,
@@ -159,6 +167,7 @@ export function createServices(options: ServicesOptions): Services {
     runControls,
     verification,
     tools,
+    watch,
     notify,
     previewDomain: options.previewDomain ?? null,
     blobStore,

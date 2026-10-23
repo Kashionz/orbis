@@ -39,6 +39,7 @@ import type { Executor } from "../db/tx";
 import { isPrimaryRun, NON_TERMINAL_RUN_STATUSES } from "../domain/run-status";
 import { planGateEnabled } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
+import { childSequence, runDepth } from "../runs/children";
 import type { EventStore } from "../runs/event-store";
 import type { RunnerHub } from "./hub";
 
@@ -212,6 +213,18 @@ export class Dispatcher {
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(tasks.id, run.taskId));
     if (!owner) return null;
+    // Child Run、讀別的 Run Worktree 的 consult Run、Feedback Loop 接續的 Run 只能派給那個 Run 所在的
+    // Runner（要用同一個 Worktree）。那個 Run 不在任何 Runner 上時留在佇列。
+    const pinned = run.parentRunId ?? run.consultOfRunId ?? run.resumesRunId;
+    let pinnedRunnerId: string | undefined;
+    if (pinned) {
+      const [source] = await this.db
+        .select({ runnerId: runs.runnerId })
+        .from(runs)
+        .where(eq(runs.id, pinned));
+      if (!source?.runnerId) return null;
+      pinnedRunnerId = source.runnerId;
+    }
     const candidates = await this.db
       .select({ id: runners.id })
       .from(runners)
@@ -221,6 +234,7 @@ export class Dispatcher {
           eq(runners.teamId, owner.teamId),
           isNull(runners.revokedAt),
           eq(runners.kind, run.target),
+          pinnedRunnerId ? eq(runners.id, pinnedRunnerId) : undefined,
           run.target === "local" && run.requestedByMemberId
             ? eq(runners.memberId, run.requestedByMemberId)
             : undefined,
@@ -303,10 +317,22 @@ export class Dispatcher {
       agent: run.agent,
       model: run.model,
       permission_policy: run.permissionPolicy,
-      prompt: await buildPrompt(this.db, task),
+      // Child Run、@agent、Feedback Loop 的 Run 有自己的 prompt；其他 Run 由 Task 組出。
+      prompt: (run.prompt as ContentBlock[] | null) ?? (await buildPrompt(this.db, task)),
+      ...(run.promptSource && { prompt_source: run.promptSource }),
       // 只有主 Run 會經過 Planning 與 Plan Gate（ARCHITECTURE §5）。
       plan_gate: isPrimaryRun(run) && run.origin === "dispatch" && planGateEnabled(task, project),
-      delegation: null,
+      delegation:
+        run.parentRunId && run.delegationMode
+          ? {
+              parent_run_id: run.parentRunId,
+              mode: run.delegationMode,
+              depth: await runDepth(this.db, run),
+              child_seq: await childSequence(this.db, run),
+            }
+          : null,
+      ...(run.consultOfRunId && { consult_of_run_id: run.consultOfRunId }),
+      ...(await this.continuation(run)),
       last_event_seq: await this.options.eventStore.lastContiguousSeq(run.id),
       acceptance_criteria: criteria.map((c) => ({
         criterion_id: c.id,
@@ -316,6 +342,20 @@ export class Dispatcher {
         command: c.kind === "command" ? c.command : null,
       })),
       origin: run.origin,
+    };
+  }
+
+  /** Feedback Loop 接續的 Run：沿用前一個 Run 的 Worktree、session 與 base commit（ARCHITECTURE §5.2）。 */
+  private async continuation(run: RunRow): Promise<Pick<DispatchOffer, "continuation">> {
+    if (!run.resumesRunId) return {};
+    const [previous] = await this.db.select().from(runs).where(eq(runs.id, run.resumesRunId));
+    if (!previous?.baseCommit) return {};
+    return {
+      continuation: {
+        previous_run_id: previous.id,
+        session_id: previous.agentSessionId,
+        base_commit: previous.baseCommit,
+      },
     };
   }
 
