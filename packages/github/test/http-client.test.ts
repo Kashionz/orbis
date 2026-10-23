@@ -225,6 +225,43 @@ describe("HTTP GitHubClient", () => {
     ]);
   });
 
+  it("listReviewComments 從 PR 的行內留言中取出這份 review 的（帶行號），並翻頁", async () => {
+    const comment = (id: number, reviewId: number, line: number | null) => ({
+      id,
+      pull_request_review_id: reviewId,
+      user: { id: 1, login: "alice", type: "User" },
+      body: `留言 ${id}`,
+      path: "src/a.ts",
+      line,
+      start_line: null,
+      side: "RIGHT",
+      diff_hunk: "@@ -1 +1 @@",
+      html_url: `https://github.com/acme/app/pull/3#discussion_r${id}`,
+    });
+    const { client, requests } = setup([
+      tokenRoute,
+      (req) =>
+        req.url === "https://gh.test/repos/acme/app/pulls/3/comments?per_page=100"
+          ? json([comment(1, 40, 7), comment(2, 41, 9)], {
+              headers: {
+                "content-type": "application/json",
+                link: '<https://gh.test/repos/acme/app/pulls/3/comments?per_page=100&page=2>; rel="next"',
+              },
+            })
+          : undefined,
+      (req) =>
+        req.url.endsWith("/pulls/3/comments?per_page=100&page=2")
+          ? json([comment(3, 40, 12)])
+          : undefined,
+    ]);
+    const comments = await client.listReviewComments(5, { owner: "acme", name: "app" }, 3, 40);
+    expect(comments.map((c) => [c.id, c.reviewId, c.line, c.side])).toEqual([
+      [1, 40, 7, "RIGHT"],
+      [3, 40, 12, "RIGHT"],
+    ]);
+    expect(requests.some((r) => r.url.includes("/reviews/"))).toBe(false);
+  });
+
   it("getCollaboratorRole 回傳 role_name；不是 collaborator（404）時是 none", async () => {
     const { client } = setup([
       tokenRoute,

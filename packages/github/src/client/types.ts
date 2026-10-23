@@ -205,7 +205,7 @@ export interface GitHubClient {
     input: PullRequestInput,
   ): Promise<GitHubPullRequest>;
 
-  /** 一份 review 中的行內留言。 */
+  /** 一份 review 中的行內留言（含行號）。 */
   listReviewComments(
     installationId: number,
     repo: RepoRef,

@@ -516,9 +516,10 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
     },
 
     async listReviewComments(installationId, repo, pullNumber, reviewId) {
+      // `GET /pulls/{n}/reviews/{id}/comments` 的回應沒有 line、start_line、side，
+      // 所以列出 PR 的所有行內留言，再以 pull_request_review_id 過濾。
       const comments: GitHubReviewComment[] = [];
-      let url: string | null =
-        `${repoPath(repo)}/pulls/${pullNumber}/reviews/${reviewId}/comments?per_page=100`;
+      let url: string | null = `${repoPath(repo)}/pulls/${pullNumber}/comments?per_page=100`;
       for (let page = 0; url && page < MAX_PAGES; page++) {
         const result = await request(
           "GET",
@@ -527,7 +528,9 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
           z.array(ReviewCommentResponse),
         );
         if (!result) break;
-        comments.push(...result.data.map(toReviewComment));
+        comments.push(
+          ...result.data.filter((c) => c.pull_request_review_id === reviewId).map(toReviewComment),
+        );
         url = nextPage(result.response.headers.get("link"));
       }
       return comments;
