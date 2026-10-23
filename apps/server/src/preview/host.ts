@@ -12,6 +12,7 @@ import {
   PREVIEW_COOKIE,
   PREVIEW_RESERVED_PREFIX,
   type PreviewDomain,
+  previewShareUrl,
   runIdFromHost,
   safeReturnPath,
 } from "./domain";
@@ -27,7 +28,7 @@ export interface PreviewHostDeps {
   domain: PreviewDomain | null;
   publicUrl: string;
   auth: PreviewAuth;
-  // TODO(contract): 契約 v2 的 preview 多工 frame 合併後提供 relay（#29）。
+  /** 未提供時，通過登入檢查的請求回 503（測試用）。 */
   relay?: PreviewRelay;
 }
 
@@ -60,6 +61,21 @@ function html(status: number, title: string, message: string): Response {
   );
 }
 
+/**
+ * 是不是從其他 origin 發出的請求（例如其他 Run 的 Preview 頁面；它們和這個 Preview 網址是 same-site，
+ * 會帶著 SameSite=Lax 的 preview cookie）。頁面導覽（使用者點連結、Web UI 的 iframe）不算。
+ */
+export function isCrossOrigin(
+  headers: { get(name: string): string | null },
+  previewOrigin: string,
+): boolean {
+  if (headers.get("sec-fetch-mode") === "navigate") return false;
+  const site = headers.get("sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") return true;
+  const origin = headers.get("origin");
+  return origin !== null && origin !== previewOrigin;
+}
+
 /** 移除 Orbis 自己的 preview cookie，其餘 cookie 原樣留給 dev server。 */
 export function withoutPreviewCookie(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
@@ -68,6 +84,10 @@ export function withoutPreviewCookie(cookieHeader: string | null): string | null
     .map((c) => c.trim())
     .filter((c) => c && !c.startsWith(`${PREVIEW_COOKIE}=`));
   return kept.length > 0 ? kept.join("; ") : null;
+}
+
+function previewOrigin(runId: string, domain: PreviewDomain): string {
+  return new URL(previewShareUrl(runId, domain)).origin;
 }
 
 export function createPreviewHost(deps: PreviewHostDeps): PreviewHost {
@@ -107,6 +127,9 @@ export function createPreviewHost(deps: PreviewHostDeps): PreviewHost {
       if (url.pathname.startsWith(PREVIEW_RESERVED_PREFIX)) {
         return html(404, "找不到頁面", "這個路徑保留給 Server 使用。");
       }
+      if (deps.domain && isCrossOrigin(request.headers, previewOrigin(runId, deps.domain))) {
+        return new Response("不接受其他網站發出的請求", { status: 403 });
+      }
       if (!(await authorized(runId, request.headers.get("cookie") ?? undefined))) {
         if (isNavigation(request)) {
           const returnPath = `${url.pathname}${url.search}`;
@@ -129,6 +152,17 @@ export function createPreviewHost(deps: PreviewHostDeps): PreviewHost {
     },
 
     async upgrade(runId, request, socket, head) {
+      const headers = {
+        get: (name: string) => {
+          const value = request.headers[name];
+          return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
+        },
+      };
+      // WebSocket 不受 CORS 保護：瀏覽器一定會帶 Origin，必須是這個 Preview 網址自己
+      if (deps.domain && isCrossOrigin(headers, previewOrigin(runId, deps.domain))) {
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
+      }
       if (!(await authorized(runId, request.headers.cookie))) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         return;

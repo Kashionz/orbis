@@ -285,7 +285,7 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
 
     it("有 preview cookie 時交給轉送；登出後 5 秒內失效", async () => {
       const cookie = await previewCookie(team.members.viewer.cookie);
-      // TODO(contract): 轉送在契約 v2 之後提供，目前通過登入檢查的請求回 503（#29）。
+      // 通過登入檢查後交給轉送；這個 Run 沒有 Runner，所以轉送回 503
       expect((await raw(server.port, previewHost, "/", { cookie })).status).toBe(503);
       expect(await upgrade(server.port, previewHost, cookie)).toBe(503);
 

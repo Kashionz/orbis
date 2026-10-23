@@ -711,10 +711,22 @@ impl Stream {
         self.send_frame(PreviewToServer::PreviewWsClose(PreviewWsClose {
             stream_id: self.id,
             code,
-            reason: reason.chars().take(120).collect(),
+            reason: close_reason(reason),
         }))
         .await
     }
+}
+
+/// WebSocket close reason 的上限是 123 bytes（UTF-8），依字元截斷，不切開多 byte 的字。
+fn close_reason(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        if out.len() + ch.len_utf8() > 123 {
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// mpsc receiver 轉成 hyper 的 body stream。
@@ -782,6 +794,13 @@ mod tests {
         );
         assert_eq!(origin_host("null"), None);
         assert_eq!(origin_host("https://a.b/c"), None);
+    }
+
+    #[test]
+    fn close_reason_依_utf8_bytes_截斷() {
+        let reason = close_reason(&"中".repeat(100));
+        assert_eq!(reason.len(), 123);
+        assert_eq!(close_reason("ok"), "ok");
     }
 
     #[test]

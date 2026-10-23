@@ -5,6 +5,11 @@ import type { ServerToRunner } from "@orbis/protocol";
 export interface RunnerLink {
   send(frame: ServerToRunner): boolean;
   close(code: number, reason: string): void;
+  /**
+   * 送出原始的訊息：字串是 JSON frame，bytes 是 binary 訊息（E 軌的 Preview 轉送，§13）。
+   * Runner 不在線上時回傳 false。
+   */
+  sendRaw?(data: string | Uint8Array): boolean;
 }
 
 interface Entry {
@@ -57,6 +62,11 @@ export class RunnerHub {
     if (!entry) return;
     this.entries.delete(runnerId);
     entry.link.close(code, reason);
+  }
+
+  /** 目前的連線（Preview 轉送用）。 */
+  link(runnerId: string): RunnerLink | undefined {
+    return this.entries.get(runnerId)?.link;
   }
 
   onlineRunnerIds(): string[] {

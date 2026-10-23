@@ -9,6 +9,7 @@ import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
 import { createPreviewHost } from "./preview/host";
+import { PreviewRelayService } from "./preview/relay";
 import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
 import { createServices, type Services, type ServicesOptions } from "./services";
 import { attachWebEndpoint, type WebEndpoint } from "./web/ws";
@@ -62,10 +63,17 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     });
   const app = createApp({ ...deps, services });
   // Preview 網址（`<run-id>.<Preview 網域>`）的請求依 Host 分流給 E 軌的 src/preview/，其他照常交給 API
+  const previewRelay = new PreviewRelayService({
+    db: deps.db,
+    hub: services.hub,
+    logger: deps.logger,
+    scheme: services.preview.domain?.scheme ?? "http",
+  });
   const previewHost = createPreviewHost({
     domain: services.preview.domain,
     publicUrl: services.preview.publicUrl,
     auth: services.preview.auth,
+    relay: previewRelay,
   });
   const server = createAdaptorServer({
     fetch: (request: Request, env: unknown) => {
@@ -92,6 +100,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     devPairingToken: deps.config.devPairingToken,
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
+    preview: previewRelay,
   });
   const webEndpoint = attachWebEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,
