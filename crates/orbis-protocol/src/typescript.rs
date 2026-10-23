@@ -29,7 +29,8 @@ use crate::event::{
 use crate::frame::{RunnerToServer, ServerToRunner};
 use crate::names::Names;
 use crate::sidecar::{
-    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_FLAG, SidecarCommand, SidecarConnectionState, SidecarOutput,
+    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SIDECAR_FLAG, SidecarCommand,
+    SidecarConnectionState, SidecarOutput,
 };
 
 const HEADER: &str = "// 由 crates/orbis-protocol 產生（cargo gen-protocol），不可手改。\n";
@@ -283,6 +284,11 @@ export const DEFAULT_MAX_CONCURRENT_RUNS = {DEFAULT_MAX_CONCURRENT_RUNS};"
     writeln!(
         out,
         "\nexport const SIDECAR_EXIT_NEEDS_PAIRING = {SIDECAR_EXIT_NEEDS_PAIRING};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "\nexport const SIDECAR_EXIT_VERSION_MISMATCH = {SIDECAR_EXIT_VERSION_MISMATCH};"
     )
     .unwrap();
     for l in &lists {

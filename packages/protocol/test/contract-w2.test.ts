@@ -9,6 +9,7 @@ import {
   RUNNER_BLOB_PATH,
   type SIDECAR_CONNECTION_STATES,
   SIDECAR_EXIT_NEEDS_PAIRING,
+  SIDECAR_EXIT_VERSION_MISMATCH,
   SIDECAR_FLAG,
   type SidecarCommand,
   type SidecarConnectionState,
@@ -49,5 +50,6 @@ describe("W2–4 契約：協定新增的型別", () => {
     expect(RUNNER_BLOB_PATH.startsWith("/api/")).toBe(true);
     expect(SIDECAR_FLAG).toBe("--sidecar");
     expect(SIDECAR_EXIT_NEEDS_PAIRING).toBe(78);
+    expect(SIDECAR_EXIT_VERSION_MISMATCH).toBe(76);
   });
 });

@@ -12,7 +12,9 @@
 //! - stdin 關閉（EOF）視為 [`SidecarCommand::Shutdown`]：Desktop 當掉時 Runner 會自己結束，
 //!   並結束它啟動的所有 Run。
 //! - 結束碼：0＝正常結束；[`SIDECAR_EXIT_NEEDS_PAIRING`]＝Runner token 無效或已被撤銷，
-//!   需要重新 Pairing（Desktop 不重啟，改為重新取得 Pairing token）；其他非 0 視為當掉。
+//!   需要重新 Pairing（Desktop 不重啟，改為重新取得 Pairing token）；
+//!   [`SIDECAR_EXIT_VERSION_MISMATCH`]＝協定版本與 Server 不相容（Desktop 不重啟，提示更新）；
+//!   其他非 0 視為當掉。
 //!
 //! 和 Runner↔Server 的 frame 一樣，每一行都是以 `type` 區分種類的 JSON 物件。
 //! 接收端遇到不認得的 `type` 或欄位要忽略，不能因此結束。
@@ -29,6 +31,10 @@ pub const SIDECAR_FLAG: &str = "--sidecar";
 /// Runner token 無效或已被撤銷、需要重新 Pairing 時的結束碼。
 /// 取 BSD 的 `EX_CONFIG`（78），避免和參數錯誤（clap 為 2）、panic（101）、一般錯誤（1）混淆。
 pub const SIDECAR_EXIT_NEEDS_PAIRING: i32 = 78;
+
+/// Server 以 `hello_rejected { reason: version_mismatch }` 拒絕時的結束碼：重新啟動也不會成功，
+/// 必須更新 Runner（或 Desktop）。取 BSD 的 `EX_PROTOCOL`（76）。
+pub const SIDECAR_EXIT_VERSION_MISMATCH: i32 = 76;
 
 /// Runner 寫到 stdout 的一行。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -120,6 +126,9 @@ mod tests {
 
     #[test]
     fn exit_code_does_not_collide_with_common_codes() {
-        assert!(![0, 1, 2, 101].contains(&SIDECAR_EXIT_NEEDS_PAIRING));
+        for code in [SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH] {
+            assert!(![0, 1, 2, 101].contains(&code));
+        }
+        assert_ne!(SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH);
     }
 }

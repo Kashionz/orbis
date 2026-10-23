@@ -31,6 +31,8 @@ export const SIDECAR_FLAG = "--sidecar";
 
 export const SIDECAR_EXIT_NEEDS_PAIRING = 78;
 
+export const SIDECAR_EXIT_VERSION_MISMATCH = 76;
+
 export const RUN_STATUSES = ["queued", "dispatched", "starting", "running", "awaiting_permission", "rate_limited", "awaiting_gate", "completed", "failed", "canceled"] as const satisfies readonly RunStatus[];
 
 export const TERMINAL_RUN_STATUSES = ["completed", "failed", "canceled"] as const satisfies readonly RunStatus[];
