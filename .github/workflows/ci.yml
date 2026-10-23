@@ -50,6 +50,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 完整系統 e2e 用的原生 Postgres（三平台都裝；macOS 與 Windows 的 runner 不能跑 Linux container）。
+      # 只有完整系統 e2e 的步驟會拿到 DATABASE_URL，其他 DB 測試照舊用 Testcontainers。
+      # 固定在 master 的 commit：v8 的 Linux 安裝用 apt-key，ubuntu-latest（26.04）已經沒有這個指令，
+      # master 已改用 /etc/apt/keyrings，但還沒有發新版
+      - name: Install Postgres
+        id: postgres
+        uses: ikalnytskyi/action-setup-postgres@0f1fdf59c857aabfa61ab1a2619e9af34de678d3
+        with:
+          postgres-version: "17"
+
       - name: Lint（Biome、rustfmt、clippy、名稱常數、ARCHITECTURE §3 路徑）
         run: pnpm lint
 
@@ -93,13 +103,11 @@ jobs:
         run: pnpm --filter @orbis/web test:e2e
 
       # 完整系統的 M1 e2e：真實 Server + Postgres + Local Runner + Fake Agent（apps/server 的 e2e:stack）。
-      # 沒有 DATABASE_URL，stack 以 Testcontainers 啟動 Postgres，所以和其他 DB 測試一樣只在 Linux 跑。
+      # stack 接上面安裝的原生 Postgres，三平台都跑。
       - name: Playwright（Web 完整系統 M1）
+        env:
+          ORBIS_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: |
-          if [ "$RUNNER_OS" != "Linux" ]; then
-            echo "::notice::略過完整系統 e2e：需要 Docker（Testcontainers 的 Postgres），GitHub 的 macOS runner 沒有 Docker，Windows runner 只能跑 Windows container"
-            exit 0
-          fi
           cargo build -p orbis-runner -p orbis-fake-agent
           pnpm --filter @orbis/web test:e2e:system
 
@@ -113,6 +121,19 @@ jobs:
             pnpm --filter @orbis/desktop test:e2e
           fi
 
+      # Electron 版的 M1 路徑：stack 不啟動 Runner，由 Desktop 的 sidecar 自己 Pairing，走到 merge 後 Task 轉 Done。
+      # 看板要 1280×720 的 viewport，Linux 的虛擬螢幕要夠大。
+      - name: Playwright（Desktop 完整系統 M1）
+        env:
+          ORBIS_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
+        run: |
+          cargo build -p orbis-runner -p orbis-fake-agent
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @orbis/desktop test:e2e:system
+          else
+            pnpm --filter @orbis/desktop test:e2e:system
+          fi
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
@@ -122,7 +143,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload 完整系統 e2e 的 trace 與 log
-        if: failure() && runner.os == 'Linux'
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: system-e2e-${{ matrix.os }}
@@ -137,4 +158,14 @@ jobs:
         with:
           name: playwright-report-desktop-${{ matrix.os }}
           path: apps/desktop/playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload Desktop 完整系統 e2e 的 trace 與 log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: system-e2e-desktop-${{ matrix.os }}
+          path: |
+            apps/desktop/test-results/system
+            apps/desktop/test-results/system-logs
           if-no-files-found: ignore
