@@ -24,7 +24,11 @@ import { isTerminalRunStatus, NON_TERMINAL_RUN_STATUSES } from "../domain/run-st
 import type { Notify } from "../notifications/types";
 import type { Dispatcher } from "../runner/dispatcher";
 import { childRunSummary, runDepth } from "../runs/children";
-import { checkDelegation, type DelegationRejectReason } from "../runs/delegation-rules";
+import {
+  checkDelegation,
+  type DelegationRejectReason,
+  MAX_ACTIVE_CHILD_RUNS,
+} from "../runs/delegation-rules";
 import type { RunWatch } from "./run-watch";
 import { type ToolContext, ToolError, type ToolHandlers } from "./service";
 
@@ -133,6 +137,28 @@ export function delegationToolHandlers(deps: DelegationToolDeps): ToolHandlers {
       // 建立 Child Run 與寫入工具呼叫的結果在同一個 transaction：Runner 重送同一個 call_id 時不會建出兩個。
       const output = await inTransaction(db, async (uow) => {
         const { tx } = uow;
+        // 鎖住父 Run：同一個父 Run 的 delegate 依序處理，數量上限與 --c<n> 的序號不會算重。
+        await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, caller.id)).for("update");
+        // 同一個 call_id 已經處理過（重送的呼叫剛好同時到）時，回傳已保存的結果。
+        const [stored] = await tx
+          .select({ result: orbisToolCalls.result })
+          .from(orbisToolCalls)
+          .where(eq(orbisToolCalls.callId, context.callId))
+          .for("update");
+        const previous = stored?.result as OrbisToolResult | null | undefined;
+        if (previous?.outcome === "ok") return previous.output;
+        const [{ activeNow } = { activeNow: 0 }] = await tx
+          .select({ activeNow: count() })
+          .from(runs)
+          .where(
+            and(eq(runs.parentRunId, caller.id), inArray(runs.status, NON_TERMINAL_RUN_STATUSES)),
+          );
+        if (activeNow >= MAX_ACTIVE_CHILD_RUNS) {
+          throw new ToolError(
+            "child_limit_exceeded",
+            `每個 Run 同時最多 ${MAX_ACTIVE_CHILD_RUNS} 個 Child Run`,
+          );
+        }
         const [{ siblings } = { siblings: 0 }] = await tx
           .select({ siblings: count() })
           .from(runs)
@@ -167,7 +193,7 @@ export function delegationToolHandlers(deps: DelegationToolDeps): ToolHandlers {
         await tx
           .update(orbisToolCalls)
           .set({ result, completedAt: deps.clock.now() })
-          .where(eq(orbisToolCalls.callId, context.callId));
+          .where(and(eq(orbisToolCalls.callId, context.callId), isNull(orbisToolCalls.result)));
         uow.afterCommit(() => void deps.dispatcher.kick());
         return result.output;
       });
