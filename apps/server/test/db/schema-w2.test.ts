@@ -257,6 +257,13 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema：W2–4 契約", () =>
       .where(eq(runControls.controlId, controlId))
       .returning();
     expect(resolved?.outcome).toBe("branch_pushed");
+    await expectPgError(
+      db
+        .update(runControls)
+        .set({ outcome: "mystery" })
+        .where(eq(runControls.controlId, controlId)),
+      PG.checkViolation,
+    );
   });
 
   it("Pairing 記下 session；session 刪除時 Runner 與 Pairing token 的關聯設為 null", async () => {

@@ -68,7 +68,8 @@ CREATE TABLE "run_controls" (
 	"outcome_payload" jsonb,
 	"resolved_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "run_controls_outcome_complete" CHECK (("run_controls"."outcome" IS NULL) = ("run_controls"."resolved_at" IS NULL))
+	CONSTRAINT "run_controls_outcome_complete" CHECK (("run_controls"."outcome" IS NULL) = ("run_controls"."resolved_at" IS NULL)),
+	CONSTRAINT "run_controls_outcome_known" CHECK ("run_controls"."outcome" IS NULL OR "run_controls"."outcome" IN ('applied', 'branch_pushed', 'rejected'))
 );
 --> statement-breakpoint
 ALTER TABLE "gates" ADD COLUMN "assignee_member_id_at_creation" uuid;--> statement-breakpoint

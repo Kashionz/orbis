@@ -1,5 +1,5 @@
 {
-  "id": "ccdfe30a-7827-450c-b51b-9d1abcdc3237",
+  "id": "b80183c0-a813-4a05-af27-242d257cac77",
   "prevId": "b6a57d25-bcf3-4c06-b748-609c9314a975",
   "version": "7",
   "dialect": "postgresql",
@@ -1599,6 +1599,10 @@
         "run_controls_outcome_complete": {
           "name": "run_controls_outcome_complete",
           "value": "(\"run_controls\".\"outcome\" IS NULL) = (\"run_controls\".\"resolved_at\" IS NULL)"
+        },
+        "run_controls_outcome_known": {
+          "name": "run_controls_outcome_known",
+          "value": "\"run_controls\".\"outcome\" IS NULL OR \"run_controls\".\"outcome\" IN ('applied', 'branch_pushed', 'rejected')"
         }
       },
       "isRLSEnabled": false

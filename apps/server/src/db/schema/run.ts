@@ -135,10 +135,6 @@ export const dispatches = pgTable(
 );
 
 /**
- * blob 參照：大型內容（完整檔案、截圖）存在 blob 儲存，Event 只放 BlobRef。
- * id 即協定 BlobRef 的 blob_id。預設保存 90 天，到期由清理工作刪除。
- */
-/**
  * 送給 Runner 的 RunControl（ARCHITECTURE §6.1）：每個指令一筆，以 control_id 對應 Runner 回的
  * run_control_result。outcome 為 null 表示還沒有結果；Runner 重新連線後補送這些指令。
  */
@@ -172,9 +168,17 @@ export const runControls = pgTable(
     index("run_controls_run_id_idx").on(t.runId),
     index("run_controls_pending_idx").on(t.dispatchId).where(sql`${t.resolvedAt} IS NULL`),
     check("run_controls_outcome_complete", sql`(${t.outcome} IS NULL) = (${t.resolvedAt} IS NULL)`),
+    check(
+      "run_controls_outcome_known",
+      sql`${t.outcome} IS NULL OR ${t.outcome} IN ('applied', 'branch_pushed', 'rejected')`,
+    ),
   ],
 );
 
+/**
+ * blob 參照：大型內容（完整檔案、截圖）存在 blob 儲存，Event 只放 BlobRef。
+ * id 即協定 BlobRef 的 blob_id。預設保存 90 天，到期由清理工作刪除。
+ */
 export const blobs = pgTable(
   "blobs",
   {
