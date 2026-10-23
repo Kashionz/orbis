@@ -47,6 +47,7 @@ import { type Executor, inTransaction } from "../db/tx";
 import { toAcceptanceCriterion, toGates, toNeedsYou } from "../http/dto";
 import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
+import { type PreviewDomain, runIdFromHost } from "../preview/domain";
 import type { Services } from "../services";
 import { answerQuestion, questionKey } from "../tools/delegation-tools";
 
@@ -271,7 +272,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         input.action === "reject" ? input.reviewComments : [];
       const previewComments =
         input.action === "reject"
-          ? await checkPreviewComments(tx, runId, input.previewComments, s.previewDomain)
+          ? await checkPreviewComments(tx, runId, input.previewComments, s.preview.domain)
           : [];
       const [decided] = await tx
         .update(gates)
@@ -474,24 +475,23 @@ export interface CheckedPreviewComment {
 }
 
 /**
- * 檢查 Preview 留言：網址必須是這個 Run 的 Preview（http(s)、host 是 `<run-id>.preview.<domain>`；
- * 有設定 Preview 的網域時整個 host 都要相同），截圖必須是這個 Run 的 blob。
+ * 檢查 Preview 留言：網址必須是這個 Run 的 Preview 網址（`<scheme>://<run-id>.<Preview 網域>/`，
+ * ARCHITECTURE §13），截圖必須是這個 Run 的 blob。沒有設定 Preview 網域時不接受 Preview 留言。
  */
 async function checkPreviewComments(
   tx: Executor,
   runId: string,
   comments: PreviewCommentParsed[],
-  previewDomain: string | null,
+  domain: PreviewDomain | null,
 ): Promise<CheckedPreviewComment[]> {
   const checked: CheckedPreviewComment[] = [];
-  const prefix = `${runId.toLowerCase()}.preview.`;
   for (const comment of comments) {
     const url = new URL(comment.url);
-    const host = url.hostname.toLowerCase();
-    const sameRun = previewDomain
-      ? host === `${prefix}${previewDomain.toLowerCase()}`
-      : host.startsWith(prefix) && host.length > prefix.length;
-    if (!sameRun || (url.protocol !== "https:" && url.protocol !== "http:")) {
+    const sameRun =
+      domain !== null &&
+      url.protocol === `${domain.scheme}:` &&
+      runIdFromHost(url.host, domain) === runId.toLowerCase();
+    if (!sameRun) {
       throw new ApiError(422, "invalid_input", "Preview 留言的網址不是這個 Run 的 Preview");
     }
     let screenshot: BlobRef | null = null;

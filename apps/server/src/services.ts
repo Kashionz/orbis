@@ -21,10 +21,10 @@ import {
 } from "./github/integration";
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
-import { createPreviewService, type PreviewService } from "./preview";
 import { MentionService } from "./mentions/service";
 import { DesktopChannel, InAppChannel, WebPushHub } from "./notifications/channels";
 import { NotificationService } from "./notifications/service";
+import { createPreviewService, type PreviewService } from "./preview";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
 import { EventIngest } from "./runs/event-ingest";
@@ -68,8 +68,6 @@ export interface Services {
   mentions: MentionService;
   /** 每位 Member 的 Web 連線（推送通知）。 */
   webPush: WebPushHub;
-  /** Preview 子網域的網域（`<run-id>.preview.<domain>` 的 domain）；未設定時只檢查前綴。 */
-  previewDomain: string | null;
   /** 共同編輯的文件（載入、寫回、與資料庫內容同步）。 */
   collab: CollabHub;
   heartbeatIntervalMs: number;
@@ -201,7 +199,6 @@ export function createServices(options: ServicesOptions): Services {
     webPush,
     mentions,
     notify,
-    previewDomain: options.previewDomain ?? null,
     blobStore,
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     sessionCleanup,

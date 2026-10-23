@@ -260,11 +260,12 @@ export interface Harness {
 
 export async function startHarness(
   db: Database,
-  options: { webAuthzRecheckMs?: number } = {},
+  options: { webAuthzRecheckMs?: number; previewDomain?: string } = {},
 ): Promise<Harness> {
   const ctx = createTestContext(db, {
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
     offerTimeoutMs: OFFER_TIMEOUT_MS,
+    previewDomain: options.previewDomain,
   });
   const server = await startServer({
     config: {

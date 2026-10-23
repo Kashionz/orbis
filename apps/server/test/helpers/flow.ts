@@ -61,8 +61,9 @@ export interface Flow {
 export async function startFlow(
   db: Database,
   projectOverrides: Partial<typeof projects.$inferInsert> = {},
+  harnessOptions: Parameters<typeof startHarness>[1] = {},
 ): Promise<Flow> {
-  const h = await startHarness(db);
+  const h = await startHarness(db, harnessOptions);
   const team = await seedTeam(db);
   const { project, repo } = await seedProject(db, team.teamId, projectOverrides);
   return {

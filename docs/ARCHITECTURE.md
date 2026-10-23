@@ -407,7 +407,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 內容是每個檔案的完整新舊內容，大檔放 blob（§14）。
   - Server 保存這份 diff，所以 Runner 離線時仍然可以 review，重播時也看得到。
 - **行內留言**存在獨立的資料表中，每則一筆（之後的 @mention 與通知會用到）。退回時打包成 prompt 送回 Agent。
-- **Preview 留言**（§13）和行內留言存在同一個資料表，種類是 `preview`，帶 URL、selector（一般瀏覽器中沒有）與截圖的 blob。退回時一起打包成 prompt，截圖以圖片附上。
+- **Preview 留言**（§13）和行內留言存在同一個資料表，種類是 `preview`，帶 URL、selector（一般瀏覽器中沒有）與截圖的 blob。URL 必須是這個 Run 的 Preview 網址，截圖必須是這個 Run 的 blob；沒有設定 Preview 網域時不接受 Preview 留言。退回時一起打包成 prompt，截圖以圖片附上。
 
 ---
 
