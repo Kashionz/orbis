@@ -5,20 +5,13 @@
 // C 軌的 Review 頁面：以 loadPreviewDrafts() 列出草稿，退回時放進 GateDecisionInput.previewComments，
 // 送出成功後呼叫 clearPreviewDrafts()。
 
+import { PreviewCommentInput } from "@orbis/api-contract";
 import { z } from "zod";
 
-// TODO(contract): 契約 v2 合併後改用 api-contract 的 PreviewCommentInput（#29）。
-export const PreviewCommentDraft = z.object({
-  body: z.string().trim().min(1),
-  /** 留言時 Preview 的網址。 */
-  url: z.string().min(1),
-  /** 在 Desktop 中選取的元素；一般瀏覽器中是 null。 */
-  selector: z.string().min(1).nullable(),
-  screenshotBlobId: z.string().min(1).nullable(),
-});
-export type PreviewCommentDraft = z.infer<typeof PreviewCommentDraft>;
+/** 一則草稿就是退回時送出的 PreviewCommentInput。 */
+export type PreviewCommentDraft = z.output<typeof PreviewCommentInput>;
 
-const Drafts = z.array(PreviewCommentDraft);
+const Drafts = z.array(PreviewCommentInput);
 
 const storageKey = (runId: string) => `preview-draft:${runId}`;
 /** sessionStorage 無法使用時的備援。 */

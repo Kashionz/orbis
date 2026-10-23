@@ -8,10 +8,15 @@ import {
   getDesktopBridge,
   type PreviewNavState,
 } from "@orbis/desktop/bridge";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ErrorText } from "../../components/ErrorText";
-import { previewStateQuery, unavailableMessage, uploadScreenshot } from "./preview-api";
+import {
+  previewStateQuery,
+  restartPreview,
+  unavailableMessage,
+  uploadScreenshot,
+} from "./preview-api";
 import { loadPreviewDrafts, type PreviewCommentDraft, savePreviewDrafts } from "./preview-drafts";
 import { canCaptureTab, captureElement, imageFromClipboard } from "./screenshot";
 import "./preview.css";
@@ -28,17 +33,41 @@ export interface PreviewPanelProps {
   runId: string;
   /** 能不能留言（和 Review Gate 退回的權限相同）。 */
   canComment: boolean;
+  /** 能不能重新啟動 Preview（和取消 Run 的權限相同）。 */
+  canRestart: boolean;
 }
 
-export function PreviewPanel({ runId, canComment }: PreviewPanelProps) {
+export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProps) {
   const [bridge] = useState(() => getDesktopBridge()?.preview ?? null);
-  const { data: state, error } = useQuery(previewStateQuery(runId));
+  const queryClient = useQueryClient();
+  const query = previewStateQuery(runId);
+  const { data: state, error } = useQuery(query);
   const [capture, setCapture] = useState<PreviewCapture | null>(null);
   const [drafts, setDrafts] = useState(() => loadPreviewDrafts(runId));
+  const restart = useMutation({
+    mutationFn: () => restartPreview(runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: query.queryKey }),
+  });
   if (error) return <ErrorText error={error} />;
   if (!state) return <p className="preview-message">載入中…</p>;
+  const restartButton = canRestart && state.status !== "not_configured" && (
+    <button type="button" disabled={restart.isPending} onClick={() => restart.mutate()}>
+      重新啟動 Preview
+    </button>
+  );
   const message = unavailableMessage(state, bridge !== null);
-  if (message) return <p className="preview-message">{message}</p>;
+  if (message) {
+    return (
+      <div className="preview-tab">
+        <p className="preview-message">{message}</p>
+        {state.status === "stopped" && state.stopped?.output && (
+          <pre className="preview-output">{state.stopped.output}</pre>
+        )}
+        {state.status === "stopped" && restartButton}
+        <ErrorText error={restart.error} />
+      </div>
+    );
+  }
 
   const onCapture = canComment ? setCapture : undefined;
   const update = (next: PreviewCommentDraft[]) => {
@@ -47,6 +76,8 @@ export function PreviewPanel({ runId, canComment }: PreviewPanelProps) {
   };
   return (
     <div className="preview-tab">
+      {restartButton && <div className="preview-toolbar">{restartButton}</div>}
+      <ErrorText error={restart.error} />
       {bridge ? (
         <DesktopPreview runId={runId} bridge={bridge} onCapture={onCapture} />
       ) : (

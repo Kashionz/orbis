@@ -2,18 +2,17 @@
 // Preview 網址的請求以 Host header 指定（`<run-id>.preview.test`），送到 Server 實際 listen 的 port。
 
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
-import { NAMES } from "@orbis/api-contract";
+import { NAMES, PREVIEW_SCREENSHOT_MAX_BYTES, PreviewState } from "@orbis/api-contract";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { runEvents, runs, sessions } from "../../src/db/schema";
 import { ACCESS_CACHE_MS } from "../../src/preview/auth";
 import { PREVIEW_CALLBACK_PATH, PREVIEW_COOKIE } from "../../src/preview/domain";
-import { PREVIEW_SCREENSHOT_MAX_BYTES } from "../../src/preview/routes";
-import { PreviewState } from "../../src/preview/state";
 import { type RunningServer, startServer } from "../../src/server";
 import {
   createTestContext,
+  expectContract,
   resetDatabase,
   type SeededTeam,
   seedProject,
@@ -164,41 +163,83 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
   }
 
   describe("狀態", () => {
-    it("依 Event 與 Run 的狀態回報啟動中、就緒、停止，並附上 Preview 網址", async () => {
+    it("依 Event 與 Run 的狀態回報沒有設定、啟動中、就緒、停止，就緒時附上 Preview 網址", async () => {
       const viewer = team.members.viewer.cookie;
       const shareUrl = `http://${runId}.${PREVIEW_DOMAIN}/`;
-      let res = await state(viewer);
-      expect(res.status).toBe(200);
-      expect(PreviewState.parse(res.body)).toEqual({
+      const parse = async () => expectContract(PreviewState, (await state(viewer)).body);
+      // 還沒建立 Worktree：不知道有沒有設定
+      expect(await parse()).toEqual({
         status: "starting",
         runnerId: null,
         port: null,
         localUrl: null,
-        shareUrl,
+        shareUrl: null,
+        stopped: null,
       });
 
-      await addEvent(1, "preview_ready", { port: 41234, url: "http://localhost:41234/" });
-      res = await state(viewer);
-      expect(res.body).toEqual({
+      await addEvent(1, "worktree_ready", {
+        worktree_path: "/wt/r1",
+        branch: `${NAMES.branchPrefix}ORB-1-x`,
+        base_commit: "c".repeat(40),
+        preview_port: 41234,
+      });
+      expect(await parse()).toMatchObject({ status: "starting", port: 41234, shareUrl: null });
+
+      await addEvent(2, "preview_ready", { port: 41234, url: "http://localhost:41234/" });
+      expect(await parse()).toEqual({
         status: "ready",
         runnerId: null,
         port: 41234,
         localUrl: "http://localhost:41234/",
         shareUrl,
+        stopped: null,
       });
 
-      // TODO(contract): 契約 v2 的 preview_stopped Event 合併後改用它（#29）。
-      await addEvent(2, "error", {
-        code: "internal",
-        message: "Preview 已停止（exited，結束碼 1）：boom",
-        fatal: false,
+      await addEvent(3, "preview_stopped", {
+        reason: "exited",
+        exit_code: 1,
+        output: "boom",
       });
-      expect(((await state(viewer)).body as PreviewState).status).toBe("stopped");
+      expect(await parse()).toMatchObject({
+        status: "stopped",
+        shareUrl: null,
+        stopped: { reason: "exited", exitCode: 1, output: "boom" },
+      });
 
-      await addEvent(3, "preview_ready", { port: 41234, url: "http://localhost:41234/" });
-      expect(((await state(viewer)).body as PreviewState).status).toBe("ready");
+      // 重新啟動後就緒：最近一次停止的原因仍然保留
+      await addEvent(4, "preview_ready", { port: 41234, url: "http://localhost:41234/" });
+      expect(await parse()).toMatchObject({ status: "ready", stopped: { reason: "exited" } });
       await database.db.update(runs).set({ status: "canceled" }).where(eq(runs.id, runId));
-      expect(((await state(viewer)).body as PreviewState).status).toBe("stopped");
+      expect((await parse()).status).toBe("stopped");
+    });
+
+    it("worktree_ready 沒有 preview_port 時是沒有設定", async () => {
+      await addEvent(1, "worktree_ready", {
+        worktree_path: "/wt/r1",
+        branch: `${NAMES.branchPrefix}ORB-1-x`,
+        base_commit: "c".repeat(40),
+      });
+      const res = await state(team.members.viewer.cookie);
+      expect(expectContract(PreviewState, res.body).status).toBe("not_configured");
+    });
+
+    it("重新啟動：需要能編輯 Task；沒有設定 Preview、Run 已結束或不在 Runner 上時回 409", async () => {
+      const restart = (cookie: string) =>
+        ctx.app.request(`/api/runs/${runId}/preview/restart`, {
+          method: "POST",
+          headers: { cookie },
+        });
+      expect((await restart(team.members.viewer.cookie)).status).toBe(403);
+      // 沒有 Dispatch：Runner 上沒有這個 Run
+      expect((await restart(team.members.member.cookie)).status).toBe(409);
+      await addEvent(1, "worktree_ready", {
+        worktree_path: "/wt/r1",
+        branch: null,
+        base_commit: "c".repeat(40),
+      });
+      expect((await restart(team.members.member.cookie)).status).toBe(409);
+      await database.db.update(runs).set({ status: "canceled" }).where(eq(runs.id, runId));
+      expect((await restart(team.members.member.cookie)).status).toBe(409);
     });
 
     it("沒有登入回 401，其他 Team 的人看不到", async () => {
@@ -236,10 +277,13 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
         headers: { cookie: team.members.owner.cookie },
       });
       expect(res.status).toBe(404);
+      await addEvent(1, "preview_ready", { port: 41234, url: "http://localhost:41234/" });
       const stateRes = await plain.app.request(statePath(), {
         headers: { cookie: team.members.owner.cookie },
       });
-      expect(((await stateRes.json()) as PreviewState).shareUrl).toBeNull();
+      const ready = (await stateRes.json()) as PreviewState;
+      expect(ready.status).toBe("ready");
+      expect(ready.shareUrl).toBeNull();
     });
   });
 

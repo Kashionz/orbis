@@ -6,7 +6,7 @@ import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { PROTOCOL_VERSION, RUNNER_WS_PATH } from "@orbis/protocol";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { runs } from "../../src/db/schema";
+import { dispatches, runEvents, runs } from "../../src/db/schema";
 import { closeReason, hostOnlyCookie } from "../../src/preview/relay";
 import {
   decodePreviewData,
@@ -450,6 +450,42 @@ describe.skipIf(dbSkipReason !== null)("Preview 的轉送", () => {
     const offline = await raw(server.port, host, "/", { headers: { cookie } });
     expect(offline.status).toBe(503);
     expect(offline.body.toString()).toContain("離線");
+  });
+
+  it("重新啟動 Preview：送 restart_preview 給執行這個 Run 的 Runner", async () => {
+    const [dispatch] = await database.db
+      .insert(dispatches)
+      .values({
+        runId,
+        runnerId: runner.runnerId,
+        status: "accepted",
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      .returning();
+    await database.db.insert(runEvents).values({
+      runId,
+      seq: 1,
+      ts: new Date(),
+      kind: "worktree_ready",
+      payload: {
+        kind: "worktree_ready",
+        worktree_path: "/wt/r1",
+        branch: null,
+        base_commit: "c".repeat(40),
+        preview_port: 41234,
+      },
+    });
+    const res = await ctx.app.request(`/api/runs/${runId}/preview/restart`, {
+      method: "POST",
+      headers: { cookie: team.members.member.cookie },
+    });
+    expect(res.status).toBe(202);
+    const control = await runner.frame("run_control");
+    expect(control).toMatchObject({
+      run_id: runId,
+      dispatch_id: dispatch?.id,
+      action: "restart_preview",
+    });
   });
 });
 

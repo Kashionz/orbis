@@ -19,6 +19,7 @@ function ready(overrides: Partial<PreviewState> = {}): PreviewState {
     port: 41234,
     localUrl: "http://localhost:41234/",
     shareUrl: `https://${RUN}.preview.example.com/`,
+    stopped: null,
     ...overrides,
   };
 }

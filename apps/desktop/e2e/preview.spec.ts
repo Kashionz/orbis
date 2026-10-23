@@ -202,6 +202,7 @@ test("自己的 Local Runner 跑的 Run 直接開 localhost，選取元素時回
     port: devServer.port,
     localUrl: `${devServer.url}/`,
     shareUrl: null,
+    stopped: null,
   };
 
   const shown = await callBridge<PreviewShowResult>(main, "show", RUN, BOUNDS);
@@ -275,6 +276,7 @@ test("別人的 Run 開 Preview 網址，經過 authorize 換票後留在內嵌�
     port: 41000,
     localUrl: "http://localhost:41000/",
     shareUrl,
+    stopped: null,
   };
 
   const shown = await callBridge<PreviewShowResult>(main, "show", RUN, BOUNDS);
@@ -331,6 +333,7 @@ test("Preview 還沒就緒或沒有 Preview 網址時回傳原因", async () => 
     port: null,
     localUrl: null,
     shareUrl: null,
+    stopped: null,
   };
   expect(await callBridge<PreviewShowResult>(main, "show", RUN, BOUNDS)).toEqual({
     ok: false,
@@ -342,6 +345,7 @@ test("Preview 還沒就緒或沒有 Preview 網址時回傳原因", async () => 
     port: 41000,
     localUrl: "http://localhost:41000/",
     shareUrl: null,
+    stopped: null,
   };
   expect(await callBridge<PreviewShowResult>(main, "show", RUN, BOUNDS)).toEqual({
     ok: false,

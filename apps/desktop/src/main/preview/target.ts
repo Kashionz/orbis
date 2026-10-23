@@ -3,33 +3,17 @@
 // - 其他 Run：開 Preview 網址。第一次開啟時經過 Web UI 的 authorize 換票，所以 authorize 也要放行。
 // 網址一律由 main 程序自己向 Server 查詢後決定，Web UI 只給 Run ID，不能讓 Desktop 開任意網址。
 
-import { z } from "zod";
+import { API_ROUTES, apiPath, PreviewState } from "@orbis/api-contract";
 import type { PreviewBounds, PreviewMode } from "../../bridge";
 
-// TODO(contract): 契約 v2 合併後改用 api-contract 的 PreviewState 與 API_ROUTES（#29）。
-export const PREVIEW_STATE_ROUTE = "/api/runs/:runId/preview";
-// TODO(contract): 同上。
-export const PREVIEW_AUTHORIZE_ROUTE = "/api/preview/:runId/authorize";
-
-// TODO(contract): 同上。
-export const PreviewState = z.object({
-  status: z.enum(["not_configured", "starting", "ready", "stopped"]),
-  /** 執行這個 Run 的 Runner。 */
-  runnerId: z.string().nullable(),
-  port: z.number().int().min(1).max(65_535).nullable(),
-  /** Runner 本機的網址（`preview_ready` 的 url）。 */
-  localUrl: z.string().nullable(),
-  /** Preview 網址；Server 沒有設定 Preview 網域時是 null。 */
-  shareUrl: z.string().nullable(),
-});
-export type PreviewState = z.infer<typeof PreviewState>;
+export { PreviewState };
 
 export function previewStatePath(runId: string): string {
-  return PREVIEW_STATE_ROUTE.replace(":runId", encodeURIComponent(runId));
+  return apiPath(API_ROUTES.runPreview, { runId });
 }
 
 export function previewAuthorizePath(runId: string): string {
-  return PREVIEW_AUTHORIZE_ROUTE.replace(":runId", encodeURIComponent(runId));
+  return apiPath(API_ROUTES.previewAuthorize, { runId });
 }
 
 export type PreviewTarget =

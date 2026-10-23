@@ -1,27 +1,28 @@
 // Web UI origin 上的 Preview API（ARCHITECTURE §13）：
-// - `GET /api/runs/:runId/preview`：Run 的 Preview 狀態與網址。
-// - `GET /api/preview/:runId/authorize`：換票。確認 session 與查看權限後，帶著一次性 ticket
+// - `GET runPreview`：Run 的 Preview 狀態與網址。
+// - `POST runPreviewRestart`：重新啟動 Preview 的 dev server（`restart_preview`）。
+// - `GET previewAuthorize`：換票。確認 session 與查看權限後，帶著一次性 ticket
 //   轉到 Preview 網址的 callback。沒有登入時轉到登入頁。
-// - `POST /api/runs/:runId/preview/screenshots`：上傳 Preview 留言的截圖（multipart，欄位 `file`，PNG）。
+// - `POST runPreviewScreenshots`：上傳 Preview 留言的截圖（multipart，欄位 `file`，PNG）。
 
 import { createHash, randomUUID } from "node:crypto";
+import { API_ROUTES, apiPath, PREVIEW_SCREENSHOT_MAX_BYTES } from "@orbis/api-contract";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getCookie } from "hono/cookie";
 import { requireProjectCapability } from "../authz/scope";
 import { BLOB_RETENTION_MS, blobStorageKey } from "../blobs/store";
 import { blobs } from "../db/schema";
-import { ApiError, readId } from "../http/errors";
+import { inTransaction } from "../db/tx";
+import { TERMINAL_RUN_STATUSES } from "../domain/run-status";
+import { ApiError, conflict, readId } from "../http/errors";
 import { type AppEnv, resolveActor } from "../http/session";
 import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
 import { requireRunVisible } from "./access";
 import { PREVIEW_CALLBACK_PATH, previewShareUrl, safeReturnPath } from "./domain";
-import { loadPreviewState, PREVIEW_AUTHORIZE_ROUTE, PREVIEW_STATE_ROUTE } from "./state";
+import { loadPreviewState } from "./state";
 
-// TODO(contract): 契約 v2 合併後改用 API_ROUTES.runPreviewScreenshots 與 PREVIEW_SCREENSHOT_MAX_BYTES（#29）。
-export const PREVIEW_SCREENSHOTS_ROUTE = "/api/runs/:runId/preview/screenshots";
-export const PREVIEW_SCREENSHOT_MAX_BYTES = 10 * 1024 * 1024;
 /** multipart 的邊界與欄位標頭的額外空間。 */
 const MULTIPART_OVERHEAD = 64 * 1024;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -30,12 +31,26 @@ export function createPreviewRoutes(s: Services): Hono<AppEnv> {
   const { db, auth, clock, preview, blobStore } = s;
   const app = new Hono<AppEnv>();
 
-  app.get(PREVIEW_STATE_ROUTE, auth, async (c) => {
+  app.get(API_ROUTES.runPreview, auth, async (c) => {
     const scope = await requireRunVisible(db, c.get("actor"), readId(c, "runId", "Run"));
     return c.json(await loadPreviewState(db, scope.run, preview.domain));
   });
 
-  app.get(PREVIEW_AUTHORIZE_ROUTE, async (c) => {
+  app.post(API_ROUTES.runPreviewRestart, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await requireRunVisible(db, actor, readId(c, "runId", "Run"));
+    // 和取消 Run 相同的權限
+    requireProjectCapability(actor, scope, "edit_task");
+    if (TERMINAL_RUN_STATUSES.includes(scope.run.status)) throw conflict("Run 已經結束");
+    const state = await loadPreviewState(db, scope.run, preview.domain);
+    if (state.status === "not_configured") throw conflict("這個 Repo 沒有設定 Preview");
+    await inTransaction(db, (uow) =>
+      s.runControls.send(uow.tx, scope.run.id, { action: "restart_preview" }, uow, actor.memberId),
+    );
+    return c.body(null, 202);
+  });
+
+  app.get(API_ROUTES.previewAuthorize, async (c) => {
     const runId = readId(c, "runId", "Run");
     const domain = preview.domain;
     if (!domain) throw new ApiError(404, "not_found", "Server 沒有設定 Preview 網域");
@@ -59,7 +74,7 @@ export function createPreviewRoutes(s: Services): Hono<AppEnv> {
   });
 
   app.post(
-    PREVIEW_SCREENSHOTS_ROUTE,
+    API_ROUTES.runPreviewScreenshots,
     auth,
     // 先確認來源與權限，之後才讀 body
     async (c, next) => {
@@ -134,9 +149,7 @@ export function createPreviewRoutes(s: Services): Hono<AppEnv> {
 
 /** authorize 的網址（Preview 網址沒有 preview cookie 時，頁面導覽轉到這裡）。 */
 export function previewAuthorizeUrl(publicUrl: string, runId: string, returnPath: string): string {
-  const url = new URL(
-    `${publicUrl}${PREVIEW_AUTHORIZE_ROUTE.replace(":runId", encodeURIComponent(runId))}`,
-  );
+  const url = new URL(`${publicUrl}${apiPath(API_ROUTES.previewAuthorize, { runId })}`);
   url.searchParams.set("return", safeReturnPath(returnPath));
   return url.href;
 }

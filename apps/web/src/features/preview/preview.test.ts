@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type PreviewState, unavailableMessage } from "./preview-api";
+import { type PreviewState, stoppedMessage, unavailableMessage } from "./preview-api";
 import { clearPreviewDrafts, loadPreviewDrafts, savePreviewDrafts } from "./preview-drafts";
 import { cropToElement } from "./screenshot";
 
@@ -39,6 +39,7 @@ describe("unavailableMessage", () => {
     port: 41000,
     localUrl: "http://localhost:41000/",
     shareUrl: "https://x.preview.example.com/",
+    stopped: null,
   };
 
   it("就緒而且有 Preview 網址時可以開啟", () => {
@@ -49,6 +50,22 @@ describe("unavailableMessage", () => {
     const noDomain = { ...ready, shareUrl: null };
     expect(unavailableMessage(noDomain, false)).toContain("沒有設定 Preview 網域");
     expect(unavailableMessage(noDomain, true)).toBeNull();
+  });
+
+  it("停止時說明原因與結束碼", () => {
+    const stopped = (
+      reason: "exited" | "ready_timeout" | "spawn_failed",
+      exitCode: number | null,
+    ) => ({
+      ...ready,
+      status: "stopped" as const,
+      stopped: { reason, exitCode, output: "" },
+    });
+    expect(stoppedMessage(stopped("exited", 1))).toBe(
+      "Preview 已停止（dev server 結束了，結束碼 1）",
+    );
+    expect(stoppedMessage(stopped("ready_timeout", null))).toBe("Preview 已停止（等待就緒逾時）");
+    expect(stoppedMessage({ ...ready, status: "stopped" })).toBe("Preview 已停止");
   });
 
   it("還沒就緒時說明原因", () => {
