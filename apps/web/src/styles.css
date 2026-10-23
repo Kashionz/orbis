@@ -1220,3 +1220,26 @@ textarea {
   margin: 0 0 0.25rem;
   font-size: 1rem;
 }
+
+.run-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 1rem 1rem;
+}
+
+.review-preview-drafts {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.review-preview-drafts h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.preview-draft-shot {
+  max-width: 16rem;
+  max-height: 10rem;
+  border: 1px solid var(--border);
+}

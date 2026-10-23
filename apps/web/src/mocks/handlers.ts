@@ -346,6 +346,24 @@ export function createHandlers(backend: MockBackend) {
       handle((_, p) => backend.cancelRun(p.runId ?? ""), 202),
     ),
     http.get(
+      API_ROUTES.runPreview,
+      handle((_, p) => backend.previewState(p.runId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.runPreviewRestart,
+      handle((_, p) => {
+        backend.previewState(p.runId ?? "");
+      }),
+    ),
+    http.post(
+      API_ROUTES.runPreviewScreenshots,
+      handle(async (request, p) => {
+        const file = (await request.formData()).get("file");
+        if (!(file instanceof Blob)) throw new MockError(400, "invalid_input", "缺少截圖");
+        return backend.uploadPreviewScreenshot(p.runId ?? "", file);
+      }, 201),
+    ),
+    http.get(
       API_ROUTES.runVerifications,
       handle((_, p) => backend.verifications(p.runId ?? "")),
     ),

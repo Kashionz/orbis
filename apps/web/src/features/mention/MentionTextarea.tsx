@@ -107,7 +107,6 @@ export function MentionTextarea({
         <div id={listId} role="listbox" className="mention-options" aria-label="提及的對象">
           {options.map((option, index) => (
             // 用 mousedown，在 textarea 失去焦點（關閉清單）之前插入
-            // biome-ignore lint/a11y/useKeyWithClickEvents: 鍵盤操作由 textarea 的 onKeyDown 處理
             <div
               key={option.key}
               id={`${listId}-${index}`}

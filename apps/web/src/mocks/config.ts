@@ -39,6 +39,8 @@ export interface MockConfig {
   verificationFailures?: number;
   /** 在等待 Review Gate 的 Run（ORB-4）底下建立 Child Run 樹與一個向人提問的 Child Run。 */
   childRuns?: boolean;
+  /** Run 的 Preview 已就緒；省略時所有 Run 都是「沒有設定」。 */
+  preview?: boolean;
 }
 
 declare global {

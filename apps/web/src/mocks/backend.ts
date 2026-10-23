@@ -30,6 +30,7 @@ import {
   type NotificationKind,
   type NotificationListResponse,
   type NotificationPreferences,
+  type PreviewState,
   type Project,
   parseMentions,
   READY_REQUIREMENTS,
@@ -1253,6 +1254,43 @@ export class MockBackend {
     task.updatedAt = now();
     this.save();
     return gate;
+  }
+
+  // ---------- Preview（ARCHITECTURE §13；E 軌的 Preview 分頁） ----------
+
+  previewState(runId: string): PreviewState {
+    const run = this.run(runId);
+    if (!this.config.preview) {
+      return {
+        status: "not_configured",
+        port: null,
+        localUrl: null,
+        shareUrl: null,
+        runnerId: run.runnerId,
+        stopped: null,
+      };
+    }
+    return {
+      status: "ready",
+      port: 4123,
+      localUrl: "http://localhost:4123/",
+      // 測試只檢查 iframe 的網址，不需要真的有 dev server
+      shareUrl: "http://127.0.0.1:9/",
+      runnerId: run.runnerId,
+      stopped: null,
+    };
+  }
+
+  /** 上傳 Preview 留言的截圖：存成 data URL 的 blob，Review 頁可以顯示。 */
+  async uploadPreviewScreenshot(runId: string, file: Blob): Promise<{ blobId: string }> {
+    this.run(runId);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    const blobId = this.newId("blob");
+    this.state.blobs[blobId] = `data:image/png;base64,${btoa(binary)}`;
+    this.save();
+    return { blobId };
   }
 
   // ---------- 通知（ARCHITECTURE §12.3） ----------

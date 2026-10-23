@@ -22,12 +22,13 @@ import {
 } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
 import { PlanGatePanel } from "../gate/PlanGatePanel";
+import { PreviewPanel } from "../preview/PreviewPanel";
 import { VerificationPanel } from "../verification/VerificationPanel";
 import { useRunControls } from "./use-run-controls";
 import { useRunTimeline } from "./use-run-timeline";
 import { VirtualTimeline } from "./VirtualTimeline";
 
-type RunTab = "timeline" | "verification";
+type RunTab = "timeline" | "verification" | "preview";
 
 /**
  * Run 即時檢視：時間軸、Verification 結果、等待中的 Plan Gate。`focus` 是要捲到的時間軸項目 key。
@@ -166,6 +167,14 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
         >
           Verification
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "preview"}
+          onClick={() => setTab("preview")}
+        >
+          Preview
+        </button>
       </div>
       {tab === "timeline" && (
         <VirtualTimeline items={timeline.items} controls={controls} focusKey={focus} />
@@ -177,6 +186,16 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
           maxRetries={project?.policy.verificationMaxRetries ?? 3}
           canDecide={permissions.can("run.control")}
         />
+      )}
+      {/* 只在選取時掛載：Desktop 的內嵌瀏覽器在 PreviewPanel 卸載時才會隱藏 */}
+      {tab === "preview" && (
+        <div className="run-preview">
+          <PreviewPanel
+            runId={runId}
+            canComment={permissions.can("gate.reject")}
+            canRestart={permissions.can("run.control")}
+          />
+        </div>
       )}
     </main>
   );

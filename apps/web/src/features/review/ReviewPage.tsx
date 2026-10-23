@@ -14,6 +14,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import {
   acceptanceCriteriaQuery,
   blobTextQuery,
+  blobUrl,
   cancelRun,
   decideGate,
   projectsQuery,
@@ -29,6 +30,12 @@ import { DIFF_CHANGE_LABELS } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
 import { MentionMarkdown } from "../mention/MentionMarkdown";
 import { MentionTextarea } from "../mention/MentionTextarea";
+import {
+  clearPreviewDrafts,
+  loadPreviewDrafts,
+  savePreviewDrafts,
+  subscribePreviewDrafts,
+} from "../preview/preview-drafts";
 import { ConsultRunLinks } from "../task/TaskComments";
 import { DiffEditor } from "./DiffEditor";
 import { ReviewCriteria, uncheckedManualCriteria } from "./ReviewCriteria";
@@ -94,6 +101,12 @@ function Review({
   const permissions = usePermissions(project, task);
   const [selectedPath, setSelectedPath] = useState(diff.files[0]?.path ?? null);
   const [draft, setDraftState] = useState<ReviewDraft>(() => loadDraft(run.id));
+  // Preview 分頁寫的留言草稿（E 軌的 preview-drafts），退回時一起送出
+  const [previewDrafts, setPreviewDrafts] = useState(() => loadPreviewDrafts(run.id));
+  useEffect(
+    () => subscribePreviewDrafts(run.id, () => setPreviewDrafts(loadPreviewDrafts(run.id))),
+    [run.id],
+  );
   const [target, setTarget] = useState<CommentTarget | null>(null);
   const [body, setBody] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -134,11 +147,13 @@ function Review({
               action: "reject",
               comment: draft.summary.trim() === "" ? null : draft.summary.trim(),
               reviewComments: sortComments(draft.comments),
+              previewComments: previewDrafts,
             },
       );
     },
     onSuccess: async () => {
       setDraft({ comments: [], summary: "" });
+      clearPreviewDrafts(run.id);
       await afterDecision();
     },
   });
@@ -172,7 +187,8 @@ function Review({
   const original = useTextBody(file && !file.binary ? file.old : null);
   const modified = useTextBody(file && !file.binary ? file.new : null);
   const contentError = original.error ?? modified.error;
-  const canSendRejection = draft.comments.length > 0 || draft.summary.trim() !== "";
+  const canSendRejection =
+    draft.comments.length > 0 || previewDrafts.length > 0 || draft.summary.trim() !== "";
 
   return (
     <main className="review-page">
@@ -279,6 +295,53 @@ function Review({
         </section>
       </div>
 
+      {previewDrafts.length > 0 && (
+        <section className="review-preview-drafts" aria-labelledby="preview-drafts-heading">
+          <h2 id="preview-drafts-heading">Preview 留言（{previewDrafts.length}）</h2>
+          <p className="hint">在 Run 頁的 Preview 分頁寫的留言，退回時和行內留言一起送給 Agent。</p>
+          <ul className="comment-list">
+            {previewDrafts.map((comment, index) => (
+              <li
+                key={comment.screenshotBlobId ?? `${comment.url}|${comment.body}`}
+                className="review-comment"
+              >
+                <span className="hint">
+                  {comment.url}
+                  {comment.selector && (
+                    <>
+                      {" "}
+                      <code>{comment.selector}</code>
+                    </>
+                  )}
+                </span>
+                <p>{comment.body}</p>
+                {comment.screenshotBlobId && (
+                  <img
+                    className="preview-draft-shot"
+                    src={blobUrl(comment.screenshotBlobId)}
+                    alt="Preview 留言的截圖"
+                  />
+                )}
+                {canComment && (
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() =>
+                      savePreviewDrafts(
+                        run.id,
+                        previewDrafts.filter((_, i) => i !== index),
+                      )
+                    }
+                  >
+                    刪除 Preview 留言
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <ReviewCriteria taskId={task.id} runId={run.id} canCheck={canComment} />
       {previous.length > 0 && <PreviousReviews gates={previous} />}
 
@@ -303,7 +366,7 @@ function Review({
                 disabled={!canSendRejection || decision.isPending}
                 onClick={() => decision.mutate("reject")}
               >
-                退回並附上留言（{draft.comments.length}）
+                退回並附上留言（{draft.comments.length + previewDrafts.length}）
               </button>
             )}
             {canApprove && (
