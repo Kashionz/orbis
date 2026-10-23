@@ -209,7 +209,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
       requireProjectCapability(actor, { ...scope, task: undefined }, "approve_gate");
     } else requireProjectCapability(actor, scope, "edit_task");
     if (gate.kind !== "review") {
-      // TODO(B2)：Plan Gate 的核准與退回。
+      // TODO(B2, #15)：Plan Gate 的核准與退回。
       throw conflict("B1 只支援 Review Gate");
     }
     if (!gate.runId) throw conflict("這個 Gate 沒有對應的 Run");

@@ -1,5 +1,5 @@
 // GitHub 整合給 Web 用的資源（ARCHITECTURE §11）：從 Issue 匯入 Task。
-// 端點由 packages/github 提供，掛在 Server 上（路徑見 API_ROUTES）。
+// 端點由 Server 依 API_ROUTES 提供，實作呼叫 packages/github。
 
 import { z } from "zod";
 import { Id, Timestamp } from "./common";

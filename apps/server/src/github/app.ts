@@ -32,7 +32,7 @@ export function taskUrl(publicUrl: string, taskKey: string): string {
 
 /**
  * 只記 log 的通知（PR merge、PR 沒 merge 就關閉、開 PR 失敗）。
- * TODO(B2)：換成通知中心與桌面通知（ARCHITECTURE §12.3）。
+ * TODO(B2, #16)：換成通知中心與桌面通知（ARCHITECTURE §12.3）。
  */
 export function loggingNotifier(logger: Logger): Notifier {
   return {

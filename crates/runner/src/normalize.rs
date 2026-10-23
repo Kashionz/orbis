@@ -283,7 +283,7 @@ pub fn prompt_to_acp(blocks: &[ContentBlock]) -> Vec<acp::ContentBlock> {
             ContentBlock::ResourceLink { uri, name } => {
                 acp::ContentBlock::ResourceLink(acp::ResourceLink::new(name.clone(), uri.clone()))
             }
-            // TODO(A2)：下載 blob 後以圖片送出（Preview 上的留言截圖）。
+            // TODO(A2, #17)：下載 blob 後以圖片送出（Preview 上的留言截圖）。
             ContentBlock::Image(blob) => acp::ContentBlock::from(format!(
                 "[圖片 {}（{}，{} bytes）]",
                 blob.blob_id, blob.media_type, blob.size
