@@ -38,6 +38,7 @@ use crate::home::RunnerHome;
 use crate::normalize::{self, Normalizer};
 use crate::outbox::Outbox;
 use crate::policy::{self, Decision, PolicyContext};
+use crate::preview::{Preview, PreviewNotice, PreviewSpec, PreviewTiming};
 use crate::repo_config::CommitFields;
 use crate::secrets::Redactor;
 use crate::worktree::{Worktree, WorktreeManager, WorktreeRequest};
@@ -110,6 +111,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         notices: None,
         pending: HashMap::new(),
         settings_baseline: HashMap::new(),
+        preview: None,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -176,6 +178,8 @@ struct Run {
     pending: HashMap<PermissionRequestId, Pending>,
     /// 受保護的 Agent 設定檔：已被接受的內容（`None` 表示檔案不存在）。
     settings_baseline: HashMap<String, Option<Vec<u8>>>,
+    /// Preview 的 dev server（§13），隨 Run 結束。
+    preview: Option<Preview>,
 }
 
 impl Run {
@@ -194,6 +198,9 @@ impl Run {
         };
         if let Some(session) = self.session.take() {
             session.shutdown().await;
+        }
+        if let Some(preview) = self.preview.take() {
+            preview.stop().await;
         }
         match outcome {
             Ok(()) | Err(Stop::Shutdown) => {}
@@ -310,7 +317,8 @@ impl Run {
         }
         self.normalizer = Some(Normalizer::new(&wt.path, self.redactor.clone()));
         self.worktree = Some(wt);
-        self.run_setup().await?;
+        let setup_in_background = self.run_setup().await?;
+        self.start_preview(setup_in_background);
         self.load_settings_baseline().await;
         self.check_agent_settings().await?;
         self.start_agent().await
@@ -365,7 +373,8 @@ impl Run {
         }
     }
 
-    async fn run_setup(&mut self) -> Result<(), Stop> {
+    /// 執行 setup。`wait_for_setup = false` 時在背景執行，回傳它的結果（成功與否）。
+    async fn run_setup(&mut self) -> Result<Option<oneshot::Receiver<bool>>, Stop> {
         let wt = self.wt().clone();
         let Some(script) = wt
             .config
@@ -375,7 +384,7 @@ impl Run {
             .clone()
             .filter(|s| !s.trim().is_empty())
         else {
-            return Ok(());
+            return Ok(None);
         };
         self.emit(EventKind::ToolCall(ToolCall {
             tool_call_id: SETUP_TOOL_CALL.into(),
@@ -430,9 +439,58 @@ impl Run {
             }
         } else {
             // 不等 setup：在背景執行，結果仍以 Event 回報。
-            tokio::spawn(job);
+            let (done, done_rx) = oneshot::channel();
+            tokio::spawn(async move {
+                let (ok, _) = job.await;
+                let _ = done.send(ok);
+            });
+            return Ok(Some(done_rx));
         }
-        Ok(())
+        Ok(None)
+    }
+
+    /// 啟動 Preview（§13）：有 `[preview].command` 而且腳本已核准時，setup 成功後啟動。
+    fn start_preview(&mut self, after: Option<oneshot::Receiver<bool>>) {
+        let wt = self.wt();
+        if !wt.scripts_approved {
+            return;
+        }
+        let Some(spec) = PreviewSpec::from_worktree(wt) else {
+            return;
+        };
+        let outbox = self.ctx.outbox.clone();
+        let run_id = self.offer.run_id.clone();
+        let notify = move |notice| {
+            let kind = match notice {
+                PreviewNotice::Ready { port, url } => EventKind::PreviewReady { port, url },
+                // TODO(contract): 契約 v2 加入 `preview_stopped` Event 後改用它（#29）。
+                PreviewNotice::Stopped {
+                    reason,
+                    exit_code,
+                    output,
+                } => EventKind::Error {
+                    code: RunErrorCode::Internal,
+                    message: format!(
+                        "Preview 已停止（{}，結束碼 {}）：{}",
+                        reason.as_str(),
+                        exit_code.map_or_else(|| "無".to_owned(), |c| c.to_string()),
+                        normalize::truncate(output, 4000)
+                    ),
+                    fatal: false,
+                },
+            };
+            if let Err(e) = outbox.emit(&run_id, now(), kind) {
+                tracing::error!(run_id = %run_id, error = %e, "無法記錄 Preview 的 Event");
+            }
+        };
+        self.preview = Some(Preview::start(
+            spec,
+            after,
+            self.redactor.clone(),
+            self.status_tx.subscribe(),
+            PreviewTiming::default(),
+            notify,
+        ));
     }
 
     async fn start_agent(&mut self) -> Result<(), Stop> {

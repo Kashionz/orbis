@@ -11,6 +11,7 @@ pub mod normalize;
 pub mod outbox;
 pub mod paths;
 pub mod policy;
+pub mod preview;
 pub mod process;
 pub mod repo_config;
 pub mod run;
