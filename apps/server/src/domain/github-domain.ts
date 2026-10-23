@@ -17,7 +17,7 @@ import type {
   TransitionCause,
   TransitionResult,
 } from "@orbis/github";
-import { and, asc, count, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { authorize, effectiveRole } from "../authz/capabilities";
 import type { Database } from "../db/client";
 import {
@@ -32,6 +32,7 @@ import {
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
 import { ApiError, notFound } from "../http/errors";
+import { parseMentions, replaceMentions } from "../mentions/parse";
 import { TERMINAL_RUN_STATUSES } from "./run-status";
 import type { TaskLifecycleService, TaskRow } from "./task-lifecycle";
 
@@ -68,14 +69,14 @@ export class GitHubDomainService implements DomainService {
     return row ? this.toTaskRecord(row.task, row.specPath) : null;
   }
 
-  private toTaskRecord(row: TaskRow, specPath: string | null): TaskRecord {
+  private async toTaskRecord(row: TaskRow, specPath: string | null): Promise<TaskRecord> {
     return {
       id: row.id,
       key: row.key,
       projectId: row.projectId,
       repoId: row.repoId,
       title: row.title,
-      description: row.description,
+      description: await this.issueBody(row.description, row.projectId),
       status: row.status,
       doneReason: row.doneReason,
       assigneeMemberId: row.assigneeMemberId,
@@ -94,6 +95,28 @@ export class GitHubDomainService implements DomainService {
           .where(eq(repoSpecs.id, row.repoSpecId))
       : [];
     return this.toTaskRecord(row, spec?.path ?? null);
+  }
+
+  /**
+   * 同步到 GitHub Issue 的 body：Member 的 mention 換成 `@<GitHub login>`；Agent 的 mention
+   * 與找不到（或不在這個 Team）的 Member 只留顯示名稱，避免 GitHub 通知到同名的其他帳號。
+   */
+  private async issueBody(description: string, projectId: string): Promise<string> {
+    const memberIds = parseMentions(description).flatMap((m) =>
+      m.target.kind === "member" ? [m.target.memberId] : [],
+    );
+    if (memberIds.length === 0) return description;
+    const rows = await this.db
+      .select({ id: members.id, login: members.githubLogin })
+      .from(members)
+      .innerJoin(projects, eq(projects.teamId, members.teamId))
+      .where(and(eq(projects.id, projectId), inArray(members.id, memberIds)));
+    const logins = new Map(rows.map((r) => [r.id, r.login]));
+    return replaceMentions(description, (m) => {
+      if (m.target.kind !== "member") return null;
+      const login = logins.get(m.target.memberId);
+      return login ? `@${login}` : null;
+    });
   }
 
   async getRepo(repoId: string): Promise<RepoRecord | null> {
