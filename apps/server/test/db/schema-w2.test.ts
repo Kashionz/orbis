@@ -319,6 +319,32 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema：W2–4 契約", () =>
       PG.uniqueViolation,
     );
 
+    // 同一個 Repo 中，一個 Issue 只能對應一個 Task（兩人同時匯入同一個 Issue）
+    const otherTask = one(
+      await db
+        .insert(tasks)
+        .values({
+          projectId: task.projectId,
+          number: 2,
+          key: `${task.key}0`,
+          repoId: repo.id,
+          title: "另一個",
+        })
+        .returning(),
+    );
+    await expectPgError(
+      db.insert(taskIssueLinks).values({
+        taskId: otherTask.id,
+        repoId: repo.id,
+        githubRepoId: 9001,
+        issueNumber: 12,
+        issueId: 777,
+        issueUrl: "https://github.com/Kashionz/orbis-sandbox/issues/12",
+        snapshot: {},
+      }),
+      PG.uniqueViolation,
+    );
+
     await db.insert(githubWebhookDeliveries).values({
       deliveryId: `delivery-${seq}`,
       event: "issues",

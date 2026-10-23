@@ -1,5 +1,5 @@
 {
-  "id": "b80183c0-a813-4a05-af27-242d257cac77",
+  "id": "a6ae1d14-5090-416c-8e99-003968da14e3",
   "prevId": "b6a57d25-bcf3-4c06-b748-609c9314a975",
   "version": "7",
   "dialect": "postgresql",
@@ -575,7 +575,23 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "github_webhook_deliveries_claimed_at_idx": {
+          "name": "github_webhook_deliveries_claimed_at_idx",
+          "columns": [
+            {
+              "expression": "claimed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -852,7 +868,13 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "task_issue_links_repo_id_issue_number_unique": {
+          "name": "task_issue_links_repo_id_issue_number_unique",
+          "nullsNotDistinct": false,
+          "columns": ["repo_id", "issue_number"]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

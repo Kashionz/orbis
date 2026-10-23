@@ -53,7 +53,8 @@ CREATE TABLE "task_issue_links" (
 	"summary_hash" text,
 	"snapshot" jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "task_issue_links_repo_id_issue_number_unique" UNIQUE("repo_id","issue_number")
 );
 --> statement-breakpoint
 CREATE TABLE "run_controls" (
@@ -89,6 +90,7 @@ ALTER TABLE "run_controls" ADD CONSTRAINT "run_controls_run_id_runs_id_fk" FOREI
 ALTER TABLE "run_controls" ADD CONSTRAINT "run_controls_dispatch_id_dispatches_id_fk" FOREIGN KEY ("dispatch_id") REFERENCES "public"."dispatches"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "run_controls" ADD CONSTRAINT "run_controls_requested_by_member_id_members_id_fk" FOREIGN KEY ("requested_by_member_id") REFERENCES "public"."members"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "review_comments_gate_id_idx" ON "review_comments" USING btree ("gate_id");--> statement-breakpoint
+CREATE INDEX "github_webhook_deliveries_claimed_at_idx" ON "github_webhook_deliveries" USING btree ("claimed_at");--> statement-breakpoint
 CREATE INDEX "pull_requests_task_id_idx" ON "pull_requests" USING btree ("task_id");--> statement-breakpoint
 CREATE INDEX "task_issue_links_github_repo_id_issue_number_idx" ON "task_issue_links" USING btree ("github_repo_id","issue_number");--> statement-breakpoint
 CREATE INDEX "run_controls_run_id_idx" ON "run_controls" USING btree ("run_id");--> statement-breakpoint

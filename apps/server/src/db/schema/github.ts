@@ -49,22 +49,30 @@ export const taskIssueLinks = pgTable(
   },
   (t) => [
     index("task_issue_links_github_repo_id_issue_number_idx").on(t.githubRepoId, t.issueNumber),
+    // 同一個 Repo（Project 內的登記）中，一個 Issue 只能對應一個 Task；兩人同時匯入時由 DB 擋下。
+    // 同一個 GitHub repo 登記在不同 Project 時是不同的 repo_id，不受影響。
+    unique("task_issue_links_repo_id_issue_number_unique").on(t.repoId, t.issueNumber),
   ],
 );
 
 /**
  * webhook delivery 的去重紀錄。先以 processing 搶下處理權，處理成功後改成 completed；
  * 處理失敗會刪除紀錄，讓 GitHub 的 redelivery 可以重新處理。
+ * GitHub 只能重新傳送 3 天內的 delivery，Server 定期刪除舊紀錄（以 claimed_at 查詢）。
  */
-export const githubWebhookDeliveries = pgTable("github_webhook_deliveries", {
-  /** GitHub 的 `X-GitHub-Delivery`。 */
-  deliveryId: text("delivery_id").primaryKey(),
-  /** `X-GitHub-Event`，例如 `issues`。 */
-  event: text("event").notNull(),
-  status: githubWebhookDeliveryStatusEnum("status").notNull(),
-  claimedAt: timestamptz("claimed_at").notNull(),
-  completedAt: timestamptz("completed_at"),
-});
+export const githubWebhookDeliveries = pgTable(
+  "github_webhook_deliveries",
+  {
+    /** GitHub 的 `X-GitHub-Delivery`。 */
+    deliveryId: text("delivery_id").primaryKey(),
+    /** `X-GitHub-Event`，例如 `issues`。 */
+    event: text("event").notNull(),
+    status: githubWebhookDeliveryStatusEnum("status").notNull(),
+    claimedAt: timestamptz("claimed_at").notNull(),
+    completedAt: timestamptz("completed_at"),
+  },
+  (t) => [index("github_webhook_deliveries_claimed_at_idx").on(t.claimedAt)],
+);
 
 /** 以 GitHub App 身分開出的 PR 與 Task 的對應，以及 Feedback Loop 的次數（ARCHITECTURE §5.2）。 */
 export const pullRequests = pgTable(
