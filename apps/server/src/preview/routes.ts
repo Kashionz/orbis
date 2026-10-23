@@ -61,8 +61,18 @@ export function createPreviewRoutes(s: Services): Hono<AppEnv> {
   app.post(
     PREVIEW_SCREENSHOTS_ROUTE,
     auth,
-    // 先確認權限，之後才讀 body
+    // 先確認來源與權限，之後才讀 body
     async (c, next) => {
+      // multipart 的 POST 不需要 preflight：同站的 Preview 頁面會帶著 session cookie 送來，
+      // 所以只接受 Web UI 自己發出的請求（B 軌之後會對所有寫入型 API 檢查 Origin）
+      const origin = c.req.header("origin");
+      const site = c.req.header("sec-fetch-site");
+      if (
+        (origin !== undefined && origin !== new URL(preview.publicUrl).origin) ||
+        (site !== undefined && site !== "same-origin" && site !== "none")
+      ) {
+        throw new ApiError(403, "forbidden", "不接受其他網站發出的請求");
+      }
       const actor = c.get("actor");
       const scope = await requireRunVisible(db, actor, readId(c, "runId", "Run"));
       // 截圖是 Preview 留言的附件，和 Review Gate 退回的權限相同

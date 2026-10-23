@@ -319,12 +319,16 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
   describe("Preview 留言的截圖", () => {
     const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
-    function upload(cookie: string, bytes: Uint8Array, type = "image/png") {
+    function upload(
+      cookie: string,
+      bytes: Uint8Array,
+      headers: Record<string, string> = { origin: PUBLIC_URL, "sec-fetch-site": "same-origin" },
+    ) {
       const form = new FormData();
-      form.append("file", new Blob([bytes], { type }), "screenshot.png");
+      form.append("file", new Blob([bytes], { type: "image/png" }), "screenshot.png");
       return ctx.app.request(`/api/runs/${runId}/preview/screenshots`, {
         method: "POST",
-        headers: { cookie },
+        headers: { cookie, ...headers },
         body: form,
       });
     }
@@ -351,6 +355,18 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
       expect((await upload(team.members.member.cookie, big)).status).toBe(413);
       const other = await seedTeam(database.db, "Other");
       expect((await upload(other.members.owner.cookie, PNG)).status).toBe(404);
+    });
+
+    it("只接受 Web UI 發出的請求（Preview 頁面是 same-site，會帶著 session cookie）", async () => {
+      const fromPreview = await upload(team.members.member.cookie, PNG, {
+        origin: `http://${previewHost}`,
+        "sec-fetch-site": "same-site",
+      });
+      expect(fromPreview.status).toBe(403);
+      const sameSiteOnly = await upload(team.members.member.cookie, PNG, {
+        "sec-fetch-site": "same-site",
+      });
+      expect(sameSiteOnly.status).toBe(403);
     });
   });
 });
