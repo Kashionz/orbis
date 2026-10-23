@@ -182,6 +182,42 @@ fn decide_command(command: &str, ctx: &PolicyContext<'_>) -> Decision {
     Decision::Allow
 }
 
+/// 這個權限請求會動到哪些受保護的設定檔（`protected_paths` 中的項目）。
+/// 指令只能字面判斷，提到受保護的設定檔（或它們的目錄）時視為全部都可能被改。
+pub fn protected_targets(subject: &PermissionSubject, ctx: &PolicyContext<'_>) -> Vec<String> {
+    match subject {
+        PermissionSubject::Write { paths } | PermissionSubject::Delete { paths } => ctx
+            .protected_paths
+            .iter()
+            .filter(|p| {
+                paths.iter().any(|path| {
+                    is_protected(
+                        path,
+                        &PolicyContext {
+                            protected_paths: std::slice::from_ref(*p),
+                            ..ctx.clone()
+                        },
+                    )
+                })
+            })
+            .cloned()
+            .collect(),
+        PermissionSubject::Command { command } => {
+            let mentioned = analyze(command)
+                .segments
+                .iter()
+                .flatten()
+                .any(|word| mentions_protected(word, ctx));
+            if mentioned {
+                ctx.protected_paths.to_vec()
+            } else {
+                Vec::new()
+            }
+        }
+        PermissionSubject::Read { .. } | PermissionSubject::Other { .. } => Vec::new(),
+    }
+}
+
 fn is_protected(path: &Path, ctx: &PolicyContext<'_>) -> bool {
     let resolved = if path.is_absolute() {
         path.to_owned()

@@ -191,21 +191,70 @@ impl Normalizer {
     }
 }
 
-/// 權限選項（ACP → 協定）。
+/// 權限選項的名稱一律用 Orbis 的文字（依 `kind`），不沿用 Agent 的英文（issue #58）。
+pub fn option_name(kind: PermissionOptionKind) -> &'static str {
+    match kind {
+        PermissionOptionKind::AllowOnce => "允許這次",
+        PermissionOptionKind::AllowAlways => "永遠允許",
+        PermissionOptionKind::RejectOnce => "拒絕",
+        PermissionOptionKind::RejectAlways => "永遠拒絕",
+    }
+}
+
+/// 轉給人的權限選項（ACP → 協定，issue #52）：Agent 自己的「永遠允許／永遠拒絕」會寫進 Agent 的設定檔
+/// （例如 Claude Code 的 `.claude/settings.local.json`），之後的同類請求就不再經過 Runner，
+/// 所以有同方向的「這次」選項時拿掉它們。只有「永遠」選項時保留（否則人無法允許或拒絕），
+/// 寫入設定檔的後果由 session 中途的設定檔比對攔下。
 pub fn permission_options(options: &[acp::PermissionOption]) -> Vec<PermissionOption> {
+    let kind_of = |o: &acp::PermissionOption| match o.kind {
+        acp::PermissionOptionKind::AllowOnce => PermissionOptionKind::AllowOnce,
+        acp::PermissionOptionKind::AllowAlways => PermissionOptionKind::AllowAlways,
+        acp::PermissionOptionKind::RejectAlways => PermissionOptionKind::RejectAlways,
+        _ => PermissionOptionKind::RejectOnce,
+    };
+    let has = |kind: PermissionOptionKind| options.iter().any(|o| kind_of(o) == kind);
     options
         .iter()
-        .map(|o| PermissionOption {
-            option_id: o.option_id.0.to_string(),
-            name: o.name.clone(),
-            kind: match o.kind {
-                acp::PermissionOptionKind::AllowOnce => PermissionOptionKind::AllowOnce,
-                acp::PermissionOptionKind::AllowAlways => PermissionOptionKind::AllowAlways,
-                acp::PermissionOptionKind::RejectAlways => PermissionOptionKind::RejectAlways,
-                _ => PermissionOptionKind::RejectOnce,
-            },
+        .filter(|o| match kind_of(o) {
+            PermissionOptionKind::AllowAlways => !has(PermissionOptionKind::AllowOnce),
+            PermissionOptionKind::RejectAlways => !has(PermissionOptionKind::RejectOnce),
+            _ => true,
+        })
+        .map(|o| {
+            let kind = kind_of(o);
+            PermissionOption {
+                option_id: o.option_id.0.to_string(),
+                name: option_name(kind).to_owned(),
+                kind,
+            }
         })
         .collect()
+}
+
+/// 權限請求的標題（issue #58）：Agent 把 `cd <dir> && \` 這類前綴拿掉後，標題會留下只有 `\`
+/// 的行或行尾的續行符號。去掉這些續行符號、空行與前後空白，續行接成同一行。
+pub fn permission_title(raw: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut continued = false;
+    for line in raw.lines() {
+        let line = line.trim_end();
+        let (body, continues) = match line.strip_suffix('\\') {
+            Some(rest) => (rest.trim_end(), true),
+            None => (line, false),
+        };
+        let body = if continued { body.trim_start() } else { body };
+        if !body.trim().is_empty() {
+            match lines.last_mut() {
+                Some(last) if continued => {
+                    last.push(' ');
+                    last.push_str(body);
+                }
+                _ => lines.push(body.to_owned()),
+            }
+        }
+        continued = continues && (continued || !body.trim().is_empty());
+    }
+    lines.join("\n").trim().to_owned()
 }
 
 fn non_empty<T>(items: Vec<T>) -> Option<Vec<T>> {
@@ -422,5 +471,77 @@ mod tests {
         let cut = truncate(text, 7);
         assert!(cut.starts_with("測測"), "{cut}");
         assert!(cut.contains("已截斷"));
+    }
+
+    fn acp_option(id: &str, name: &str, kind: acp::PermissionOptionKind) -> acp::PermissionOption {
+        acp::PermissionOption::new(id.to_owned(), name.to_owned(), kind)
+    }
+
+    /// Windows 實機（ORB-2）：Claude Code 給的是 Always Allow／Yes／No。
+    #[test]
+    fn 權限選項用_orbis_的文字並拿掉_agent_的永遠允許() {
+        use acp::PermissionOptionKind as K;
+        let options = permission_options(&[
+            acp_option("allow_always", "Always Allow", K::AllowAlways),
+            acp_option("allow", "Yes", K::AllowOnce),
+            acp_option("reject", "No", K::RejectOnce),
+        ]);
+        assert_eq!(
+            options,
+            vec![
+                PermissionOption {
+                    option_id: "allow".into(),
+                    name: "允許這次".into(),
+                    kind: PermissionOptionKind::AllowOnce,
+                },
+                PermissionOption {
+                    option_id: "reject".into(),
+                    name: "拒絕".into(),
+                    kind: PermissionOptionKind::RejectOnce,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn 只有永遠選項時保留_否則無法允許或拒絕() {
+        use acp::PermissionOptionKind as K;
+        let options = permission_options(&[
+            acp_option("ok", "Allow", K::AllowAlways),
+            acp_option("never", "Never", K::RejectAlways),
+        ]);
+        let kinds: Vec<_> = options
+            .iter()
+            .map(|o| (o.option_id.as_str(), o.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("ok", PermissionOptionKind::AllowAlways),
+                ("never", PermissionOptionKind::RejectAlways)
+            ]
+        );
+        assert_eq!(options[0].name, "永遠允許");
+    }
+
+    #[test]
+    fn 權限請求標題去掉殘留的續行符號() {
+        // 拿掉 `cd … && \` 之後剩下的開頭 `\`
+        assert_eq!(permission_title("\\\npnpm test"), "pnpm test");
+        assert_eq!(permission_title(" \\ \n  pnpm test  \n"), "pnpm test");
+        // 行尾的續行接成同一行
+        assert_eq!(
+            permission_title("cargo test \\\n  -p orbis-runner \\\n  --quiet"),
+            "cargo test -p orbis-runner --quiet"
+        );
+        // 中間只有 `\` 的行不打斷續行
+        assert_eq!(
+            permission_title("git status \\\n\\\n--short"),
+            "git status --short"
+        );
+        // 沒有續行的多行內容保留換行，去掉空行
+        assert_eq!(permission_title("echo a\n\necho b"), "echo a\necho b");
+        assert_eq!(permission_title("Edit src/main.rs"), "Edit src/main.rs");
+        assert_eq!(permission_title("\\"), "");
     }
 }

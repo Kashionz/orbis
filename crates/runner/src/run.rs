@@ -51,6 +51,8 @@ const CANCEL_GRACE: Duration = Duration::from_secs(10);
 const DEFAULT_RATE_LIMIT_WAIT: Duration = Duration::from_secs(60);
 /// rate limit 恢復後送給 Agent 的 prompt。
 pub const RESUME_PROMPT: &str = "額度已恢復，請繼續剛才的工作。";
+/// session 中途 Agent 的設定檔被改、人處理完之後送給 Agent 的 prompt。
+pub const SETTINGS_RESUME_PROMPT: &str = "Agent 的設定檔已依 Orbis 的決定處理（接受或還原），請繼續剛才的工作，不要修改 Agent 的設定檔。";
 /// setup 的 tool call ID（Runner 自己產生）。
 const SETUP_TOOL_CALL: &str = "orbis-setup";
 
@@ -116,6 +118,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         pending: HashMap::new(),
         settings_baseline: HashMap::new(),
         preview: None,
+        approved_settings_writes: HashMap::new(),
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -155,13 +158,19 @@ enum Pending {
     /// Agent 的權限請求，回覆會轉給 Agent。
     Agent {
         reply: oneshot::Sender<acp::RequestPermissionOutcome>,
-        options: Vec<String>,
+        options: Vec<(String, PermissionOptionKind)>,
+        tool_call_id: String,
+        /// 這個請求會動到的受保護設定檔；人允許時記進 `approved_settings_writes`。
+        protected: Vec<String>,
     },
 }
 
 /// 一個回合怎麼結束。
 enum TurnEnd {
     Done(acp::StopReason),
+    /// 回合中 Agent 的設定檔被改（例如 Claude Code 自己寫入 `.claude/settings.local.json`），
+    /// Runner 中止了這個回合，要先問人（issue #52）。
+    SettingsChanged,
     RateLimited {
         retry_after: Option<Duration>,
         message: String,
@@ -184,6 +193,9 @@ struct Run {
     settings_baseline: HashMap<String, Option<Vec<u8>>>,
     /// Preview 的 dev server（§13），隨 Run 結束。
     preview: Option<Preview>,
+    /// 經權限請求允許（人或政策）、會寫入受保護設定檔的 tool call：tool call ID → 設定檔。
+    /// 這些 tool call 結束時的寫入視為已接受，不算 session 中途被改（issue #52）。
+    approved_settings_writes: HashMap<String, Vec<String>>,
 }
 
 impl Run {
@@ -324,7 +336,8 @@ impl Run {
         let setup_in_background = self.run_setup().await?;
         self.start_preview(setup_in_background);
         self.load_settings_baseline().await;
-        self.check_agent_settings().await?;
+        self.check_agent_settings(SettingsCheck::BeforePrompt)
+            .await?;
         self.start_agent().await
     }
 
@@ -343,7 +356,7 @@ impl Run {
             crate::repo_config::config_path()
         );
         let options = vec![
-            option("allow_once", "這次允許", PermissionOptionKind::AllowOnce),
+            option("allow_once", "允許這次", PermissionOptionKind::AllowOnce),
             option(
                 "allow_always",
                 "永遠允許這份設定",
@@ -644,37 +657,82 @@ impl Run {
         }
     }
 
-    /// 每次送出 prompt 前：Worktree 中 Agent 的設定檔和已接受的內容（一開始是 base commit）不同時，
-    /// 先問人（`agent_settings_changed`），允許後才繼續。
-    async fn check_agent_settings(&mut self) -> Result<(), Stop> {
+    /// 經權限請求允許、會寫入受保護設定檔的 tool call 結束了：它寫入的內容視為已接受。
+    fn accept_approved_settings_write(&mut self, tool_call_id: &str) {
+        let Some(paths) = self.approved_settings_writes.remove(tool_call_id) else {
+            return;
+        };
         let wt_path = self.wt().path.clone();
-        let mut changed = Vec::new();
-        for (path, accepted) in &self.settings_baseline {
-            let current = std::fs::read(wt_path.join(path)).ok();
-            if &current != accepted {
-                changed.push((path.clone(), current));
-            }
+        for path in paths {
+            let current = std::fs::read(wt_path.join(&path)).ok();
+            self.settings_baseline.insert(path, current);
         }
+    }
+
+    /// 和已接受的內容不同的受保護設定檔：（相對路徑, 目前內容），依路徑排序。
+    fn changed_agent_settings(&self) -> Vec<(String, Option<Vec<u8>>)> {
+        let Some(wt) = self.worktree.as_ref() else {
+            return Vec::new();
+        };
+        let mut changed: Vec<_> = self
+            .settings_baseline
+            .iter()
+            .filter_map(|(path, accepted)| {
+                let current = std::fs::read(wt.path.join(path)).ok();
+                (&current != accepted).then(|| (path.clone(), current))
+            })
+            .collect();
+        changed.sort_by(|a, b| a.0.cmp(&b.0));
+        changed
+    }
+
+    /// Worktree 中 Agent 的設定檔和已接受的內容（一開始是 base commit）不同時，先問人
+    /// （`agent_settings_changed`）。
+    ///
+    /// - 送出 prompt 前（含啟動 session 前）：允許才繼續，拒絕就停止 Run。
+    /// - session 中途被改（issue #52）：接受變更，或把檔案還原成已接受的內容，兩者都繼續 session。
+    async fn check_agent_settings(&mut self, when: SettingsCheck) -> Result<(), Stop> {
+        let changed = self.changed_agent_settings();
         if changed.is_empty() {
             return Ok(());
         }
-        changed.sort_by(|a, b| a.0.cmp(&b.0));
         let list = changed
             .iter()
             .map(|(p, _)| p.as_str())
             .collect::<Vec<_>>()
             .join("、");
-        let title = format!(
-            "Worktree 中 Agent 的設定檔 {list} 和 base commit 不同，可能讓 Agent 繞過 Permission Policy。允許後才繼續。"
-        );
-        let options = vec![
-            option("allow_once", "允許並繼續", PermissionOptionKind::AllowOnce),
-            option(
-                "reject_once",
-                "拒絕並停止 Run",
-                PermissionOptionKind::RejectOnce,
+        let (title, options) = match when {
+            SettingsCheck::BeforePrompt => (
+                format!(
+                    "Worktree 中 Agent 的設定檔 {list} 和 base commit 不同，可能讓 Agent 繞過 Permission Policy。允許後才繼續。"
+                ),
+                vec![
+                    option("allow_once", "允許並繼續", PermissionOptionKind::AllowOnce),
+                    option(
+                        "reject_once",
+                        "拒絕並停止 Run",
+                        PermissionOptionKind::RejectOnce,
+                    ),
+                ],
             ),
-        ];
+            SettingsCheck::MidSession => (
+                format!(
+                    "Agent 在執行中修改了自己的設定檔 {list}，可能讓之後的操作不再經過 Permission Policy。已中止這個回合，請決定要接受變更還是還原。"
+                ),
+                vec![
+                    option(
+                        "allow_once",
+                        "接受變更並繼續",
+                        PermissionOptionKind::AllowOnce,
+                    ),
+                    option(
+                        "reject_once",
+                        "還原設定檔並繼續",
+                        PermissionOptionKind::RejectOnce,
+                    ),
+                ],
+            ),
+        };
         let chosen = self
             .ask_human(
                 PermissionPurpose::AgentSettingsChanged,
@@ -683,14 +741,39 @@ impl Run {
                 options,
             )
             .await?;
-        if chosen != "allow_once" {
-            return Err(Stop::failed(
+        if chosen == "allow_once" {
+            for (path, current) in changed {
+                self.settings_baseline.insert(path, current);
+            }
+            return Ok(());
+        }
+        match when {
+            SettingsCheck::BeforePrompt => Err(Stop::failed(
                 RunErrorCode::AgentError,
                 format!("Agent 設定檔的變更（{list}）沒有被允許"),
-            ));
+            )),
+            SettingsCheck::MidSession => self.restore_agent_settings(&changed),
         }
-        for (path, current) in changed {
-            self.settings_baseline.insert(path, current);
+    }
+
+    /// 把被修改的設定檔還原成已接受的內容（原本不存在的就刪除）。
+    fn restore_agent_settings(&self, changed: &[(String, Option<Vec<u8>>)]) -> Result<(), Stop> {
+        let wt_path = self.wt().path.clone();
+        for (path, _) in changed {
+            let file = wt_path.join(path);
+            let result = match self.settings_baseline.get(path).cloned().flatten() {
+                Some(content) => std::fs::write(&file, content),
+                None => match std::fs::remove_file(&file) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    other => other,
+                },
+            };
+            result.map_err(|e| {
+                Stop::failed(
+                    RunErrorCode::AgentError,
+                    format!("無法還原 Agent 的設定檔 {path}：{e}"),
+                )
+            })?;
         }
         Ok(())
     }
@@ -707,6 +790,10 @@ impl Run {
                 } => {
                     self.wait_rate_limit(retry_after, message).await?;
                     prompt = vec![acp::ContentBlock::from(RESUME_PROMPT.to_owned())];
+                }
+                TurnEnd::SettingsChanged => {
+                    self.check_agent_settings(SettingsCheck::MidSession).await?;
+                    prompt = vec![acp::ContentBlock::from(SETTINGS_RESUME_PROMPT.to_owned())];
                 }
                 TurnEnd::Done(reason) => {
                     self.send_run_diff().await;
@@ -726,7 +813,8 @@ impl Run {
 
     /// 送出 prompt，處理期間的 update、權限請求與 RunControl，直到回合結束。
     async fn turn(&mut self, prompt: Vec<acp::ContentBlock>) -> Result<TurnEnd, Stop> {
-        self.check_agent_settings().await?;
+        self.check_agent_settings(SettingsCheck::BeforePrompt)
+            .await?;
         self.set_status(RunStatus::Running, None, None);
         let session = self.session.as_ref().expect("Agent 已啟動");
         let mut closed = session.closed();
@@ -734,12 +822,21 @@ impl Run {
         tokio::pin!(turn);
         let mut notices = self.notices.take().expect("Agent 已啟動");
         let mut canceling: Option<tokio::time::Instant> = None;
+        let mut settings_changed = false;
         let result = loop {
             let deadline = canceling
                 .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86400 * 365));
             tokio::select! {
                 result = &mut turn => break result,
-                Some(notice) = notices.recv() => self.on_notice(notice),
+                Some(notice) = notices.recv() => {
+                    if self.on_notice(notice) && canceling.is_none() {
+                        tracing::warn!(run_id = %self.run_id(), "回合中 Agent 的設定檔被修改，中止這個回合並問人");
+                        self.session.as_ref().expect("Agent 已啟動").cancel();
+                        self.cancel_pending();
+                        settings_changed = true;
+                        canceling = Some(tokio::time::Instant::now() + CANCEL_GRACE);
+                    }
+                }
                 input = self.rx.recv() => match input {
                     None | Some(RunInput::Shutdown) => {
                         self.notices = Some(notices);
@@ -760,7 +857,7 @@ impl Run {
                         break result;
                     }
                     self.notices = Some(notices);
-                    if canceling.is_some() {
+                    if canceling.is_some() && !settings_changed {
                         return Err(Stop::Canceled);
                     }
                     let tail = self.session.as_ref().map(AcpSession::stderr_tail).unwrap_or_default();
@@ -769,6 +866,12 @@ impl Run {
                 () = tokio::time::sleep_until(deadline), if canceling.is_some() => {
                     tracing::warn!(run_id = %self.run_id(), "Agent 沒有在寬限期內結束回合，直接結束程序樹");
                     self.notices = Some(notices);
+                    if settings_changed {
+                        return Err(Stop::failed(
+                            RunErrorCode::AgentError,
+                            "Agent 的設定檔被修改後，Agent 沒有在寬限期內停下來",
+                        ));
+                    }
                     return Err(Stop::Canceled);
                 }
             }
@@ -779,6 +882,9 @@ impl Run {
         }
         self.notices = Some(notices);
         self.cancel_pending();
+        if settings_changed {
+            return Ok(TurnEnd::SettingsChanged);
+        }
         if canceling.is_some() {
             return Err(Stop::Canceled);
         }
@@ -820,7 +926,7 @@ impl Run {
                     );
                     return false;
                 };
-                if !options.contains(option_id) {
+                if !options.iter().any(|(id, _)| id == option_id) {
                     self.reject(
                         &control,
                         RunControlRejectReason::UnknownPermissionRequest,
@@ -828,9 +934,26 @@ impl Run {
                     );
                     return false;
                 }
-                let Some(Pending::Agent { reply, .. }) = self.pending.remove(request_id) else {
+                let Some(Pending::Agent {
+                    reply,
+                    options,
+                    tool_call_id,
+                    protected,
+                }) = self.pending.remove(request_id)
+                else {
                     unreachable!("剛剛確認過");
                 };
+                let allowed = options.iter().any(|(id, kind)| {
+                    id == option_id
+                        && matches!(
+                            kind,
+                            PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways
+                        )
+                });
+                if allowed && !protected.is_empty() {
+                    self.approved_settings_writes
+                        .insert(tool_call_id, protected);
+                }
                 let _ = reply.send(acp::RequestPermissionOutcome::Selected(
                     acp::SelectedPermissionOutcome::new(option_id.clone()),
                 ));
@@ -874,9 +997,15 @@ impl Run {
         }
     }
 
-    fn on_notice(&mut self, notice: AgentNotice) {
+    /// 處理 Agent 的訊息。回傳 `true` 表示 Agent 的設定檔在這個回合中被修改了（issue #52）：
+    /// 每個 tool call 結束時與每個權限請求進來時，都和已接受的內容比對一次。
+    fn on_notice(&mut self, notice: AgentNotice) -> bool {
         match notice {
             AgentNotice::Update(update) => {
+                let finished = tool_call_finished(&update);
+                if let Some(id) = &finished {
+                    self.accept_approved_settings_write(id);
+                }
                 let events = self
                     .normalizer
                     .as_mut()
@@ -885,8 +1014,17 @@ impl Run {
                 for event in events {
                     self.emit(event);
                 }
+                finished.is_some() && !self.changed_agent_settings().is_empty()
             }
-            AgentNotice::Permission { request, reply } => self.on_permission(request, reply),
+            AgentNotice::Permission { request, reply } => {
+                if !self.changed_agent_settings().is_empty() {
+                    // 先中止回合問人；這個請求不再處理（回覆取消）。
+                    let _ = reply.send(acp::RequestPermissionOutcome::Cancelled);
+                    return true;
+                }
+                self.on_permission(request, reply);
+                false
+            }
         }
     }
 
@@ -898,16 +1036,16 @@ impl Run {
     ) {
         let wt = self.wt().clone();
         let subject = self.profile.classify(&request, &wt.path);
-        let decision = policy::decide(
-            &subject,
-            &PolicyContext {
-                policy: self.offer.permission_policy,
-                worktree: &wt.path,
-                allow_commands: &wt.config.config.permissions.allow_commands,
-                default_branch: &wt.default_branch,
-                protected_paths: &self.profile.protected_paths,
-            },
-        );
+        let policy_ctx = PolicyContext {
+            policy: self.offer.permission_policy,
+            worktree: &wt.path,
+            allow_commands: &wt.config.config.permissions.allow_commands,
+            default_branch: &wt.default_branch,
+            protected_paths: &self.profile.protected_paths,
+        };
+        let decision = policy::decide(&subject, &policy_ctx);
+        let protected = policy::protected_targets(&subject, &policy_ctx);
+        let tool_call_id = request.tool_call.tool_call_id.0.to_string();
         tracing::info!(run_id = %self.run_id(), ?subject, ?decision, "權限請求");
         let pick = |kinds: &[acp::PermissionOptionKind]| {
             kinds.iter().find_map(|kind| {
@@ -931,6 +1069,10 @@ impl Run {
             Decision::Ask { .. } => None,
         };
         if let Some(choice) = auto {
+            if matches!(decision, Decision::Allow) && !protected.is_empty() {
+                self.approved_settings_writes
+                    .insert(tool_call_id, protected);
+            }
             let outcome = match choice {
                 Some(id) => {
                     acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(id))
@@ -951,7 +1093,9 @@ impl Run {
             .tool_call
             .fields
             .title
-            .clone()
+            .as_deref()
+            .map(normalize::permission_title)
+            .filter(|t| !t.is_empty())
             .unwrap_or_else(|| request.tool_call.tool_call_id.0.to_string());
         let request_id: PermissionRequestId = uuid::Uuid::now_v7().to_string().into();
         let options = normalize::permission_options(&request.options);
@@ -959,7 +1103,12 @@ impl Run {
             request_id.clone(),
             Pending::Agent {
                 reply,
-                options: options.iter().map(|o| o.option_id.clone()).collect(),
+                options: options
+                    .iter()
+                    .map(|o| (o.option_id.clone(), o.kind))
+                    .collect(),
+                tool_call_id,
+                protected,
             },
         );
         self.emit(EventKind::PermissionRequest {
@@ -1164,6 +1313,29 @@ impl Run {
         let sha = git.rev_parse_commit("HEAD").await.map_err(fail)?;
         Ok((branch, sha))
     }
+}
+
+/// 什麼時候檢查 Agent 的設定檔。
+#[derive(Debug, Clone, Copy)]
+enum SettingsCheck {
+    /// 啟動 session 前、每次送出 prompt 前。
+    BeforePrompt,
+    /// session 中途偵測到被修改，回合已中止。
+    MidSession,
+}
+
+/// 這筆 update 表示某個 tool call 結束（completed／failed）時，回傳它的 ID。
+fn tool_call_finished(update: &acp::SessionUpdate) -> Option<String> {
+    let (id, status) = match update {
+        acp::SessionUpdate::ToolCall(call) => (&call.tool_call_id, Some(call.status)),
+        acp::SessionUpdate::ToolCallUpdate(update) => (&update.tool_call_id, update.fields.status),
+        _ => return None,
+    };
+    matches!(
+        status,
+        Some(acp::ToolCallStatus::Completed | acp::ToolCallStatus::Failed)
+    )
+    .then(|| id.0.to_string())
 }
 
 /// 等到 ACP 連線結束（不把 watch 的 guard 留在 await 之間）。

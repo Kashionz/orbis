@@ -579,87 +579,157 @@ async fn allow_commands_中的指令自動允許() {
     assert_eq!(subject, "feat: 測試 Task（ORB-1）");
 }
 
-/// Agent 修改自己的設定檔：寫入時問人；之後啟動回合前和 base commit 比對，有差異先問人。
-#[tokio::test(flavor = "multi_thread")]
-async fn agent_設定檔的防護() {
-    // 用內建 claude-code profile 的修補與受保護路徑，但啟動指令換成 Fake Agent。
-    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
-        format!(
-            "worktree_root = {}\n[agents.claude-code]\ncommand = {}\nargs = [\"--script\", {}]\n",
-            toml_string(&wt.to_string_lossy()),
-            toml_string(&support::fake_agent_bin().to_string_lossy()),
-            toml_string(&runner_script("agent-settings.yaml").to_string_lossy()),
+/// runner.toml：用內建 claude-code profile 的修補與受保護路徑，但啟動指令換成 Fake Agent。
+fn claude_code_as_fake(wt: &Path, script: &Path) -> String {
+    format!(
+        "worktree_root = {}\n[agents.claude-code]\ncommand = {}\nargs = [\"--script\", {}]\n",
+        toml_string(&wt.to_string_lossy()),
+        toml_string(&support::fake_agent_bin().to_string_lossy()),
+        toml_string(&script.to_string_lossy()),
+    )
+}
+
+/// 回覆權限請求，確認被接受。
+async fn answer(conn: &mut RunnerSide, control_id: &str, request: &Value, option_id: &str) {
+    let result = conn
+        .control(
+            "r1",
+            "d-r1",
+            control_id,
+            RunControlAction::PermissionResponse {
+                request_id: request["request_id"].as_str().unwrap().into(),
+                option_id: option_id.into(),
+            },
         )
+        .await;
+    assert_eq!(result_outcome(&result), "applied", "{result}");
+}
+
+/// Agent 修改自己的設定檔（issue #52）：經權限請求寫入時問人，人允許的寫入視為已接受；
+/// 不經過權限請求的寫入在 session 中途就被發現 → 中止回合並問人，選「還原」後檔案還原、
+/// 同一個 session 繼續。
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_設定檔在_session_中途被改時中止回合並問人_還原後繼續() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        claude_code_as_fake(wt, &runner_script("agent-settings.yaml"))
     })
     .await;
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let worktree = std::path::PathBuf::from(
+        conn.wait_event("worktree_ready").await["worktree_path"]
+            .as_str()
+            .unwrap(),
+    );
     // 寫入 .claude/settings.json：Worktree 內的寫入在 auto 下本來自動允許，Agent 設定檔例外。
     let request = conn.wait_event("permission_request").await;
     assert_eq!(request["purpose"], "tool");
     assert_eq!(request["tool_call_id"], "write-settings");
-    conn.control(
-        "r1",
-        "d-r1",
-        "c1",
-        RunControlAction::PermissionResponse {
-            request_id: request["request_id"].as_str().unwrap().into(),
-            option_id: "allow_once".into(),
-        },
-    )
-    .await;
-    conn.wait_status("awaiting_gate").await;
-    conn.control(
-        "r1",
-        "d-r1",
-        "c2",
-        RunControlAction::GateResult {
-            gate: GateKind::Review,
-            decision: GateDecision::Rejected,
-        },
-    )
-    .await;
-    conn.control(
-        "r1",
-        "d-r1",
-        "c3",
-        RunControlAction::Prompt {
-            prompt: vec![ContentBlock::Text {
-                text: "繼續".into(),
-            }],
-            source: None,
-        },
-    )
-    .await;
-    // 第二回合開始前：設定檔和 base commit 不同 → 先問人。
+    answer(&mut conn, "c1", &request, "allow_once").await;
+
+    // Agent 直接寫入 settings.local.json：回合被中止，問人。
     let request = conn.wait_event("permission_request").await;
     assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
     let title = request["title"].as_str().unwrap();
+    assert!(title.contains(".claude/settings.local.json"), "{title}");
     assert!(
-        title.contains(".claude/settings.json") && title.contains(".claude/settings.local.json"),
-        "{title}"
+        !title.contains(".claude/settings.json"),
+        "人允許的寫入不再問：{title}"
     );
-    let running_before_answer = conn
-        .events
+    let options: Vec<&str> = request["options"]
+        .as_array()
+        .unwrap()
         .iter()
-        .rev()
-        .take_while(|e| e["kind"] != "permission_request")
-        .any(|e| e["kind"] == "status_changed" && e["status"] == "running");
-    assert!(!running_before_answer, "允許前不可以開始回合");
-    conn.control(
-        "r1",
-        "d-r1",
-        "c4",
-        RunControlAction::PermissionResponse {
-            request_id: request["request_id"].as_str().unwrap().into(),
-            option_id: "allow_once".into(),
-        },
-    )
-    .await;
+        .map(|o| o["option_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(options, ["allow_once", "reject_once"]);
+    answer(&mut conn, "c2", &request, "reject_once").await;
+
     conn.wait_for("第二回合", |v| {
         v["kind"] == "message_chunk" && v["content"]["text"] == "第二回合完成。"
     })
     .await;
+    let diff = conn.wait_event("run_diff").await;
+    conn.wait_status("awaiting_gate").await;
+    assert!(
+        !worktree
+            .join(".claude")
+            .join("settings.local.json")
+            .exists(),
+        "選「還原」後 base commit 沒有的設定檔要刪除"
+    );
+    assert!(worktree.join(".claude").join("settings.json").is_file());
+    let paths: Vec<&str> = diff["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, [".claude/settings.json"], "{diff}");
+}
+
+/// session 中途被改，人選「接受」：保留變更並繼續，之後的回合不再為同一份內容問人。
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_設定檔在_session_中途被改_接受後不再重複問() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        claude_code_as_fake(wt, &runner_script("agent-settings.yaml"))
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let worktree = std::path::PathBuf::from(
+        conn.wait_event("worktree_ready").await["worktree_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let request = conn.wait_event("permission_request").await;
+    answer(&mut conn, "c1", &request, "allow_once").await;
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
+    answer(&mut conn, "c2", &request, "allow_once").await;
+    conn.wait_status("awaiting_gate").await;
+    assert!(
+        worktree
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
+    let asked_again = conn
+        .events
+        .iter()
+        .filter(|e| e["kind"] == "permission_request")
+        .count();
+    assert_eq!(asked_again, 2, "接受之後不再問");
+}
+
+/// 啟動 session 前：Worktree 中 Agent 的設定檔和 base commit 不同（這裡是 setup 寫入的），
+/// 先問人，允許後才開始回合。
+#[tokio::test(flavor = "multi_thread")]
+async fn 啟動_session_前設定檔和_base_commit_不同時先問人() {
+    let config = "[worktree]\nsetup = \"mkdir .claude && cd .claude && echo {} > settings.json\"\n";
+    let mut env = Env::new(&[("README.md", "a\n"), (cfg().as_str(), config)], |wt| {
+        claude_code_as_fake(wt, &runner_script("simple.yaml"))
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    approve_config(&mut conn, "r1").await;
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
+    assert!(
+        request["title"]
+            .as_str()
+            .unwrap()
+            .contains(".claude/settings.json"),
+        "{request}"
+    );
+    let running_before_answer = conn
+        .events
+        .iter()
+        .any(|e| e["kind"] == "status_changed" && e["status"] == "running");
+    assert!(!running_before_answer, "允許前不可以開始回合");
+    answer(&mut conn, "c1", &request, "allow_once").await;
+    conn.wait_status("running").await;
     conn.wait_status("awaiting_gate").await;
 }
 

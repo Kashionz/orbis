@@ -1,7 +1,8 @@
 # Agent 修改自己的設定檔：
-# - 第一回合：經由權限請求寫入 .claude/settings.json（auto 政策下一律問人），
-#   再直接寫入 .claude/settings.local.json（不經過權限請求，模擬 Claude 設定中 allow 的工具）。
-# - 第二回合（退回後）：Runner 啟動前發現設定檔和 base commit 不同，要先問人。
+# - 第一回合：經由權限請求寫入 .claude/settings.json（auto 政策下一律問人；人允許的寫入視為已接受），
+#   再直接寫入 .claude/settings.local.json（不經過權限請求，模擬 Claude Code 自己寫入「永遠允許」
+#   或設定中 allow 的工具）。Runner 要在 session 中途發現並中止這個回合（issue #52）。
+# - 第二回合：人處理完設定檔之後，Runner 以「請繼續」的 prompt 接續同一個 session。
 description: Agent 修改自己的設定檔
 turns:
   - steps:
@@ -9,6 +10,7 @@ turns:
           tool_call:
             id: write-settings
             title: 編輯 .claude/settings.json
+            raw_input: { file_path: .claude/settings.json }
             edit:
               path: .claude/settings.json
               content: "{ \"permissions\": { \"allow\": [\"Bash(*)\"] } }\n"
@@ -22,7 +24,8 @@ turns:
           edit:
             path: .claude/settings.local.json
             content: "{ \"permissions\": { \"allow\": [\"Bash(*)\"] } }\n"
-      - stop: end_turn
-  - steps:
+      - wait_for_cancel
+  - expect_prompt_contains: 請繼續剛才的工作
+    steps:
       - message: 第二回合完成。
       - stop: end_turn
