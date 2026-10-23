@@ -15,6 +15,7 @@ use agent_client_protocol::schema::v1::{
 use orbis_protocol::availability::{AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS};
 
 use crate::home::{AgentSettings, Settings};
+use crate::paths;
 use crate::policy::PermissionSubject;
 use crate::process::{self, ProcessSpec};
 
@@ -44,8 +45,51 @@ pub enum Launch {
         version: &'static str,
         entry: &'static str,
         min_node: u32,
+        /// 套件內附、由套件再啟動的原生執行檔。
+        native: Option<NativeBinary>,
     },
 }
+
+/// npm 套件內附的原生執行檔（例如 Claude Agent SDK 的 `claude.exe`）。
+///
+/// Windows 上安裝路徑可能超過 `MAX_PATH`（`--home` 或 Desktop 的狀態目錄很深時），
+/// 套件用 Node 的 spawn 啟動它會回報找不到檔案；這時 Runner 以 `env` 指定的環境變數
+/// 傳入帶 `\\?\` 前綴的路徑（[`paths::spawnable`](crate::paths::spawnable)）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeBinary {
+    /// 套件接受的「執行檔路徑」環境變數。
+    pub env: &'static str,
+    /// 平台套件名稱的前綴，後面接 `<os>-<arch>`，例如 `@anthropic-ai/claude-agent-sdk-`。
+    pub platform_package_prefix: &'static str,
+    /// 平台套件內的執行檔名稱（Windows）。
+    pub windows_file: &'static str,
+}
+
+impl NativeBinary {
+    /// Windows 上平台套件內的執行檔位置；其他平台沒有路徑長度問題，回傳 `None`。
+    fn windows_path(&self, node_modules: &Path) -> Option<PathBuf> {
+        if !cfg!(windows) {
+            return None;
+        }
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            _ => return None,
+        };
+        let mut path = node_modules.to_owned();
+        for part in format!("{}win32-{arch}", self.platform_package_prefix).split('/') {
+            path.push(part);
+        }
+        Some(path.join(self.windows_file))
+    }
+}
+
+/// Claude Agent SDK 內附的 Claude Code 原生執行檔。
+const CLAUDE_NATIVE: NativeBinary = NativeBinary {
+    env: "CLAUDE_CODE_EXECUTABLE",
+    platform_package_prefix: "@anthropic-ai/claude-agent-sdk-",
+    windows_file: "claude.exe",
+};
 
 /// 一個 Agent 的接入設定。
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +122,7 @@ impl AgentProfile {
                 version: CLAUDE_ACP_VERSION,
                 entry: CLAUDE_ACP_ENTRY,
                 min_node: CLAUDE_ACP_MIN_NODE,
+                native: Some(CLAUDE_NATIVE),
             },
             // 使用者的 `permissions.defaultMode` 可能是 acceptEdits 或 bypassPermissions；
             // 一律切回會詢問的 default 模式（ADR-0006：不使用 bypass）。
@@ -149,10 +194,22 @@ impl AgentProfile {
                 package,
                 version,
                 entry,
+                native,
                 ..
             } => {
-                let entry = install::entry_path(agents_dir, package, version, entry);
-                Ok(ProcessSpec::new("node").arg(entry))
+                let entry_file = install::entry_path(agents_dir, package, version, entry);
+                let mut spec = ProcessSpec::new("node").arg(entry_file);
+                let native = native.as_ref().and_then(|native| {
+                    let file = native
+                        .windows_path(&install::node_modules(agents_dir, package, version))?;
+                    let spawnable = paths::spawnable(&file);
+                    (file.is_file() && spawnable != paths::normalize(&file))
+                        .then_some((native.env, spawnable))
+                });
+                if let Some((env, file)) = native {
+                    spec = spec.env(env, file);
+                }
+                Ok(spec)
             }
         }
     }
@@ -344,6 +401,46 @@ mod tests {
 
     fn wt() -> PathBuf {
         std::env::temp_dir().join("wt")
+    }
+
+    /// 實機測試時發現：`--home` 很深時，內附的 `claude.exe` 路徑超過 `MAX_PATH`，
+    /// adapter 用 Node 啟動它會失敗（ENOENT）。
+    #[cfg(windows)]
+    #[test]
+    fn 內附執行檔路徑過長時以環境變數傳入長路徑形式() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = AgentProfile::claude_code();
+        let env_of = |agents_dir: &Path| {
+            profile
+                .launch_spec(agents_dir)
+                .unwrap()
+                .env
+                .into_iter()
+                .find(|(k, _)| k == CLAUDE_NATIVE.env)
+                .map(|(_, v)| PathBuf::from(v))
+        };
+        let install = |agents_dir: &Path| {
+            let file = CLAUDE_NATIVE
+                .windows_path(&install::node_modules(
+                    agents_dir,
+                    CLAUDE_ACP_PACKAGE,
+                    CLAUDE_ACP_VERSION,
+                ))
+                .unwrap();
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, b"").unwrap();
+            file
+        };
+
+        let short = dir.path().join("a");
+        install(&short);
+        assert_eq!(env_of(&short), None, "路徑不長時維持套件的預設行為");
+
+        let deep = dir.path().join("d".repeat(150));
+        let file = install(&deep);
+        let passed = env_of(&deep).expect("應傳入執行檔路徑");
+        assert!(passed.to_string_lossy().starts_with(r"\\?\"));
+        assert!(paths::same_path(&passed, &file));
     }
 
     fn call(kind: ToolKind, raw: serde_json::Value) -> ToolCallUpdate {

@@ -43,10 +43,12 @@ fn normalize_prefix(kind: Prefix<'_>, raw: &std::ffi::OsStr) -> std::ffi::OsStri
 
 /// 正規化，並在檔案存在時解開 symlink／junction（Windows 上不帶 `\\?\` 前綴）。
 /// 用在比較 Agent 回報的路徑與 Worktree 時，避免 `C:\Users\RUNNER~1` 這類別名造成誤判。
+/// 路徑不存在時改用 [`resolve_existing`]，讓存在的上層目錄同樣被解開（例如 macOS 的 `/home`），
+/// 兩邊比較的基準才一致。
 pub fn canonical(path: &Path) -> PathBuf {
     match std::fs::canonicalize(path) {
         Ok(real) => normalize(&real),
-        Err(_) => normalize(path),
+        Err(_) => resolve_existing(path),
     }
 }
 
@@ -182,9 +184,44 @@ pub fn expand_home(raw: &str, home: &Path) -> PathBuf {
     }
 }
 
+/// Windows 一般路徑的長度上限（`MAX_PATH`，含結尾的 NUL）。
+pub const WINDOWS_MAX_PATH: usize = 260;
+
+/// 交給其他程式啟動的執行檔路徑：Windows 上路徑長度達到 `MAX_PATH` 時改成 `\\?\C:\…`，
+/// 否則 `CreateProcess`（例如 Node 的 spawn）會回報找不到檔案。其他情況原樣回傳。
+pub fn spawnable(path: &Path) -> PathBuf {
+    let path = normalize(path);
+    let text = path.to_string_lossy();
+    let is_disk = matches!(
+        path.components().next(),
+        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_))
+    );
+    if cfg!(windows) && is_disk && text.chars().count() >= WINDOWS_MAX_PATH - 1 {
+        PathBuf::from(format!(r"\\?\{text}"))
+    } else {
+        path
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn 過長的執行檔路徑加上長路徑前綴() {
+        let short = PathBuf::from(r"C:\a\claude.exe");
+        assert_eq!(spawnable(&short), short);
+        let long = PathBuf::from(format!(r"C:\{}\claude.exe", "a".repeat(260)));
+        let out = spawnable(&long);
+        assert!(
+            out.to_string_lossy().starts_with(r"\\?\C:\"),
+            "{}",
+            out.display()
+        );
+        // 正規化後仍是同一個位置
+        assert!(same_path(&out, &long));
+    }
 
     #[test]
     fn 正規化會解開點與上一層() {

@@ -14,9 +14,14 @@ fn prefix_dir(agents_dir: &Path, package: &str, version: &str) -> PathBuf {
     agents_dir.join(format!("{}@{version}", package.replace('/', "__")))
 }
 
+/// 安裝目錄的 `node_modules`。
+pub fn node_modules(agents_dir: &Path, package: &str, version: &str) -> PathBuf {
+    prefix_dir(agents_dir, package, version).join("node_modules")
+}
+
 /// 套件進入點的完整路徑。
 pub fn entry_path(agents_dir: &Path, package: &str, version: &str, entry: &str) -> PathBuf {
-    let mut path = prefix_dir(agents_dir, package, version).join("node_modules");
+    let mut path = node_modules(agents_dir, package, version);
     for part in package.split('/') {
         path.push(part);
     }
