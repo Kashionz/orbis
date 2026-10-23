@@ -1,13 +1,10 @@
-// Hono 路由，由 Server 掛在 apps/server/src/routes/github.ts 的掛載點：
-// - `createGitHubWebhookRoutes` → `/api/webhooks/github`
-// - `createGitHubApiRoutes` → `/api/github`
+// GitHub webhook 的 Hono 路由。Server 在 apps/server/src/routes/github.ts 把它掛在
+// `API_ROUTES.githubWebhook`，不經過登入檢查（由簽章驗證把關）。
 //
-// TODO(contract): 下面的 request／response schema 之後移到 packages/api-contract（契約 PR）。
+// 從 Issue 匯入 Task 的端點由 Server 依 `API_ROUTES` 提供，內部呼叫 GitHubIntegration。
 
-import { type Context, Hono, type MiddlewareHandler } from "hono";
-import { z } from "zod";
+import { Hono } from "hono";
 import type { GitHubIntegration } from "./integration";
-import { RepoNotConnectedError } from "./issues/import";
 
 export function createGitHubWebhookRoutes(github: Pick<GitHubIntegration, "handleWebhook">): Hono {
   const app = new Hono();
@@ -20,76 +17,5 @@ export function createGitHubWebhookRoutes(github: Pick<GitHubIntegration, "handl
     });
     return c.json(result.body, result.status);
   });
-  return app;
-}
-
-export const InspectRepoQuery = z.object({
-  /** 要把 Repo 登記到哪個 Project（用來檢查權限）。 */
-  projectId: z.string().min(1),
-  owner: z.string().trim().min(1),
-  name: z.string().trim().min(1),
-});
-
-export const ImportIssuesInput = z
-  .object({ issueNumbers: z.array(z.number().int().positive()).min(1).max(100) })
-  .strict();
-
-export interface GitHubApiRoutesOptions {
-  github: Pick<GitHubIntegration, "inspectRepo" | "listImportableIssues" | "importIssues">;
-  /** Server 的登入檢查（沒有登入時擋下）。 */
-  authenticate: MiddlewareHandler;
-  /** 目前登入的 Member（authenticate 之後一定有值）。 */
-  memberIdOf: (c: Context) => string;
-  /** 目前的 Member 能不能在這個 Project 登記 Repo（Role 檢查由 Server 負責）。 */
-  canManageRepos: (c: Context, projectId: string) => Promise<boolean>;
-  /** 目前的 Member 能不能在這個 Repo 所屬的 Project 建立 Task；Repo 不存在時回傳 false。 */
-  canCreateTasksInRepo: (c: Context, repoId: string) => Promise<boolean>;
-}
-
-export function createGitHubApiRoutes(options: GitHubApiRoutesOptions): Hono {
-  const app = new Hono();
-  app.use("*", options.authenticate);
-
-  // 錯誤回應的格式與 Server 的 REST 錯誤一致：`error` 是代碼，`message` 是給人看的說明。
-  const forbidden = (c: Context) =>
-    c.json({ error: "forbidden", message: "沒有權限操作這個 Project 或 Repo" }, 403);
-  const invalidInput = (c: Context, error: z.ZodError) =>
-    c.json({ error: "invalid_input", message: z.prettifyError(error), issues: error.issues }, 400);
-  // 以 repoId 為單位檢查權限：不同 Project（甚至不同 Team）的 Repo 不能互相讀取或匯入。
-  const canUseRepo = (c: Context) => options.canCreateTasksInRepo(c, c.req.param("repoId") ?? "");
-
-  app.onError((error, c) => {
-    if (error instanceof RepoNotConnectedError) {
-      return c.json({ error: "repo_not_connected", message: error.message }, 409);
-    }
-    throw error;
-  });
-
-  app.get("/repos/inspect", async (c) => {
-    const query = InspectRepoQuery.safeParse(c.req.query());
-    if (!query.success) return invalidInput(c, query.error);
-    if (!(await options.canManageRepos(c, query.data.projectId))) return forbidden(c);
-    return c.json(
-      await options.github.inspectRepo(query.data.owner, query.data.name, options.memberIdOf(c)),
-    );
-  });
-
-  app.get("/repos/:repoId/importable-issues", async (c) => {
-    if (!(await canUseRepo(c))) return forbidden(c);
-    return c.json({ issues: await options.github.listImportableIssues(c.req.param("repoId")) });
-  });
-
-  app.post("/repos/:repoId/import", async (c) => {
-    if (!(await canUseRepo(c))) return forbidden(c);
-    const input = ImportIssuesInput.safeParse(await c.req.json().catch(() => null));
-    if (!input.success) return invalidInput(c, input.error);
-    const results = await options.github.importIssues({
-      repoId: c.req.param("repoId"),
-      issueNumbers: input.data.issueNumbers,
-      importedByMemberId: options.memberIdOf(c),
-    });
-    return c.json({ results });
-  });
-
   return app;
 }
