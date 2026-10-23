@@ -1177,12 +1177,12 @@ textarea {
   border-radius: 6px;
 }
 
-.mention-options li {
+.mention-options [role="option"] {
   padding: 0.25rem 0.75rem;
   cursor: pointer;
 }
 
-.mention-options li[aria-selected="true"] {
+.mention-options [role="option"][aria-selected="true"] {
   background: var(--surface);
   outline: 1px solid var(--accent);
 }
