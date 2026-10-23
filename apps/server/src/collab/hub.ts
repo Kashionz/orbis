@@ -17,7 +17,7 @@ import type { Logger } from "../logger";
 import type { MentionService } from "../mentions/service";
 import { type CollabDocRef, collabDocRef } from "./doc-name";
 import { fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
-import { CollabRoom } from "./room";
+import { CollabRoom, type MentionAuthor, mentionNodes } from "./room";
 import type { CollabStore } from "./store";
 
 /** 文件修改後多久寫回 CollabStore。 */
@@ -166,7 +166,7 @@ export class CollabHub {
   private async writeBack(
     ref: CollabDocRef,
     doc: Y.Doc,
-    authors: ReadonlyMap<string, string>,
+    authors: ReadonlyMap<string, MentionAuthor>,
   ): Promise<void> {
     await this.processMentions(ref, doc, authors);
     const markdown = fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT));
@@ -209,9 +209,15 @@ export class CollabHub {
   private async processMentions(
     ref: CollabDocRef,
     doc: Y.Doc,
-    authors: ReadonlyMap<string, string>,
+    authors: ReadonlyMap<string, MentionAuthor>,
   ): Promise<void> {
-    const nodes = mentionNodes(doc.getXmlFragment(COLLAB_FRAGMENT));
+    // 只處理知道是誰加入的節點，而且目標和當時記錄的相同（由描述重建或被 REST 取代的節點不算新的 mention）。
+    const nodes = mentionNodes(doc.getXmlFragment(COLLAB_FRAGMENT)).flatMap((node) => {
+      const author = authors.get(node.nodeId);
+      return author && author.targetId === node.id
+        ? [{ ...node, authorMemberId: author.memberId }]
+        : [];
+    });
     if (nodes.length === 0) return;
     const { db } = this.options;
     const owner = await documentOwner(db, ref);
@@ -225,29 +231,10 @@ export class CollabHub {
           task: owner.task,
           text: fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT)),
         },
-        nodes.map((node) => ({ ...node, authorMemberId: authors.get(node.nodeId) ?? null })),
+        nodes,
       ),
     );
   }
-}
-
-/** 文件中所有的 mention 節點。 */
-function mentionNodes(fragment: Y.XmlFragment): { id: string; label: string; nodeId: string }[] {
-  const found: { id: string; label: string; nodeId: string }[] = [];
-  const walk = (node: Y.XmlElement | Y.XmlFragment) => {
-    for (const child of node.toArray()) {
-      if (!(child instanceof Y.XmlElement)) continue;
-      if (child.nodeName === "mention") {
-        const id = child.getAttribute("id");
-        const nodeId = child.getAttribute("nodeId");
-        if (typeof id === "string" && typeof nodeId === "string") {
-          found.push({ id, nodeId, label: String(child.getAttribute("label") ?? id) });
-        }
-      } else walk(child);
-    }
-  };
-  walk(fragment);
-  return found;
 }
 
 /** 文件所屬的 Project 與 Task（Repo Spec 草稿沒有 Task）。 */

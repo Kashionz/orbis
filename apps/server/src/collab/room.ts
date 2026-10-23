@@ -35,8 +35,8 @@ export interface CollabPeer {
 export type CollabPersistHook = (
   ref: CollabDocRef,
   doc: Y.Doc,
-  /** mention 節點（nodeId）是哪位 Member 的連線加進來的。 */
-  mentionAuthors: ReadonlyMap<string, string>,
+  /** mention 節點（nodeId）是哪位 Member 的連線加進來的，以及當時的目標（`id` 屬性）。 */
+  mentionAuthors: ReadonlyMap<string, MentionAuthor>,
 ) => Promise<void>;
 
 export class CollabRoom {
@@ -47,8 +47,8 @@ export class CollabRoom {
   private persistTimer: NodeJS.Timeout | null = null;
   private persisting: Promise<void> = Promise.resolve();
   private dirty = false;
-  /** mention 節點的 nodeId → 加入它的 Member（只記這次載入之後由 client 加入的）。 */
-  private readonly mentionAuthors = new Map<string, string>();
+  /** mention 節點的 nodeId → 加入（或改了目標）的 Member（只記這次載入之後由 client 做的修改）。 */
+  private readonly mentionAuthors = new Map<string, MentionAuthor>();
   /** 已通過權限檢查、正在完成 WebSocket upgrade 的 client 數（避免這段期間被卸載）。 */
   private reserved = 0;
 
@@ -179,11 +179,15 @@ export class CollabRoom {
           const update = decoding.readVarUint8Array(decoder);
           // 唯讀的 client（Viewer）不能修改文件。
           if (peer.writable) {
-            const before = new Set(mentionNodeIds(this.fragment));
+            const before = new Map(mentionNodes(this.fragment).map((m) => [m.nodeId, m.id]));
             Y.applyUpdate(this.doc, update, peer);
-            for (const nodeId of mentionNodeIds(this.fragment)) {
-              if (!before.has(nodeId) && !this.mentionAuthors.has(nodeId)) {
-                this.mentionAuthors.set(nodeId, peer.memberId);
+            // 新出現、或目標被改掉的 mention 節點，算在這次修改的人名下。
+            for (const node of mentionNodes(this.fragment)) {
+              if (before.get(node.nodeId) !== node.id) {
+                this.mentionAuthors.set(node.nodeId, {
+                  memberId: peer.memberId,
+                  targetId: node.id,
+                });
               }
             }
           }
@@ -295,18 +299,29 @@ export class CollabRoom {
   }
 }
 
-/** 文件中所有 mention 節點的 nodeId。 */
-export function mentionNodeIds(fragment: Y.XmlFragment): string[] {
-  const ids: string[] = [];
+export interface MentionAuthor {
+  memberId: string;
+  /** 記錄時節點的 `id` 屬性（`member:…`／`agent:…`）。 */
+  targetId: string;
+}
+
+/** 文件中所有的 mention 節點（attrs：id、label、nodeId）。 */
+export function mentionNodes(
+  fragment: Y.XmlFragment,
+): { id: string; label: string; nodeId: string }[] {
+  const found: { id: string; label: string; nodeId: string }[] = [];
   const walk = (node: Y.XmlElement | Y.XmlFragment) => {
     for (const child of node.toArray()) {
       if (!(child instanceof Y.XmlElement)) continue;
       if (child.nodeName === "mention") {
+        const id = child.getAttribute("id");
         const nodeId = child.getAttribute("nodeId");
-        if (typeof nodeId === "string") ids.push(nodeId);
+        if (typeof id === "string" && typeof nodeId === "string") {
+          found.push({ id, nodeId, label: String(child.getAttribute("label") ?? id) });
+        }
       } else walk(child);
     }
   };
   walk(fragment);
-  return ids;
+  return found;
 }
