@@ -98,6 +98,8 @@ pub struct AgentProfile {
     pub launch: Launch,
     /// 建立 session 後要切換到的 session mode（修補使用者設定的 bypass／acceptEdits 預設模式）。
     pub session_mode: Option<&'static str>,
+    /// 建立（或接續）session 時放在 `_meta` 的內容（Agent 專屬的選項）。
+    pub session_meta: Option<serde_json::Map<String, serde_json::Value>>,
     /// Agent 自己的設定檔（相對於 Worktree）。修改它們可能讓 Agent 繞過 Permission Policy，
     /// `auto` 下寫入一律問人；每次送出 prompt 前和 base commit 比對，有差異就先問人。
     pub protected_paths: Vec<String>,
@@ -112,9 +114,38 @@ pub struct AgentProfile {
     pub max_concurrent_runs: u32,
 }
 
+/// Claude Code 在 Run 中載入的設定來源（claude-agent-acp 的 `_meta.claudeCode.options.settingSources`，
+/// 預設是 `user`、`project`、`local`）。不載入 `user`：使用者全域的 allow 規則、plugin 與 MCP、hooks
+/// 都不會出現在 Run 中（issue #55、ARCHITECTURE §8）。登入不受影響（憑證不在設定檔中）。
+const CLAUDE_ISOLATED_SETTING_SOURCES: [&str; 2] = ["project", "local"];
+
+/// Claude Code 的 Permission Policy 落差：設定中 allow 的工具不會詢問 Runner。
+fn claude_settings_gap(user_settings: bool) -> String {
+    if user_settings {
+        "Claude 自己的設定（~/.claude/settings.json、Repo 的 .claude/settings*.json）中 allow 的工具不會詢問 Runner".into()
+    } else {
+        "Repo 的 .claude/settings*.json 中 allow 的工具不會詢問 Runner（使用者全域的 ~/.claude 設定在 Run 中不載入）".into()
+    }
+}
+
 impl AgentProfile {
-    /// 內建的 Claude Code profile。
+    /// 內建的 Claude Code profile（不載入使用者全域設定）。
     pub fn claude_code() -> Self {
+        Self::claude_code_with(false)
+    }
+
+    /// 內建的 Claude Code profile。`user_settings` 為 `true` 時載入使用者全域的 Claude 設定
+    /// （runner.toml 的 `[agents.claude-code] user_settings = true`）。
+    pub fn claude_code_with(user_settings: bool) -> Self {
+        let session_meta = (!user_settings).then(|| {
+            let meta = serde_json::json!({
+                "claudeCode": { "options": { "settingSources": CLAUDE_ISOLATED_SETTING_SOURCES } }
+            });
+            match meta {
+                serde_json::Value::Object(map) => map,
+                _ => unreachable!("字面值是物件"),
+            }
+        });
         Self {
             id: CLAUDE_CODE.into(),
             launch: Launch::ManagedNpm {
@@ -127,12 +158,13 @@ impl AgentProfile {
             // 使用者的 `permissions.defaultMode` 可能是 acceptEdits 或 bypassPermissions；
             // 一律切回會詢問的 default 模式（ADR-0006：不使用 bypass）。
             session_mode: Some("default"),
+            session_meta,
             protected_paths: vec![
                 ".claude/settings.json".into(),
                 ".claude/settings.local.json".into(),
             ],
             permission_gaps: vec![
-                "Claude 自己的設定（~/.claude/settings.json、Repo 的 .claude/settings*.json）中 allow 的工具不會詢問 Runner".into(),
+                claude_settings_gap(user_settings),
                 "manual 政策攔不到 Worktree 內的讀取（Claude Code 讀取工作目錄內的檔案不會請求權限）".into(),
                 "寫入 .claude/settings.json 與 .claude/settings.local.json 在 auto 政策下一律問人；Worktree 中這兩個檔案和 base commit 不同時，啟動 session 前會先問人".into(),
             ],
@@ -156,6 +188,7 @@ impl AgentProfile {
                 env: settings.env.clone(),
             },
             session_mode: None,
+            session_meta: None,
             protected_paths: Vec::new(),
             permission_gaps: vec!["一般 ACP Agent：只能攔截 Agent 主動送出的權限請求".into()],
             known_issues: Vec::new(),
@@ -305,7 +338,13 @@ pub struct Profiles {
 impl Profiles {
     pub fn from_settings(settings: &Settings) -> Self {
         let mut profiles = BTreeMap::new();
-        let claude = AgentProfile::claude_code();
+        let claude = AgentProfile::claude_code_with(
+            settings
+                .agents
+                .get(CLAUDE_CODE)
+                .and_then(|a| a.user_settings)
+                .unwrap_or(false),
+        );
         profiles.insert(claude.id.clone(), claude);
         for (id, agent) in &settings.agents {
             let profile = match profiles.remove(id) {
@@ -587,6 +626,33 @@ mod tests {
             "覆寫啟動指令時保留修補"
         );
         assert!(!claude.protected_paths.is_empty());
+    }
+
+    /// issue #55：預設不載入使用者全域設定，落差說明跟著改變。
+    #[test]
+    fn claude_code_預設隔離使用者全域設定() {
+        let isolated = AgentProfile::claude_code();
+        let meta = isolated
+            .session_meta
+            .clone()
+            .expect("預設要傳 settingSources");
+        assert_eq!(
+            meta["claudeCode"]["options"]["settingSources"],
+            serde_json::json!(["project", "local"])
+        );
+        assert!(!isolated.permission_gaps[0].contains("~/.claude/settings.json）"));
+
+        let settings = Settings::parse(
+            "[agents.claude-code]
+command = \"x\"
+user_settings = true
+",
+        )
+        .unwrap();
+        let profiles = Profiles::from_settings(&settings);
+        let with_user = profiles.get(CLAUDE_CODE).unwrap();
+        assert_eq!(with_user.session_meta, None);
+        assert!(with_user.permission_gaps[0].contains("~/.claude/settings.json"));
     }
 
     #[test]

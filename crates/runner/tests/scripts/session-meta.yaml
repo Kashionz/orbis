@@ -1,0 +1,6 @@
+# 回報建立 session 時收到的 _meta（確認 Runner 傳給 Agent 的選項，例如 Claude Code 的 settingSources）。
+description: 回報 session 的 _meta
+turns:
+  - steps:
+      - echo_session_meta
+      - stop: end_turn

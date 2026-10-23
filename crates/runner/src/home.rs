@@ -308,6 +308,9 @@ pub struct AgentSettings {
     pub env: BTreeMap<String, String>,
     /// 每組 Credential 的並行上限，預設 30。
     pub max_concurrent_runs: Option<u32>,
+    /// 只對內建的 Claude Code 有效：是否載入使用者全域的 Claude 設定（`~/.claude/settings.json`
+    /// 的 allow 規則、plugin、hooks 等）。預設 `false`：Run 中只載入 Repo 的設定（ARCHITECTURE §8）。
+    pub user_settings: Option<bool>,
 }
 
 impl Settings {

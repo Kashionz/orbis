@@ -359,6 +359,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
   - 能派工的人都可以選 `manual` 或 `auto`，預設為 Project 的預設政策。
   - `yolo` 只能在「在我的電腦跑」時選，UI 會顯示警告。Team Runner 的 `yolo` 留到 Phase 2。
   - 修改 Project 的預設政策需要 Admin 以上（§12.2）。
+- **使用者全域的 Agent 設定**：Claude Code 在 Run 中預設只載入 Repo 的 project／local 設定，不載入使用者全域的 `~/.claude/settings.json`（Runner 在 `session/new` 傳 claude-agent-acp 的 `settingSources`）。使用者自己的 allow 規則、plugin 與它帶的 MCP、hooks 都不會出現在 Run 中；登入不受影響。需要時可以在 runner.toml 的 `[agents.claude-code]` 設 `user_settings = true` 打開，AgentAvailability 的落差說明會跟著改變。其他 Agent 的使用者全域設定見 §7 的 Agent Profile。
 - **已知落差**：Agent 自己的設定中允許的工具不會詢問 Runner，例如 Claude Code 的 `.claude/settings.json`。
   - Phase 1 接受這個落差。各 Agent Profile 在 AgentAvailability 中回報落差，派工對話框顯示警告。
   - `auto` 下，寫入 `.claude/settings.json`、`.claude/settings.local.json` 一律問人。

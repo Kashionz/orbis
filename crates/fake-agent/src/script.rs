@@ -39,6 +39,7 @@
 //! | `mcp_call: {...}`（[`McpCallStep`]） | 以 MCP client 身分呼叫注入的 stdio MCP server，結果以 `tool_call` 回報 |
 //! | `sleep_ms: <毫秒>` | 不送訊息，只等待（可被 `session/cancel` 中斷） |
 //! | `spawn_child` | 啟動一個一直執行、不會自己結束的子程序（模擬 Agent 開的 dev server），以 `agent_message_chunk` 回報 `child pid: <pid>` |
+//! | `echo_session_meta` | 以 `agent_message_chunk` 回報建立（或接續）session 時收到的 `_meta`（JSON；沒有時為 `null`），讓測試確認 Runner 傳給 Agent 的選項 |
 //! | `wait_for_cancel` | 一直等到 `session/cancel`，以 `cancelled` 結束 |
 //! | `error: {...}`（[`ErrorStep`]） | `session/prompt` 回 JSON-RPC 錯誤 |
 //! | `rate_limit: {...}`（[`RateLimitStep`]） | `session/prompt` 回可辨識為 rate limit 的 JSON-RPC 錯誤 |
@@ -106,6 +107,8 @@ pub enum Step {
     WaitForCancel,
     /// 啟動一個不會自己結束的子程序（Runner 測試「取消時整個程序樹都被結束」用）。
     SpawnChild,
+    /// 回報建立 session 時收到的 `_meta`。
+    EchoSessionMeta,
     /// 讓 `session/prompt` 回 JSON-RPC 錯誤。
     Error(ErrorStep),
     /// 讓 `session/prompt` 回 rate limit 錯誤；下一次 prompt 從下一個回合繼續。

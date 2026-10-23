@@ -113,6 +113,7 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
                         &request.session_id,
                         &request.cwd,
                         request.mcp_servers,
+                        request.meta,
                         false,
                     ) {
                         Ok(()) => {
@@ -134,8 +135,13 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
             {
                 let agent = agent.clone();
                 async move |request: ResumeSessionRequest, responder, _cx| match agent
-                    .restore_session(&request.session_id, &request.cwd, request.mcp_servers, true)
-                {
+                    .restore_session(
+                        &request.session_id,
+                        &request.cwd,
+                        request.mcp_servers,
+                        request.meta,
+                        true,
+                    ) {
                     Ok(()) => responder.respond(ResumeSessionResponse::new()),
                     Err(error) => responder.respond_with_error(error),
                 }
@@ -186,6 +192,8 @@ struct Session {
     cwd: PathBuf,
     /// 回合進度的保存位置（有 session 保存目錄時）。
     state_file: Option<PathBuf>,
+    /// 建立或接續 session 時收到的 `_meta`（`echo_session_meta` 步驟回報）。
+    meta: Option<serde_json::Map<String, serde_json::Value>>,
     mcp_servers: Vec<McpServer>,
     slot: Mutex<TurnSlot>,
     runtime: tokio::sync::Mutex<SessionRuntime>,
@@ -249,7 +257,7 @@ impl FakeAgent {
             Some(_) => format!("fake-session-{}-{number}", std::process::id()),
             None => format!("fake-session-{number}"),
         });
-        let session = self.insert_session(&id, &request.cwd, request.mcp_servers, 0);
+        let session = self.insert_session(&id, &request.cwd, request.mcp_servers, 0, request.meta);
         session.save()?;
         Ok(NewSessionResponse::new(id))
     }
@@ -260,6 +268,7 @@ impl FakeAgent {
         cwd: &std::path::Path,
         mcp_servers: Vec<McpServer>,
         next_turn: usize,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Arc<Session> {
         let session = Arc::new(Session {
             id: id.clone(),
@@ -269,6 +278,7 @@ impl FakeAgent {
                 .state_dir
                 .as_ref()
                 .map(|dir| dir.join(format!("{}.json", id.0))),
+            meta,
             mcp_servers,
             slot: Mutex::new(TurnSlot {
                 next_turn,
@@ -286,6 +296,7 @@ impl FakeAgent {
         id: &SessionId,
         cwd: &std::path::Path,
         mcp_servers: Vec<McpServer>,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
         resume: bool,
     ) -> Result<(), acp::Error> {
         let supported = self.options.state_dir.is_some() && (!resume || self.options.resume);
@@ -307,7 +318,7 @@ impl FakeAgent {
                 "saved": saved.cwd,
             })));
         }
-        self.insert_session(id, cwd, mcp_servers, saved.next_turn);
+        self.insert_session(id, cwd, mcp_servers, saved.next_turn, meta);
         Ok(())
     }
 
@@ -564,6 +575,12 @@ impl TurnRunner<'_> {
                     () = tokio::time::sleep(std::time::Duration::from_millis(*ms)) => {}
                     () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
                 }
+            }
+            Step::EchoSessionMeta => {
+                let meta = serde_json::to_string(&self.session.meta).unwrap_or_default();
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(meta),
+                )))?;
             }
             Step::SpawnChild => {
                 let pid = spawn_child().map_err(|error| {

@@ -210,7 +210,10 @@ impl AcpSession {
             Some(id) if caps.session_capabilities.resume.is_some() => {
                 let response = self
                     .cx
-                    .send_request(ResumeSessionRequest::new(id.to_owned(), cwd))
+                    .send_request(
+                        ResumeSessionRequest::new(id.to_owned(), cwd)
+                            .meta(profile.session_meta.clone()),
+                    )
                     .block_task()
                     .await
                     .map_err(AgentError::Acp)?;
@@ -221,7 +224,10 @@ impl AcpSession {
             Some(id) if caps.load_session => {
                 let response = self
                     .cx
-                    .send_request(LoadSessionRequest::new(id.to_owned(), cwd))
+                    .send_request(
+                        LoadSessionRequest::new(id.to_owned(), cwd)
+                            .meta(profile.session_meta.clone()),
+                    )
                     .block_task()
                     .await
                     .map_err(AgentError::Acp)?;
@@ -232,7 +238,7 @@ impl AcpSession {
             _ => {
                 let response = self
                     .cx
-                    .send_request(NewSessionRequest::new(cwd))
+                    .send_request(NewSessionRequest::new(cwd).meta(profile.session_meta.clone()))
                     .block_task()
                     .await
                     .map_err(AgentError::Acp)?;

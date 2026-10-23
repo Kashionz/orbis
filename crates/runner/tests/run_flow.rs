@@ -773,6 +773,63 @@ async fn 啟動_session_前設定檔和_base_commit_不同時先問人() {
     conn.wait_status("awaiting_gate").await;
 }
 
+/// 取出第一則訊息片段並解析成 JSON（`echo_session_meta` 回報的 `_meta`）。
+async fn session_meta(conn: &mut RunnerSide) -> Value {
+    let chunk = conn.wait_event("message_chunk").await;
+    serde_json::from_str(chunk["content"]["text"].as_str().unwrap()).unwrap()
+}
+
+/// issue #55：Claude Code 在 Run 中預設不載入使用者全域的設定（plugin、MCP、allow 規則），
+/// 只載入 Repo 的 project／local 設定。
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_預設不載入使用者全域設定() {
+    let mut env = Env::new(
+        &[(
+            "README.md",
+            "a
+",
+        )],
+        |wt| claude_code_as_fake(wt, &runner_script("session-meta.yaml")),
+    )
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let meta = session_meta(&mut conn).await;
+    assert_eq!(
+        meta["claudeCode"]["options"]["settingSources"],
+        serde_json::json!(["project", "local"]),
+        "{meta}"
+    );
+}
+
+/// runner.toml 的 `user_settings = true`：照 Claude Code 的預設載入使用者全域設定。
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_設定_user_settings_時載入使用者全域設定() {
+    let mut env = Env::new(
+        &[(
+            "README.md",
+            "a
+",
+        )],
+        |wt| {
+            format!(
+                "{}user_settings = true
+",
+                claude_code_as_fake(wt, &runner_script("session-meta.yaml"))
+            )
+        },
+    )
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let meta = session_meta(&mut conn).await;
+    assert_eq!(
+        meta,
+        Value::Null,
+        "不傳 settingSources，沿用 Claude Code 的預設"
+    );
+}
+
 /// rate limit：回報 rate_limited 並暫停，額度恢復後在同一個 session 繼續。
 #[tokio::test(flavor = "multi_thread")]
 async fn rate_limit_後在同一個_session_繼續() {
