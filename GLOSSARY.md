@@ -130,6 +130,14 @@ _Avoid_: Auto-fix loop、Bounce-back
 Run 的 Worktree 中跑起來的 dev server，可以在 Orbis 內嵌瀏覽器中開啟，或分享給 Team。
 _Avoid_: Deploy preview、Staging
 
+**Preview 網址**：
+Server 為 Run 的 Preview 產生的子網域網址 `https://<run-id>.<Preview 網域>/`，流量經由 Runner 通道轉送，只有能查看該 Run 的人登入後才能開啟。
+_Avoid_: Share link、Tunnel URL、Public URL
+
+**Preview 留言**：
+在 Preview 畫面上的留言，附截圖、URL，以及在 Electron 中選取的元素的 CSS selector。和 diff 行內留言一起在 Review Gate 退回時送回 Agent。
+_Avoid_: Visual comment、Annotation、Screenshot feedback
+
 **Needs You**：
 等待某位 Member 處理的項目清單：權限請求、待核准的 Gate、停下來的 Run。
 _Avoid_: Inbox、Pending queue

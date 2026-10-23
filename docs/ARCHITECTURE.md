@@ -391,13 +391,14 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 ## 10. Review
 
 - **Diff review**：用 Monaco 顯示 diff，比較對象是 base_commit 與 Worktree 目前的狀態。行內留言可以打包送回 Agent，作為下一個 prompt。
-- **Review Gate 的動作**：核准（接著自動 push 並開 PR）、退回（附上留言）、中止 Run。
+- **Review Gate 的動作**：核准（接著自動 push 並開 PR）、退回（附上留言，包括 diff 行內留言與 Preview 留言，§13）、中止 Run。
 - **Project 可以要求**「Member 不能核准自己的 Task」。「自己的 Task」指 Task 的指派對象，所有種類的 Gate 都適用。
 - **diff 的來源**：
   - Agent 結束回合、進入 Review Gate 之前，Runner 送出 Run 的完整 diff：從 base_commit 到 Worktree 目前的狀態，包含未 commit 的變更。
   - 內容是每個檔案的完整新舊內容，大檔放 blob（§14）。
   - Server 保存這份 diff，所以 Runner 離線時仍然可以 review，重播時也看得到。
 - **行內留言**存在獨立的資料表中，每則一筆（之後的 @mention 與通知會用到）。退回時打包成 prompt 送回 Agent。
+- **Preview 留言**（§13）和行內留言存在同一個資料表，種類是 `preview`，帶 URL、selector（一般瀏覽器中沒有）與截圖的 blob。退回時一起打包成 prompt，截圖以圖片附上。
 
 ---
 
@@ -497,10 +498,42 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 ## 13. Preview 與瀏覽器
 
-- **啟動**：Runner 依 `[preview].command` 用 `ORBIS_PORT` 啟動 dev server，並以 `ready_path` 判斷是否已就緒。
+- **啟動與生命週期**：
+  - Runner 依 `[preview].command` 用 `ORBIS_PORT` 啟動 dev server。執行方式與 setup 相同（§6.3），也注入相同的環境變數。程序樹放進 Run 的 Job Object 或 process group（§6.4）。
+  - setup 成功後啟動，和 Agent 並行；沒有 setup 時，信任核准（§6.2）後啟動。dev server 持續到 Run 結束（包括等待 Review Gate 的期間），Run 結束或 Runner 關閉時一併結束整個程序樹。
+  - 就緒判斷：每 500 毫秒對 `localhost:$ORBIS_PORT` 加上 `ready_path` 送 `GET`，同時嘗試 IPv4 與 IPv6（dev server 可能只綁 `::1`），收到 2xx 或 3xx 就送出 `preview_ready` Event。300 秒內沒有就緒時，結束程序並回報。
+  - dev server 自己結束、逾時或無法啟動時，送出 `preview_stopped` Event，附上原因與遮蔽過 secret 的輸出尾段。UI 可以要求重新啟動（`restart_preview`）。
 - **本機開啟**：Electron 用 WebContentsView 直接打開 `localhost:$ORBIS_PORT`。
-- **分享給 Team**：Runner 把 Preview 的 HTTP 與 WebSocket 流量**經由既有的 Runner 通道**轉送到 Server，產生 `https://<server>/preview/<run-id>/`，限同 Team 登入後才能存取。
-- **在 Preview 上留言**：在內嵌的瀏覽器中點選元素留言，自動附上截圖、selector 與 URL，送回 Agent 作為下一個 prompt。
+- **Preview 網址（分享給 Team）**：
+  - 子網域式：`https://<run-id>.<Preview 網域>/`。Preview 網域由 Server 的 `ORBIS_PREVIEW_DOMAIN` 設定（例如 `preview.example.com`），scheme 和 Web UI 相同。沒有設定時不提供 Preview 網址，本機開啟不受影響。
+  - 不用路徑式（`/preview/<run-id>/`）的原因：
+    - 路徑式要求每個專案設定 base path（Vite 的 `base`、Next.js 的 `basePath`）並處理寫死的絕對路徑。
+    - 而且 Agent 寫的程式會在 Orbis 的 origin 上執行，可以用看的人的身分呼叫 Orbis API。
+    - 子網域式讓每個 Run 是獨立的 origin，框架不需要任何設定。
+  - **部署需求**：
+    - wildcard DNS（`*.<Preview 網域>` 指向 Server）。
+    - wildcard TLS 憑證（Let's Encrypt 只能用 DNS-01 驗證）。
+    - 反向代理把 wildcard host 原樣轉給 Server。
+    - 開發與測試時用 `<run-id>.preview.localhost:<port>`，Chromium 會把 `*.localhost` 解析到本機，不需要 DNS。
+  - Preview 網域建議和 Web UI 是 same-site（例如同一個網域底下的子網域），瀏覽器版本才能用 iframe 嵌入；否則只能在新分頁開啟。
+- **登入保護（換票）**：
+  - Orbis 的 session cookie 只屬於 Web UI 的 host，不會送到 Preview 網址，所以第一次開啟時要換票：
+    1. Preview 網址沒有 preview cookie 時，頁面導覽轉到 Web UI 的 `/api/preview/<run-id>/authorize`。其他請求（含 WebSocket upgrade）回 401。
+    2. authorize 確認 session，並確認登入的人能查看這個 Run（同 Team，含 Viewer），然後發一次性、60 秒有效的 ticket，再轉回 Preview 網址的 callback。callback 路徑以 `/__<product slug>/` 開頭，例如 `/__orbis/callback`。
+    3. callback 設定 host-only、HttpOnly 的 preview cookie，再導回原本的路徑。
+  - preview session 綁定 Orbis 的 session：登出或 session 過期後，最多 5 秒內失效。preview session 與 ticket 只存在 Server 的記憶體中，Server 重新啟動後使用者會自動重新換票。
+  - Server 對寫入型 API 檢查 `Origin`，避免 same-site 的 Preview 頁面帶著 Orbis 的 cookie 送出請求。
+- **轉送**（[ADR-0010](adr/0010-preview-through-runner-channel.md)）：
+  - Runner 把 Preview 的 HTTP 與 WebSocket（含 HMR）流量**經由既有的 Runner 通道**多工轉送：Server 依 Host 把 Preview 網址的請求交給對應 Run 的 Runner，每個請求或 WebSocket 是一條 stream。控制用 JSON frame，資料用 binary 訊息，避免 base64 的膨脹。
+  - **背壓**：雙向以 credit 控制，每條 stream 的初始 window 是 256 KiB，每個 chunk 最大 64 KiB。接收端把資料寫出去（Server 寫給瀏覽器、Runner 寫給 dev server）後才補 credit。Runner 送往 Server 時，Preview 的資料排在 Event 與 control 之後，大檔案不會卡住 Heartbeat。
+  - Runner 把 `Host`、`Origin` 改寫成 `localhost:$ORBIS_PORT`，並加上 `X-Forwarded-Host`、`X-Forwarded-Proto`。dev server 因此視為本機請求：Vite 的 `server.allowedHosts`、Next.js 的 `allowedDevOrigins` 都不必設定。
+  - Server 轉送前移除 Orbis 自己的 cookie 與 `/__<product slug>/` 路徑；回應的 `Set-Cookie` 移除 `Domain` 屬性，避免寫到其他 Preview 或 Web UI 的 host。
+  - Runner 只轉送給執行中、而且 Preview 正在執行的 Run，每個 Run 最多 256 條 stream。Runner 離線、Run 已結束或 Preview 沒有在執行時，頁面導覽顯示說明頁。
+- **在 Preview 上留言（Preview 留言）**：
+  - 在 Electron 內嵌的瀏覽器中點選元素留言，自動附上截圖、CSS selector 與 URL。
+  - 一般瀏覽器中不能選取元素，只能附整頁截圖：以 `getDisplayMedia` 擷取目前的分頁，再裁成 Preview 的範圍；不支援或使用者拒絕時，改成貼上或上傳圖片。
+  - Preview 留言和 diff 行內留言一樣先存成草稿，Review Gate 退回時一起打包成 prompt 送回 Agent（§10），截圖以圖片附上。
+  - 留言的權限和 Review Gate 退回相同；看 Preview 的權限是能查看該 Run。
 - **Agent 操作瀏覽器**：Runner 額外注入 Playwright MCP（headless），連到同一個 Preview，用來判定 `browser` 類型的 Acceptance Criterion。UI 顯示截圖與操作紀錄。即時觀看 Agent 的瀏覽器畫面留到 Phase 2。
 
 ---
@@ -625,9 +658,5 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 
 ## 19. 待決事項
 
-- **Preview 的路徑前綴問題**：`/preview/<run-id>/` 這種路徑式代理，會讓使用絕對路徑載入資源的前端 app 壞掉（例如 Vite 的 `base` 預設是 `/`）。
-  - 選項一：改用子網域模式 `https://<run-id>.preview.<domain>`，需要 wildcard DNS 與 wildcard 憑證。
-  - 選項二：要求專案在 config 中設定 `base`。
-  - 要在 Track E 開始做 Preview 轉送之前決定。
 - **Repo 可見度**：目前假設是 private，尚未確認。
 - **共用訂閱的條款風險**：見 [ADR-0005](adr/0005-shared-subscription-on-team-runner.md)。
