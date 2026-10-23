@@ -12,11 +12,14 @@ import {
   DispatchOptions,
   Gate,
   GateDecisionInput,
+  ImportIssueResult,
+  ImportIssuesInput,
   MANUAL_TASK_TRANSITIONS,
   Member,
   type NeedsYouPermissionRequest,
   PairingTokenCreated,
   PermissionResponseInput,
+  Repo,
   ReviewDiff,
   type ReviewDiffFile,
   type RouteParams,
@@ -150,8 +153,14 @@ describe("Project 與 Repo 的輸入", () => {
     expect(CreateRepoInput.safeParse(input).success).toBe(false);
   });
 
-  it("預設分支是 main", () => {
-    expect(CreateRepoInput.parse({ owner: "Kashionz", name: "orbis" }).defaultBranch).toBe("main");
+  it("預設分支可以不填（App 已安裝時由 Server 從 GitHub 讀取）", () => {
+    expect(
+      CreateRepoInput.parse({ owner: "Kashionz", name: "orbis" }).defaultBranch,
+    ).toBeUndefined();
+    expect(
+      CreateRepoInput.parse({ owner: "Kashionz", name: "orbis", defaultBranch: "develop" })
+        .defaultBranch,
+    ).toBe("develop");
   });
 });
 
@@ -352,5 +361,45 @@ describe("與協定、DB 一致的型別", () => {
     >().toEqualTypeOf<protocol.PermissionPurpose>();
     expectTypeOf<ReviewDiffFile["change"]>().toEqualTypeOf<protocol.FileChange>();
     expectTypeOf<ReviewDiffFile["old"]>().toExtend<protocol.TextBody | null>();
+  });
+});
+
+describe("GitHub：Repo 的 App 安裝狀態與 Issue 匯入", () => {
+  it("Repo 帶 App 的安裝狀態", () => {
+    const repo = {
+      id: ID,
+      projectId: ID,
+      owner: "Kashionz",
+      name: "orbis-sandbox",
+      defaultBranch: "main",
+      github: {
+        installed: false,
+        installUrl: "https://github.com/apps/orbis-dev/installations/new",
+      },
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    expect(Repo.safeParse(repo).success).toBe(true);
+    expect(Repo.safeParse({ ...repo, github: undefined }).success).toBe(false);
+  });
+
+  it("一次匯入 1–100 個 Issue", () => {
+    expect(ImportIssuesInput.safeParse({ issueNumbers: [1, 2] }).success).toBe(true);
+    expect(ImportIssuesInput.safeParse({ issueNumbers: [] }).success).toBe(false);
+    expect(
+      ImportIssuesInput.safeParse({ issueNumbers: Array.from({ length: 101 }, (_, i) => i + 1) })
+        .success,
+    ).toBe(false);
+    expect(
+      ImportIssueResult.safeParse({ issueNumber: 1, status: "imported", taskId: ID }).success,
+    ).toBe(true);
+    expect(ImportIssueResult.safeParse({ issueNumber: 1, status: "skipped" }).success).toBe(false);
+  });
+
+  it("GitHub 的路由也在 API_ROUTES 中", () => {
+    expect(apiPath(API_ROUTES.repoImportIssues, { repoId: "r1" })).toBe(
+      "/api/repos/r1/import-issues",
+    );
+    expect(API_ROUTES.githubWebhook).toBe("/api/webhooks/github");
   });
 });

@@ -37,6 +37,7 @@ export const repo = {
   owner: "acme",
   name: "web-app",
   defaultBranch: "main",
+  github: { installed: true, installUrl: null },
   createdAt: NOW,
   updatedAt: NOW,
 } satisfies Repo;

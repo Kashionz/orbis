@@ -46,6 +46,11 @@ export const API_ROUTES = {
 
   blob: "/api/blobs/:blobId",
 
+  /** GitHub App 的 webhook（由 packages/github 處理）。 */
+  githubWebhook: "/api/webhooks/github",
+  repoImportableIssues: "/api/repos/:repoId/importable-issues",
+  repoImportIssues: "/api/repos/:repoId/import-issues",
+
   /** Web 的即時推送（訊息見 `ws.ts`）。 */
   ws: "/api/ws",
 } as const;

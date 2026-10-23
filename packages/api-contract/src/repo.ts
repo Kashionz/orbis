@@ -11,6 +11,12 @@ export const Repo = z.object({
   /** GitHub 上的 repository 名稱。 */
   name: z.string().min(1),
   defaultBranch: z.string().min(1),
+  /** GitHub App 在這個 repo 的安裝狀態，由 installation webhook 即時更新（§11）。 */
+  github: z.object({
+    installed: z.boolean(),
+    /** 還沒安裝時，給使用者安裝 App 的網址；已安裝時為 null。 */
+    installUrl: z.url().nullable(),
+  }),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -49,12 +55,15 @@ export const GitBranchName = z
     { error: "不是合法的 git 分支名稱" },
   );
 
-/** 登記 Repo（Admin 以上）。 */
+/**
+ * 登記 Repo（Admin 以上）。GitHub App 已安裝時，Server 從 GitHub 讀取 default branch；
+ * 還沒安裝時用 `defaultBranch`，沒有指定就用 `main`（§11）。
+ */
 export const CreateRepoInput = z
   .object({
     owner: GitHubOwnerName,
     name: GitHubRepoName,
-    defaultBranch: GitBranchName.default("main"),
+    defaultBranch: GitBranchName.optional(),
   })
   .strict();
 export type CreateRepoInput = z.input<typeof CreateRepoInput>;
