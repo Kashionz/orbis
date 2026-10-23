@@ -1,0 +1,281 @@
+import { type Member, type Project, ROLES, type Role } from "@orbis/api-contract";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import {
+  addMember,
+  deleteProjectRole,
+  membersQuery,
+  projectRolesQuery,
+  queryKeys,
+  removeMember,
+  setProjectRole,
+  updateMemberRole,
+} from "../../api/resources";
+import { ErrorText } from "../../components/ErrorText";
+import { TextField } from "../../components/TextField";
+import { ROLE_LABELS } from "../../lib/labels";
+
+/** 只有 Owner 能指派或移除 Owner（§12.2）。 */
+function assignableRoles(myRole: Role): readonly Role[] {
+  return myRole === "owner" ? ROLES : ROLES.filter((r) => r !== "owner");
+}
+
+/**
+ * 成員與 Role（ARCHITECTURE §12.2，Admin 以上）：以 GitHub login 新增、改 Role、移除。
+ * 只有 Owner 能指派或移除 Owner；不能移除或降級最後一位 Owner（以 Server 的回應為準）。
+ */
+export function MembersSection({ myRole, myMemberId }: { myRole: Role; myMemberId: string }) {
+  const queryClient = useQueryClient();
+  const { data: members = [], error } = useQuery(membersQuery);
+  const [login, setLogin] = useState("");
+  const [role, setRole] = useState<Role>("member");
+  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.members });
+  const add = useMutation({
+    mutationFn: () => addMember({ githubLogin: login.trim(), role }),
+    onSuccess: async () => {
+      setLogin("");
+      setRole("member");
+      await refresh();
+    },
+  });
+
+  return (
+    <section className="section" aria-labelledby="admin-members">
+      <h2 id="admin-members">成員與 Role</h2>
+      <ErrorText error={error} />
+      <table className="run-table member-table">
+        <thead>
+          <tr>
+            <th scope="col">成員</th>
+            <th scope="col">Role</th>
+            <th scope="col">
+              <span className="visually-hidden">操作</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {members.map((member) => (
+            <MemberRow
+              key={member.id}
+              member={member}
+              myRole={myRole}
+              isMe={member.id === myMemberId}
+              onChanged={refresh}
+            />
+          ))}
+        </tbody>
+      </table>
+      <form
+        className="settings-form inline-form"
+        aria-label="新增成員"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (login.trim() !== "") add.mutate();
+        }}
+      >
+        <TextField label="GitHub login" value={login} onChange={setLogin} />
+        <label className="field">
+          Role
+          <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
+            {assignableRoles(myRole).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="primary" disabled={add.isPending || login.trim() === ""}>
+          新增成員
+        </button>
+        <ErrorText error={add.error} />
+      </form>
+    </section>
+  );
+}
+
+function MemberRow({
+  member,
+  myRole,
+  isMe,
+  onChanged,
+}: {
+  member: Member;
+  myRole: Role;
+  isMe: boolean;
+  onChanged: () => Promise<unknown>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const update = useMutation({
+    mutationFn: (role: Role) => updateMemberRole(member.id, role),
+    onSuccess: onChanged,
+  });
+  const remove = useMutation({ mutationFn: () => removeMember(member.id), onSuccess: onChanged });
+  // Admin 不能改動 Owner
+  const editable = myRole === "owner" || member.role !== "owner";
+  const label = `@${member.githubLogin}`;
+
+  return (
+    <tr data-member={member.githubLogin}>
+      <td>
+        {label}
+        {member.name && <span className="hint"> {member.name}</span>}
+        {isMe && <span className="tag">你</span>}
+      </td>
+      <td>
+        {editable ? (
+          <select
+            aria-label={`${label} 的 Role`}
+            value={member.role}
+            disabled={update.isPending}
+            onChange={(event) => update.mutate(event.target.value as Role)}
+          >
+            {assignableRoles(myRole).map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
+          </select>
+        ) : (
+          ROLE_LABELS[member.role]
+        )}
+        <ErrorText error={update.error} />
+      </td>
+      <td>
+        {editable && (
+          <button
+            type="button"
+            className="danger"
+            disabled={remove.isPending}
+            onClick={() => (confirming ? remove.mutate() : setConfirming(true))}
+          >
+            {confirming ? `確定移除 ${label}` : "移除"}
+          </button>
+        )}
+        <ErrorText error={remove.error} />
+      </td>
+    </tr>
+  );
+}
+
+const OVERRIDE_ROLES = ROLES.filter((r) => r !== "owner");
+
+/** Project 的 Role 覆寫（Admin 以上）：不能覆寫成 Owner，Team 的 Owner 也不能被覆寫。 */
+export function ProjectRolesSection({ projects }: { projects: readonly Project[] }) {
+  const queryClient = useQueryClient();
+  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
+  const { data: members = [] } = useQuery(membersQuery);
+  const { data: overrides = [], error } = useQuery({
+    ...projectRolesQuery(projectId),
+    enabled: projectId !== "",
+  });
+  const [memberId, setMemberId] = useState("");
+  const [role, setRole] = useState<(typeof OVERRIDE_ROLES)[number]>("viewer");
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.projectRoles(projectId) });
+  const set = useMutation({
+    mutationFn: ({ id, value }: { id: string; value: (typeof OVERRIDE_ROLES)[number] }) =>
+      setProjectRole(projectId, id, value),
+    onSuccess: async () => {
+      setMemberId("");
+      await refresh();
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteProjectRole(projectId, id),
+    onSuccess: refresh,
+  });
+  const candidates = members.filter(
+    (m) => m.role !== "owner" && !overrides.some((o) => o.memberId === m.id),
+  );
+  const loginOf = (id: string) => members.find((m) => m.id === id)?.githubLogin ?? id;
+
+  return (
+    <section className="section" aria-labelledby="admin-project-roles">
+      <h2 id="admin-project-roles">Project 的 Role 覆寫</h2>
+      <label className="field-inline">
+        Project
+        <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}（{p.keyPrefix}）
+            </option>
+          ))}
+        </select>
+      </label>
+      <ErrorText error={error ?? set.error ?? remove.error} />
+      {overrides.length === 0 ? (
+        <p className="empty">這個 Project 沒有 Role 覆寫，所有人沿用 Team 的 Role。</p>
+      ) : (
+        <ul className="role-overrides" aria-label="Role 覆寫">
+          {overrides.map((o) => (
+            <li key={o.memberId} data-member={loginOf(o.memberId)}>
+              @{loginOf(o.memberId)}：
+              <select
+                aria-label={`@${loginOf(o.memberId)} 在這個 Project 的 Role`}
+                value={o.role}
+                onChange={(event) =>
+                  set.mutate({
+                    id: o.memberId,
+                    value: event.target.value as (typeof OVERRIDE_ROLES)[number],
+                  })
+                }
+              >
+                {OVERRIDE_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="link-button"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(o.memberId)}
+              >
+                取消覆寫
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {candidates.length > 0 && (
+        <form
+          className="settings-form inline-form"
+          aria-label="新增 Role 覆寫"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (memberId !== "") set.mutate({ id: memberId, value: role });
+          }}
+        >
+          <label className="field-inline">
+            成員
+            <select value={memberId} onChange={(event) => setMemberId(event.target.value)}>
+              <option value="">選擇成員</option>
+              {candidates.map((m) => (
+                <option key={m.id} value={m.id}>
+                  @{m.githubLogin}（Team：{ROLE_LABELS[m.role]}）
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-inline">
+            覆寫成
+            <select
+              value={role}
+              onChange={(event) => setRole(event.target.value as (typeof OVERRIDE_ROLES)[number])}
+            >
+              {OVERRIDE_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" disabled={memberId === "" || set.isPending}>
+            新增覆寫
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}

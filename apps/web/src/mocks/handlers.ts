@@ -2,10 +2,12 @@
 // 回應與錯誤的形狀和 Server 相同。
 
 import {
+  AddMemberInput,
   AnswerChildQuestionInput,
   API_ROUTES,
   CheckAcceptanceCriterionInput,
   CreateAcceptanceCriterionInput,
+  CreatePairingTokenInput,
   CreateProjectInput,
   CreateRepoInput,
   CreateRepoSpecInput,
@@ -18,10 +20,13 @@ import {
   NotificationPreferences,
   PermissionResponseInput,
   RepoSpecCommitInput,
+  SetProjectRoleInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
   UpdateDraftTaskInput,
+  UpdateMemberInput,
   UpdateProjectInput,
+  UpdateRunnerCredentialInput,
   UpdateTaskCommentInput,
   UpdateTaskInput,
   VerificationDecisionInput,
@@ -534,6 +539,73 @@ export function createHandlers(backend: MockBackend) {
       API_ROUTES.taskComment,
       handle((_, p) => {
         backend.deleteTaskComment(p.commentId ?? "");
+      }),
+    ),
+    http.get(
+      API_ROUTES.credentials,
+      handle(() => backend.credentials()),
+    ),
+    http.patch(
+      API_ROUTES.runnerCredential,
+      handle(async (request, p) => {
+        const input = await parse(request, UpdateRunnerCredentialInput);
+        backend.updateRunnerCredential(
+          p.runnerId ?? "",
+          p.credential ?? "",
+          input.maxConcurrentRuns,
+        );
+      }),
+    ),
+    http.get(
+      API_ROUTES.teamRunnerQueue,
+      handle(() => backend.teamRunnerQueue()),
+    ),
+    http.get(
+      API_ROUTES.runners,
+      handle(() => backend.runners()),
+    ),
+    http.post(
+      API_ROUTES.pairingTokens,
+      handle(
+        async (request) =>
+          backend.createPairingToken((await parse(request, CreatePairingTokenInput)).kind),
+        201,
+      ),
+    ),
+    http.post(
+      API_ROUTES.members,
+      handle(async (request) => backend.addMember(await parse(request, AddMemberInput)), 201),
+    ),
+    http.patch(
+      API_ROUTES.member,
+      handle(async (request, p) =>
+        backend.updateMember(p.memberId ?? "", (await parse(request, UpdateMemberInput)).role),
+      ),
+    ),
+    http.delete(
+      API_ROUTES.member,
+      handle((_, p) => {
+        backend.removeMember(p.memberId ?? "");
+      }),
+    ),
+    http.get(
+      API_ROUTES.projectRoles,
+      handle((_, p) => backend.projectRoles(p.projectId ?? "")),
+    ),
+    http.put(
+      API_ROUTES.projectRole,
+      handle(async (request, p) =>
+        backend.setProjectRole(
+          p.projectId ?? "",
+          p.memberId ?? "",
+          (await parse(request, SetProjectRoleInput)).role,
+        ),
+      ),
+    ),
+    http.delete(
+      API_ROUTES.projectRole,
+      handle((_, p) => {
+        backend.deleteProjectRole(p.projectId ?? "", p.memberId ?? "");
       }),
     ),
     http.get(

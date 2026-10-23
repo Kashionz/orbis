@@ -6,6 +6,7 @@
 
 import {
   type AcceptanceCriterion,
+  type AddMemberInput,
   type ApiError,
   type CollabMentionAttrs,
   type CreateAcceptanceCriterionInput,
@@ -14,6 +15,7 @@ import {
   type CreateRepoSpecInput,
   type CreateRunInput,
   type CreateTaskInput,
+  type CredentialStatus,
   canTransitionManually,
   type DispatchOptions,
   type DraftTask,
@@ -33,8 +35,10 @@ import {
   type NotificationKind,
   type NotificationListResponse,
   type NotificationPreferences,
+  type PairingTokenCreated,
   type PreviewState,
   type Project,
+  type ProjectMemberRole,
   parseCollabDocName,
   parseMentions,
   parseMentionTargetId,
@@ -47,10 +51,13 @@ import {
   type Role,
   type Run,
   type RunEvent,
+  type Runner,
+  type RunnerKind,
   type RunUsage,
   type Task,
   type TaskComment,
   type TaskStatus,
+  type TeamRunnerQueueItem,
   type UpdateAcceptanceCriterionInput,
   type UpdateDraftTaskInput,
   type UpdateProjectInput,
@@ -130,6 +137,9 @@ export interface MockState {
   repoSpecs: RepoSpec[];
   /** Repo Spec 草稿轉成的 markdown（提交時使用）。 */
   repoSpecDrafts: Record<string, string>;
+  /** Credential 並行上限的覆寫，key 是 `<runnerId>/<credential>`。 */
+  credentialOverrides: Record<string, number>;
+  projectRoles: ProjectMemberRole[];
 }
 
 /** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
@@ -218,6 +228,8 @@ export class MockBackend {
     this.state.collabDocs ??= {};
     this.state.repoSpecs ??= [];
     this.state.repoSpecDrafts ??= {};
+    this.state.credentialOverrides ??= {};
+    this.state.projectRoles ??= [];
     this.save();
   }
 
@@ -419,6 +431,8 @@ export class MockBackend {
         },
       ],
       repoSpecDrafts: { "spec-1": "# 登入\n\n使用 GitHub 帳號登入。" },
+      credentialOverrides: {},
+      projectRoles: [{ projectId: "project-1", memberId: "member-bob", role: "viewer" }],
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -1461,6 +1475,244 @@ export class MockBackend {
       created,
       overwritesUpstreamChanges: this.config.specUpstreamChanged ?? false,
     };
+  }
+
+  // ---------- Runner、Credential 與佇列（ARCHITECTURE §6.1、§7） ----------
+
+  private get teamRole(): Role {
+    return this.config.role ?? "owner";
+  }
+
+  private requireTeamAdmin(): void {
+    if (this.config.forbidWrites || !roleAtLeast(this.teamRole, "admin")) {
+      throw new MockError(403, "forbidden", "需要 Admin 以上的 Role");
+    }
+  }
+
+  runners(): Runner[] {
+    const agent = (name: string, credential: string | null) => ({
+      agent: name,
+      credential,
+      available: true,
+      maxConcurrency: 30,
+      details: null,
+    });
+    const all: Runner[] = [
+      {
+        id: "runner-team",
+        teamId: "team-1",
+        kind: "team",
+        memberId: null,
+        name: "team-runner-1",
+        runnerVersion: "0.2.0",
+        os: "linux",
+        arch: "x64",
+        online: true,
+        acceptingDispatches: true,
+        lastHeartbeatAt: SEED_TIME,
+        agents: [agent("claude-code", "team-claude"), agent("codex", "team-openai")],
+        createdAt: SEED_TIME,
+      },
+      {
+        id: "runner-local",
+        teamId: "team-1",
+        kind: "local",
+        memberId: ME_ID,
+        name: "octocat-laptop",
+        runnerVersion: "0.2.0",
+        os: "windows",
+        arch: "x64",
+        online: true,
+        acceptingDispatches: true,
+        lastHeartbeatAt: SEED_TIME,
+        agents: [agent("claude-code", "default")],
+        createdAt: SEED_TIME,
+      },
+      {
+        id: "runner-alice",
+        teamId: "team-1",
+        kind: "local",
+        memberId: "member-alice",
+        name: "alice-mac",
+        runnerVersion: "0.2.0",
+        os: "macos",
+        arch: "arm64",
+        online: false,
+        acceptingDispatches: true,
+        lastHeartbeatAt: SEED_TIME,
+        agents: [agent("claude-code", "default")],
+        createdAt: SEED_TIME,
+      },
+    ];
+    // 同 Server：Admin 以上看得到全部，其他人只看得到 Team Runner 與自己的 Local Runner
+    return roleAtLeast(this.teamRole, "admin")
+      ? all
+      : all.filter((r) => r.kind === "team" || r.memberId === ME_ID);
+  }
+
+  credentials(): CredentialStatus[] {
+    return this.runners().flatMap((runner) => {
+      const groups = new Map<string, string[]>();
+      for (const a of runner.agents) {
+        if (a.credential) groups.set(a.credential, [...(groups.get(a.credential) ?? []), a.agent]);
+      }
+      return [...groups].map(([credential, agents]): CredentialStatus => {
+        const override = this.state.credentialOverrides[`${runner.id}/${credential}`] ?? null;
+        const team = runner.kind === "team";
+        return {
+          runnerId: runner.id,
+          runnerName: runner.name,
+          runnerKind: runner.kind,
+          online: runner.online,
+          credential,
+          agents,
+          reportedMaxConcurrentRuns: 30,
+          maxConcurrentRunsOverride: override,
+          maxConcurrentRuns: override ?? 30,
+          activeRuns: team && credential === "team-claude" ? 2 : 0,
+          queuedRuns: team && credential === "team-claude" ? 1 : 0,
+          rateLimitedUntil:
+            team && credential === "team-claude" ? "2026-10-24T10:30:00.000Z" : null,
+          usage24h: {
+            runs: team ? 12 : 3,
+            inputTokens: team ? 1_250_000 : 80_000,
+            outputTokens: team ? 64_000 : null,
+            cost: team ? { amount: 18.5, currency: "USD" } : null,
+          },
+        };
+      });
+    });
+  }
+
+  updateRunnerCredential(runnerId: string, credential: string, value: number | null): void {
+    this.requireTeamAdmin();
+    const key = `${runnerId}/${credential}`;
+    if (value === null) delete this.state.credentialOverrides[key];
+    else this.state.credentialOverrides[key] = value;
+    this.save();
+  }
+
+  teamRunnerQueue(): TeamRunnerQueueItem[] {
+    const task = this.state.tasks.find((t) => t.projectId === "project-1");
+    if (!task) return [];
+    return [
+      {
+        runId: "run-queued",
+        taskId: task.id,
+        taskKey: task.key,
+        agent: "claude-code",
+        credential: "team-claude",
+        position: 1,
+        waitingReason: "rate_limited",
+        queuedAt: SEED_TIME,
+      },
+    ];
+  }
+
+  createPairingToken(kind: RunnerKind): PairingTokenCreated {
+    if (kind === "team") this.requireTeamAdmin();
+    return {
+      id: this.newId("pairing"),
+      kind,
+      token: `pt_${kind}_${this.state.nextId}_mocktoken`,
+      expiresAt: "2026-10-25T08:00:00.000Z",
+    };
+  }
+
+  // ---------- 成員與 Project 的 Role 覆寫（ARCHITECTURE §12.2） ----------
+
+  /** 只有 Owner 能指派或改動 Owner。 */
+  private requireCanAssign(role: Role): void {
+    if (role === "owner" && this.teamRole !== "owner") {
+      throw new MockError(403, "forbidden", "只有 Owner 能指派或移除 Owner");
+    }
+  }
+
+  private lastOwnerGuard(member: Member, next: Role | null): void {
+    const owners = this.state.members.filter((m) => m.role === "owner");
+    if (member.role === "owner" && next !== "owner" && owners.length === 1) {
+      throw new MockError(409, "last_owner", "不能移除或降級最後一位 Owner");
+    }
+  }
+
+  addMember(input: AddMemberInput): Member {
+    this.requireTeamAdmin();
+    const role = input.role ?? "member";
+    this.requireCanAssign(role);
+    if (input.githubLogin === "ghost") {
+      throw new MockError(404, "not_found", "GitHub 上找不到 ghost");
+    }
+    if (this.state.members.some((m) => m.githubLogin === input.githubLogin)) {
+      throw new MockError(409, "conflict", `${input.githubLogin} 已經是 Member`);
+    }
+    const created = member(
+      this.newId("member"),
+      1000 + this.state.nextId,
+      input.githubLogin,
+      input.githubLogin,
+      role,
+    );
+    created.name = null;
+    this.state.members.push(created);
+    this.save();
+    return created;
+  }
+
+  updateMember(memberId: string, role: Role): Member {
+    this.requireTeamAdmin();
+    const target = this.state.members.find((m) => m.id === memberId);
+    if (!target) throw new MockError(404, "not_found", "找不到這位 Member");
+    this.requireCanAssign(target.role);
+    this.requireCanAssign(role);
+    this.lastOwnerGuard(target, role);
+    target.role = role;
+    target.updatedAt = now();
+    this.save();
+    return target;
+  }
+
+  removeMember(memberId: string): void {
+    this.requireTeamAdmin();
+    const target = this.state.members.find((m) => m.id === memberId);
+    if (!target) throw new MockError(404, "not_found", "找不到這位 Member");
+    this.requireCanAssign(target.role);
+    this.lastOwnerGuard(target, null);
+    this.state.members = this.state.members.filter((m) => m !== target);
+    this.save();
+  }
+
+  projectRoles(projectId: string): ProjectMemberRole[] {
+    this.requireProjectAdmin(this.project(projectId));
+    return this.state.projectRoles.filter((r) => r.projectId === projectId);
+  }
+
+  setProjectRole(
+    projectId: string,
+    memberId: string,
+    role: ProjectMemberRole["role"],
+  ): ProjectMemberRole {
+    this.requireProjectAdmin(this.project(projectId));
+    const target = this.state.members.find((m) => m.id === memberId);
+    if (!target) throw new MockError(404, "not_found", "找不到這位 Member");
+    if (target.role === "owner") {
+      throw new MockError(422, "invalid_input", "Team 的 Owner 不能被覆寫");
+    }
+    this.state.projectRoles = [
+      ...this.state.projectRoles.filter(
+        (r) => !(r.projectId === projectId && r.memberId === memberId),
+      ),
+      { projectId, memberId, role },
+    ];
+    this.save();
+    return { projectId, memberId, role };
+  }
+
+  deleteProjectRole(projectId: string, memberId: string): void {
+    this.requireProjectAdmin(this.project(projectId));
+    this.state.projectRoles = this.state.projectRoles.filter(
+      (r) => !(r.projectId === projectId && r.memberId === memberId),
+    );
+    this.save();
   }
 
   // ---------- 通知（ARCHITECTURE §12.3） ----------

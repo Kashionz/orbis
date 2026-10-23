@@ -24,6 +24,11 @@ export function AuthedLayout() {
             </Link>
             <NeedsYouLink />
             <NotificationsLink />
+            {me.member.role !== "viewer" && (
+              <Link to="/admin" activeProps={{ "aria-current": "page" }}>
+                管理
+              </Link>
+            )}
           </nav>
         )}
         <span className="spacer" />

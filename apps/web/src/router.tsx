@@ -8,6 +8,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
+import { AdminPage } from "./features/admin/AdminPage";
 import { AuthedLayout } from "./features/auth/AuthedLayout";
 import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
 import { LoginPage } from "./features/auth/LoginPage";
@@ -169,6 +170,13 @@ const notificationSettingsRoute = createRoute({
   errorComponent: PageError,
 });
 
+const adminRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/admin",
+  component: AdminPage,
+  errorComponent: PageError,
+});
+
 function AuthErrorPage({ error }: ErrorComponentProps) {
   return (
     <main className="notice" role="alert">
@@ -201,6 +209,7 @@ const routeTree = rootRoute.addChildren([
     needsYouRoute,
     notificationsRoute,
     notificationSettingsRoute,
+    adminRoute,
   ]),
 ]);
 
