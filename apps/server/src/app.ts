@@ -12,6 +12,7 @@ import { requireTrustedOrigin } from "./http/origin-check";
 import type { Logger } from "./logger";
 import { createPreviewRoutes } from "./preview/routes";
 import { createAuthRoutes } from "./routes/auth";
+import { createDraftRoutes } from "./routes/drafts";
 import { createGitHubRoutes, createGitHubWebhookRoute } from "./routes/github";
 import { createProjectRoutes } from "./routes/projects";
 import { createReviewRoutes } from "./routes/review";
@@ -75,6 +76,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", createRunRoutes(services));
   app.route("/", createReviewRoutes(services));
   app.route("/", createRunnerRoutes(services));
+  app.route("/", createDraftRoutes(services));
 
   // blob：Runner 以 Runner token 上傳，Web 以 session 下載。
   const blobRoutes = createBlobRoutes(services);

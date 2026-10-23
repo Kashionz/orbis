@@ -2,6 +2,7 @@
 
 import type {
   AcceptanceCriterion,
+  DraftTask,
   Gate,
   Member,
   NeedsYouItem,
@@ -14,6 +15,7 @@ import type {
   RunEvent,
   RunUsage,
   Task,
+  TaskNote,
   Team,
   Verification,
 } from "@orbis/api-contract";
@@ -21,6 +23,7 @@ import type { PermissionPurpose } from "@orbis/protocol";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import {
   acceptanceCriteria,
+  type draftTasks,
   type gates,
   type members,
   needsYouItems,
@@ -31,6 +34,7 @@ import {
   type runEvents,
   type runs,
   taskDependencies,
+  type taskNotes,
   type tasks,
   type teams,
   verificationResults,
@@ -401,4 +405,36 @@ export async function toVerifications(
     startedAt: iso(row.startedAt),
     completedAt: isoOrNull(row.completedAt),
   }));
+}
+
+/** Draft Task（DB 的 draft_tasks）。 */
+export function toDraftTask(row: typeof draftTasks.$inferSelect): DraftTask {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    batchId: row.batchId,
+    position: row.position,
+    proposedByRunId: row.proposedByRunId,
+    repoId: row.repoId,
+    spec: row.spec,
+    title: row.title,
+    description: row.description,
+    acceptanceCriteria: row.acceptanceCriteria as DraftTask["acceptanceCriteria"],
+    dependsOn: row.dependsOn as string[],
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
+/** Task note（DB 的 task_notes）。 */
+export function toTaskNote(row: typeof taskNotes.$inferSelect): TaskNote {
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    runId: row.runId,
+    source: row.source,
+    body: row.body,
+    url: row.url,
+    createdAt: iso(row.createdAt),
+  };
 }

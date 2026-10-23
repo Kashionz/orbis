@@ -13,6 +13,7 @@ import type { Database } from "../db/client";
 import type { Logger } from "../logger";
 import type { EventIngest } from "../runs/event-ingest";
 import type { RunControlService } from "../runs/run-control";
+import type { OrbisToolService } from "../tools/service";
 import type { UpgradeRouter } from "../ws-upgrade";
 import type { Dispatcher } from "./dispatcher";
 import {
@@ -60,6 +61,7 @@ export interface RunnerEndpointOptions {
   dispatcher: Dispatcher;
   ingest: EventIngest;
   runControls: RunControlService;
+  tools: OrbisToolService;
   devPairingToken: string | null;
   heartbeatIntervalMs: number;
   /** 連線後等待 Hello 的時間。 */
@@ -202,6 +204,10 @@ class RunnerConnection implements RunnerLink {
         if (result.ok) this.send({ type: "event_ack", ...result.ack });
         return;
       }
+      case "tool_call":
+        // 在背景處理（wait_run、ask_parent 會阻塞），不擋住這條連線的其他 frame。
+        this.options.tools.onToolCall(runner.id, frame);
+        return;
       case "run_control_result": {
         const parsed = RunControlResultFrame.safeParse(frame);
         if (!parsed.success) return this.malformed(runner, frame);

@@ -101,6 +101,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     dispatcher: services.dispatcher,
     ingest: services.ingest,
     runControls: services.runControls,
+    tools: services.tools,
     devPairingToken: deps.config.devPairingToken,
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
@@ -141,6 +142,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       services.blobCleanup.stop();
       services.sessionCleanup.stop();
       await services.dispatcher.idle();
+      await services.tools.idle();
       await services.githubIdle();
       router.close();
       await runnerEndpoint.close();

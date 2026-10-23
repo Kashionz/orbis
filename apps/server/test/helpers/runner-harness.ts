@@ -1,5 +1,6 @@
 // 模擬 Runner 的測試 harness：真實的 Server（HTTP 與 WebSocket）＋直接使用協定型別的 Runner client。
 
+import { randomUUID } from "node:crypto";
 import type { RunnerKind } from "@orbis/api-contract";
 import type { AgentAvailability, EventKind, RunnerToServer, ServerToRunner } from "@orbis/protocol";
 import { PROTOCOL_VERSION, RUNNER_WS_PATH } from "@orbis/protocol";
@@ -205,6 +206,19 @@ export class MockRunner {
       message: null,
     });
     return frame;
+  }
+
+  /** 送出 Orbis MCP 工具呼叫並等結果（`call_id` 未指定時自動產生）。 */
+  async toolCall(
+    dispatchId: string,
+    runId: string,
+    call: Record<string, unknown>,
+    callId: string = randomUUID(),
+    timeoutMs = 5000,
+  ) {
+    this.send({ type: "tool_call", call_id: callId, run_id: runId, dispatch_id: dispatchId, call });
+    const frame = await this.next("tool_result", (f) => f.call_id === callId, timeoutMs);
+    return { callId, result: frame.result };
   }
 
   setSeq(runId: string, seq: number): void {
