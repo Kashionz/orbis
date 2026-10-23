@@ -9,7 +9,10 @@ export interface RunnerLink {
 
 interface Entry {
   link: RunnerLink;
-  /** Runner 是否接受新的 Dispatch（Heartbeat 的 accepting_dispatches）。 */
+  /**
+   * Runner 是否接受新的 Dispatch（Heartbeat 的 accepting_dispatches）。
+   * 連線後收到第一個 Heartbeat 之前一律是 false：重新連線的 Runner 可能還在「暫停領取」。
+   */
   acceptingDispatches: boolean;
 }
 
@@ -22,7 +25,7 @@ export class RunnerHub {
 
   /** 登記連線；同一個 Runner 已有連線時取代舊的（由呼叫端關閉舊連線）。 */
   register(runnerId: string, link: RunnerLink): void {
-    this.entries.set(runnerId, { link, acceptingDispatches: true });
+    this.entries.set(runnerId, { link, acceptingDispatches: false });
     for (const listener of this.connectListeners) listener(runnerId);
   }
 

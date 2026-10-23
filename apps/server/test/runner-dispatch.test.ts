@@ -305,6 +305,60 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       expect((await mine.next("dispatch_offer")).run_id).toBe(run.id);
     });
 
+    describe("連線後要等第一個 Heartbeat 才派工", () => {
+      /** 有一個 Run 在佇列中、派工者的 Local Runner 已離線。 */
+      async function queuedWhileOffline() {
+        const mine = await h.pairRunner(team.members.member, "local");
+        mine.close();
+        await mine.closed;
+        await waitUntil(() => !h.ctx.services.hub.isOnline(mine.runnerId));
+        const run = (await dispatch((await readyTask()).id)).body;
+        await h.ctx.services.dispatcher.kick();
+        expect((await runRow(run.id))?.status).toBe("queued");
+        return { mine, run };
+      }
+
+      /** 等一小段時間，確認沒有收到 Offer。 */
+      async function expectNoOffer(runner: Awaited<ReturnType<typeof h.reconnect>>) {
+        await h.ctx.services.dispatcher.kick();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(runner.pending("dispatch_offer")).toHaveLength(0);
+      }
+
+      it("重新連線後、第一個 Heartbeat 之前不會收到 Offer（AgentAvailability 只記錄、不觸發派工）", async () => {
+        const { mine, run } = await queuedWhileOffline();
+        const back = await h.reconnect(mine, { firstHeartbeat: null });
+        expect(h.ctx.services.hub.isAcceptingDispatches(back.runnerId)).toBe(false);
+        await expectNoOffer(back);
+        const list = expectContract(z.array(Runner), (await as("member").get("/api/runners")).body);
+        expect(list[0]).toMatchObject({ online: true, acceptingDispatches: false });
+
+        back.heartbeat({ accepting_dispatches: true });
+        expect((await back.next("dispatch_offer")).run_id).toBe(run.id);
+      });
+
+      it("暫停領取的 Runner 重新連線：第一個 Heartbeat 是 false 時一直不派，送出 true 後才派", async () => {
+        const { mine, run } = await queuedWhileOffline();
+        const back = await h.reconnect(mine, { firstHeartbeat: false });
+        await waitUntil(async () => {
+          const [row] = await database.db
+            .select()
+            .from(runners)
+            .where(eq(runners.id, back.runnerId));
+          return row?.lastHeartbeatAt !== null;
+        });
+        await expectNoOffer(back);
+        // 暫停期間再回報 AgentAvailability、持續送 Heartbeat，也都不派工。
+        back.availability();
+        back.heartbeat({ accepting_dispatches: false });
+        await expectNoOffer(back);
+        expect((await runRow(run.id))?.status).toBe("queued");
+
+        back.heartbeat({ accepting_dispatches: true });
+        expect((await back.next("dispatch_offer")).run_id).toBe(run.id);
+      });
+    });
+
     it("Task 不在 Ready 或相依的 Task 還沒 Done 時拒絕派工", async () => {
       const backlog = await readyTask({ status: "backlog" });
       const res = await dispatch(backlog.id);

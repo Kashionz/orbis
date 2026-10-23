@@ -273,6 +273,8 @@ class RunnerConnection implements RunnerLink {
     const { hub, dispatcher } = this.options;
     await recordHeartbeat(this.options.db, runner.id, this.options.clock.now());
     const accepting = parsed.data.accepting_dispatches;
+    // 連線後的第一個 Heartbeat 之前視為不接受派工（hub 的預設值），所以第一個帶
+    // accepting_dispatches = true 的 Heartbeat 也算「改變」，從這時才開始派工。
     const changed = hub.isAcceptingDispatches(runner.id) !== accepting;
     hub.setAcceptingDispatches(runner.id, accepting);
     if (changed && accepting) void dispatcher.kick();

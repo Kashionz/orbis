@@ -4,6 +4,7 @@
 // - `local` 的 Run 只交給派工者自己的 Local Runner；Local Runner 離線時 Run 留在佇列，不轉給 Team Runner。
 // - `team` 的 Run 交給同一個 Team 的 Team Runner。
 // - Runner 必須在線上、接受新的 Dispatch（Heartbeat 的 accepting_dispatches），而且回報該 Agent 可用。
+//   連線後要等第一個 Heartbeat 才知道是否接受，所以在那之前不派工。
 //
 // 逾時：
 // - Offer 在 expires_at 之前沒有回覆 → Dispatch `expired`，Run 回到佇列。
@@ -109,12 +110,16 @@ export class Dispatcher {
     return this.chain;
   }
 
-  /** Runner 送出新的 AgentAvailability 時，解除它的拒絕冷卻。 */
+  /**
+   * Runner 送出新的 AgentAvailability 時，解除它的拒絕冷卻。
+   * 連線後的第一個 Heartbeat 之前（還不知道是否暫停領取）只記錄，不觸發派工；
+   * 第一個 Heartbeat 由 endpoint 觸發派工。
+   */
   availabilityChanged(runnerId: string): void {
     for (const key of this.cooldowns.keys()) {
       if (key.endsWith(`:${runnerId}`)) this.cooldowns.delete(key);
     }
-    void this.kick();
+    if (this.options.hub.isAcceptingDispatches(runnerId)) void this.kick();
   }
 
   private async pass(): Promise<void> {

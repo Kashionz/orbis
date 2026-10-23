@@ -163,8 +163,14 @@ export interface Harness {
   connect(): Promise<MockRunner>;
   /** 以某位 Member 取得 Pairing token 並完成 Pairing、回報 AgentAvailability、送一次 Heartbeat。 */
   pairRunner(member: SeededMember, kind: RunnerKind, agents?: MockAgent[]): Promise<MockRunner>;
-  /** 以 Runner token 重新連線。 */
-  reconnect(previous: MockRunner): Promise<MockRunner>;
+  /**
+   * 以 Runner token 重新連線。`firstHeartbeat` 是連線後第一個 Heartbeat 的 accepting_dispatches；
+   * `null` 表示不送 Heartbeat（模擬 AgentAvailability 與第一個 Heartbeat 之間的空檔）。
+   */
+  reconnect(
+    previous: MockRunner,
+    options?: { firstHeartbeat?: boolean | null },
+  ): Promise<MockRunner>;
   close(): Promise<void>;
 }
 
@@ -206,13 +212,17 @@ export async function startHarness(
     return runner;
   }
 
-  async function finishHello(runner: MockRunner, agents?: MockAgent[]) {
+  async function finishHello(
+    runner: MockRunner,
+    agents?: MockAgent[],
+    firstHeartbeat: boolean | null = true,
+  ) {
     const ack = await runner.next("hello_ack");
     runner.runnerId = ack.runner_id;
     if (ack.runner_token) runner.runnerToken = ack.runner_token;
     const expected = agents ?? [{ id: "claude-code" }];
     runner.availability(expected);
-    runner.heartbeat();
+    if (firstHeartbeat !== null) runner.heartbeat({ accepting_dispatches: firstHeartbeat });
     // 等 Server 記錄完 AgentAvailability（同一條連線的 frame 依序處理）。
     await waitUntil(
       async () => {
@@ -225,6 +235,14 @@ export async function startHarness(
       5000,
       "AgentAvailability 寫入",
     );
+    // 等 Server 處理完第一個 Heartbeat（之後才會派工給這台 Runner）。
+    if (firstHeartbeat === true) {
+      await waitUntil(
+        () => ctx.services.hub.isAcceptingDispatches(ack.runner_id),
+        5000,
+        "第一個 Heartbeat",
+      );
+    }
     await ctx.services.dispatcher.idle();
     return ack;
   }
@@ -245,7 +263,7 @@ export async function startHarness(
       await waitUntil(() => ctx.services.hub.isOnline(runner.runnerId));
       return runner;
     },
-    async reconnect(previous) {
+    async reconnect(previous, options = {}) {
       const runner = await connect();
       runner.runnerToken = previous.runnerToken;
       runner.hello({
@@ -253,7 +271,7 @@ export async function startHarness(
         runner_id: previous.runnerId,
         token: previous.runnerToken,
       });
-      await finishHello(runner);
+      await finishHello(runner, undefined, options.firstHeartbeat);
       await waitUntil(() => ctx.services.hub.isOnline(runner.runnerId));
       return runner;
     },
