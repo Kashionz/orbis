@@ -21,6 +21,13 @@
     "bytes_hex": "020102030400ff10"
   },
   {
+    "name": "WebSocket 訊息的片段（後面還有）",
+    "kind": "ws_fragment",
+    "stream_id": 18,
+    "payload_hex": "68656c",
+    "bytes_hex": "030000001268656c"
+  },
+  {
     "name": "空的 body（例如 0 byte 的回應）",
     "kind": "body",
     "stream_id": 1,

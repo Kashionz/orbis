@@ -126,6 +126,12 @@ pub enum EventKind {
         branch: Option<String>,
         /// 開出 Worktree 時的 commit SHA（40 個十六進位字元）。
         base_commit: String,
+        /// 分配給這個 Worktree 的 Preview port（協定版本 2）。Repo 設定檔沒有 `[preview].command` 時
+        /// 缺少或為 `null`，Server 據此把 Preview 顯示為「沒有設定」；有值但還沒收到 `preview_ready`
+        /// 時顯示為「啟動中」。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        preview_port: Option<u16>,
     },
     /// Run 目前相對於 base commit 的完整 diff，見 [`RunDiff`]。
     RunDiff(RunDiff),

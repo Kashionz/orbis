@@ -40,6 +40,8 @@ export const DEFAULT_MAX_CONCURRENT_RUNS = 30;
 
 export const RUNNER_BLOB_PATH = "/api/runner/blobs";
 
+export const RUNNER_BLOB_ROUTE = "/api/runner/blobs/:blobId";
+
 export const SIDECAR_FLAG = "--sidecar";
 
 export const SIDECAR_EXIT_NEEDS_PAIRING = 78;
@@ -54,7 +56,9 @@ export const PREVIEW_MAX_STREAMS_PER_RUN = 256;
 
 export const PREVIEW_DATA_HEADER_LEN = 5;
 
-export const PREVIEW_DATA_KINDS = { body: 0, ws_text: 1, ws_binary: 2 } as const;
+export const PREVIEW_MAX_WS_MESSAGE = 16777216;
+
+export const PREVIEW_DATA_KINDS = { body: 0, ws_text: 1, ws_binary: 2, ws_fragment: 3 } as const;
 
 export const RUN_STATUSES = ["queued", "dispatched", "starting", "running", "verifying", "awaiting_permission", "rate_limited", "awaiting_gate", "completed", "failed", "canceled"] as const satisfies readonly RunStatus[];
 

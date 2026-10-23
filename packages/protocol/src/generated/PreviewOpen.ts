@@ -20,6 +20,7 @@ path: string,
  */
 headers: Array<[string, string]>, 
 /**
- * Server 給 Runner 的初始 credit（Runner→Server 方向的資料）。
+ * Server 給 Runner 的初始 credit（Runner→Server 方向的資料）。反方向固定是
+ * [`PREVIEW_INITIAL_WINDOW`]。
  */
 window: number, };

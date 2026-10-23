@@ -9,10 +9,16 @@
 //!   `preview_ws_close`。
 //! - 資料（HTTP body、WebSocket 訊息）走 **WebSocket binary 訊息**，格式見 [`PreviewData`]：
 //!   `[kind u8][stream_id u32 big-endian][payload]`。
-//! - **背壓**：以 credit 控制，雙向各自計算。送出的一方對每個 stream 最多送出對方給的 credit
-//!   （初始值是 `preview_open` 的 `window`，預設 [`PREVIEW_INITIAL_WINDOW`]），收到
-//!   `preview_window` 後再加上 `credit`。接收的一方把資料交出去（寫進 socket 或 HTTP 回應）
-//!   之後才補 credit。單一 binary 訊息的 payload 最多 [`PREVIEW_MAX_CHUNK`]。
+//! - **背壓**：以 credit 控制，雙向各自計算，單位是 payload 的 byte 數。送出的一方對每個 stream
+//!   最多送出對方給的 credit，收到 `preview_window` 後再加上 `credit`。接收的一方把資料交出去
+//!   （寫進 socket 或 HTTP 回應）之後才補 credit。初始 credit：
+//!   - Server→Runner 方向：Runner 給 Server 的固定為 [`PREVIEW_INITIAL_WINDOW`]，不協商，
+//!     `preview_response` 不帶 window。
+//!   - Runner→Server 方向：Server 在 `preview_open` 的 `window` 指定。
+//! - 單一 binary 訊息的 payload 最多 [`PREVIEW_MAX_CHUNK`]。超過的 WebSocket 訊息切成多段：前面各段
+//!   用 [`PreviewDataKind::WsFragment`]，最後一段用 `ws_text` 或 `ws_binary`（同時表示種類與結束），
+//!   接收端累積後組回。組回後整則訊息最多 [`PREVIEW_MAX_WS_MESSAGE`]，超過時以 `preview_ws_close`
+//!   （1009，message too big）關閉。
 //! - `path` 是 dev server 端的路徑（含 query），與 Preview 網址的形式無關。
 
 use serde::{Deserialize, Serialize};
@@ -26,6 +32,12 @@ pub const PREVIEW_INITIAL_WINDOW: u32 = 256 * 1024;
 
 /// 單一 binary 訊息的 payload 上限，單位是 byte。
 pub const PREVIEW_MAX_CHUNK: usize = 64 * 1024;
+
+/// 組回後一則 WebSocket 訊息的上限，單位是 byte。超過時以 close code 1009 關閉 stream。
+pub const PREVIEW_MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
+
+/// WebSocket 的 close code：訊息太大（RFC 6455）。
+pub const WS_CLOSE_MESSAGE_TOO_BIG: u16 = 1009;
 
 /// 每個 Run 同時開啟的 stream 上限；超過時 Runner 以 `preview_reset`（`too_many_streams`）拒絕。
 pub const PREVIEW_MAX_STREAMS_PER_RUN: u32 = 256;
@@ -49,7 +61,8 @@ pub struct PreviewOpen {
     pub path: String,
     /// 轉送的 header（Server 已移除 Orbis 自己的 cookie）。Runner 會改寫 `Host` 與 `Origin`。
     pub headers: PreviewHeaders,
-    /// Server 給 Runner 的初始 credit（Runner→Server 方向的資料）。
+    /// Server 給 Runner 的初始 credit（Runner→Server 方向的資料）。反方向固定是
+    /// [`PREVIEW_INITIAL_WINDOW`]。
     pub window: u32,
 }
 
@@ -128,10 +141,12 @@ pub enum PreviewDataKind {
     WsText = 1,
     /// WebSocket 的 binary 訊息。
     WsBinary = 2,
+    /// 超過 [`PREVIEW_MAX_CHUNK`] 的 WebSocket 訊息中、最後一段以外的片段。
+    WsFragment = 3,
 }
 
 impl PreviewDataKind {
-    pub const ALL: &'static [Self] = &[Self::Body, Self::WsText, Self::WsBinary];
+    pub const ALL: &'static [Self] = &[Self::Body, Self::WsText, Self::WsBinary, Self::WsFragment];
 
     /// TS 常數中使用的名稱。
     pub const fn as_str(self) -> &'static str {
@@ -139,6 +154,7 @@ impl PreviewDataKind {
             Self::Body => "body",
             Self::WsText => "ws_text",
             Self::WsBinary => "ws_binary",
+            Self::WsFragment => "ws_fragment",
         }
     }
 
@@ -147,6 +163,7 @@ impl PreviewDataKind {
             0 => Some(Self::Body),
             1 => Some(Self::WsText),
             2 => Some(Self::WsBinary),
+            3 => Some(Self::WsFragment),
             _ => None,
         }
     }

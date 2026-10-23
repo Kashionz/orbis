@@ -23,6 +23,7 @@ import {
   PREVIEW_DATA_KINDS,
   PREVIEW_INITIAL_WINDOW,
   PREVIEW_MAX_CHUNK,
+  PREVIEW_MAX_WS_MESSAGE,
   type PREVIEW_RESET_REASONS,
   type PREVIEW_STOP_REASONS,
   type PREVIEW_STREAM_KINDS,
@@ -34,6 +35,8 @@ import {
   type PromptSource,
   type RUN_ORIGINS,
   RUN_STATUSES,
+  RUNNER_BLOB_PATH,
+  RUNNER_BLOB_ROUTE,
   type RunControlAction,
   type RunOrigin,
   type VERIFICATION_KINDS,
@@ -112,6 +115,15 @@ describe("W5–7 契約：既有型別的新增欄位都是 optional", () => {
     type Prompt = Extract<RunControlAction, { action: "prompt" }>;
     expectTypeOf<{ action: "prompt"; prompt: Prompt["prompt"] }>().toExtend<Prompt>();
   });
+
+  it("worktree_ready 的 preview_port 可以省略；缺少表示沒有設定 Preview", () => {
+    type WorktreeReady = Extract<EventKind, { kind: "worktree_ready" }>;
+    expectTypeOf<WorktreeReady["preview_port"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<Omit<WorktreeReady, "preview_port">>().toExtend<WorktreeReady>();
+    const ports = fixtures("runner_to_server.event.worktree_ready.").map((f) => f.preview_port);
+    expect(ports).toContain(undefined);
+    expect(ports).toContain(4123);
+  });
 });
 
 describe("W5–7 契約：Event 與 RunControl", () => {
@@ -158,7 +170,9 @@ describe("W5–7 契約：Preview binary 訊息", () => {
   }[];
 
   it("常數與 Rust 一致", () => {
-    expect(PREVIEW_DATA_KINDS).toEqual({ body: 0, ws_text: 1, ws_binary: 2 });
+    expect(PREVIEW_DATA_KINDS).toEqual({ body: 0, ws_text: 1, ws_binary: 2, ws_fragment: 3 });
+    expect(PREVIEW_MAX_WS_MESSAGE).toBe(16 * 1024 * 1024);
+    expect(RUNNER_BLOB_ROUTE).toBe(`${RUNNER_BLOB_PATH}/:blobId`);
     expect(PREVIEW_DATA_HEADER_LEN).toBe(5);
     expect(PREVIEW_INITIAL_WINDOW).toBe(256 * 1024);
     expect(PREVIEW_MAX_CHUNK).toBe(64 * 1024);

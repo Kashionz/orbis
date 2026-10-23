@@ -169,6 +169,9 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   | 雙向 | `preview_window`、`preview_end`、`preview_reset`、`preview_ws_close` |
 
   - 協定版本 2（W5–7）新增 `tool_call`／`tool_result`（Orbis MCP 工具呼叫，§9）與 `preview_*`（Preview 通道，§13）。Preview 的資料（HTTP body、WebSocket 訊息）走 WebSocket binary 訊息：`[kind u8][stream_id u32 big-endian][payload]`，以 credit 控制背壓。
+    - 單一訊息的 payload 最多 64 KiB。更大的 WebSocket 訊息切成多段，前面各段用 `ws_fragment`，最後一段用 `ws_text` 或 `ws_binary`；組回後最多 16 MiB，超過以 close code 1009 關閉。
+    - 初始 credit：Server→Runner 方向固定 256 KiB；Runner→Server 方向由 `preview_open` 的 `window` 指定。
+    - `worktree_ready` 帶 `preview_port`（沒有設定 `[preview]` 時缺少），Server 據此顯示 Preview 是「沒有設定」還是「啟動中」。
   - `run_control` 的動作：取消、後續 prompt（帶來源，例如 Review Gate 退回、Verification 重試、Feedback Loop）、回覆權限請求、Gate 結果、push 分支、`verify`（§5.1）、`archive`（§6.2 的封存）、`restart_preview`。
 
   - 連線後 Runner 先送 `hello`（協定版本與 Pairing token，或已配對的 Runner token）。Server 回 `hello_ack`（Runner ID、第一次 Pairing 時發的 Runner token、心跳間隔、各 Run 已收到的最後 seq），或回 `hello_rejected` 並附上原因。
@@ -488,7 +491,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - 同一個 `blob_id` 重送相同內容視為成功，可以安全地重試；內容不同回 409。
     - Web 以 `GET /api/blobs/<blob_id>` 下載，需要能查看該 Run。只有圖片直接顯示，其他內容一律以附件下載；過期回 410。
   - 上傳成功後，Runner 才送出參照它的 Event。
-  - Runner 以 `GET /api/runner/blobs/<blob_id>` 下載 blob（同樣以 Runner token 認證），例如 Review Gate 退回時附上的 Preview 截圖。只能下載掛在這台 Runner 正在執行的 Run 上的 blob。
+  - 同一個路徑也支援 `GET /api/runner/blobs/<blob_id>`：Runner 下載 blob（同樣以 Runner token 認證），例如 Review Gate 退回時附上的 Preview 截圖。只能下載掛在這台 Runner 正在執行的 Run 上的 blob，其他回 404，過期回 410。
   - 到期的 blob 會被清除（Server 每小時檢查一次），但 **`run_events` 不刪**：Run 永遠可以完整重播，到期的內容顯示為已過期。
   - Review 用的完整 diff（§10）也存在 `run_events` 中。**超過 90 天的 Run，review diff 中放在 blob 的大檔案無法顯示**，只剩檔案清單與內嵌的小檔案。
 - **斷線處理**：Runner 斷線時，Event 先暫存在本機，重新連上後以 seq 補送。UI 可以從 Event 重播整個 Run。

@@ -290,6 +290,8 @@ impl Run {
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
         self.emit(EventKind::WorktreeReady {
+            // Preview 的 port 由 E2 填入。
+            preview_port: None,
             worktree_path: wt.path.to_string_lossy().into_owned(),
             branch: wt.branch.clone(),
             base_commit: wt.base_commit.clone(),

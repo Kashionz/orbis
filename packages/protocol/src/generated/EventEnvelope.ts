@@ -87,7 +87,13 @@ branch: string | null,
 /**
  * 開出 Worktree 時的 commit SHA（40 個十六進位字元）。
  */
-base_commit: string, } | { "kind": "run_diff" } & RunDiff | { "kind": "plan_proposed", 
+base_commit: string, 
+/**
+ * 分配給這個 Worktree 的 Preview port（協定版本 2）。Repo 設定檔沒有 `[preview].command` 時
+ * 缺少或為 `null`，Server 據此把 Preview 顯示為「沒有設定」；有值但還沒收到 `preview_ready`
+ * 時顯示為「啟動中」。
+ */
+preview_port?: number, } | { "kind": "run_diff" } & RunDiff | { "kind": "plan_proposed", 
 /**
  * plan 的 markdown 全文：Agent plan 模式交出的內容，或回合最後一則訊息的全文。
  */

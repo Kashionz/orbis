@@ -32,7 +32,8 @@ use crate::frame::{RunnerToServer, ServerToRunner};
 use crate::names::Names;
 use crate::preview::{
     PREVIEW_DATA_HEADER_LEN, PREVIEW_INITIAL_WINDOW, PREVIEW_MAX_CHUNK,
-    PREVIEW_MAX_STREAMS_PER_RUN, PreviewDataKind, PreviewResetReason, PreviewStreamKind,
+    PREVIEW_MAX_STREAMS_PER_RUN, PREVIEW_MAX_WS_MESSAGE, PreviewDataKind, PreviewResetReason,
+    PreviewStreamKind,
 };
 use crate::sidecar::{
     SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SIDECAR_FLAG, SidecarCommand,
@@ -373,6 +374,12 @@ export const DEFAULT_MAX_CONCURRENT_RUNS = {DEFAULT_MAX_CONCURRENT_RUNS};"
         crate::RUNNER_BLOB_PATH
     )
     .unwrap();
+    writeln!(
+        out,
+        "\nexport const RUNNER_BLOB_ROUTE = \"{}\";",
+        crate::RUNNER_BLOB_ROUTE
+    )
+    .unwrap();
     writeln!(out, "\nexport const SIDECAR_FLAG = \"{SIDECAR_FLAG}\";").unwrap();
     writeln!(
         out,
@@ -406,6 +413,12 @@ export const PREVIEW_MAX_STREAMS_PER_RUN = {PREVIEW_MAX_STREAMS_PER_RUN};"
         out,
         "
 export const PREVIEW_DATA_HEADER_LEN = {PREVIEW_DATA_HEADER_LEN};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const PREVIEW_MAX_WS_MESSAGE = {PREVIEW_MAX_WS_MESSAGE};"
     )
     .unwrap();
     // Preview binary 訊息第一個 byte 的值（見 crates/orbis-protocol/src/preview.rs）。

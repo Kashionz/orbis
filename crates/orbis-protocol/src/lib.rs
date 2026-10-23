@@ -37,7 +37,10 @@ pub const RUNNER_WS_PATH: &str = "/runner";
 /// 以 `Authorization: Bearer <Runner token>` 認證，body 是 blob 的原始內容。
 /// Server 驗證 SHA-256 與大小；上傳成功後 Runner 才送出參照它的 Event。
 ///
-/// Runner 也以 `GET <server><RUNNER_BLOB_PATH>/<blob_id>` 下載 blob（同樣以 Runner token 認證），
-/// 例如 Review Gate 退回時附上的 Preview 截圖。只能下載掛在這台 Runner 正在執行的 Run 上的 blob，
-/// 其他回 404；過期回 410。
+/// 同一個路徑也支援 `GET <server><RUNNER_BLOB_PATH>/<blob_id>`：Runner 下載 blob（協定版本 2），
+/// 同樣以 Runner token 認證，例如 Review Gate 退回時附上的 Preview 截圖。只能下載掛在這台 Runner
+/// 正在執行的 Run 上的 blob，其他回 404；過期回 410。
 pub const RUNNER_BLOB_PATH: &str = "/api/runner/blobs";
+
+/// [`RUNNER_BLOB_PATH`] 加上路由參數的形式，Server 直接拿來註冊 `PUT` 與 `GET` 的路由。
+pub const RUNNER_BLOB_ROUTE: &str = "/api/runner/blobs/:blobId";
