@@ -136,7 +136,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 
 ### 6.1 Pairing 與 Dispatch
 
-- **Local Runner**：Member 在 Electron 登入後自動完成 Pairing，Runner 綁定該 Member。
+- **Local Runner**：Member 在 Electron 登入後自動完成 Pairing，Runner 綁定該 Member。流程見 §16.1。
 - **Team Runner**：Admin 在 UI 產生 Team token，Runner 用這組 token 完成 Pairing。
 - **派工規則**：
   - Run 選擇「在我的電腦跑」→ 只有派工者本人的 Local Runner 會領取（「我」是派工的人，不是 Task 的負責人）。
@@ -423,6 +423,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 ### 12.3 通知與 @mention
 
 - **通知管道**：App 內的通知中心，加上 Electron 的桌面通知。發送層要設計成可以擴充管道的介面（email、Slack 留到之後）。
+  - Electron 的桌面通知目前只涵蓋 Needs You：Desktop 每 5 秒輪詢 Needs You 清單，出現新項目時發出原生通知（§16.1）。
 - **觸發通知的事件**：
   - 權限請求（Needs You）
   - Gate 等待核准
@@ -504,6 +505,49 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
       - 撤銷時立刻斷線，Runner 上進行中的 Run 回到佇列；這個 session 取得、還沒使用的 Pairing token 也一併失效。
       - 過期的 session 每小時清除一次。
 - **Team Runner**：以 Docker image 發布。
+
+### 16.1 Desktop 殼
+
+Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)），另外代管 Local Runner、顯示系統匣與桌面通知。
+
+- **Server URL**：
+  - 第一次啟動時由使用者輸入 Web UI 的 origin，Desktop 以 `GET /api/health` 確認後存在本機設定中。
+  - Runner 要連的 API origin 取自 `GET /api/health` 回報的 `apiOrigin`；回應沒有這個欄位時，退回 Web UI 的 origin。Desktop 在取得 Pairing token 時決定這個網址，sidecar 重新啟動也沿用同一個網址。
+- **安全設定**：
+  - 主視窗啟用 `contextIsolation` 與 `sandbox`，不啟用 `nodeIntegration`。
+  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree、登出前的 `beforeLogout()`。main 程序只接受來自 Server origin 主 frame 的呼叫。
+  - 導覽只允許 Server origin 與 GitHub OAuth 的登入頁，其他 http(s) 連結用外部瀏覽器開啟，不開新視窗。
+- **登入與 Pairing**：
+  - main 程序監看 Server 的 session cookie，有變化時以 `/api/auth/me` 確認登入狀態。
+  - 登入的人是某個 Team 的 Member 時，向 Server 取得 Local Runner 的 Pairing token，以環境變數交給 sidecar（不放在命令列上）。
+  - Runner 完成 Pairing 後自己保存 Runner token，之後重新啟動都用它。
+  - **登出**：Web UI 送出登出前呼叫 bridge 的 `beforeLogout()`，Desktop 依 §16 的流程處理後才回傳放行。
+    - 撤銷用的 Runner ID 是 sidecar 最後一次回報的值，存在本機設定中。從來沒有連上過時跳過撤銷。撤銷失敗時照樣放行，交給 Server 端撤銷。
+    - 放行後 15 秒內，即使 cookie 還在也不重新 Pairing。這段時間過後 cookie 仍然存在，表示登出失敗，Desktop 會重新 Pairing。
+    - 沒有經過 `beforeLogout()` 的登出（cookie 消失或 `/api/auth/me` 回 401）時，Desktop 也會停止 sidecar 並刪除本機狀態。
+  - **換 Server**：先停止 sidecar 並刪除本機的 Runner 狀態，之後才改用新的 Server URL。
+- **Runner sidecar**：
+  - 開發模式使用 `cargo build` 的產物，打包模式使用內建的執行檔。Desktop 代管的 Runner 使用自己的狀態目錄，不和手動執行的 Runner 共用 Runner token。
+  - 以 `--sidecar` 啟動，透過 stdio 溝通：
+    - stdout 每行一個狀態 JSON：連線中、已連線、離線，執行中的 Run 數，是否暫停領取。
+    - stdin 每行一個指令：`pause_claiming`、`resume_claiming`、`shutdown`。
+    - log 一律走 stderr，Desktop 寫到有大小上限、會輪替的 log 檔。
+  - 當掉時以指數退避重啟（1 秒起、上限 60 秒，連續正常運作 60 秒後重置）。
+  - 以「需要重新 Pairing」的結束碼結束時不重啟，而是重新取得 Pairing token。
+  - 以「協定版本不相容」的結束碼結束時也不重啟，系統匣與視窗提示「Runner 版本與 Server 不相容，請更新」。
+  - **結束 App 時**：Desktop 送出 `shutdown` 並關閉 stdin，Runner 結束自己的 Run（§6.4）後退出。stdin EOF 也視為 shutdown，所以 Desktop 當掉時 Runner 也會自行結束。Runner 逾時沒有結束，Desktop 就強制結束整個程序樹：Windows 用 `taskkill /T`，macOS／Linux 用 process group。
+- **系統匣**：
+  - 顯示 Runner 狀態（連線中、已連線與執行中的 Run 數、離線）與 Needs You 的數量。
+  - 提供「顯示視窗」「暫停領取新 Run」「開啟 Runner log」。暫停領取存在本機設定中，Runner 以 Heartbeat 告訴 Server 不要再派工。
+  - 關閉主視窗只是縮到系統匣，結束 App 要用系統匣或選單。
+- **桌面通知**：
+  - 登入後每 5 秒輪詢 Needs You 清單。第一次輪詢只建立基準，之後新出現的項目各發一次原生通知。
+  - 點擊通知後顯示主視窗，並前往和 Web UI 的 Needs You 清單相同的位置：Review Gate 到 diff review，權限請求與其他項目到 Run 頁。
+- **開啟本機工具**：
+  - Run 頁面可以用設定的編輯器或終端機開啟 Worktree，兩者都提供預設選項與自訂指令（`{path}` 會換成 Worktree 路徑）。
+  - Desktop 只接受 Worktree 根目錄（§6.2）底下 `<repo>/<Worktree>` 這一層、而且確實存在的目錄，並解析 symlink 確認沒有跳出根目錄。
+  - 執行檔一律以絕對路徑啟動，不在目前目錄（Worktree）中搜尋。Worktree 的內容可能是 Agent 寫的。
+  - Windows 上的 `.cmd` shim 經由 `cmd.exe` 執行，參數由 Desktop 自己加引號。
 
 ---
 

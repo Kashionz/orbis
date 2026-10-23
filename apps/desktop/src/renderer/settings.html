@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>設定</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <main>
+      <h1 id="heading">設定</h1>
+
+      <form id="server-form" novalidate>
+        <h2>Server URL</h2>
+        <p class="hint">Web UI 的網址，例如 <code>https://team.example.com</code>。</p>
+        <div class="row">
+          <input
+            id="server-url"
+            name="serverUrl"
+            type="url"
+            autocomplete="url"
+            placeholder="https://team.example.com"
+            required
+          />
+          <button id="server-save" type="submit">連線</button>
+        </div>
+        <p id="server-error" class="error" role="alert"></p>
+      </form>
+
+      <form id="tools-form" hidden>
+        <h2>本機工具</h2>
+        <p class="hint">
+          Run 頁面的「用編輯器開啟 Worktree」與「在終端機開啟」使用的程式。自訂指令中的
+          <code id="placeholder-hint"></code> 會換成 Worktree 路徑。
+        </p>
+        <label for="editor-preset">編輯器</label>
+        <div class="row">
+          <select id="editor-preset" name="editorPreset"></select>
+          <input id="editor-custom" name="editorCustom" type="text" placeholder="自訂指令" />
+        </div>
+        <label for="terminal-preset">終端機</label>
+        <div class="row">
+          <select id="terminal-preset" name="terminalPreset"></select>
+          <input id="terminal-custom" name="terminalCustom" type="text" placeholder="自訂指令" />
+        </div>
+        <div class="row end">
+          <span id="tools-status" role="status"></span>
+          <button id="tools-save" type="submit">儲存</button>
+        </div>
+      </form>
+    </main>
+    <script src="settings.js"></script>
+  </body>
+</html>

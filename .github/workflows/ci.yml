@@ -92,10 +92,28 @@ jobs:
       - name: Playwright（Web）
         run: pnpm --filter @orbis/web test:e2e
 
+      # Desktop 的 e2e 以 Playwright 的 Electron 模式跑，sidecar 用真實的 Runner（test:e2e 會先 cargo build）。
+      # Linux runner 沒有顯示器，用 xvfb 提供虛擬的 X server。
+      - name: Playwright（Desktop）
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run --auto-servernum pnpm --filter @orbis/desktop test:e2e
+          else
+            pnpm --filter @orbis/desktop test:e2e
+          fi
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-${{ matrix.os }}
           path: apps/web/playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload Desktop Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-desktop-${{ matrix.os }}
+          path: apps/desktop/playwright-report
           if-no-files-found: ignore
