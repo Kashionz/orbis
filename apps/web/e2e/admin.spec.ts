@@ -2,6 +2,7 @@
 // 設定的信任核准（Admin 以上），以及共用訂閱的條款風險警告（ADR-0005）。
 
 import { NAMES } from "@orbis/api-contract";
+import { CONFIG_PATH } from "../src/mocks/scripts";
 import { expect, test } from "./fixtures";
 
 test("Owner：新增成員、改 Role、移除；不能降級最後一位 Owner", async ({ page }) => {
@@ -90,7 +91,7 @@ test.describe("設定的信任核准", () => {
     await expect(select).toHaveValue("manual");
 
     const request = section.locator(".trust-request");
-    await expect(request).toContainText("執行 .orbis/config.toml 的 setup");
+    await expect(request).toContainText(`執行 ${CONFIG_PATH} 的 setup`);
     await request.getByRole("button", { name: "信任並執行" }).click();
     await expect(request).toHaveCount(0);
     await expect(section.getByText("沒有等待核准的請求。")).toBeVisible();

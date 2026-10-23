@@ -107,7 +107,7 @@ export function RunnersSection() {
 
 /**
  * Permission Policy 與設定的信任核准（ARCHITECTURE §6.2、§8，Admin 以上）：各 Project 的預設
- * Permission Policy，以及等待核准的 `.orbis/config.toml` 信任請求。
+ * Permission Policy，以及等待核准的 Repo 設定檔信任請求。
  */
 export function PolicySection({ projects }: { projects: readonly Project[] }) {
   const { data: needsYou = [] } = useQuery(needsYouQuery);
