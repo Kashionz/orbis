@@ -13,28 +13,19 @@ import {
   type NeedsYouListResponse,
   PermissionResponseInput,
   type ReviewCommentInput,
-  type Role,
 } from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { authorize, authorizePermissionResponse, effectiveRole } from "../authz/capabilities";
+import { authorize, authorizePermissionResponse } from "../authz/capabilities";
 import {
+  actorProjectRoles,
   loadRunScope,
   loadTaskScope,
   type RunScope,
   requireProjectCapability,
 } from "../authz/scope";
-import {
-  gates,
-  needsYouItems,
-  projectMemberRoles,
-  projects,
-  reviewComments,
-  runners,
-  runs,
-  tasks,
-} from "../db/schema";
+import { gates, needsYouItems, projects, reviewComments, runners, runs, tasks } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
 import { toGates, toNeedsYou } from "../http/dto";
 import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
@@ -101,7 +92,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         ),
       )
       .orderBy(desc(needsYouItems.createdAt), desc(needsYouItems.id));
-    const roles = await projectRoles(db, actor);
+    const roles = await actorProjectRoles(db, actor);
     const items: NeedsYouListResponse = [];
     for (const r of rows) {
       const role = roles(r.project.id);
@@ -329,16 +320,6 @@ export function rejectionPrompt(
     }
   }
   return lines.join("\n");
-}
-
-/** Actor 在各 Project 的有效 Role（一次查出所有 Project 的覆寫）。 */
-async function projectRoles(db: Executor, actor: Actor): Promise<(projectId: string) => Role> {
-  const overrides = await db
-    .select({ projectId: projectMemberRoles.projectId, role: projectMemberRoles.role })
-    .from(projectMemberRoles)
-    .where(eq(projectMemberRoles.memberId, actor.memberId));
-  const byProject = new Map(overrides.map((o) => [o.projectId, o.role]));
-  return (projectId) => effectiveRole(actor.teamRole, byProject.get(projectId));
 }
 
 /** 確認 Actor 可以回覆這個 Run 的權限請求；不行時丟出 403。 */

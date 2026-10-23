@@ -8,6 +8,7 @@ import type {
   Project,
   Repo,
   ReviewComment,
+  Role,
   Run,
   RunEvent,
   RunUsage,
@@ -59,7 +60,8 @@ export function toMember(row: typeof members.$inferSelect): Member {
   };
 }
 
-export function toProject(row: typeof projects.$inferSelect): Project {
+/** `viewerRole` 是目前登入者在這個 Project 的有效 Role（authz 的 effectiveRole）。 */
+export function toProject(row: typeof projects.$inferSelect, viewerRole: Role): Project {
   return {
     id: row.id,
     teamId: row.teamId,
@@ -75,6 +77,7 @@ export function toProject(row: typeof projects.$inferSelect): Project {
       defaultPermissionPolicy: row.defaultPermissionPolicy,
       autoCreateIssues: row.autoCreateIssues,
     },
+    viewerRole,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };

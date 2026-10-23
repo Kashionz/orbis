@@ -83,6 +83,22 @@ export async function loadRunScope(db: Executor, actor: Actor, runId: string): P
   return { ...row, role: await projectRole(db, actor, row.project.id) };
 }
 
+/**
+ * Actor 在各 Project 的有效 Role：一次查出 Actor 所有的 Project 覆寫，列表不必逐一查詢。
+ */
+export async function actorProjectRoles(
+  db: Executor,
+  actor: Actor,
+): Promise<(projectId: string) => Role> {
+  if (actor.teamRole === "owner") return () => "owner";
+  const overrides = await db
+    .select({ projectId: projectMemberRoles.projectId, role: projectMemberRoles.role })
+    .from(projectMemberRoles)
+    .where(eq(projectMemberRoles.memberId, actor.memberId));
+  const byProject = new Map(overrides.map((o) => [o.projectId, o.role]));
+  return (projectId) => effectiveRole(actor.teamRole, byProject.get(projectId));
+}
+
 /** 在 Project 範圍內檢查能力；不允許時丟出 403。 */
 export function requireProjectCapability(
   actor: Actor,

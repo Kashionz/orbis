@@ -204,6 +204,45 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         keyPrefix: "ORB",
         teamId: team.teamId,
         policy: { planGateEnabled: true, defaultPermissionPolicy: "auto", autoCreateIssues: true },
+        viewerRole: "admin",
+      });
+    });
+
+    describe("viewerRole：目前登入者在這個 Project 的有效 Role", () => {
+      const setOverride = (projectId: string, memberId: string, role: string) =>
+        as("admin").put(`/api/projects/${projectId}/roles/${memberId}`, { role });
+
+      it("列表中每個 Project 各自套用 Role 覆寫，沒有覆寫時用 Team 的 Role", async () => {
+        const a = await createProject("AAA");
+        const b = await createProject("BBB");
+        await setOverride(a.id, team.members.member.id, "viewer");
+        await setOverride(b.id, team.members.viewer.id, "admin");
+        const roles = async (role: keyof SeededTeam["members"]) => {
+          const list = expectContract(z.array(Project), (await as(role).get("/api/projects")).body);
+          return Object.fromEntries(list.map((p) => [p.keyPrefix, p.viewerRole]));
+        };
+        expect(await roles("member")).toEqual({ AAA: "viewer", BBB: "member" });
+        expect(await roles("viewer")).toEqual({ AAA: "viewer", BBB: "admin" });
+        expect(await roles("owner")).toEqual({ AAA: "owner", BBB: "owner" });
+      });
+
+      it("GET 與 PATCH 單一 Project 也帶 viewerRole；移除覆寫後回到 Team 的 Role", async () => {
+        const project = await createProject();
+        await setOverride(project.id, team.members.viewer.id, "admin");
+        const got = await as("viewer").get(`/api/projects/${project.id}`);
+        expect(expectContract(Project, got.body).viewerRole).toBe("admin");
+        // 覆寫成 Admin 後可以修改，回應中仍是覆寫後的 Role。
+        const patched = await as("viewer").patch(`/api/projects/${project.id}`, { name: "改名" });
+        expect(patched.status).toBe(200);
+        expect(expectContract(Project, patched.body).viewerRole).toBe("admin");
+        await as("admin").delete(`/api/projects/${project.id}/roles/${team.members.viewer.id}`);
+        const after = await as("viewer").get(`/api/projects/${project.id}`);
+        expect(expectContract(Project, after.body).viewerRole).toBe("viewer");
+      });
+
+      it("建立 Project 時是建立者的 Team Role", async () => {
+        const res = await as("owner").post("/api/projects", { name: "Owner 的", keyPrefix: "OWN" });
+        expect(expectContract(Project, res.body).viewerRole).toBe("owner");
       });
     });
 
