@@ -2,6 +2,7 @@ CREATE TYPE "public"."feedback_fix_status" AS ENUM('sent', 'pushed', 'failed', '
 CREATE TYPE "public"."feedback_source" AS ENUM('review', 'ci');--> statement-breakpoint
 CREATE TYPE "public"."mention_source" AS ENUM('task_comment', 'review_comment', 'collab_document');--> statement-breakpoint
 CREATE TYPE "public"."notification_kind" AS ENUM('permission_request', 'gate_pending', 'verification_failed', 'feedback_limit_reached', 'mentioned', 'task_assigned', 'task_merged', 'task_rejected', 'run_stopped');--> statement-breakpoint
+CREATE TYPE "public"."prompt_source" AS ENUM('user', 'plan_gate', 'review_gate', 'verification_retry', 'feedback_review', 'feedback_ci', 'child_question');--> statement-breakpoint
 CREATE TYPE "public"."review_comment_kind" AS ENUM('diff', 'preview');--> statement-breakpoint
 CREATE TYPE "public"."run_origin" AS ENUM('dispatch', 'delegation', 'verification', 'mention', 'feedback_loop');--> statement-breakpoint
 CREATE TYPE "public"."task_note_source" AS ENUM('agent', 'feedback_loop');--> statement-breakpoint
@@ -210,6 +211,7 @@ ALTER TABLE "runs" ADD COLUMN "consult_of_run_id" uuid;--> statement-breakpoint
 ALTER TABLE "runs" ADD COLUMN "resumes_run_id" uuid;--> statement-breakpoint
 ALTER TABLE "runs" ADD COLUMN "agent_session_id" text;--> statement-breakpoint
 ALTER TABLE "runs" ADD COLUMN "prompt" jsonb;--> statement-breakpoint
+ALTER TABLE "runs" ADD COLUMN "prompt_source" "prompt_source";--> statement-breakpoint
 ALTER TABLE "acceptance_criteria" ADD COLUMN "result_summary" text;--> statement-breakpoint
 ALTER TABLE "draft_tasks" ADD COLUMN "batch_id" uuid DEFAULT gen_random_uuid() NOT NULL;--> statement-breakpoint
 ALTER TABLE "draft_tasks" ADD COLUMN "position" integer DEFAULT 1 NOT NULL;--> statement-breakpoint

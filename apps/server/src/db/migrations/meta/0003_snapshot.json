@@ -1,5 +1,5 @@
 {
-  "id": "478c456f-11d7-4aec-a012-d57988cb82d7",
+  "id": "5cb327a7-565c-4c13-91aa-551dd4d3a198",
   "prevId": "1b890104-b4c3-43ad-94d1-2a1e3ca1fac2",
   "version": "7",
   "dialect": "postgresql",
@@ -3277,6 +3277,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "prompt_source": {
+          "name": "prompt_source",
+          "type": "prompt_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
         "started_at": {
           "name": "started_at",
           "type": "timestamp with time zone",
@@ -5036,6 +5043,19 @@
       "name": "permission_policy",
       "schema": "public",
       "values": ["manual", "auto", "yolo"]
+    },
+    "public.prompt_source": {
+      "name": "prompt_source",
+      "schema": "public",
+      "values": [
+        "user",
+        "plan_gate",
+        "review_gate",
+        "verification_retry",
+        "feedback_review",
+        "feedback_ci",
+        "child_question"
+      ]
     },
     "public.pull_request_state": {
       "name": "pull_request_state",

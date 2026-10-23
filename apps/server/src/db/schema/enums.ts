@@ -13,6 +13,7 @@ import {
   NEEDS_YOU_KINDS,
   NOTIFICATION_KINDS,
   PERMISSION_POLICIES,
+  PROMPT_SOURCES,
   PULL_REQUEST_STATES,
   REVIEW_COMMENT_KINDS,
   REVIEW_COMMENT_SIDES,
@@ -57,6 +58,7 @@ export const githubWebhookDeliveryStatusEnum = pgEnum(
 
 // W5–7
 export const runOriginEnum = pgEnum("run_origin", RUN_ORIGINS);
+export const promptSourceEnum = pgEnum("prompt_source", PROMPT_SOURCES);
 export const verificationStatusEnum = pgEnum("verification_status", VERIFICATION_STATUSES);
 export const verificationOutcomeEnum = pgEnum("verification_outcome", VERIFICATION_OUTCOMES);
 export const verificationResolutionEnum = pgEnum(

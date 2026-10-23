@@ -10,6 +10,7 @@ import {
   GATE_DECISIONS,
   GATE_KINDS,
   PERMISSION_POLICIES,
+  PROMPT_SOURCES,
   RUN_CONTROL_ACTIONS,
   RUN_ORIGINS,
   RUN_STATUSES,
@@ -24,6 +25,7 @@ export {
   GATE_DECISIONS,
   GATE_KINDS,
   PERMISSION_POLICIES,
+  PROMPT_SOURCES,
   RUN_CONTROL_ACTIONS,
   RUN_ORIGINS,
   RUN_STATUSES,
@@ -131,6 +133,10 @@ export type AcceptanceCriterionResult = z.infer<typeof AcceptanceCriterionResult
 /** Run 為什麼產生：人派工、Delegation、判定 Verification、@agent、Feedback Loop。 */
 export const RunOrigin = z.enum(RUN_ORIGINS);
 export type RunOrigin = z.infer<typeof RunOrigin>;
+
+/** 送給 Agent 的 prompt 的來源（Review Gate 退回、Verification 重試、Feedback Loop 等）。 */
+export const PromptSource = z.enum(PROMPT_SOURCES);
+export type PromptSource = z.infer<typeof PromptSource>;
 
 /** 一條條件的 Verification 結果。`error`＝無法判定（Server 算失敗，UI 另外標示）。 */
 export const VerificationOutcome = z.enum(VERIFICATION_OUTCOMES);

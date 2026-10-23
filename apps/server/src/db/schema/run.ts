@@ -17,6 +17,7 @@ import {
   delegationModeEnum,
   dispatchStatusEnum,
   permissionPolicyEnum,
+  promptSourceEnum,
   runControlActionEnum,
   runnerKindEnum,
   runOriginEnum,
@@ -85,6 +86,8 @@ export const runs = pgTable(
      * Server 重新啟動後派工都拿得到。
      */
     prompt: jsonb("prompt"),
+    /** `prompt` 的來源（協定的 PromptSource）；null 表示 `user` 或由 Task 組出。改派或重新啟動後原樣帶回 DispatchOffer。 */
+    promptSource: promptSourceEnum("prompt_source"),
     startedAt: timestamptz("started_at"),
     finishedAt: timestamptz("finished_at"),
     createdAt: createdAt(),
