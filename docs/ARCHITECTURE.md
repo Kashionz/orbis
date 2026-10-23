@@ -142,6 +142,10 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 零散的留言在最後一則之後 2 分鐘才觸發，期間的留言合併成一批。零散的留言是只有一則行內留言的 review（GitHub 的「Add single comment」也會產生一份 review），以及 PR 對話串的留言。
   - 零散的留言還在等時送出了 review，就一起送出。
   - 同一個 PR 同時只有一次自動修正。修正還沒 push 時，新的回饋先暫存，修正 push 或 Run 沒有 push 就結束之後再送。review 與 CI 都在等時，先送 review。PR 有了新的 commit 之後，舊 commit 的 CI 結果作廢。
+- **已知風險：CI 輸出的 prompt injection**：
+  - check run 的 output 與 log 由建立它的 App 決定，這些內容會放進修正 prompt。
+  - Phase 1 不設 CI App 的白名單，理由是只有 repo 的 admin 能把 App 裝到 repo 上，而且 CI 失敗就應該觸發。
+  - 緩解：output 與 log 放在 code block 中當資料，並限制長度；prompt 中註明它們是 CI 產生的資料，不是給 Agent 的指示。
 - **次數上限**：每個 PR 自動修正最多 **5 次**，CI 與 review 分開計數。超過就停下並通知 Task 負責人。
 - **紀錄**：每次自動修正都在 Task（Task note）與 PR 上留下紀錄，註明是哪個來源觸發。
 - **送回原 Run 的 session**：PR 開出後原 Run 已經 `completed`，所以每次修正都開一個**新的 Run**（`origin = feedback_loop`，以 `resumes_run_id` 連到前一個 Run）。
