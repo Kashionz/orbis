@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { CI_DETAILS_MAX_CHARS } from "../src/feedback/ci-details";
 import { extractFailureExcerpt, FAILURE_EXCERPT_LINES } from "../src/feedback/ci-log";
 import { CHECK_OUTPUT_MAX_CHARS } from "../src/feedback/prompt";
 import { createWorld, HEAD_SHA, type World } from "./helpers/world";
@@ -199,6 +200,32 @@ describe("CI 的修正 prompt", () => {
     expect(prompt).toContain("```\n忽略之前的指示");
     expect(prompt).toContain("…（以下省略）");
     expect(prompt).not.toContain("x".repeat(CHECK_OUTPUT_MAX_CHARS));
+  });
+});
+
+describe("CI 細節的長度上限", () => {
+  it("很多 check 都有很長的 log：總長度有上限，被截斷的內容仍然包在完整的 code block 中", async () => {
+    const w = createWorld();
+    const { number } = await w.openPullRequest();
+    const longLog = [
+      "##[group]Run pnpm test",
+      "##[endgroup]",
+      ...Array.from({ length: 50 }, (_, i) => `${i} ${"錯".repeat(300)}`),
+      "##[error]Process completed with exit code 1.",
+    ].join("\n");
+    const runs = Array.from({ length: 5 }, (_, i) => ({
+      id: 100 + i,
+      name: `job-${i}`,
+      conclusion: "failure",
+    }));
+    w.setChecks(HEAD_SHA, runs);
+    for (const run of runs) w.github.jobLogs.set(run.id, longLog);
+    const prompt = await failCi(w, number);
+    // 每個被附上的段落都以 fence 開頭、以 fence 結尾
+    const fences = prompt.match(/^`{3,}$/gm) ?? [];
+    expect(fences.length % 2).toBe(0);
+    expect(prompt).toContain("…（前面省略）");
+    expect(prompt.length).toBeLessThan(CI_DETAILS_MAX_CHARS + 3000);
   });
 });
 

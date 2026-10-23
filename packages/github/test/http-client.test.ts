@@ -2,7 +2,7 @@
 
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { createHttpGitHubClient } from "../src/client/http";
+import { createHttpGitHubClient, readTail } from "../src/client/http";
 import { GitHubApiError } from "../src/client/types";
 import { fixture } from "./helpers/world";
 
@@ -237,5 +237,31 @@ describe("HTTP GitHubClient", () => {
     expect(await client.getCollaboratorRole(5, repo, { login: "nobody", id: 12 })).toBe("none");
     // login 已經屬於另一個帳號（改名後被別人註冊）
     expect(await client.getCollaboratorRole(5, repo, { login: "alice", id: 99 })).toBe("none");
+  });
+});
+
+describe("readTail（job log 只讀最後的部分）", () => {
+  function streamed(parts: string[]): Response {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(encoder.encode(part));
+        controller.close();
+      },
+    });
+    return new Response(body);
+  }
+
+  it("沒有超過上限時原樣回傳", async () => {
+    expect(await readTail(streamed(["a\n", "b\n"]), 100)).toBe("a\nb\n");
+  });
+
+  it("超過上限時只保留最後的部分，並丟掉被截斷的第一行", async () => {
+    const parts = Array.from({ length: 1000 }, (_, i) => `第 ${i} 行\n`);
+    const text = await readTail(streamed(parts), 200);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(200);
+    expect(text.endsWith("第 999 行\n")).toBe(true);
+    expect(text.startsWith("第 ")).toBe(true);
+    expect(text).not.toContain("第 0 行");
   });
 });

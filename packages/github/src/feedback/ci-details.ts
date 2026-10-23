@@ -7,20 +7,28 @@
 import { GitHubApiError, type GitHubCheckAnnotation } from "../client/types";
 import { type ConnectedRepo, connectedRepo, type IntegrationContext } from "../context";
 import type { CiFeedbackItem, PullRequestLink } from "../ports";
-import { extractFailureExcerpt, limitTail } from "./ci-log";
+import { extractFailureExcerpt, FAILURE_EXCERPT_MAX_CHARS, limitTail } from "./ci-log";
 import { codeBlock } from "./prompt";
 
 /** 一批 CI 回饋的細節加起來最多幾個字元（超過的 check 只附 output 與連結）。 */
 export const CI_DETAILS_MAX_CHARS = 12_000;
+/** 每個 check 的標題與 code fence 預留的字元數。 */
+const HEADER_RESERVE = 200;
 /** 每個 check 最多附幾則 annotation。 */
 const MAX_ANNOTATIONS = 20;
 
 const GITHUB_ACTIONS = "github-actions";
 
+/** 一個 check 的內容最多幾個字元：每個 check 的上限與這批剩下的預算取小。 */
+function contentLimit(budget: number): number {
+  return Math.max(0, Math.min(FAILURE_EXCERPT_MAX_CHARS, budget));
+}
+
 async function actionsLogDetails(
   ctx: IntegrationContext,
   repo: ConnectedRepo,
   item: CiFeedbackItem,
+  budget: number,
 ): Promise<string | null> {
   let log: string | null;
   try {
@@ -41,7 +49,9 @@ async function actionsLogDetails(
   const heading = excerpt.step
     ? `失敗的步驟 \`${excerpt.step.replace(/`/g, "'")}\` 的 log（${excerpt.truncated ? "最後" : "全部"} ${excerpt.lines.length} 行）：`
     : `log 的最後 ${excerpt.lines.length} 行：`;
-  return `${heading}\n\n${codeBlock(limitTail(excerpt.lines.join("\n")))}`;
+  // 先截斷內容再包 code block，外框一定保留。
+  const content = limitTail(excerpt.lines.join("\n"), contentLimit(budget));
+  return `${heading}\n\n${codeBlock(content)}`;
 }
 
 function formatAnnotation(a: GitHubCheckAnnotation): string {
@@ -58,6 +68,7 @@ async function annotationDetails(
   ctx: IntegrationContext,
   repo: ConnectedRepo,
   item: CiFeedbackItem,
+  budget: number,
 ): Promise<string | null> {
   const annotations = (
     await ctx.client.listCheckRunAnnotations(repo.installationId, repo.ref, item.checkRunId)
@@ -67,7 +78,8 @@ async function annotationDetails(
   if (annotations.length > shown.length) {
     shown.push(`…還有 ${annotations.length - shown.length} 則`);
   }
-  return `失敗的 annotations：\n\n${codeBlock(limitTail(shown.join("\n")))}`;
+  const content = limitTail(shown.join("\n"), contentLimit(budget));
+  return `失敗的 annotations：\n\n${codeBlock(content)}`;
 }
 
 /** 每個失敗 check 的細節（markdown），以 check run id 為 key。讀不到細節的 check 不放。 */
@@ -82,14 +94,15 @@ export async function collectCiDetails(
   if (!repo) return details;
   let budget = CI_DETAILS_MAX_CHARS;
   for (const item of items) {
-    if (budget <= 0) break;
+    // 標題與 code fence 另外留 HEADER_RESERVE 個字元
+    if (budget <= HEADER_RESERVE) break;
     const text =
-      (item.appSlug === GITHUB_ACTIONS ? await actionsLogDetails(ctx, repo, item) : null) ??
-      (await annotationDetails(ctx, repo, item));
+      (item.appSlug === GITHUB_ACTIONS
+        ? await actionsLogDetails(ctx, repo, item, budget - HEADER_RESERVE)
+        : null) ?? (await annotationDetails(ctx, repo, item, budget - HEADER_RESERVE));
     if (!text) continue;
-    const limited = text.length <= budget ? text : limitTail(text, budget);
-    details.set(item.checkRunId, limited);
-    budget -= limited.length;
+    details.set(item.checkRunId, text);
+    budget -= text.length;
   }
   return details;
 }

@@ -198,6 +198,33 @@ function toReviewComment(raw: z.infer<typeof ReviewCommentResponse>): GitHubRevi
   };
 }
 
+/** job log 最多讀幾個 byte。log 可能很大，只保留最後的部分（錯誤通常在最後）。 */
+export const MAX_JOB_LOG_BYTES = 8 * 1024 * 1024;
+
+/** 以串流讀取 body，只保留最後 `maxBytes`；有截掉時丟掉第一個不完整的行。 */
+export async function readTail(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let dropped = false;
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+    size += chunk.byteLength;
+    // 去掉前面的 chunk，但至少保留 maxBytes
+    while (chunks.length > 1 && size - (chunks[0]?.byteLength ?? 0) >= maxBytes) {
+      size -= chunks.shift()?.byteLength ?? 0;
+      dropped = true;
+    }
+  }
+  let bytes = Buffer.concat(chunks);
+  if (bytes.byteLength > maxBytes) {
+    bytes = bytes.subarray(bytes.byteLength - maxBytes);
+    dropped = true;
+  }
+  const text = bytes.toString("utf8");
+  return dropped ? text.slice(text.indexOf("\n") + 1) : text;
+}
+
 /** repo 內的路徑（以 `/` 分隔）逐段編碼。 */
 function contentPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -591,7 +618,7 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
           `GitHub API GET ${path} 失敗：HTTP ${response.status}`,
         );
       }
-      return response.text();
+      return readTail(response, MAX_JOB_LOG_BYTES);
     },
 
     async getBranchHead(installationId, repo, branch) {
