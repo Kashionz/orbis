@@ -308,6 +308,8 @@ pub struct AgentSettings {
     pub env: BTreeMap<String, String>,
     /// 每組 Credential 的並行上限，預設 30。
     pub max_concurrent_runs: Option<u32>,
+    /// 一般 ACP Agent 可靠的 plan 模式（session mode 的 id）；沒有時 Planning 改用只產出 plan 的 prompt。
+    pub plan_mode: Option<String>,
     /// 只對內建的 Claude Code 有效：是否載入使用者全域的 Claude 設定（`~/.claude/settings.json`
     /// 的 allow 規則、plugin、hooks 等）。預設 `false`：Run 中只載入 Repo 的設定（ARCHITECTURE §8）。
     pub user_settings: Option<bool>,

@@ -351,6 +351,19 @@ impl AcpSession {
         &self.capabilities
     }
 
+    /// 切換 session mode（Planning 的 plan 模式與之後的執行模式）。
+    pub async fn set_mode(&self, mode: &str) -> Result<(), AgentError> {
+        self.cx
+            .send_request(SetSessionModeRequest::new(
+                self.session_id.clone(),
+                SessionModeId::new(mode),
+            ))
+            .block_task()
+            .await
+            .map(|_| ())
+            .map_err(AgentError::Acp)
+    }
+
     /// ACP session ID（Feedback Loop 與重新啟動 Agent 時用來接續）。
     pub fn session_id(&self) -> &str {
         &self.session_id.0

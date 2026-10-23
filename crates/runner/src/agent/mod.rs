@@ -141,6 +141,9 @@ pub struct AgentProfile {
     pub session_mode: Option<&'static str>,
     /// 建立（或接續）session 時放在 `_meta` 的內容（Agent 專屬的選項）。
     pub session_meta: Option<serde_json::Map<String, serde_json::Value>>,
+    /// 可靠的 plan 模式（session mode 的 id）。有值時 Planning 以這個模式執行、核准後切回
+    /// `session_mode`；沒有時改用「只產出 plan、不修改檔案」的 prompt（ARCHITECTURE §5、§7）。
+    pub plan_mode: Option<String>,
     /// Agent 自己的設定（相對於 Worktree，`/` 分隔；以 `/` 結尾的是整個目錄）。修改它們可能讓
     /// Agent 繞過 Permission Policy，`auto` 下寫入一律問人；和已接受的內容比對，有差異就先問人。
     pub protected_paths: Vec<String>,
@@ -205,6 +208,8 @@ impl AgentProfile {
             // 一律切回會詢問的 default 模式（ADR-0006：不使用 bypass）。
             session_mode: Some("default"),
             session_meta,
+            // plan mode 有已知 bug（§7），Planning 改用只產出 plan 的 prompt。
+            plan_mode: None,
             protected_paths: vec![
                 ".claude/settings.json".into(),
                 ".claude/settings.local.json".into(),
@@ -246,6 +251,8 @@ impl AgentProfile {
             },
             session_mode: Some("read-only"),
             session_meta: None,
+            // codex-acp 沒有 plan 模式（read-only 是沙盒設定），Planning 改用只產出 plan 的 prompt。
+            plan_mode: None,
             protected_paths: vec![".codex/".into()],
             permission_gaps: vec![
                 "read-only 模式下，Codex 在自己的沙盒中直接執行它認為唯讀的指令（含讀取 Worktree 以外的檔案），不會詢問 Runner".into(),
@@ -281,6 +288,8 @@ impl AgentProfile {
             },
             session_mode: None,
             session_meta: None,
+            // Gemini CLI 的 plan 審核模式只能在啟動參數指定，ACP 中無法切換，Planning 改用 prompt。
+            plan_mode: None,
             protected_paths: vec![".gemini/".into()],
             permission_gaps: vec![
                 "Gemini 自己的設定（~/.gemini/settings.json、Repo 的 .gemini/settings.json）中允許的工具不會詢問 Runner".into(),
@@ -313,6 +322,7 @@ impl AgentProfile {
             },
             session_mode: None,
             session_meta: None,
+            plan_mode: None,
             protected_paths: vec![".grok/".into()],
             permission_gaps: vec!["Grok 自己的設定（~/.grok）中允許的工具不會詢問 Runner".into()],
             known_issues: vec![
@@ -337,6 +347,7 @@ impl AgentProfile {
             },
             session_mode: None,
             session_meta: None,
+            plan_mode: settings.plan_mode.clone(),
             protected_paths: Vec::new(),
             permission_gaps: vec!["一般 ACP Agent：只能攔截 Agent 主動送出的權限請求".into()],
             known_issues: Vec::new(),
@@ -362,7 +373,10 @@ impl AgentProfile {
         if self.reports_usage {
             out.push(AgentCapability::UsageReport);
         }
-        // plan mode 不可靠（§7），A2 實作 Planning 前不宣告。
+        // 只有 profile 指定了可靠的 plan 模式才宣告；沒有時 Planning 用只產出 plan 的 prompt。
+        if self.plan_mode.is_some() {
+            out.push(AgentCapability::PlanMode);
+        }
         out
     }
 

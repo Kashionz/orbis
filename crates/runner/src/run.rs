@@ -23,9 +23,9 @@ use orbis_protocol::control::{
     RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason, RunControlResult,
 };
 use orbis_protocol::dispatch::DispatchOffer;
-use orbis_protocol::enums::{GateDecision, GateKind, RunStatus};
+use orbis_protocol::enums::{GateDecision, GateKind, PromptSource, RunStatus};
 use orbis_protocol::event::{
-    ContentBlock, EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose,
+    ContentBlock, EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose, PlanSource,
     RunErrorCode, TextBody, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use orbis_protocol::frame::RunnerToServer;
@@ -58,6 +58,14 @@ pub const RESUME_PROMPT: &str = "額度已恢復，請繼續剛才的工作。";
 pub const SETTINGS_RESUME_PROMPT: &str = "Agent 的設定檔已依 Orbis 的決定處理（接受或還原），請繼續剛才的工作，不要修改 Agent 的設定檔。";
 /// 還原設定檔後 Agent 重新啟動、但無法接續原本的 session 時，接在原本的 prompt 後面的說明。
 pub const SETTINGS_RESTART_NOTE: &str = "（Agent 因為修改了自己的設定檔而被重新啟動，設定檔已還原。之前的修改都還在 Worktree 中，請先檢查目前的狀態再繼續，不要修改 Agent 的設定檔。）";
+/// Planning（Agent 沒有可靠的 plan 模式時）：接在第一個 prompt 後面，要 Agent 只產出 plan。
+pub const PLAN_ONLY_PROMPT: &str = "這是 Planning 階段：請先閱讀需要的檔案，產出實作計畫（markdown），列出要修改的檔案、步驟與驗證方式。這個階段不要修改任何檔案，也不要執行會改變狀態的指令。回覆的最後一則訊息就是計畫全文。";
+/// Plan Gate 核准後送給 Agent 的 prompt。
+pub const PLAN_APPROVED_PROMPT: &str = "Plan 已核准，請依照核准的計畫開始實作。";
+/// Verification 的一條指令最多執行這麼久。
+const VERIFY_COMMAND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Verification 失敗時摘要中保留的輸出行數（完整輸出在證據中）。
+const VERIFY_SUMMARY_LINES: usize = 20;
 /// setup 的 tool call ID（Runner 自己產生）。
 const SETUP_TOOL_CALL: &str = "orbis-setup";
 
@@ -134,6 +142,10 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         approved_settings_writes: HashMap::new(),
         rate_limit_hint: None,
         rate_limit_set: None,
+        planning: false,
+        plan_text: None,
+        turn_text: String::new(),
+        last_source: PromptSource::User,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -180,6 +192,31 @@ enum Pending {
     },
 }
 
+/// 要送給 Agent 的 prompt（協定的內容區塊）與它的來源（`prompt_submitted` Event 用）。
+#[derive(Debug, Clone)]
+struct Prompt {
+    blocks: Vec<ContentBlock>,
+    source: PromptSource,
+}
+
+impl Prompt {
+    fn text(text: &str, source: PromptSource) -> Self {
+        Self {
+            blocks: vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }],
+            source,
+        }
+    }
+}
+
+/// Plan Gate 的結果。
+enum PlanDecision {
+    Approved,
+    /// 退回：依附帶的意見在同一個 session 重新產出 plan。
+    Revise(Prompt),
+}
+
 /// 一個回合怎麼結束。
 enum TurnEnd {
     Done(acp::StopReason),
@@ -215,6 +252,14 @@ struct Run {
     rate_limit_hint: Option<crate::rate_limit::RateLimit>,
     /// 這個 Run 設下的 Credential 暫停（恢復時間），結束時解除。
     rate_limit_set: Option<std::time::SystemTime>,
+    /// Planning 中（`plan_gate` 的 Run，Plan Gate 核准之前）：寫入一律拒絕。
+    planning: bool,
+    /// plan 模式下 Agent 交出的 plan（例如 Claude Code 的 ExitPlanMode）。
+    plan_text: Option<String>,
+    /// 這個回合 Agent 回覆的文字（`final_message` 與 Planning 的 plan 用）。
+    turn_text: String,
+    /// 最近一個 prompt 的來源。Runner 自己補送的 prompt（rate limit 恢復後的「請繼續」等）沿用它。
+    last_source: PromptSource,
 }
 
 impl Run {
@@ -223,9 +268,6 @@ impl Run {
     }
 
     async fn main(mut self) {
-        if self.offer.plan_gate {
-            tracing::warn!(run_id = %self.run_id(), "Planning 屬於 A2，先忽略 plan_gate 直接執行");
-        }
         self.set_status(RunStatus::Starting, None, None);
         let outcome = match self.start().await {
             Ok(()) => self.work().await,
@@ -359,7 +401,9 @@ impl Run {
         self.load_settings_baseline().await;
         self.check_agent_settings(SettingsCheck::BeforePrompt)
             .await?;
-        self.start_agent(None).await.map(|_| ())
+        self.planning = self.offer.plan_gate;
+        self.start_agent(None).await?;
+        self.enter_plan_mode().await
     }
 
     /// 信任核准（§6.2）：設定檔中的腳本第一次執行前、或內容改變後，要人核准。
@@ -567,6 +611,9 @@ impl Run {
             "Agent 已啟動"
         );
         let resumed = session.resumed();
+        self.emit(EventKind::AgentSession {
+            session_id: session.session_id().to_owned(),
+        });
         let learned = crate::agent::Learned {
             capabilities: session.capabilities().to_vec(),
             version: session.agent_info().map(|(_, version)| version),
@@ -588,7 +635,7 @@ impl Run {
     /// 回傳接下來要送的 prompt。
     ///
     /// 一定要先結束整個程序樹再還原：否則 Agent 可能在還原之後、結束之前又改一次。
-    async fn restart_agent(&mut self) -> Result<Vec<acp::ContentBlock>, Stop> {
+    async fn restart_agent(&mut self) -> Result<Prompt, Stop> {
         let previous = self.session.take().map(|session| {
             let id = session.session_id().to_owned();
             (id, session)
@@ -604,13 +651,62 @@ impl Run {
         self.restore_agent_settings(&changed)?;
         tracing::info!(run_id = %self.run_id(), ?resume, "還原設定檔後重新啟動 Agent");
         if self.start_agent(resume).await? {
-            return Ok(vec![acp::ContentBlock::from(
-                SETTINGS_RESUME_PROMPT.to_owned(),
-            )]);
+            self.enter_plan_mode().await?;
+            return Ok(Prompt::text(SETTINGS_RESUME_PROMPT, self.last_source));
         }
-        let mut prompt = self.prompt_blocks(&self.offer.prompt).await;
-        prompt.push(acp::ContentBlock::from(SETTINGS_RESTART_NOTE.to_owned()));
+        self.enter_plan_mode().await?;
+        let mut prompt = self.first_prompt();
+        prompt.blocks.push(ContentBlock::Text {
+            text: SETTINGS_RESTART_NOTE.to_owned(),
+        });
         Ok(prompt)
+    }
+
+    /// 第一個 prompt：DispatchOffer 的 prompt；Planning 而且 Agent 沒有可靠的 plan 模式時，
+    /// 接上只產出 plan 的指示。
+    fn first_prompt(&self) -> Prompt {
+        let mut blocks = self.offer.prompt.clone();
+        if self.planning && self.profile.plan_mode.is_none() {
+            blocks.push(ContentBlock::Text {
+                text: PLAN_ONLY_PROMPT.to_owned(),
+            });
+        }
+        Prompt {
+            blocks,
+            source: self.offer.prompt_source.unwrap_or(PromptSource::User),
+        }
+    }
+
+    /// Planning 而且 profile 有可靠的 plan 模式時切過去。
+    async fn enter_plan_mode(&mut self) -> Result<(), Stop> {
+        let (true, Some(mode)) = (self.planning, self.profile.plan_mode.clone()) else {
+            return Ok(());
+        };
+        let session = self.session.as_ref().expect("Agent 已啟動");
+        session.set_mode(&mode).await.map_err(|e| {
+            Stop::failed(
+                RunErrorCode::AgentError,
+                format!("無法切換到 plan 模式 {mode}：{e}"),
+            )
+        })
+    }
+
+    /// Plan Gate 核准：離開 Planning，有 plan 模式時切回執行用的模式。
+    async fn leave_plan_mode(&mut self) -> Result<(), Stop> {
+        self.planning = false;
+        if self.profile.plan_mode.is_none() {
+            return Ok(());
+        }
+        let Some(mode) = self.profile.session_mode else {
+            return Ok(());
+        };
+        let session = self.session.as_ref().expect("Agent 已啟動");
+        session.set_mode(mode).await.map_err(|e| {
+            Stop::failed(
+                RunErrorCode::AgentError,
+                format!("Plan Gate 核准後無法切換到 {mode} 模式：{e}"),
+            )
+        })
     }
 
     /// 協定的 prompt 轉成 ACP 的內容。圖片在 Agent 支援時從 Server 下載、以圖片送出（issue #17，
@@ -943,12 +1039,12 @@ impl Run {
     // ── 執行與 Review ──────────────────────────────────────────────────────────
 
     async fn work(&mut self) -> Result<(), Stop> {
-        let mut prompt = self.prompt_blocks(&self.offer.prompt).await;
+        let mut prompt = self.first_prompt();
         loop {
             match self.turn(prompt).await? {
                 TurnEnd::RateLimited { resets_at, message } => {
                     self.wait_rate_limit(resets_at, message).await?;
-                    prompt = vec![acp::ContentBlock::from(RESUME_PROMPT.to_owned())];
+                    prompt = Prompt::text(RESUME_PROMPT, self.last_source);
                 }
                 TurnEnd::SettingsChanged => {
                     let restore = self.check_agent_settings(SettingsCheck::MidSession).await?;
@@ -957,7 +1053,17 @@ impl Run {
                         // 更新 session 中的規則），只還原檔案不夠：重新啟動 Agent 讓它重新讀取。
                         self.restart_agent().await?
                     } else {
-                        vec![acp::ContentBlock::from(SETTINGS_RESUME_PROMPT.to_owned())]
+                        Prompt::text(SETTINGS_RESUME_PROMPT, self.last_source)
+                    };
+                }
+                TurnEnd::Done(_) if self.planning => {
+                    self.propose_plan();
+                    prompt = match self.await_plan_gate().await? {
+                        PlanDecision::Approved => {
+                            self.leave_plan_mode().await?;
+                            Prompt::text(PLAN_APPROVED_PROMPT, PromptSource::PlanGate)
+                        }
+                        PlanDecision::Revise(next) => next,
                     };
                 }
                 TurnEnd::Done(reason) => {
@@ -976,11 +1082,83 @@ impl Run {
         }
     }
 
+    /// Planning 的回合結束：送出 plan（`plan_proposed`），進入 Plan Gate。
+    fn propose_plan(&mut self) {
+        let (text, source) = match self.plan_text.take() {
+            Some(text) => (text, PlanSource::PlanMode),
+            None if self.profile.plan_mode.is_some() => {
+                (self.turn_text.clone(), PlanSource::PlanMode)
+            }
+            None => (self.turn_text.clone(), PlanSource::PromptFallback),
+        };
+        self.emit(EventKind::PlanProposed {
+            body: TextBody::Inline {
+                text: self.redactor.redact(&text),
+            },
+            source,
+        });
+        self.set_status(RunStatus::AwaitingGate, Some(GateKind::Plan), None);
+    }
+
+    /// 等 Plan Gate 的結果。
+    async fn await_plan_gate(&mut self) -> Result<PlanDecision, Stop> {
+        loop {
+            let control = match self.rx.recv().await {
+                None | Some(RunInput::Shutdown) => return Err(Stop::Shutdown),
+                Some(RunInput::Control(control)) => control,
+            };
+            match &control.action {
+                RunControlAction::Cancel => {
+                    self.applied(&control);
+                    return Err(Stop::Canceled);
+                }
+                RunControlAction::GateResult {
+                    gate: GateKind::Plan,
+                    decision: GateDecision::Approved,
+                } => {
+                    self.applied(&control);
+                    return Ok(PlanDecision::Approved);
+                }
+                RunControlAction::GateResult {
+                    gate: GateKind::Plan,
+                    decision: GateDecision::Rejected,
+                } => {
+                    // 退回的意見另外以 prompt 送出；在那之前維持 awaiting_gate（plan）。
+                    self.applied(&control);
+                }
+                RunControlAction::Prompt { prompt, source } => {
+                    self.applied(&control);
+                    return Ok(PlanDecision::Revise(Prompt {
+                        blocks: prompt.clone(),
+                        source: source.unwrap_or(PromptSource::PlanGate),
+                    }));
+                }
+                RunControlAction::PermissionResponse { .. } => self.reject(
+                    &control,
+                    RunControlRejectReason::UnknownPermissionRequest,
+                    "沒有等待中的權限請求",
+                ),
+                _ => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "Run 正在等待 Plan Gate",
+                ),
+            }
+        }
+    }
+
     /// 送出 prompt，處理期間的 update、權限請求與 RunControl，直到回合結束。
-    async fn turn(&mut self, prompt: Vec<acp::ContentBlock>) -> Result<TurnEnd, Stop> {
+    async fn turn(&mut self, prompt: Prompt) -> Result<TurnEnd, Stop> {
         self.check_agent_settings(SettingsCheck::BeforePrompt)
             .await?;
         self.rate_limit_hint = None;
+        self.turn_text.clear();
+        self.last_source = prompt.source;
+        self.emit(EventKind::PromptSubmitted {
+            prompt: prompt.blocks.clone(),
+            source: prompt.source,
+        });
+        let prompt = self.prompt_blocks(&prompt.blocks).await;
         self.set_status(RunStatus::Running, None, None);
         let session = self.session.as_ref().expect("Agent 已啟動");
         let mut closed = session.closed();
@@ -1065,7 +1243,14 @@ impl Run {
             });
         }
         match result {
-            Ok(reason) => Ok(TurnEnd::Done(reason)),
+            Ok(reason) => {
+                self.emit(EventKind::FinalMessage {
+                    text: TextBody::Inline {
+                        text: self.redactor.redact(&self.turn_text),
+                    },
+                });
+                Ok(TurnEnd::Done(reason))
+            }
             Err(error) => match crate::rate_limit::from_error(&error) {
                 Some(limit) => Ok(TurnEnd::RateLimited {
                     resets_at: limit.resets_at,
@@ -1178,6 +1363,11 @@ impl Run {
     fn on_notice(&mut self, notice: AgentNotice) -> bool {
         match notice {
             AgentNotice::Update(update) => {
+                if let acp::SessionUpdate::AgentMessageChunk(chunk) = &update
+                    && let acp::ContentBlock::Text(text) = &chunk.content
+                {
+                    self.turn_text.push_str(&text.text);
+                }
                 // 只接受 Claude Code 的 rate limit 事件（其他 Agent 送同樣的 `_meta` 不算數）。
                 if let acp::SessionUpdate::UsageUpdate(usage) = &update
                     && self.profile.id == crate::agent::CLAUDE_CODE
@@ -1229,7 +1419,51 @@ impl Run {
             default_branch: &wt.default_branch,
             protected_paths: &self.profile.protected_paths,
         };
-        let decision = policy::decide(&subject, &policy_ctx);
+        // plan 模式下 Agent 交出 plan（例如 Claude Code 的 ExitPlanMode，`rawInput.plan`）：
+        // 記下 plan、拒絕切換模式，由 Plan Gate 決定（不轉給人）。
+        if self.planning
+            && self.profile.plan_mode.is_some()
+            && let Some(plan) = request
+                .tool_call
+                .fields
+                .raw_input
+                .as_ref()
+                .and_then(|raw| raw.get("plan"))
+                .and_then(|p| p.as_str())
+        {
+            self.plan_text = Some(plan.to_owned());
+            let reject = request
+                .options
+                .iter()
+                .find(|o| {
+                    matches!(
+                        o.kind,
+                        acp::PermissionOptionKind::RejectOnce
+                            | acp::PermissionOptionKind::RejectAlways
+                    )
+                })
+                .map(|o| o.option_id.clone());
+            let _ = reply.send(match reject {
+                Some(id) => {
+                    acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(id))
+                }
+                None => acp::RequestPermissionOutcome::Cancelled,
+            });
+            return;
+        }
+        let mut decision = policy::decide(&subject, &policy_ctx);
+        // Planning 中不可以修改檔案（plan 核准之前）。
+        if self.planning
+            && matches!(
+                subject,
+                crate::policy::PermissionSubject::Write { .. }
+                    | crate::policy::PermissionSubject::Delete { .. }
+            )
+        {
+            decision = Decision::Deny {
+                reason: "Planning 階段不可以修改檔案".into(),
+            };
+        }
         let protected = policy::protected_targets(&subject, &policy_ctx);
         let tool_call_id = request.tool_call.tool_call_id.0.to_string();
         tracing::info!(run_id = %self.run_id(), ?subject, ?decision, "權限請求");
@@ -1376,7 +1610,7 @@ impl Run {
     }
 
     /// 等 Review Gate 的結果。回傳 `Some(prompt)` 表示退回後在同一個 session 繼續，`None` 表示核准。
-    async fn await_review(&mut self) -> Result<Option<Vec<acp::ContentBlock>>, Stop> {
+    async fn await_review(&mut self) -> Result<Option<Prompt>, Stop> {
         loop {
             let control = match self.rx.recv().await {
                 None | Some(RunInput::Shutdown) => return Err(Stop::Shutdown),
@@ -1404,9 +1638,17 @@ impl Run {
                     }
                     return Ok(None);
                 }
-                RunControlAction::Prompt { prompt, .. } => {
+                RunControlAction::Prompt { prompt, source } => {
                     self.applied(&control);
-                    return Ok(Some(self.prompt_blocks(prompt).await));
+                    return Ok(Some(Prompt {
+                        blocks: prompt.clone(),
+                        source: source.unwrap_or(PromptSource::ReviewGate),
+                    }));
+                }
+                RunControlAction::Verify(request) => {
+                    self.applied(&control);
+                    let request = request.clone();
+                    self.verify(&request).await?;
                 }
                 RunControlAction::GateResult {
                     gate: GateKind::Plan,
@@ -1426,16 +1668,138 @@ impl Run {
                     RunControlRejectReason::UnknownPermissionRequest,
                     "沒有等待中的權限請求",
                 ),
-                // 協定版本 2 的動作，由 A2（verify、archive）實作；restart_preview 由 Supervisor 處理，不會到這裡。
-                RunControlAction::Verify(_)
-                | RunControlAction::Archive
-                | RunControlAction::RestartPreview => self.reject(
+                // 協定版本 2 的動作：archive 由 A2 實作；restart_preview 由 Supervisor 處理，不會到這裡。
+                RunControlAction::Archive | RunControlAction::RestartPreview => self.reject(
                     &control,
                     RunControlRejectReason::InvalidState,
                     "這個 Runner 還不支援這個動作",
                 ),
             }
         }
+    }
+
+    /// 一輪 Verification（ARCHITECTURE §5.1）：逐條執行，每條送 `verification_result`，最後送
+    /// `verification_completed` 並回到 `awaiting_gate`（review）。重試與上限由 Server 決定。
+    async fn verify(
+        &mut self,
+        request: &orbis_protocol::verification::VerificationRequest,
+    ) -> Result<(), Stop> {
+        use orbis_protocol::verification::{VerificationKind, VerificationOutcome};
+        self.set_status(RunStatus::Verifying, None, None);
+        let mut outcomes = Vec::new();
+        for criterion in &request.criteria {
+            let (outcome, summary, evidence) = match criterion.kind {
+                VerificationKind::Command => self.verify_command(criterion).await?,
+                // TODO(A2, #32)：agent／browser 以 delegate（purpose = verification）建立 consult Child Run 判定。
+                VerificationKind::Agent | VerificationKind::Browser => (
+                    VerificationOutcome::Error,
+                    "這台 Runner 還不支援 agent／browser 類型的判定".to_owned(),
+                    Vec::new(),
+                ),
+            };
+            outcomes.push(outcome);
+            self.emit(EventKind::VerificationResult(
+                orbis_protocol::verification::VerificationResult {
+                    verification_id: request.verification_id.clone(),
+                    attempt: request.attempt,
+                    criterion_id: criterion.criterion_id.clone(),
+                    outcome,
+                    summary: self.redactor.redact(&summary),
+                    evidence,
+                    judged_by_run_id: None,
+                },
+            ));
+        }
+        let outcome = if outcomes.contains(&VerificationOutcome::Failed) {
+            VerificationOutcome::Failed
+        } else if outcomes.contains(&VerificationOutcome::Error) {
+            VerificationOutcome::Error
+        } else {
+            VerificationOutcome::Passed
+        };
+        self.emit(EventKind::VerificationCompleted {
+            verification_id: request.verification_id.clone(),
+            attempt: request.attempt,
+            outcome,
+        });
+        self.set_status(RunStatus::AwaitingGate, Some(GateKind::Review), None);
+        Ok(())
+    }
+
+    /// `command` 類型：在 Worktree 執行指令（沒有指定時用 Repo 設定檔的 `[verify].commands`，
+    /// 已經過信任核准），全部 exit code 為 0 才通過。
+    async fn verify_command(
+        &mut self,
+        criterion: &orbis_protocol::verification::VerificationCriterion,
+    ) -> Result<
+        (
+            orbis_protocol::verification::VerificationOutcome,
+            String,
+            Vec<orbis_protocol::verification::VerificationEvidence>,
+        ),
+        Stop,
+    > {
+        use orbis_protocol::verification::{VerificationEvidence, VerificationOutcome};
+        let wt = self.wt().clone();
+        let commands: Vec<String> = match &criterion.command {
+            Some(command) if !command.trim().is_empty() => vec![command.clone()],
+            _ => wt.config.config.verify.commands.clone(),
+        };
+        if commands.is_empty() {
+            return Ok((
+                VerificationOutcome::Error,
+                format!(
+                    "沒有可以執行的指令：條件沒有指定指令，{} 也沒有 [verify].commands",
+                    crate::repo_config::config_path()
+                ),
+                Vec::new(),
+            ));
+        }
+        let mut evidence = Vec::new();
+        let mut failure: Option<String> = None;
+        for command in &commands {
+            let spec = crate::shell::Shell::for_script(command)
+                .spec(command)
+                .cwd(&wt.path)
+                .envs(wt.env())
+                .unattended_git();
+            let run = tokio::time::timeout(VERIFY_COMMAND_TIMEOUT, crate::process::run(&spec));
+            let (exit_code, output) = match self.interruptible(run).await? {
+                Ok(Ok(out)) => (out.status.code(), out.combined()),
+                Ok(Err(e)) => (None, format!("無法執行：{e:#}")),
+                Err(_) => (
+                    None,
+                    format!(
+                        "超過 {} 分鐘沒有結束",
+                        VERIFY_COMMAND_TIMEOUT.as_secs() / 60
+                    ),
+                ),
+            };
+            let output = self.redactor.redact(&output);
+            if exit_code != Some(0) && failure.is_none() {
+                let tail: Vec<&str> = output.lines().rev().take(VERIFY_SUMMARY_LINES).collect();
+                let tail: Vec<&str> = tail.into_iter().rev().collect();
+                failure = Some(format!(
+                    "`{command}` 失敗（exit code {}）：\n{}",
+                    exit_code.map_or_else(|| "無".to_owned(), |c| c.to_string()),
+                    tail.join("\n")
+                ));
+            }
+            evidence.push(VerificationEvidence::CommandOutput {
+                command: self.redactor.redact(command),
+                exit_code,
+                output: TextBody::Inline { text: output },
+                truncated: false,
+            });
+        }
+        Ok(match failure {
+            Some(summary) => (VerificationOutcome::Failed, summary, evidence),
+            None => (
+                VerificationOutcome::Passed,
+                format!("{} 個指令都通過", commands.len()),
+                evidence,
+            ),
+        })
     }
 
     /// Review 已核准：等 `push_branch`，push 成功後 Run 才進入 `completed`。
