@@ -29,7 +29,7 @@ export type CommitRepoSpecResult =
       /**
        * repo 中的檔案在上一次提交之後被別人改過：PR 會覆蓋那些修改（照常開 PR，由 review 決定）。
        */
-      overwritesRepoChanges: boolean;
+      overwritesUpstreamChanges: boolean;
     }
   | {
       ok: false;
@@ -79,7 +79,7 @@ function coAuthor(member: MemberRecord): string {
 function renderSpecPullRequestBody(input: {
   spec: RepoSpecRecord;
   requester: MemberRecord;
-  overwritesRepoChanges: boolean;
+  overwritesUpstreamChanges: boolean;
 }): string {
   const { spec } = input;
   const lines = [
@@ -89,7 +89,7 @@ function renderSpecPullRequestBody(input: {
     `- 目前的版本：v${spec.version}（merge 後成為 v${spec.version + 1}）`,
     `- 提交者：@${input.requester.githubLogin}`,
   ];
-  if (input.overwritesRepoChanges) {
+  if (input.overwritesUpstreamChanges) {
     lines.push(
       "",
       `> [!WARNING]\n> repo 中的 \`${spec.path}\` 在上一次從 ${NAMES.productName} 提交之後被修改過，這個 PR 會覆蓋那些修改。`,
@@ -161,7 +161,7 @@ export async function commitRepoSpec(
       }
 
       const baseFile = await ctx.client.getFileContent(installationId, ref, spec.path, base);
-      const overwritesRepoChanges =
+      const overwritesUpstreamChanges =
         spec.committedBlobSha !== null && (baseFile?.sha ?? null) !== spec.committedBlobSha;
 
       let branch: string;
@@ -197,7 +197,7 @@ export async function commitRepoSpec(
           title: `docs(spec): 更新 ${spec.path}`,
           head: branch,
           base,
-          body: renderSpecPullRequestBody({ spec, requester, overwritesRepoChanges }),
+          body: renderSpecPullRequestBody({ spec, requester, overwritesUpstreamChanges }),
         });
       }
       const link: RepoSpecPullRequest = {
@@ -219,7 +219,7 @@ export async function commitRepoSpec(
         pullRequest: { number: pr.number, url: pr.htmlUrl },
         created,
         commitSha,
-        overwritesRepoChanges,
+        overwritesUpstreamChanges,
       };
     } catch (error) {
       if (!(error instanceof GitHubApiError)) throw error;

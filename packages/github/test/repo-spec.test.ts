@@ -52,7 +52,7 @@ describe("提交到 repo", () => {
     const { w } = withSpec();
     const result = await commit(w);
     if (!result.ok) throw new Error(result.message);
-    expect(result).toMatchObject({ created: true, overwritesRepoChanges: false });
+    expect(result).toMatchObject({ created: true, overwritesUpstreamChanges: false });
     expect(result.commitSha).not.toBeNull();
 
     const [branchCall] = w.github.callsTo("createBranch");
@@ -136,7 +136,7 @@ describe("提交到 repo", () => {
     const { w } = withSpec();
     w.github.humanCommit(w.repo.id, "main", SPEC_PATH, "# 舊版\n");
     const result = await commit(w);
-    expect(result).toMatchObject({ ok: true, overwritesRepoChanges: false });
+    expect(result).toMatchObject({ ok: true, overwritesUpstreamChanges: false });
     expect(inputOf<{ sha?: string }>(w, "putFile").sha).toBe(blobSha("# 舊版\n"));
   });
 
@@ -144,7 +144,7 @@ describe("提交到 repo", () => {
     const { w } = withSpec({ version: 2, committedBlobSha: blobSha("# v2\n") });
     w.github.humanCommit(w.repo.id, "main", SPEC_PATH, "# 有人直接改了 main\n");
     const result = await commit(w);
-    expect(result).toMatchObject({ ok: true, overwritesRepoChanges: true });
+    expect(result).toMatchObject({ ok: true, overwritesUpstreamChanges: true });
     const { body } = inputOf<{ body: string }>(w, "createPullRequest");
     expect(body).toContain("會覆蓋那些修改");
     expect(body).toContain("目前的版本：v2（merge 後成為 v3）");
@@ -153,7 +153,7 @@ describe("提交到 repo", () => {
   it("沒有被改過時不警告", async () => {
     const { w } = withSpec({ version: 1, committedBlobSha: blobSha("# v1\n") });
     w.github.humanCommit(w.repo.id, "main", SPEC_PATH, "# v1\n");
-    expect(await commit(w)).toMatchObject({ ok: true, overwritesRepoChanges: false });
+    expect(await commit(w)).toMatchObject({ ok: true, overwritesUpstreamChanges: false });
   });
 });
 
@@ -198,7 +198,7 @@ describe("PR merge 後更新版本", () => {
     if (!first.ok) throw new Error(first.message);
     await merge(w, first.pullRequest.number);
     const second = await commit(w, `${DRAFT}第二版\n`);
-    expect(second).toMatchObject({ ok: true, created: true, overwritesRepoChanges: false });
+    expect(second).toMatchObject({ ok: true, created: true, overwritesUpstreamChanges: false });
     expect(w.github.callsTo("createBranch")).toHaveLength(2);
     const { body } = inputOf<{ body: string }>(w, "createPullRequest", 1);
     expect(body).toContain("目前的版本：v1（merge 後成為 v2）");
