@@ -12,6 +12,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sessions } from "./auth";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
 import { runnerKindEnum } from "./enums";
 import { members, teams } from "./team";
@@ -40,11 +41,20 @@ export const runners = pgTable(
     lastHeartbeatAt: timestamptz("last_heartbeat_at"),
     /** 撤銷後不能再以 Runner token 連線。 */
     revokedAt: timestamptz("revoked_at"),
+    /**
+     * 完成 Pairing 時，Pairing token 的建立者所用的 session（從 Pairing token 複製）。
+     * 登出或清除過期 session 時，Server 先撤銷這個 session 配對的 Local Runner，再刪除 session
+     * （ARCHITECTURE §16）。Team Runner 為 null。
+     */
+    pairedSessionId: uuid("paired_session_id").references(() => sessions.id, {
+      onDelete: "set null",
+    }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     index("runners_team_id_idx").on(t.teamId),
+    index("runners_paired_session_id_idx").on(t.pairedSessionId),
     index("runners_member_id_idx").on(t.memberId),
     check("runners_kind_binding", sql`(${t.kind} = 'local') = (${t.memberId} IS NOT NULL)`),
   ],
@@ -66,6 +76,10 @@ export const runnerPairingTokens = pgTable(
     kind: runnerKindEnum("kind").notNull(),
     tokenHash: text("token_hash").notNull().unique(),
     createdByMemberId: uuid("created_by_member_id").references(() => members.id, {
+      onDelete: "set null",
+    }),
+    /** 建立這個 token 的 session；Pairing 時複製到 runners.paired_session_id。 */
+    createdBySessionId: uuid("created_by_session_id").references(() => sessions.id, {
       onDelete: "set null",
     }),
     expiresAt: timestamptz("expires_at"),

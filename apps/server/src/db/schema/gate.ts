@@ -1,9 +1,9 @@
 // Gate 與 Needs You（ARCHITECTURE §5、§8、§10）。
 
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
-import { createdAt, id, timestamptz } from "./columns";
-import { gateDecisionEnum, gateKindEnum, needsYouKindEnum } from "./enums";
+import { check, index, integer, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
+import { createdAt, id, timestamptz, updatedAt } from "./columns";
+import { gateDecisionEnum, gateKindEnum, needsYouKindEnum, reviewCommentSideEnum } from "./enums";
 import { projects } from "./project";
 import { runs } from "./run";
 import { tasks } from "./task";
@@ -25,18 +25,55 @@ export const gates = pgTable(
     kind: gateKindEnum("kind").notNull(),
     /** 送審的內容（plan 文字、diff 的 blob 參照等），格式保留彈性。 */
     subject: jsonb("subject"),
+    /**
+     * Gate 建立時 Task 的指派對象。「不能核准自己的 Task」同時比對目前的與這個指派對象，
+     * 避免 Gate 等待期間改指派後核准自己做的 Task（ARCHITECTURE §10）。
+     */
+    assigneeMemberIdAtCreation: uuid("assignee_member_id_at_creation").references(
+      () => members.id,
+      { onDelete: "set null" },
+    ),
     decision: gateDecisionEnum("decision"),
     decidedByMemberId: uuid("decided_by_member_id").references(() => members.id, {
       onDelete: "set null",
     }),
     decidedAt: timestamptz("decided_at"),
-    /** 退回時的整體說明；行內留言另外保存（之後由負責的軌加入）。 */
+    /** 退回時的整體說明；行內留言存在 review_comments。 */
     comment: text("comment"),
     createdAt: createdAt(),
   },
   (t) => [
     index("gates_task_id_idx").on(t.taskId),
     check("gates_decision_complete", sql`(${t.decision} IS NULL) = (${t.decidedAt} IS NULL)`),
+  ],
+);
+
+/**
+ * Review Gate 的行內留言，每則一筆（ARCHITECTURE §10）。退回時打包成 prompt 送回 Agent；
+ * 之後的 @mention 與通知（B2）也以這張表為準。
+ */
+export const reviewComments = pgTable(
+  "review_comments",
+  {
+    id: id(),
+    gateId: uuid("gate_id")
+      .notNull()
+      .references(() => gates.id, { onDelete: "cascade" }),
+    /** 相對於 Worktree 根目錄、以 `/` 分隔的路徑。 */
+    path: text("path").notNull(),
+    /** 從 1 開始的行號。 */
+    line: integer("line").notNull(),
+    side: reviewCommentSideEnum("side").notNull(),
+    body: text("body").notNull(),
+    authorMemberId: uuid("author_member_id").references(() => members.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("review_comments_gate_id_idx").on(t.gateId),
+    check("review_comments_line_positive", sql`${t.line} >= 1`),
   ],
 );
 

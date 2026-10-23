@@ -363,6 +363,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - Task 有進行中的 Run 時，拒絕上一條的轉換：把 Issue 重新打開，並在狀態摘要留言中說明。
     - 重新打開 Issue → Done 的 Task 回到 Backlog，清空關閉原因。
   - **誰的修改算數**：只有 Project Member，或對 repo 有 write 以上權限（admin、maintain、write）的人，在 GitHub 上對 Issue 的修改才會同步回 Orbis。其他人的修改會被改回 Task 的值，並在狀態摘要留言中說明。Feedback Loop 判斷「有寫入權限的人類」也使用同一套檢查。
+  - **同一個 Issue 對應到多個 Task**：同一個 GitHub repo 可以登記在多個 Project，所以一個 Issue 可能對應到不同 Project 的 Task；同一個 Project 的 Repo 中最多對應一個 Task。
+    - 每個 Task 各有一則狀態摘要留言。
+    - Issue 關閉時，這些 Task 都會轉 Done。其中任一個 Task 有進行中的 Run 時，依上面的規則拒絕：重新打開 Issue，所有 Task 都不轉換。
+    - title 與 body 經由 Issue 在這些 Task 之間同步：任一個 Task 的修改先寫到 Issue，再同步到其他 Task。
+  - **GitHub App 的安裝狀態**：訂閱 `installation` 與 `installation_repositories` 兩個 webhook，即時更新 Repo 的 installation id。UI 依此提示哪些 Repo 還沒安裝 GitHub App。
+    - 登記 Repo 時，如果 App 已安裝，就從 GitHub 讀取 default branch；還沒安裝時，用輸入值，沒有輸入就用 `main`。
 - **PR 與 Task**：PR merge → Task 轉 Done，關閉原因為 `completed`；PR 沒有 merge 就關閉 → Task 退回 Review Gate。
 - **不串 GitHub Projects。**
 
