@@ -58,6 +58,11 @@ describe("Preview 網域", () => {
     ]) {
       expect(safeReturnPath(tricky), JSON.stringify(tricky)).toBe("/");
     }
+    // URL 解析會正規化路徑，正規化後的結果也要檢查
+    for (const dotted of ["/.//evil.test", "/%2e//evil.test", "/a/..//evil.test", "/./../evil"]) {
+      const result = safeReturnPath(dotted);
+      expect(result.startsWith("//"), `${dotted} → ${result}`).toBe(false);
+    }
     expect(safeReturnPath("/a b?q=中文#x")).toBe("/a%20b?q=%E4%B8%AD%E6%96%87#x");
   });
 
