@@ -160,6 +160,13 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 分支名稱由 Server 產生，放在 `dispatch_offer` 中。Worktree 路徑由 Runner 依 §6.2 計算，建好後以 `worktree_ready` Event 回報。
   - 改派時，`dispatch_offer` 帶上該 Run 已收到的最後 seq，新的 Dispatch 從下一個 seq 接續。
   - 每個 `run_control`（取消、後續 prompt、回覆權限請求、Gate 結果、push 分支）都會收到一個 `run_control_result`，以 `control_id` 對應。Run 因此產生的後續變化仍以 Event 回報。
+- **Runner 的本機目錄**（`~/.orbis/`）：
+  - `runner.toml` 給人編輯：Server 網址、Runner 名稱、Worktree 根目錄、port 範圍、Repo 對應到本機 checkout（`[repos.<key>] path`）、額外的 ACP Agent（`[agents.<id>] command／args／env`）。
+  - `runner/` 是狀態目錄：依 Server 網址分開保存的 Runner token、port 分配、信任核准紀錄、Event 暫存、Runner 代管安裝的 ACP adapter。
+  - `--home` 或 `ORBIS_HOME` 覆寫整個目錄（測試用）；`ORBIS_RUNNER_STATE_DIR` 只覆寫狀態目錄（Desktop 代管的 Runner 用，不和手動啟動的 Runner 共用 Runner token）。
+  - 已保存這個 Server 的 Runner token 時，Pairing token 會被忽略。
+- **重新連線**：斷線後以指數退避重新連線（1 秒到 60 秒，加上 ±20% jitter）。`hello_ack` 的 `resume` 沒有列出、但 Runner 還在執行的 Run，Runner 會中止並清除暫存。Runner 重新啟動時，暫存中沒有結束的 Run 補上 `agent_crashed` 與 `failed`。
+- **sidecar 的結束碼**：0＝正常結束；78＝Runner token 無效或已被撤銷，需要重新 Pairing（sidecar 模式下 Runner token 被撤銷時不改用 Pairing token）；協定版本不相容時是 3；其他非 0 視為當掉。
 
 ### 6.2 Worktree 管理
 
@@ -239,6 +246,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - spawn 的參數自行加引號，以處理含空白的路徑（例如 `Program Files`）。
   - 透過 `.cmd` shim 解析 npm 安裝的 CLI。
 - **長路徑**：Worktree 根目錄保持短路徑，並偵測 Git for Windows 的「path too long」錯誤，在 UI 上提示。
+  - 交給其他程式啟動的執行檔路徑超過 `MAX_PATH` 時，Runner 改用 `\\?\` 形式。例如狀態目錄很深時，Claude Code adapter 內附的 `claude.exe` 會透過 adapter 的 `CLAUDE_CODE_EXECUTABLE` 傳入。
 - **無人值守**：關閉 git 的互動式憑證提示（`GIT_TERMINAL_PROMPT=0` 與 `GCM_INTERACTIVE=never`）。
 
 ---
@@ -256,7 +264,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 
 | Agent | 接入方式 | 備註 |
 |---|---|---|
-| Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | plan mode 與 bypassPermissions 有已知 bug |
+| Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | 版本鎖定（目前 0.94.0），由 Runner 以 npm 安裝在狀態目錄的 `agents/`，以 `node` 直接啟動；plan mode 與 bypassPermissions 有已知 bug，建立 session 後一律切回 `default` 模式 |
 | Codex | `codex-acp` adapter | `CODEX_PATH` 含空白時會失敗 |
 | Gemini CLI | 原生 `gemini --acp` | 路徑檢查區分大小寫 |
 | Grok Build | 原生 `grok agent stdio` | beta；需要 SuperGrok 系列訂閱 |
