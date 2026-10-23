@@ -1,0 +1,26 @@
+# Orbis 開發 Orbis 自己時，Runner 讀取的 Repo 設定（ARCHITECTURE §6.3）。
+# setup、verify、allow_commands 需要 Admin 以上做設定的信任核准（§6.2）。
+
+[worktree]
+setup = "pnpm install --frozen-lockfile"
+wait_for_setup = true
+# 不複製 .env：裡面有 GitHub App 私鑰與 OAuth secret，不該讓 Agent 讀到。
+
+[verify]
+# 完整的測試交給 CI 的三平台；本機只跑 lint 與 typecheck，避免記憶體不足。
+commands = ["pnpm lint", "pnpm typecheck"]
+
+[permissions]
+allow_commands = [
+  "pnpm *",
+  "cargo fmt *",
+  "cargo check *",
+  "cargo clippy *",
+  "cargo test *",
+  "git status",
+  "git diff *",
+  "git log *",
+]
+
+[git]
+commit_message = "chore: {task_key} {title}"
