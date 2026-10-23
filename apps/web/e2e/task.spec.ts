@@ -1,16 +1,19 @@
 import { expect, test } from "./fixtures";
 
 test.describe("Task 頁", () => {
-  test("編輯描述：預覽 markdown，儲存後重新整理仍在", async ({ page }) => {
+  test("編輯描述：markdown 語法轉成標題與清單，重新整理後仍在", async ({ page }) => {
     await page.goto("/tasks/ORB-1");
-    await page.getByRole("button", { name: "編輯描述" }).click();
-    await page.getByLabel("描述（markdown）").fill("## 背景\n\n- 第一點\n- 第二點");
-    await page.getByRole("tab", { name: "預覽" }).click();
-    await expect(page.getByRole("heading", { name: "背景" })).toBeVisible();
-    await page.getByRole("button", { name: "儲存描述" }).click();
-
-    const description = page.getByTestId("description");
+    const description = page.getByRole("textbox", { name: "描述" });
+    await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+    await description.click();
+    await page.keyboard.press("Control+A");
+    await page.keyboard.type("## 背景");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("- 第一點");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("第二點");
     await expect(description.getByRole("heading", { name: "背景" })).toBeVisible();
+
     await page.reload();
     await expect(description.getByRole("listitem")).toHaveText(["第一點", "第二點"]);
   });
@@ -41,7 +44,7 @@ test.describe("Task 頁", () => {
     await expect(list.nth(2)).toHaveAttribute("data-kind", "agent");
 
     // command 改成 manual：指令被清掉
-    await list.nth(0).getByRole("button", { name: "編輯" }).click();
+    await list.nth(0).getByRole("button", { name: "編輯", exact: true }).click();
     await list.nth(0).getByLabel("類型").selectOption("manual");
     await list.nth(0).getByRole("button", { name: "儲存" }).click();
     await expect(list.nth(0)).toHaveAttribute("data-kind", "manual");

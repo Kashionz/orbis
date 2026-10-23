@@ -1243,3 +1243,89 @@ textarea {
   max-height: 10rem;
   border: 1px solid var(--border);
 }
+
+/* ---------- C2：共同編輯與 Repo Spec ---------- */
+
+.collab {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.collab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.collab-status {
+  color: var(--muted);
+}
+
+.collab-peers {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.collab-peers li {
+  padding: 0 0.4rem;
+  border: 2px solid;
+  border-radius: 999px;
+}
+
+.collab-content {
+  min-height: 4rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+}
+
+.collab-content p.is-editor-empty:first-child::before,
+.collab-content[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+}
+
+/* CollaborationCaret 的游標與名字標籤 */
+.collaboration-carets__caret {
+  position: relative;
+  margin: 0 -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  pointer-events: none;
+}
+
+.collaboration-carets__label {
+  position: absolute;
+  top: -1.3em;
+  left: -1px;
+  padding: 0 0.25rem;
+  border-radius: 3px 3px 3px 0;
+  color: #fff;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.ac-collab {
+  flex-basis: 100%;
+  margin-top: 0.25rem;
+}
+
+.repo-spec-page {
+  max-width: 60rem;
+  padding: 0 1rem 2rem;
+}
+
+.repo-specs h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.collab-mention-options {
+  z-index: 1000;
+}

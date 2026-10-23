@@ -30,7 +30,10 @@ for (const role of ROLES) {
       await expect(page.locator(".ac-list > li")).toHaveCount(2);
       const count = canEdit(role) ? 1 : 0;
       await expect(page.getByRole("button", { name: "編輯標題" })).toHaveCount(count);
-      await expect(page.getByRole("button", { name: "編輯描述" })).toHaveCount(count);
+      await expect(page.getByRole("textbox", { name: "描述" })).toHaveAttribute(
+        "contenteditable",
+        String(canEdit(role)),
+      );
       await expect(page.getByRole("button", { name: "新增 Acceptance Criterion" })).toHaveCount(
         count,
       );

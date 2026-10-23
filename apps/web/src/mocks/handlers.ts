@@ -8,6 +8,7 @@ import {
   CreateAcceptanceCriterionInput,
   CreateProjectInput,
   CreateRepoInput,
+  CreateRepoSpecInput,
   CreateRunInput,
   CreateTaskCommentInput,
   CreateTaskInput,
@@ -16,6 +17,7 @@ import {
   MarkNotificationsReadInput,
   NotificationPreferences,
   PermissionResponseInput,
+  RepoSpecCommitInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
   UpdateDraftTaskInput,
@@ -30,6 +32,7 @@ import {
 import { HttpResponse, http, ws } from "msw";
 import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
+import { MockCollabServer } from "./collab";
 
 /** 重播時每則 `run_events` 最多帶幾筆 Event（同 Server）。 */
 const REPLAY_BATCH_SIZE = 500;
@@ -78,6 +81,30 @@ export function createHandlers(backend: MockBackend) {
 
   const socketUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${API_ROUTES.ws}`;
   const events = ws.link(socketUrl);
+
+  const collab = new MockCollabServer(backend);
+  const collabLink = ws.link(`${socketUrl.slice(0, -API_ROUTES.ws.length)}/api/collab/*`);
+  const collabHandler = collabLink.addEventListener("connection", ({ client }) => {
+    const docName = decodeURIComponent(client.url.pathname.slice("/api/collab/".length));
+    const result = collab.connect(docName, (data) => client.send(new Uint8Array(data)));
+    if (typeof result === "number") {
+      client.close(result, "rejected");
+      return;
+    }
+    client.addEventListener("message", async (message) => {
+      const data = message.data;
+      const bytes =
+        data instanceof Blob
+          ? new Uint8Array(await data.arrayBuffer())
+          : data instanceof ArrayBuffer
+            ? new Uint8Array(data)
+            : ArrayBuffer.isView(data)
+              ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+              : null;
+      if (bytes) result.onMessage(bytes);
+    });
+    client.addEventListener("close", result.onClose);
+  });
 
   const eventsHandler = events.addEventListener("connection", ({ client }) => {
     const subscribed = new Set<string>();
@@ -135,6 +162,7 @@ export function createHandlers(backend: MockBackend) {
 
   return [
     eventsHandler,
+    collabHandler,
 
     http.get(API_ROUTES.authMe, () => {
       if (session === "unauthorized" || backend.snapshot.loggedOut) {
@@ -194,6 +222,28 @@ export function createHandlers(backend: MockBackend) {
       handle((_, p) => {
         backend.deleteRepo(p.repoId ?? "");
       }),
+    ),
+    http.get(
+      API_ROUTES.repoSpecs,
+      handle((_, p) => backend.repoSpecs(p.repoId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.repoSpecs,
+      handle(
+        async (request, p) =>
+          backend.createRepoSpec(p.repoId ?? "", await parse(request, CreateRepoSpecInput)),
+        201,
+      ),
+    ),
+    http.get(
+      API_ROUTES.repoSpec,
+      handle((_, p) => backend.repoSpec(p.repoSpecId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.repoSpecCommit,
+      handle(async (request, p) =>
+        backend.commitRepoSpec(p.repoSpecId ?? "", await parse(request, RepoSpecCommitInput)),
+      ),
     ),
     http.get(
       API_ROUTES.projectTasks,

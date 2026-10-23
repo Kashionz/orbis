@@ -41,6 +41,12 @@ export interface MockConfig {
   childRuns?: boolean;
   /** Run 的 Preview 已就緒；省略時所有 Run 都是「沒有設定」。 */
   preview?: boolean;
+  /** 共同編輯的連線一律以這個 close code 關閉（4401、4403）。 */
+  collabClose?: number;
+  /** 共同編輯文件中有另一位成員 alice 在線；`edit` 時她在連線後加入一段文字。 */
+  collabPeer?: "online" | "edit";
+  /** Repo Spec 提交時，default branch 上的檔案已經被別人改過。 */
+  specUpstreamChanged?: boolean;
 }
 
 declare global {

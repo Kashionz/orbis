@@ -6,8 +6,10 @@ import {
   membersQuery,
   projectsQuery,
   queryKeys,
+  repoSpecsQuery,
   reposQuery,
   taskByKeyQuery,
+  taskMentionsQuery,
   tasksQuery,
   updateTask,
 } from "../../api/resources";
@@ -16,10 +18,10 @@ import { ErrorText } from "../../components/ErrorText";
 import { unfinishedDependencies } from "../../lib/dependencies";
 import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
+import { CollabEditor } from "../collab/CollabEditor";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
 import { AcceptanceCriteriaSection } from "./AcceptanceCriteriaSection";
 import { DependsOnField } from "./DependsOnField";
-import { DescriptionEditor } from "./DescriptionEditor";
 import { ReadyPanel } from "./ReadyPanel";
 import { RunTree } from "./RunTree";
 import { TaskComments } from "./TaskComments";
@@ -55,6 +57,12 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
   const canDispatch = permissions.can("run.dispatchLocal") || permissions.can("run.dispatchTeam");
   const { data: projectTasks = [] } = useQuery(tasksQuery(project.id));
   const blockers = unfinishedDependencies(task, projectTasks);
+  const { data: mentions = [] } = useQuery(taskMentionsQuery(task.id));
+  const { data: specs = [] } = useQuery({
+    ...repoSpecsQuery(task.repoId ?? ""),
+    enabled: task.repoId !== null && task.specPath !== null,
+  });
+  const spec = specs.find((s) => s.path === task.specPath);
 
   return (
     <main className="task-page">
@@ -94,13 +102,18 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
 
       <div className="task-layout">
         <div className="task-main">
-          <DescriptionEditor
-            value={task.description}
-            canEdit={canEdit}
-            saving={update.isPending}
-            onSave={(description) => update.mutateAsync({ description })}
-          />
-          <AcceptanceCriteriaSection taskId={task.id} canEdit={canEdit} />
+          <section className="section" aria-labelledby="description-heading">
+            <h2 id="description-heading">描述</h2>
+            <CollabEditor
+              docRef={{ kind: "task-description", id: task.id }}
+              label="描述"
+              canEdit={canEdit}
+              projectId={project.id}
+              mentions={mentions}
+              placeholder="描述要做什麼。輸入 @ 提及成員或 Agent。"
+            />
+          </section>
+          <AcceptanceCriteriaSection taskId={task.id} projectId={project.id} canEdit={canEdit} />
           <RunTree taskId={task.id} permissions={permissions} />
           <TaskComments
             taskId={task.id}
@@ -115,6 +128,20 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
             <dt>Repo</dt>
             <dd>{repo ? `${repo.owner}/${repo.name}` : "尚未指定"}</dd>
           </dl>
+          {task.specPath && (
+            <dl>
+              <dt>Spec</dt>
+              <dd>
+                {spec ? (
+                  <Link to="/repo-specs/$repoSpecId" params={{ repoSpecId: spec.id }}>
+                    {task.specPath}
+                  </Link>
+                ) : (
+                  <code>{task.specPath}</code>
+                )}
+              </dd>
+            </dl>
+          )}
           <AssigneeField
             task={task}
             permissions={permissions}

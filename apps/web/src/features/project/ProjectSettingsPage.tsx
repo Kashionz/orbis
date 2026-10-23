@@ -25,6 +25,7 @@ import { PERMISSION_POLICY_LABELS } from "../../lib/labels";
 import { type PolicyFormValues, policyFormValues, validatePolicyForm } from "../../lib/policy-form";
 import { type RepoFormValues, validateRepoForm } from "../../lib/project-forms";
 import { usePermissions } from "../auth/use-permissions";
+import { RepoSpecsSection } from "../repo-spec/RepoSpecsSection";
 
 /**
  * Project 設定頁（最小版）：基本資料、Repo 列表與登記、政策。
@@ -53,6 +54,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
           canEdit={permissions.can("project.manage")}
         />
         <ReposSection project={project} canRegister={permissions.can("project.manage")} />
+        <RepoSpecsSection projectId={project.id} canEdit={permissions.can("task.edit")} />
         <PolicySection
           project={project}
           canEditPermissionPolicy={permissions.can("policy.manage")}

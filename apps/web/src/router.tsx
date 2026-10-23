@@ -17,6 +17,7 @@ import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
 import { NotificationSettingsPage } from "./features/notifications/NotificationSettingsPage";
 import { NotificationsPage } from "./features/notifications/NotificationsPage";
 import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
+import { RepoSpecPage } from "./features/repo-spec/RepoSpecPage";
 import { RunPage } from "./features/run/RunPage";
 import { TaskPage } from "./features/task/TaskPage";
 
@@ -96,6 +97,16 @@ const draftTasksRoute = createRoute({
   component: function DraftTasksRouteComponent() {
     const { projectId } = draftTasksRoute.useParams();
     return <DraftTasksPage key={projectId} projectId={projectId} />;
+  },
+  errorComponent: PageError,
+});
+
+const repoSpecRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/repo-specs/$repoSpecId",
+  component: function RepoSpecRouteComponent() {
+    const { repoSpecId } = repoSpecRoute.useParams();
+    return <RepoSpecPage key={repoSpecId} repoSpecId={repoSpecId} />;
   },
   errorComponent: PageError,
 });
@@ -183,6 +194,7 @@ const routeTree = rootRoute.addChildren([
     boardRoute,
     projectSettingsRoute,
     draftTasksRoute,
+    repoSpecRoute,
     taskRoute,
     runRoute,
     reviewRoute,

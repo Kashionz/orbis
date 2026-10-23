@@ -7,14 +7,17 @@
 import {
   type AcceptanceCriterion,
   type ApiError,
+  type CollabMentionAttrs,
   type CreateAcceptanceCriterionInput,
   type CreateProjectInput,
   type CreateRepoInput,
+  type CreateRepoSpecInput,
   type CreateRunInput,
   type CreateTaskInput,
   canTransitionManually,
   type DispatchOptions,
   type DraftTask,
+  formatMention,
   formatMentionTargetId,
   formatTaskKey,
   type Gate,
@@ -32,9 +35,14 @@ import {
   type NotificationPreferences,
   type PreviewState,
   type Project,
+  parseCollabDocName,
   parseMentions,
+  parseMentionTargetId,
   READY_REQUIREMENTS,
   type Repo,
+  type RepoSpec,
+  type RepoSpecCommitInput,
+  type RepoSpecCommitResponse,
   type ReviewDiff,
   type Role,
   type Run,
@@ -117,6 +125,11 @@ export interface MockState {
   notificationPreferences: NotificationPreferences;
   taskComments: TaskComment[];
   mentions: Mention[];
+  /** 共同編輯文件的 Yjs 狀態（base64），依文件名稱。 */
+  collabDocs: Record<string, string>;
+  repoSpecs: RepoSpec[];
+  /** Repo Spec 草稿轉成的 markdown（提交時使用）。 */
+  repoSpecDrafts: Record<string, string>;
 }
 
 /** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
@@ -202,6 +215,9 @@ export class MockBackend {
     this.state.notificationPreferences ??= { disabledKinds: [], quietHours: null };
     this.state.taskComments ??= [];
     this.state.mentions ??= [];
+    this.state.collabDocs ??= {};
+    this.state.repoSpecs ??= [];
+    this.state.repoSpecDrafts ??= {};
     this.save();
   }
 
@@ -388,6 +404,21 @@ export class MockBackend {
       notificationPreferences: { disabledKinds: [], quietHours: null },
       taskComments: [],
       mentions: [],
+      collabDocs: {},
+      repoSpecs: [
+        {
+          id: "spec-1",
+          repoId: "repo-1",
+          path: "docs/specs/login.md",
+          title: "登入",
+          version: 2,
+          committedSha: "1".repeat(40),
+          openPullRequest: null,
+          createdAt: SEED_TIME,
+          updatedAt: SEED_TIME,
+        },
+      ],
+      repoSpecDrafts: { "spec-1": "# 登入\n\n使用 GitHub 帳號登入。" },
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -402,6 +433,7 @@ export class MockBackend {
     const backlog = seedTask("設定 CI 快取", "backlog", {
       assigneeMemberId: null,
       description: "CI 的 pnpm store 加上快取。",
+      specPath: "docs/specs/login.md",
     });
     this.createAcceptanceCriterion(backlog.id, {
       kind: "command",
@@ -1291,6 +1323,144 @@ export class MockBackend {
     this.state.blobs[blobId] = `data:image/png;base64,${btoa(binary)}`;
     this.save();
     return { blobId };
+  }
+
+  // ---------- 共同編輯（ARCHITECTURE §12.1；collab.ts 的 MockCollabServer 使用） ----------
+
+  get collabCloseCode(): number | null {
+    return this.config.collabClose ?? null;
+  }
+
+  get collabPeer(): { name: string; color: string; editText: string | null } | null {
+    if (!this.config.collabPeer) return null;
+    return {
+      name: "alice",
+      color: "#6f42c1",
+      editText: this.config.collabPeer === "edit" ? "alice 補充的一段" : null,
+    };
+  }
+
+  collabAccess(docName: string): { readOnly: boolean; initialMarkdown: string } | null {
+    const ref = parseCollabDocName(docName);
+    if (!ref) return null;
+    const readOnly = this.role === "viewer";
+    switch (ref.kind) {
+      case "task-description": {
+        const task = this.state.tasks.find((t) => t.id === ref.id);
+        return task ? { readOnly, initialMarkdown: task.description } : null;
+      }
+      case "acceptance-criterion": {
+        const criterion = this.state.acceptanceCriteria.find((c) => c.id === ref.id);
+        return criterion ? { readOnly, initialMarkdown: criterion.description } : null;
+      }
+      case "repo-spec-draft": {
+        const spec = this.state.repoSpecs.find((s) => s.id === ref.id);
+        return spec
+          ? { readOnly, initialMarkdown: this.state.repoSpecDrafts[spec.id] ?? "" }
+          : null;
+      }
+    }
+  }
+
+  collabSnapshot(docName: string): string | null {
+    return this.state.collabDocs[docName] ?? null;
+  }
+
+  /** 保存文件，並把 markdown 回寫 Task 描述或條件的描述（Repo Spec 草稿只存快照）。 */
+  saveCollabDocument(
+    docName: string,
+    snapshot: string,
+    markdown: string,
+    mentions: CollabMentionAttrs[],
+  ): void {
+    const ref = parseCollabDocName(docName);
+    if (!ref) return;
+    this.state.collabDocs[docName] = snapshot;
+    let task: Task | null = null;
+    if (ref.kind === "task-description") {
+      task = this.state.tasks.find((t) => t.id === ref.id) ?? null;
+      if (task) Object.assign(task, { description: markdown, updatedAt: now() });
+    } else if (ref.kind === "acceptance-criterion") {
+      const criterion = this.state.acceptanceCriteria.find((c) => c.id === ref.id);
+      if (criterion && markdown.trim() !== "") {
+        Object.assign(criterion, { description: markdown.trim(), updatedAt: now() });
+      }
+      task = criterion ? this.task(criterion.taskId) : null;
+    } else {
+      this.state.repoSpecDrafts[ref.id] = markdown;
+    }
+    if (task) {
+      // 新出現的 mention 節點才發通知或建立 consult Run（以 nodeId 去除重複）
+      const valid = mentions.flatMap((m) => {
+        const target = parseMentionTargetId(m.id);
+        return target && m.nodeId
+          ? [{ token: formatMention(m.label, target), nodeId: m.nodeId }]
+          : [];
+      });
+      this.consultForMentions(
+        task,
+        valid.map((m) => m.token).join(" "),
+        "collab_document",
+        docName,
+        valid.map((m) => m.nodeId),
+      );
+    }
+    this.save();
+  }
+
+  // ---------- Repo Spec（ARCHITECTURE §12.1） ----------
+
+  repoSpecs(repoId: string): RepoSpec[] {
+    this.repo(repoId);
+    return this.state.repoSpecs.filter((s) => s.repoId === repoId);
+  }
+
+  repoSpec(id: string): RepoSpec {
+    const spec = this.state.repoSpecs.find((s) => s.id === id);
+    if (!spec) throw new MockError(404, "not_found", "找不到這份 Repo Spec");
+    return spec;
+  }
+
+  createRepoSpec(repoId: string, input: CreateRepoSpecInput): RepoSpec {
+    this.requireEditor();
+    this.repo(repoId);
+    if (this.state.repoSpecs.some((s) => s.repoId === repoId && s.path === input.path)) {
+      throw new MockError(409, "conflict", `${input.path} 已經登記`);
+    }
+    const time = now();
+    const spec: RepoSpec = {
+      id: this.newId("spec"),
+      repoId,
+      path: input.path,
+      title: input.title ?? null,
+      version: 0,
+      committedSha: null,
+      openPullRequest: null,
+      createdAt: time,
+      updatedAt: time,
+    };
+    this.state.repoSpecs.push(spec);
+    this.save();
+    return spec;
+  }
+
+  /** 提交草稿：開 Spec PR，已經有開著的 PR 時更新它。 */
+  commitRepoSpec(id: string, _input: RepoSpecCommitInput): RepoSpecCommitResponse {
+    this.requireEditor();
+    const spec = this.repoSpec(id);
+    const repo = this.repo(spec.repoId);
+    const created = spec.openPullRequest === null;
+    spec.openPullRequest ??= {
+      number: 40 + this.state.repoSpecs.indexOf(spec),
+      url: `https://github.com/${repo.owner}/${repo.name}/pull/${40 + this.state.repoSpecs.indexOf(spec)}`,
+    };
+    spec.updatedAt = now();
+    this.save();
+    return {
+      pullRequest: spec.openPullRequest,
+      created,
+      overwritesUpstreamChanges: this.config.specUpstreamChanged ?? false,
+    };
   }
 
   // ---------- 通知（ARCHITECTURE §12.3） ----------
