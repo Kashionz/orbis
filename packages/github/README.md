@@ -1,6 +1,6 @@
 # @orbis/github
 
-GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙向同步、Review Gate 核准後開 PR、PR merge 後 Task 轉 Done。設計依據是 [ARCHITECTURE §5、§11、§15](../../docs/ARCHITECTURE.md) 與 [ADR-0004](../../docs/adr/0004-self-built-task-model-with-issues-sync.md)。
+GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙向同步、Review Gate 核准後開 PR、PR merge 後 Task 轉 Done、PR 的 Feedback Loop、Repo Spec 提交到 repo。設計依據是 [ARCHITECTURE §5、§11、§12.1、§15](../../docs/ARCHITECTURE.md) 與 [ADR-0004](../../docs/adr/0004-self-built-task-model-with-issues-sync.md)。
 
 ## GitHub App
 
@@ -19,8 +19,12 @@ GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙�
 `issues`、`issue_comment`、`pull_request`、`pull_request_review`、`pull_request_review_comment`、`check_suite`、`check_run`。
 
 - `installation`、`installation_repositories` 不需要訂閱，App 一律會收到。
-- D1 處理 `issues`、`issue_comment`（只處理狀態摘要留言被刪除）、`pull_request`（`closed`、`reopened`）、`installation`、`installation_repositories`。
-- 其餘事件由 D2（Feedback Loop）處理。先訂閱好，之後就不必請每個安裝重新核准權限。
+- `issues`：Issues 雙向同步。
+- `issue_comment`：Issue 上狀態摘要留言被刪除時重建；PR 上新的留言是 Feedback Loop 的回饋。
+- `pull_request`：`closed`、`reopened` 更新 Task 或 Repo Spec 的 PR；`synchronize` 記下 PR 目前的 head commit。
+- `pull_request_review`、`check_suite`、`check_run`：Feedback Loop 的觸發來源。
+- `pull_request_review_comment` 有訂閱但不處理：它在所屬的 review 之後才送到，review 送出時已經讀過留言。
+- `installation`、`installation_repositories`：App 的安裝狀態。
 
 完整的 manifest 由 [`src/manifest.ts`](src/manifest.ts) 產生，因為產品名稱只能從名稱常數取得，所以不放靜態的 JSON 檔。
 
@@ -65,8 +69,14 @@ import { createGitHubIntegration, createGitHubWebhookRoutes, loadGitHubAppConfig
 
 const config = loadGitHubAppConfig(process.env);
 if (config) {
-  const github = createGitHubIntegration({ config, domain, store, notifier, logger, taskUrl });
+  const github = createGitHubIntegration({
+    config, domain, store, notifier, logger, taskUrl,
+    // 選填：沒有提供時 Feedback Loop 停用、commitRepoSpec 回傳 disabled
+    feedback: { store: feedbackStore, runs: feedbackRuns, botAllowlist },
+    repoSpecs: { store: repoSpecStore, getRepoSpec, recordRepoSpecMerged },
+  });
   app.route(API_ROUTES.githubWebhook, createGitHubWebhookRoutes(github));
+  const feedbackTimer = github.startFeedbackTimer(); // 關閉時 feedbackTimer.stop()
 }
 ```
 
@@ -81,6 +91,10 @@ if (config) {
 | Project 新增 Repo | `github.inspectRepo(owner, name, requesterMemberId)` |
 | Member 從 Issue 匯入 Task（`API_ROUTES.repoImportableIssues`、`repoImportIssues`） | `github.listImportableIssues(repoId)`、`github.importIssues({ repoId, issueNumbers, importedByMemberId })`；Repo 沒有安裝 App 時丟出 `RepoNotConnectedError` |
 | Team Runner 要 push | `github.getInstallationTokenForRepo(repoId)`：只限該 repo、只有 contents 寫入權限 |
+| Repo 設定頁的「重新檢查安裝狀態」 | `github.refreshRepoInstallation(repoId, requesterMemberId)` |
+| 「提交到 repo」 | `github.commitRepoSpec({ repoSpecId, markdown, requesterMemberId, message? })`：`markdown` 是共同編輯草稿的內容 |
+| Server 啟動、關閉 | `github.startFeedbackTimer()` 與它回傳的 `stop()`：每 15 秒送出到期的 Feedback Loop 批次 |
+| Feedback Loop 的 Run 沒有 push 就結束（失敗、中止） | `github.onFeedbackRunEnded({ runId })`。push 成功時照常是 `onBranchPushed` |
 
 Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5），這個套件只負責之後開 PR；開 PR 失敗時回傳 `{ ok: false }` 並通知 Task 負責人，Task 維持 `pr_open`。
 
@@ -99,6 +113,14 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
 - **`GitHubStore`**：Issue 對應與同步快照、webhook delivery 去重、PR 對應。資料表在 `apps/server/src/db/schema/github.ts`。同一個 Repo 中一個 Issue 只能對應一個 Task，違反時 `saveIssueLink` 丟出 `IssueAlreadyLinkedError`（兩人同時匯入時，後到的一方回傳 `already_linked`）。Drizzle 的實作要通過 `@orbis/github/testing/store-contract` 的契約測試。
 - **`Notifier`**：PR merge、PR 沒有 merge 就被關閉、開 PR 失敗時通知 Task 負責人；沒有負責人時通知建立者。
 - **`taskUrl(task)`**：Task 在 Web UI 上的網址。
+- **`feedback`**（選填）：
+  - `store: FeedbackStore`：待送批次與自動修正紀錄，Drizzle 的實作要通過 `describeFeedbackStoreContract`。
+  - `runs: FeedbackRunPort`：`requestFix` 開一個新的 Run 修正回饋。新的 Run 的 origin 是 `feedback_loop`，連到 `previousRunId`，使用同一個 Runner、分支與 Worktree，resume 原本的 session。Task 轉回 Running，修正經過 Verifying，通過後直接 push、不經過 Review Gate。
+  - `botAllowlist(projectId)`：Project 的 bot 白名單。
+- **`repoSpecs`**（選填）：
+  - `store: RepoSpecStore`：Spec PR 的對應，要通過 `describeRepoSpecStoreContract`。
+  - `getRepoSpec`。
+  - `recordRepoSpecMerged`：merge 後版本 +1，以原子操作遞增。
 
 ## 同步規則
 
@@ -144,6 +166,36 @@ Review Gate 核准時由 Server 把 Task 轉成 `pr_open`（ARCHITECTURE §5）�
 - `pull_request.reopened`：回到 PR Open。
 - 沒有 merge 的關閉與重開，和 Issue 一樣只採用能編輯 Task 的 Member 或對 repo 有寫入權限的人（GitHub 上 triage 角色也能關閉、重開 PR）。其他人的操作不改 Task 狀態，只記錄 PR 狀態並通知負責人。
 
+## Feedback Loop
+
+規則見 ARCHITECTURE §5.2，程式在 `src/feedback/`。
+
+- **過濾**（`trigger.ts`）：
+  - 人類：用 `senderCanWrite` 檢查，與 Issue 同步同一套。
+  - bot：要在白名單中（不分大小寫）。
+  - App 自己：一律略過。
+  - review：`approved` 不觸發。
+  - CI：結論是 `failure`、`timed_out` 才觸發，而且只看 PR 目前的 head。
+- **批次**（`dispatch.ts`）：
+  - 每個 PR 每種來源最多一批，存在 `FeedbackStore`，Server 重啟後還在。
+  - 完整的 review 與 CI 立刻到期；零散留言在最後一則之後 2 分鐘到期。
+  - 同一個 PR 有 `sent` 的紀錄時，到期的批次也先留著。
+- **CI 的判斷**：
+  - 每次 `check_suite.completed` 或失敗的 `check_run.completed` 都重新查一次這個 commit 的 suite 與 check run，所以判斷是冪等的。
+  - 有 check run 的 suite 都完成後，才把還沒觸發過的失敗 check 合併成一批。
+  - 沒有 check run、一直是 `queued` 的 suite 不等，例如 Vercel、Fly.io 這類安裝了但沒在跑 check 的 App。
+- **prompt**（`prompt.ts`）：
+  - review：附上檔案、行號、留言與 `diff_hunk` 的最後 20 行。
+  - CI：附上 check 名稱、結論與 output。output 放在 code block 中當資料，長度有上限。
+
+## Repo Spec 提交到 repo
+
+規則見 ARCHITECTURE §12.1，程式在 `src/repo-specs.ts`。
+
+- 分支名稱是 `<產品 slug>/spec/<檔名>-<6 碼亂數>`，以 Contents API commit。
+- PR body 以 `<!-- <產品 slug>:repo-spec -->` 標記。
+- Spec PR 的 `pull_request.closed` 不會被當成 Task 的 PR 處理。
+
 ## 開發與測試
 
 ```sh
@@ -163,6 +215,10 @@ npx smee-client --url <smee channel> --target http://localhost:4402/api/webhooks
 # 2. 啟動 harness（--member 是 <GitHub login>:<數字 user id>）
 pnpm --filter @orbis/github dev:harness --repo <owner>/<name> --member <login>:<id>
 # 3. 操作：POST /dev/tasks、PATCH /dev/tasks/:id、POST /dev/import、POST /dev/tasks/:id/branch-pushed（見 dev/harness.ts）
-# 4. 錄製真實 payload 成 fixture
-pnpm --filter @orbis/github fixtures:record
+# 4. 錄製真實 payload 成 fixture（--only 只錄指定的事件，不覆蓋其他 fixture）
+pnpm --filter @orbis/github fixtures:record [--only pull_request_review,check_suite]
 ```
+
+- Feedback Loop 的 fixture 是在 `orbis-sandbox` 的 PR 上錄的。
+- sandbox 有一個測試用的 CI（`.github/workflows/ci.yml`），repo 根目錄有 `FAIL_LINT` 或 `FAIL_TEST` 檔案時，對應的 job 會故意失敗。
+- 同一種 event／action 依 payload 分成幾個變體，檔名多一段，例如 `issue_comment.created.pr`、`pull_request_review.submitted.commented`、`check_suite.completed.failure`。

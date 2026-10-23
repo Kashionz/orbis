@@ -130,11 +130,18 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 
 ### 5.2 Feedback Loop（PR 開出之後）
 
-- **觸發來源**：
-  - 對 repo 有寫入權限的**人類** review 留言。
-  - CI check 失敗。
-  - bot 留言預設不觸發，要在白名單中的 bot 才會觸發。
-- **合併再送**：等 review 送出後才觸發，或最後一則留言之後 2 分鐘才觸發；同一批留言合併成一次送出。
+- **觸發來源**：只處理以 GitHub App 開出、有對應 Task 而且還開著的 PR。
+  - 對 repo 有寫入權限的**人類** review 留言（與 §11「誰的修改算數」同一套檢查）。`commented` 與 `changes_requested` 的 review 會觸發；`approved` 的 review 一律不觸發，就算附了留言。PR 對話串的留言也算。
+  - CI check 失敗：結論是 `failure` 或 `timed_out`（`cancelled`、`skipped`、`neutral`、`action_required` 不算）。
+    - 只採用 PR 目前 head commit 的結果。
+    - 等這個 commit 的 check suite 都完成，才把失敗的 check 合併成一次修正。沒有 check run 的 suite 不等，例如安裝了但沒在跑 check 的 App。
+    - 同一個 check run 只觸發一次。
+  - bot 留言預設不觸發，要在 Project 的白名單中才會觸發。GitHub App 自己的留言一律不觸發。
+- **合併再送**：
+  - 有內容、`changes_requested` 或兩則以上行內留言的 review，在送出時立刻觸發，同一份 review 的留言合併成一批。
+  - 零散的留言在最後一則之後 2 分鐘才觸發，期間的留言合併成一批。零散的留言是只有一則行內留言的 review（GitHub 的「Add single comment」也會產生一份 review），以及 PR 對話串的留言。
+  - 零散的留言還在等時送出了 review，就一起送出。
+  - 同一個 PR 同時只有一次自動修正。修正還沒 push 時，新的回饋先暫存，修正 push 或 Run 沒有 push 就結束之後再送。review 與 CI 都在等時，先送 review。PR 有了新的 commit 之後，舊 commit 的 CI 結果作廢。
 - **次數上限**：每個 PR 自動修正最多 **5 次**，CI 與 review 分開計數。超過就停下並通知 Task 負責人。
 - **紀錄**：每次自動修正都在 Task（Task note）與 PR 上留下紀錄，註明是哪個來源觸發。
 - **送回原 Run 的 session**：PR 開出後原 Run 已經 `completed`，所以每次修正都開一個**新的 Run**（`origin = feedback_loop`，以 `resumes_run_id` 連到前一個 Run）。
@@ -411,6 +418,10 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - title 與 body 經由 Issue 在這些 Task 之間同步：任一個 Task 的修改先寫到 Issue，再同步到其他 Task。
   - **GitHub App 的安裝狀態**：訂閱 `installation` 與 `installation_repositories` 兩個 webhook，即時更新 Repo 的 installation id。UI 依此提示哪些 Repo 還沒安裝 GitHub App。
     - 登記 Repo 時，如果 App 已安裝，就從 GitHub 讀取 default branch；還沒安裝時，用輸入值，沒有輸入就用 `main`。
+    - **重新檢查**：漏掉 webhook 時（例如 App 在登記 Repo 之後才安裝，而本機收不到 webhook），Repo 設定頁可以重新向 GitHub 查詢安裝狀態。
+      - 和登記 Repo 一樣，提出的人要是該 Project 的 Member，而且本人對 repo 有寫入權限；不符合時回應與「沒有安裝」相同，不改資料。
+      - GitHub 上同名 repo 的 id 與登記時不同（刪掉後重建）時，不自動改綁。
+      - App 確實沒有安裝時清掉 installation；repo 改名造成以名稱查不到時不清。
 - **PR 與 Task**：PR merge → Task 轉 Done，關閉原因為 `completed`；PR 沒有 merge 就關閉 → Task 退回 Review Gate。
 - **不串 GitHub Projects。**
 
@@ -423,6 +434,11 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **範圍**：Task 描述、Acceptance Criterion，以及存在資料庫的 Spec。
 - **技術**：Yjs、TipTap，經由 Server 的 WebSocket 同步；顯示其他人的游標與在線狀態。Yjs 文件的快照存在 Postgres。
 - **Repo 內的 Spec**：在 UI 中共同編輯一份草稿，按下「提交到 repo」後才變成 commit。Agent 要修改時，以 PR 的形式提出，不直接覆蓋草稿。
+  - **提交到 repo**：
+    - 從 default branch 開新的分支，以 GitHub App 身分 commit 草稿（`Co-authored-by` 提交者），再開 PR。提交者要能在該 Project 編輯 Task。
+    - 同一份 Spec 已經有開著的 PR 時，在同一個分支上再 commit 一次並沿用 PR。內容沒變時不 commit。
+    - repo 中的檔案在上一次提交之後被別人改過時照常開 PR，但在 PR 與回應中警告會覆蓋那些修改。
+  - **版本**：Repo Spec 有一個整數版本，從 Orbis 提交的 PR 每 merge 一次 +1，並記錄 merge commit。PR 沒有 merge 就關閉時，版本不變。
 - **不做**程式碼的共同編輯。
 
 ### 12.2 Role
