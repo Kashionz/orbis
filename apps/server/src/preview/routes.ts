@@ -7,7 +7,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { API_ROUTES, apiPath, PREVIEW_SCREENSHOT_MAX_BYTES } from "@orbis/api-contract";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getCookie } from "hono/cookie";
 import { requireProjectCapability } from "../authz/scope";
@@ -27,16 +27,36 @@ import { loadPreviewState } from "./state";
 const MULTIPART_OVERHEAD = 64 * 1024;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
+/**
+ * 寫入型的 Preview API 只接受 Web UI 自己發出的請求：沒有 body 或 multipart 的 POST 不需要 preflight，
+ * 同站的 Preview 頁面（Agent 寫的程式）會帶著 session cookie 送來（B 軌之後會對所有寫入型 API 檢查 Origin）。
+ */
+function webOriginOnly(publicUrl: string): MiddlewareHandler<AppEnv> {
+  const webOrigin = new URL(publicUrl).origin;
+  return async (c, next) => {
+    const origin = c.req.header("origin");
+    const site = c.req.header("sec-fetch-site");
+    if (
+      (origin !== undefined && origin !== webOrigin) ||
+      (site !== undefined && site !== "same-origin" && site !== "none")
+    ) {
+      throw new ApiError(403, "forbidden", "不接受其他網站發出的請求");
+    }
+    await next();
+  };
+}
+
 export function createPreviewRoutes(s: Services): Hono<AppEnv> {
   const { db, auth, clock, preview, blobStore } = s;
   const app = new Hono<AppEnv>();
+  const fromWeb = webOriginOnly(preview.publicUrl);
 
   app.get(API_ROUTES.runPreview, auth, async (c) => {
     const scope = await requireRunVisible(db, c.get("actor"), readId(c, "runId", "Run"));
     return c.json(await loadPreviewState(db, scope.run, preview.domain));
   });
 
-  app.post(API_ROUTES.runPreviewRestart, auth, async (c) => {
+  app.post(API_ROUTES.runPreviewRestart, fromWeb, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await requireRunVisible(db, actor, readId(c, "runId", "Run"));
     // 和取消 Run 相同的權限
@@ -75,19 +95,10 @@ export function createPreviewRoutes(s: Services): Hono<AppEnv> {
 
   app.post(
     API_ROUTES.runPreviewScreenshots,
+    fromWeb,
     auth,
-    // 先確認來源與權限，之後才讀 body
+    // 先確認權限，之後才讀 body
     async (c, next) => {
-      // multipart 的 POST 不需要 preflight：同站的 Preview 頁面會帶著 session cookie 送來，
-      // 所以只接受 Web UI 自己發出的請求（B 軌之後會對所有寫入型 API 檢查 Origin）
-      const origin = c.req.header("origin");
-      const site = c.req.header("sec-fetch-site");
-      if (
-        (origin !== undefined && origin !== new URL(preview.publicUrl).origin) ||
-        (site !== undefined && site !== "same-origin" && site !== "none")
-      ) {
-        throw new ApiError(403, "forbidden", "不接受其他網站發出的請求");
-      }
       const actor = c.get("actor");
       const scope = await requireRunVisible(db, actor, readId(c, "runId", "Run"));
       // 截圖是 Preview 留言的附件，和 Review Gate 退回的權限相同

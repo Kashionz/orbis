@@ -230,6 +230,16 @@ describe.skipIf(dbSkipReason !== null)("Preview 網址", () => {
           headers: { cookie },
         });
       expect((await restart(team.members.viewer.cookie)).status).toBe(403);
+      // 同站的 Preview 頁面發出的請求
+      const fromPreview = await ctx.app.request(`/api/runs/${runId}/preview/restart`, {
+        method: "POST",
+        headers: {
+          cookie: team.members.member.cookie,
+          origin: `http://${previewHost}`,
+          "sec-fetch-site": "same-site",
+        },
+      });
+      expect(fromPreview.status).toBe(403);
       // 沒有 Dispatch：Runner 上沒有這個 Run
       expect((await restart(team.members.member.cookie)).status).toBe(409);
       await addEvent(1, "worktree_ready", {
