@@ -7,11 +7,16 @@ import type {
 import Markdown from "react-markdown";
 import { formatTime } from "../../lib/format";
 import {
+  MERGE_OUTCOME_LABELS,
   PERMISSION_PURPOSE_LABELS,
+  PLAN_SOURCE_LABELS,
+  PREVIEW_STOP_REASON_LABELS,
+  PROMPT_SOURCE_LABELS,
   RUN_ERROR_LABELS,
   RUN_STATUS_LABELS,
   TOOL_CALL_STATUS_LABELS,
   TOOL_KIND_LABELS,
+  VERIFICATION_OUTCOME_LABELS,
 } from "../../lib/labels";
 import { DiffPreview } from "./DiffPreview";
 import type { TimelineItem } from "./timeline";
@@ -279,6 +284,80 @@ export function TimelineItemView({
     case "run_diff":
       return (
         <div className="event event-status">已產生 review diff：{item.fileCount} 個檔案有變更</div>
+      );
+
+    case "plan_proposed":
+      return (
+        <div className="event event-plan-proposed">
+          <strong>Agent 提出 plan</strong>
+          <span className="hint">（來源：{PLAN_SOURCE_LABELS[item.source]}）</span>
+          {item.body.type === "inline" ? (
+            <div className="markdown">
+              <Markdown>{item.body.text}</Markdown>
+            </div>
+          ) : (
+            <p className="hint">plan 全文在上方的 Plan Gate 面板。</p>
+          )}
+        </div>
+      );
+
+    case "verification_result":
+      return (
+        <div className="event event-verification" data-outcome={item.outcome}>
+          <span className="status-badge" data-status={item.outcome}>
+            {VERIFICATION_OUTCOME_LABELS[item.outcome]}
+          </span>{" "}
+          第 {item.attempt} 輪 Verification：{item.summary}
+        </div>
+      );
+
+    case "verification_completed":
+      return (
+        <div className="event event-status" data-outcome={item.outcome}>
+          第 {item.attempt} 輪 Verification 結束：{VERIFICATION_OUTCOME_LABELS[item.outcome]}
+        </div>
+      );
+
+    case "child_merged":
+      return (
+        <div className="event event-status" data-outcome={item.outcome}>
+          Child Run <code>{item.childRunId}</code> 合併結果：{MERGE_OUTCOME_LABELS[item.outcome]}
+          {item.commitSha && (
+            <>
+              {" "}
+              <code>{item.commitSha.slice(0, 7)}</code>
+            </>
+          )}
+          {item.conflictedPaths.length > 0 && (
+            <span className="hint">（衝突：{item.conflictedPaths.join("、")}）</span>
+          )}
+        </div>
+      );
+
+    case "prompt": {
+      const open = controls.isExpanded(item.key);
+      return (
+        <div className="event event-prompt" data-source={item.source}>
+          <button
+            type="button"
+            className="thought-toggle"
+            aria-expanded={open}
+            onClick={() => controls.toggle(item.key)}
+          >
+            {open ? "▾" : "▸"} 送出 prompt（{PROMPT_SOURCE_LABELS[item.source]}）
+          </button>
+          {open && <Blocks blocks={item.blocks} />}
+        </div>
+      );
+    }
+
+    case "preview_stopped":
+      return (
+        <div className="event event-error">
+          <strong>Preview 已停止</strong>：{PREVIEW_STOP_REASON_LABELS[item.reason]}
+          {item.exitCode !== null && `（exit code ${item.exitCode}）`}
+          {item.output && <pre className="tool-text">{item.output}</pre>}
+        </div>
       );
   }
 }

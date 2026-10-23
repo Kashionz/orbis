@@ -9,6 +9,7 @@ import {
   queryKeys,
   respondToPermission,
   runQuery,
+  taskGatesQuery,
   taskQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
@@ -26,6 +27,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: task } = useQuery(taskQuery(run.taskId));
   const { data: projects = [] } = useQuery(projectsQuery);
+  const { data: gates = [] } = useQuery(taskGatesQuery(run.taskId));
   const project = projects.find((p) => p.id === task?.projectId);
   const permissions = usePermissions(project, task);
   const { timeline, connected, error: streamError } = useRunTimeline(runId);
@@ -34,7 +36,10 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const status = timeline.status ?? run.status;
   const usage = timeline.usage ? toRunUsage(timeline.usage) : run.usage;
   const terminal = (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
-  const awaitingReview = status === "awaiting_gate" && timeline.gate === "review";
+  // 協定先送 awaiting_gate(review) 再開始 Verification，所以看是否有待決定的 Review Gate，不看 Run 狀態
+  const awaitingReview = gates.some(
+    (g) => g.runId === runId && g.kind === "review" && g.decision === null,
+  );
 
   // 狀態改變時，Run、Task 與 Needs You 的資料也跟著變了
   useEffect(() => {

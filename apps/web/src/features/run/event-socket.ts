@@ -1,8 +1,9 @@
-// Run Event 的 WebSocket 連線：整個頁面共用一條，依 Run 訂閱；斷線後自動重連並從各 Run
-// 已套用的最後一個 seq 之後續傳。
+// Web 的即時推送連線（`/api/ws`）：整個頁面共用一條。Run 的 Event 依 Run 訂閱，斷線後自動重連並從
+// 各 Run 已套用的最後一個 seq 之後續傳；通知不需要訂閱，登入後由通知中心常駐監聽（ARCHITECTURE §12.3）。
 
 import {
   API_ROUTES,
+  type Notification,
   type RunEvent,
   type WEB_WS_ERROR_CODES,
   type WebClientMessage,
@@ -39,9 +40,12 @@ function socketUrl(): string {
   return `${protocol}//${window.location.host}${API_ROUTES.ws}`;
 }
 
+export type NotificationListener = (notification: Notification) => void;
+
 export class EventSocket {
   private socket: WebSocket | null = null;
   private readonly subscriptions = new Map<string, Set<RunSubscription>>();
+  private readonly notificationListeners = new Set<NotificationListener>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -63,6 +67,20 @@ export class EventSocket {
     return () => this.unsubscribe(runId, subscription);
   }
 
+  /** 監聽給登入者的通知。有監聽者時連線一直開著（沒有訂閱任何 Run 也一樣）。 */
+  listenNotifications(listener: NotificationListener): () => void {
+    this.notificationListeners.add(listener);
+    this.connect();
+    return () => {
+      this.notificationListeners.delete(listener);
+      if (!this.hasListeners()) this.close();
+    };
+  }
+
+  private hasListeners(): boolean {
+    return this.subscriptions.size > 0 || this.notificationListeners.size > 0;
+  }
+
   private unsubscribe(runId: string, subscription: RunSubscription): void {
     const set = this.subscriptions.get(runId);
     if (!set) return;
@@ -70,7 +88,7 @@ export class EventSocket {
     if (set.size > 0) return;
     this.subscriptions.delete(runId);
     this.send({ type: "unsubscribe_run", runId });
-    if (this.subscriptions.size === 0) this.close();
+    if (!this.hasListeners()) this.close();
   }
 
   private connect(): void {
@@ -97,7 +115,7 @@ export class EventSocket {
   }
 
   private scheduleReconnect(): void {
-    if (this.subscriptions.size === 0) return;
+    if (!this.hasListeners()) return;
     const delay =
       RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
     this.reconnectAttempt += 1;
@@ -120,8 +138,10 @@ export class EventSocket {
       for (const s of this.subscriptions.get(parsed.runId) ?? []) s.onEvents(parsed.events);
       return;
     }
-    // 通知由通知中心（C2）處理，Run 的 Event 訂閱不需要。
-    if (parsed.type === "notification") return;
+    if (parsed.type === "notification") {
+      for (const listener of this.notificationListeners) listener(parsed.notification);
+      return;
+    }
     const targets = parsed.runId
       ? (this.subscriptions.get(parsed.runId) ?? [])
       : [...this.subscriptions.values()].flatMap((set) => [...set]);

@@ -1,4 +1,4 @@
-import type { RunEvent, WebClientMessage } from "@orbis/api-contract";
+import type { Notification, RunEvent, WebClientMessage } from "@orbis/api-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventSocket, type RunSubscription } from "./event-socket";
 
@@ -52,6 +52,23 @@ function event(seq: number): RunEvent {
     ts: "2026-10-23T08:00:00.000Z",
     event: { kind: "message_chunk", content: { type: "text", text: `#${seq}` } },
   } as RunEvent;
+}
+
+function notification(id: string): Notification {
+  return {
+    id,
+    kind: "mentioned",
+    taskId: null,
+    taskKey: null,
+    runId: null,
+    gateId: null,
+    actorMemberId: null,
+    title: "有人提到你",
+    body: null,
+    url: null,
+    readAt: null,
+    createdAt: "2026-10-23T08:00:00.000Z",
+  };
 }
 
 function subscription(afterSeq: () => number): RunSubscription & {
@@ -129,6 +146,44 @@ describe("EventSocket", () => {
     ws?.open();
     unsubscribe();
     expect(ws?.sent.at(-1)).toEqual({ type: "unsubscribe_run", runId: "run-1" });
+  });
+
+  it("只有通知監聽者時也會連線，收到 notification 交給監聽者", () => {
+    const socket = new EventSocket(() => "ws://test/api/ws");
+    const received: Notification[] = [];
+    socket.listenNotifications((n) => received.push(n));
+    const ws = FakeWebSocket.instances[0];
+    ws?.open();
+    ws?.receive({ type: "notification", notification: notification("n-1") });
+    expect(ws?.sent).toEqual([]);
+    expect(received.map((n) => n.id)).toEqual(["n-1"]);
+  });
+
+  it("最後一個 Run 訂閱取消後，有通知監聽者時連線仍保持開著並會重連", () => {
+    const socket = new EventSocket(() => "ws://test/api/ws");
+    socket.listenNotifications(() => {});
+    const unsubscribe = socket.subscribe(
+      "run-1",
+      subscription(() => 0),
+    );
+    const ws = FakeWebSocket.instances[0];
+    ws?.open();
+    unsubscribe();
+    expect(ws?.readyState).toBe(FakeWebSocket.OPEN);
+    ws?.drop();
+    vi.runOnlyPendingTimers();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it("所有監聽者都取消後關閉連線，斷線也不再重連", () => {
+    const socket = new EventSocket(() => "ws://test/api/ws");
+    const stop = socket.listenNotifications(() => {});
+    const ws = FakeWebSocket.instances[0];
+    ws?.open();
+    stop();
+    expect(ws?.readyState).toBe(3);
+    vi.runOnlyPendingTimers();
+    expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
   it("錯誤代碼轉成說明：limit_exceeded 提示關閉其他 Run 頁面", () => {

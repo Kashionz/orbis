@@ -309,3 +309,54 @@ describe("applyEvents：即時套用與重播結果相同", () => {
     });
   }
 });
+
+describe("applyEvents：協定 v2 的 Event", () => {
+  it("plan、Verification、合併 Child Run、prompt 與 Preview 停止各成一個項目；agent_session 不顯示", () => {
+    const timeline = replay(
+      events(
+        { kind: "agent_session", session_id: "s-1" },
+        {
+          kind: "prompt_submitted",
+          prompt: [{ type: "text", text: "請修正測試" }],
+          source: "verification_retry",
+        },
+        {
+          kind: "plan_proposed",
+          body: { type: "inline", text: "1. 改 README" },
+          source: "plan_mode",
+        },
+        {
+          kind: "verification_result",
+          verification_id: "v-1",
+          attempt: 1,
+          criterion_id: "ac-1",
+          outcome: "failed",
+          summary: "exit code 1",
+          evidence: [],
+          judged_by_run_id: null,
+        },
+        { kind: "verification_completed", verification_id: "v-1", attempt: 1, outcome: "failed" },
+        {
+          kind: "child_merged",
+          child_run_id: "run-2",
+          outcome: "conflict",
+          commit_sha: null,
+          conflicted_paths: ["a.ts"],
+        },
+        { kind: "preview_stopped", reason: "exited", exit_code: 1, output: "boom" },
+      ),
+    );
+    expect(timeline.lastSeq).toBe(7);
+    expect(timeline.items.map((item) => item.type)).toEqual([
+      "prompt",
+      "plan_proposed",
+      "verification_result",
+      "verification_completed",
+      "child_merged",
+      "preview_stopped",
+    ]);
+    expect(timeline.items[0]).toMatchObject({ source: "verification_retry" });
+    expect(timeline.items[2]).toMatchObject({ criterionId: "ac-1", outcome: "failed", attempt: 1 });
+    expect(timeline.items[4]).toMatchObject({ conflictedPaths: ["a.ts"], commitSha: null });
+  });
+});
