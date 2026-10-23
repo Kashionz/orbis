@@ -60,7 +60,7 @@ export class CollabHub {
         this.options.store,
         this.log,
         this.options.persistDebounceMs ?? COLLAB_PERSIST_DEBOUNCE_MS,
-        (r, doc, writer) => this.writeBack(r, doc, writer),
+        (r, doc, authors) => this.writeBack(r, doc, authors),
       );
       room = created.load(() => this.seed(ref)).then(() => created);
       room.catch(() => this.rooms.delete(ref.name));
@@ -163,8 +163,12 @@ export class CollabHub {
   }
 
   /** 存檔後把內容回寫資料庫。 */
-  private async writeBack(ref: CollabDocRef, doc: Y.Doc, writer: string | null): Promise<void> {
-    await this.processMentions(ref, doc, writer);
+  private async writeBack(
+    ref: CollabDocRef,
+    doc: Y.Doc,
+    authors: ReadonlyMap<string, string>,
+  ): Promise<void> {
+    await this.processMentions(ref, doc, authors);
     const markdown = fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT));
     const { db, events } = this.options;
     switch (ref.kind) {
@@ -205,7 +209,7 @@ export class CollabHub {
   private async processMentions(
     ref: CollabDocRef,
     doc: Y.Doc,
-    writer: string | null,
+    authors: ReadonlyMap<string, string>,
   ): Promise<void> {
     const nodes = mentionNodes(doc.getXmlFragment(COLLAB_FRAGMENT));
     if (nodes.length === 0) return;
@@ -219,10 +223,9 @@ export class CollabHub {
         {
           projectId: owner.projectId,
           task: owner.task,
-          actorMemberId: writer,
           text: fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT)),
         },
-        nodes,
+        nodes.map((node) => ({ ...node, authorMemberId: authors.get(node.nodeId) ?? null })),
       ),
     );
   }

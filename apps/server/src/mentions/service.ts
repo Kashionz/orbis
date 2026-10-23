@@ -4,9 +4,10 @@
 //   留言的 node_id 是被提及對象（formatMentionTargetId），文件的是 mention 節點的 nodeId。
 // - @member：通知被提及的人（必須是同一個 Team 的 Member）。
 // - @agent：在 Task 上建立一個 `consult` Run，prompt 帶入留言與 Task 的上下文：
-//   - 指定了要讀的 Run（diff 行內留言），或 Task 有保留 Worktree 的主 Run 時，唯讀讀那個 Worktree，
-//     派給那個 Run 所在的 Runner。
-//   - 都沒有時派到留言者自己的 Local Runner，從 base ref 開唯讀的 Worktree。
+//   - 指定了要讀的 Run（diff 行內留言），或 Task 有保留 Worktree 的主 Run，而且那個 Run 在 Team Runner 或
+//     留言者自己的 Local Runner 上時，唯讀讀那個 Worktree，派給那個 Run 所在的 Runner。
+//   - 否則派到留言者自己的 Local Runner，從 base ref 開唯讀的 Worktree（不在別人的電腦上跑）。
+//   - Run 一律記在留言者名下。
 //   - 留言者要能派工（Viewer 的 @agent 只記錄，不建立 Run）。Repo Spec 草稿沒有 Task，@agent 只記錄。
 // - consult Run 結束後，Agent 最後的回覆貼回成 Task 留言（作者是那個 Run，見 runs/event-ingest.ts）。
 
@@ -84,19 +85,27 @@ export class MentionService {
     return this.process(uow, source, context, inputs);
   }
 
-  /** 共同編輯文件中的 mention 節點（attrs：id、label、nodeId）。 */
+  /**
+   * 共同編輯文件中的 mention 節點（attrs：id、label、nodeId）。每個節點以加入它的人為準；
+   * 不知道是誰加的節點（例如由描述重建的文件）仍會通知 @member，但不建立 @agent 的 Run。
+   */
   async processNodes(
     uow: UnitOfWork,
     source: MentionSourceRef,
-    context: MentionContext,
-    nodes: { id: string; label: string; nodeId: string }[],
+    context: Omit<MentionContext, "actorMemberId">,
+    nodes: { id: string; label: string; nodeId: string; authorMemberId: string | null }[],
   ): Promise<string[]> {
-    const inputs: MentionInput[] = [];
+    const created: string[] = [];
     for (const node of nodes) {
       const target = parseMentionTargetId(node.id);
-      if (target && node.nodeId) inputs.push({ target, label: node.label, nodeId: node.nodeId });
+      if (!target || !node.nodeId) continue;
+      created.push(
+        ...(await this.process(uow, source, { ...context, actorMemberId: node.authorMemberId }, [
+          { target, label: node.label, nodeId: node.nodeId },
+        ])),
+      );
     }
-    return this.process(uow, source, context, inputs);
+    return created;
   }
 
   private async process(
@@ -181,10 +190,12 @@ export class MentionService {
             .orderBy(desc(runs.createdAt))
             .limit(1)
         )[0];
-    const target = source?.target ?? "local";
-    // 讀別人的 Local Runner 上的 Worktree 時，Run 屬於那台 Runner 的擁有者。
-    const requestedBy =
-      source && target === "local" ? source.requestedByMemberId : context.actorMemberId;
+    // 只沿用 Team Runner 或留言者自己的 Local Runner 上的 Worktree：不在別人的電腦上替留言者跑 Agent。
+    const usable =
+      source && (source.target === "team" || source.requestedByMemberId === context.actorMemberId)
+        ? source
+        : undefined;
+    const target = usable?.target ?? "local";
     if (!(await this.canDispatch(tx, task, context.actorMemberId, target))) return null;
     const prompt = await mentionPrompt(tx, task, context);
     const [run] = await tx
@@ -195,9 +206,9 @@ export class MentionService {
         agent,
         permissionPolicy: "auto",
         target,
-        requestedByMemberId: requestedBy,
+        requestedByMemberId: context.actorMemberId,
         origin: "mention",
-        consultOfRunId: source?.id ?? null,
+        consultOfRunId: usable?.id ?? null,
         prompt,
         promptSource: "user",
       })

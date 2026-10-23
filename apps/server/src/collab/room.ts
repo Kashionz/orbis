@@ -35,8 +35,8 @@ export interface CollabPeer {
 export type CollabPersistHook = (
   ref: CollabDocRef,
   doc: Y.Doc,
-  /** 最近一次修改文件的 Member（共同編輯中新出現的 mention 記在他名下）；沒有時為 null。 */
-  lastWriterMemberId: string | null,
+  /** mention 節點（nodeId）是哪位 Member 的連線加進來的。 */
+  mentionAuthors: ReadonlyMap<string, string>,
 ) => Promise<void>;
 
 export class CollabRoom {
@@ -47,7 +47,8 @@ export class CollabRoom {
   private persistTimer: NodeJS.Timeout | null = null;
   private persisting: Promise<void> = Promise.resolve();
   private dirty = false;
-  private lastWriterMemberId: string | null = null;
+  /** mention 節點的 nodeId → 加入它的 Member（只記這次載入之後由 client 加入的）。 */
+  private readonly mentionAuthors = new Map<string, string>();
   /** 已通過權限檢查、正在完成 WebSocket upgrade 的 client 數（避免這段期間被卸載）。 */
   private reserved = 0;
 
@@ -178,8 +179,13 @@ export class CollabRoom {
           const update = decoding.readVarUint8Array(decoder);
           // 唯讀的 client（Viewer）不能修改文件。
           if (peer.writable) {
-            this.lastWriterMemberId = peer.memberId;
+            const before = new Set(mentionNodeIds(this.fragment));
             Y.applyUpdate(this.doc, update, peer);
+            for (const nodeId of mentionNodeIds(this.fragment)) {
+              if (!before.has(nodeId) && !this.mentionAuthors.has(nodeId)) {
+                this.mentionAuthors.set(nodeId, peer.memberId);
+              }
+            }
           }
         } else {
           throw new Error(`不認得的 sync 訊息：${syncType}`);
@@ -273,7 +279,7 @@ export class CollabRoom {
       this.dirty = false;
       try {
         await this.store.save(this.ref, Y.encodeStateAsUpdate(this.doc));
-        await this.onPersisted?.(this.ref, this.doc, this.lastWriterMemberId);
+        await this.onPersisted?.(this.ref, this.doc, this.mentionAuthors);
       } catch (error) {
         // 留到下一次再寫；文件還在記憶體中。
         this.dirty = true;
@@ -287,4 +293,20 @@ export class CollabRoom {
     this.awareness.destroy();
     this.doc.destroy();
   }
+}
+
+/** 文件中所有 mention 節點的 nodeId。 */
+export function mentionNodeIds(fragment: Y.XmlFragment): string[] {
+  const ids: string[] = [];
+  const walk = (node: Y.XmlElement | Y.XmlFragment) => {
+    for (const child of node.toArray()) {
+      if (!(child instanceof Y.XmlElement)) continue;
+      if (child.nodeName === "mention") {
+        const nodeId = child.getAttribute("nodeId");
+        if (typeof nodeId === "string") ids.push(nodeId);
+      } else walk(child);
+    }
+  };
+  walk(fragment);
+  return ids;
 }
