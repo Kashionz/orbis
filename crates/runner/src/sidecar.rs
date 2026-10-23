@@ -11,7 +11,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
 use crate::contract::{
-    SIDECAR_EXIT_NEEDS_PAIRING, SidecarCommand, SidecarOutput, SidecarState, SidecarStatus,
+    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SidecarCommand, SidecarOutput,
+    SidecarState, SidecarStatus,
 };
 use crate::supervisor::Supervisor;
 
@@ -27,8 +28,7 @@ pub enum ExitCode {
     /// 需要重新 Pairing，不要直接重啟。
     NeedsPairing = SIDECAR_EXIT_NEEDS_PAIRING,
     /// 協定版本不相容：需要更新 Runner，不要直接重啟。
-    // TODO(contract): 契約目前只定義 0 與 78，這個值已在契約 review 時提出。
-    VersionMismatch = 3,
+    VersionMismatch = SIDECAR_EXIT_VERSION_MISMATCH,
 }
 
 /// 狀態輸出：連線狀態或 Supervisor 的狀態改變時，在 stdout 寫一行 JSON。

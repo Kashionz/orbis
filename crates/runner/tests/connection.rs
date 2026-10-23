@@ -12,7 +12,9 @@ use orbis_protocol::enums::DelegationMode;
 use orbis_protocol::frame::ServerToRunner;
 use orbis_protocol::{PROTOCOL_VERSION, names};
 use orbis_runner::config::{ENV_PAIRING_TOKEN, ENV_SERVER_URL};
-use orbis_runner::contract::{SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_FLAG};
+use orbis_runner::contract::{
+    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SIDECAR_FLAG,
+};
 use orbis_runner::home::ENV_RUNNER_STATE_DIR;
 use support::server::{
     FakeServer, RunnerOptions, fake_agent_toml, offer, send_offer, spawn_runner, write_runner_toml,
@@ -181,9 +183,9 @@ async fn exits_with_needs_pairing_code_when_pairing_is_rejected() {
     );
 }
 
-/// 協定版本不相容：結束碼 3（需要更新 Runner）。
+/// 協定版本不相容：以「需要更新 Runner」的結束碼結束。
 #[tokio::test]
-async fn exits_with_code_3_on_version_mismatch() {
+async fn exits_with_version_mismatch_code_on_version_mismatch() {
     let mut server = FakeServer::start().await;
     let home = temp_dir("orbis home");
     let mut runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
@@ -191,7 +193,12 @@ async fn exits_with_code_3_on_version_mismatch() {
     conn.recv().await;
     conn.send(&reject(HelloRejectReason::VersionMismatch)).await;
     let status = runner.wait_exit().await;
-    assert_eq!(status.code(), Some(3), "stderr：{}", runner.stderr());
+    assert_eq!(
+        status.code(),
+        Some(SIDECAR_EXIT_VERSION_MISMATCH.into()),
+        "stderr：{}",
+        runner.stderr()
+    );
 }
 
 /// 沒有保存的 Runner token、也沒有 Pairing token：需要重新 Pairing，訊息說明要設定的環境變數。

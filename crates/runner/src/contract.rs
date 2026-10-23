@@ -31,6 +31,10 @@ pub const SIDECAR_FLAG: &str = "--sidecar";
 /// sidecar：Runner token 無效或已被撤銷、需要重新 Pairing 時的結束碼（BSD 的 `EX_CONFIG`）。
 pub const SIDECAR_EXIT_NEEDS_PAIRING: u8 = 78;
 
+// TODO(contract): 改用 `orbis_protocol::sidecar::SIDECAR_EXIT_VERSION_MISMATCH`。
+/// sidecar：協定版本不相容、需要更新 Runner 時的結束碼（BSD 的 `EX_PROTOCOL`）。
+pub const SIDECAR_EXIT_VERSION_MISMATCH: u8 = 76;
+
 /// Heartbeat（含暫停領取的旗標）。
 // TODO(contract): 併入 `orbis_protocol::connection::Heartbeat` 的 `accepting_dispatches`。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
