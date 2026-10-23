@@ -8,6 +8,8 @@ import {
   type AcceptanceCriterion,
   type ApiError,
   type CreateAcceptanceCriterionInput,
+  type CreateProjectInput,
+  type CreateRepoInput,
   type CreateRunInput,
   type CreateTaskInput,
   canTransitionManually,
@@ -17,6 +19,7 @@ import {
   type GateDecisionInput,
   type Member,
   type MeResponse,
+  NAMES,
   type NeedsYouItem,
   type Project,
   READY_REQUIREMENTS,
@@ -29,6 +32,7 @@ import {
   type Task,
   type TaskStatus,
   type UpdateAcceptanceCriterionInput,
+  type UpdateProjectInput,
   type UpdateTaskInput,
 } from "@orbis/api-contract";
 import type { EventKind, PermissionPurpose, RunDiff, RunDiffFile, TextBody } from "@orbis/protocol";
@@ -111,6 +115,12 @@ const EMPTY_USAGE: RunUsage = {
 };
 
 const SEED_TIME = "2026-10-20T08:00:00.000Z";
+
+/** 假的 GitHub：App 安裝在這些擁有者底下，其他 repo 登記後顯示「未安裝」。 */
+const GITHUB_APP_OWNERS: readonly string[] = ["acme"];
+const GITHUB_APP_INSTALL_URL = `https://github.com/apps/${NAMES.productSlug}/installations/new`;
+/** App 已安裝時，Server 從 GitHub 讀到的 default branch。 */
+const GITHUB_DEFAULT_BRANCH = "main";
 
 function now(): string {
   return new Date().toISOString();
@@ -382,6 +392,21 @@ export class MockBackend {
 
     this.settle();
     for (const run of this.state.runs) run.createdAt = SEED_TIME;
+
+    // 剛建立的 Team：還沒有任何 Project
+    if (this.config.projects === "none") {
+      Object.assign(this.state, {
+        projects: [],
+        repos: [],
+        tasks: [],
+        acceptanceCriteria: [],
+        runs: [],
+        events: {},
+        needsYou: [],
+        gates: [],
+        simulations: {},
+      });
+    }
     return this.state;
   }
 
@@ -419,7 +444,12 @@ export class MockBackend {
     return this.state.projects;
   }
 
+  getProject(projectId: string): Project {
+    return this.project(projectId);
+  }
+
   repos(projectId: string): Repo[] {
+    this.project(projectId);
     return this.state.repos.filter((r) => r.projectId === projectId);
   }
 
@@ -655,6 +685,93 @@ export class MockBackend {
     if (this.config.forbidWrites || this.role === "viewer") {
       throw new MockError(403, "forbidden", "Viewer 不能修改");
     }
+  }
+
+  /** 同 Server：建立 Project 需要 Team Role 是 Admin 以上，Task Key 前綴不能重複（409）。 */
+  createProject(input: CreateProjectInput): Project {
+    const teamRole = this.config.role ?? "owner";
+    if (this.config.forbidWrites || !roleAtLeast(teamRole, "admin")) {
+      throw new MockError(403, "forbidden", "需要 Admin 以上的 Role");
+    }
+    if (this.state.projects.some((p) => p.keyPrefix === input.keyPrefix)) {
+      throw new MockError(409, "conflict", `Task Key 前綴 ${input.keyPrefix} 已被使用`);
+    }
+    const time = now();
+    const project: Project = {
+      id: this.newId("project"),
+      teamId: "team-1",
+      name: input.name,
+      keyPrefix: input.keyPrefix,
+      description: input.description ?? "",
+      // Server 的預設政策（資料表的預設值）
+      policy: {
+        planGateEnabled: true,
+        delegationEnabled: true,
+        delegationAgents: null,
+        forbidSelfApproval: false,
+        memberCanDispatchToTeamRunner: true,
+        defaultPermissionPolicy: "auto",
+        autoCreateIssues: true,
+        ...input.policy,
+      },
+      // 新的 Project 沒有 Role 覆寫
+      viewerRole: teamRole,
+      createdAt: time,
+      updatedAt: time,
+    };
+    this.state.projects.push(project);
+    this.save();
+    return project;
+  }
+
+  /** 修改 Project 需要這個 Project 的有效 Role 是 Admin 以上。 */
+  private requireProjectAdmin(project: Project): void {
+    if (this.config.forbidWrites || !roleAtLeast(project.viewerRole, "admin")) {
+      throw new MockError(403, "forbidden", "需要 Admin 以上的 Role");
+    }
+  }
+
+  updateProject(projectId: string, input: UpdateProjectInput): Project {
+    const project = this.project(projectId);
+    this.requireProjectAdmin(project);
+    Object.assign(project, {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.description !== undefined && { description: input.description }),
+      policy: { ...project.policy, ...input.policy },
+      updatedAt: now(),
+    });
+    this.save();
+    return project;
+  }
+
+  /**
+   * 同 Server（§11）：App 已安裝時用 GitHub 上的 default branch；還沒安裝時用輸入值，
+   * 沒有指定就用 `main`。同一個 Project 重複登記回 409。
+   */
+  createRepo(projectId: string, input: CreateRepoInput): Repo {
+    const project = this.project(projectId);
+    this.requireProjectAdmin(project);
+    const duplicate = this.state.repos.some(
+      (r) => r.projectId === projectId && r.owner === input.owner && r.name === input.name,
+    );
+    if (duplicate) {
+      throw new MockError(409, "conflict", `${input.owner}/${input.name} 已經登記在這個 Project`);
+    }
+    const installed = GITHUB_APP_OWNERS.includes(input.owner);
+    const time = now();
+    const repo: Repo = {
+      id: this.newId("repo"),
+      projectId,
+      owner: input.owner,
+      name: input.name,
+      defaultBranch: installed ? GITHUB_DEFAULT_BRANCH : (input.defaultBranch ?? "main"),
+      github: { installed, installUrl: installed ? null : GITHUB_APP_INSTALL_URL },
+      createdAt: time,
+      updatedAt: time,
+    };
+    this.state.repos.push(repo);
+    this.save();
+    return repo;
   }
 
   createTask(projectId: string, input: CreateTaskInput): Task {

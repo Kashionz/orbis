@@ -229,6 +229,15 @@ textarea {
   margin-bottom: 0.75rem;
 }
 
+.field-error {
+  color: var(--danger);
+  font-size: 0.85em;
+}
+
+.field [aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
 .field-inline {
   display: inline-flex;
   align-items: center;
@@ -345,7 +354,8 @@ textarea {
 /* Task 頁 */
 
 .task-page .breadcrumb,
-.run-page .breadcrumb {
+.run-page .breadcrumb,
+.settings-page .breadcrumb {
   padding: 0.75rem 1rem 0;
 }
 
@@ -474,6 +484,54 @@ textarea {
   padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--border);
   text-align: left;
+}
+
+/* Project 設定頁 */
+
+.settings-layout {
+  max-width: 48rem;
+  padding: 0 1rem 2rem;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin-top: 1rem;
+}
+
+.settings-form .field,
+.settings-form .field :is(input, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.settings-form h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.repo-form-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0 0.75rem;
+  width: 100%;
+}
+
+.settings-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.settings-list dt {
+  font-weight: 600;
+}
+
+.settings-list dd {
+  margin: 0;
 }
 
 /* Run 即時檢視 */

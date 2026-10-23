@@ -4,12 +4,15 @@
 import {
   API_ROUTES,
   CreateAcceptanceCriterionInput,
+  CreateProjectInput,
+  CreateRepoInput,
   CreateRunInput,
   CreateTaskInput,
   GateDecisionInput,
   PermissionResponseInput,
   TransitionTaskInput,
   UpdateAcceptanceCriterionInput,
+  UpdateProjectInput,
   UpdateTaskInput,
   WEB_WS_MAX_SUBSCRIPTIONS,
   WebClientMessage,
@@ -138,9 +141,34 @@ export function createHandlers(backend: MockBackend) {
       API_ROUTES.projects,
       handle(() => backend.projects()),
     ),
+    http.post(
+      API_ROUTES.projects,
+      handle(
+        async (request) => backend.createProject(await parse(request, CreateProjectInput)),
+        201,
+      ),
+    ),
+    http.get(
+      API_ROUTES.project,
+      handle((_, p) => backend.getProject(p.projectId ?? "")),
+    ),
+    http.patch(
+      API_ROUTES.project,
+      handle(async (request, p) =>
+        backend.updateProject(p.projectId ?? "", await parse(request, UpdateProjectInput)),
+      ),
+    ),
     http.get(
       API_ROUTES.projectRepos,
       handle((_, p) => backend.repos(p.projectId ?? "")),
+    ),
+    http.post(
+      API_ROUTES.projectRepos,
+      handle(
+        async (request, p) =>
+          backend.createRepo(p.projectId ?? "", await parse(request, CreateRepoInput)),
+        201,
+      ),
     ),
     http.get(
       API_ROUTES.projectTasks,

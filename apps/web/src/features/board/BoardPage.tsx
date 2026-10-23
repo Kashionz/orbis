@@ -34,6 +34,7 @@ import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { matchesTaskKey, parseTaskKeyQuery } from "../../lib/task-key-search";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
+import { CreateProjectDialog } from "../project/CreateProjectDialog";
 import { CreateTaskDialog } from "./CreateTaskDialog";
 
 /**
@@ -64,26 +65,42 @@ function isDraggable(task: Task, tasks: readonly Task[], permissions: Permission
 export function BoardPage({ projectId }: { projectId: string | undefined }) {
   const { data: projects } = useSuspenseQuery(projectsQuery);
   const project = projects.find((p) => p.id === projectId) ?? projects[0];
-  if (!project) {
-    return (
-      <main className="notice">
-        <h1>還沒有任何 Project</h1>
-      </main>
-    );
-  }
+  if (!project) return <NoProjects />;
   return <Board key={project.id} project={project} projects={projects} />;
+}
+
+function NoProjects() {
+  // 建立 Project 看的是 Team 的 Role
+  const teamPermissions = usePermissions();
+  const [creating, setCreating] = useState(false);
+  return (
+    <main className="notice">
+      <h1>還沒有任何 Project</h1>
+      {teamPermissions.can("project.manage") ? (
+        <button type="button" className="primary" onClick={() => setCreating(true)}>
+          新增 Project
+        </button>
+      ) : (
+        <p>請 Team 的 Owner 或 Admin 建立 Project。</p>
+      )}
+      <CreateProjectDialog open={creating} onClose={() => setCreating(false)} />
+    </main>
+  );
 }
 
 function Board({ project, projects }: { project: Project; projects: Project[] }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const permissions = usePermissions(project);
+  // 建立 Project 看的是 Team 的 Role，不是這個 Project 的有效 Role
+  const teamPermissions = usePermissions();
   const { data: tasks = [], error: loadError } = useQuery(tasksQuery(project.id));
   const { data: members = [] } = useQuery(membersQuery);
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState<Task | null>(null);
   const [dispatching, setDispatching] = useState<Task | null>(null);
   const [creating, setCreating] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
 
   const query = parseTaskKeyQuery(search);
   const visible = tasks.filter((t) => matchesTaskKey(t.key, query));
@@ -155,6 +172,14 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
             ))}
           </select>
         </label>
+        <Link to="/projects/$projectId/settings" params={{ projectId: project.id }}>
+          Project 設定
+        </Link>
+        {teamPermissions.can("project.manage") && (
+          <button type="button" onClick={() => setCreatingProject(true)}>
+            新增 Project
+          </button>
+        )}
         <input
           type="search"
           className="search"
@@ -206,6 +231,7 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
         />
       )}
       <CreateTaskDialog project={project} open={creating} onClose={() => setCreating(false)} />
+      <CreateProjectDialog open={creatingProject} onClose={() => setCreatingProject(false)} />
     </main>
   );
 }

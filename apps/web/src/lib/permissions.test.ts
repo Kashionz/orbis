@@ -22,6 +22,7 @@ const policy: ProjectPolicy = {
 /** ARCHITECTURE §12.2 的表格（Project 採預設政策：Member 可以派工到 Team Runner、可以核准自己的 Task）。 */
 const MATRIX: Record<Action, Record<Role, boolean>> = {
   "team.manage": { owner: true, admin: true, member: false, viewer: false },
+  "project.manage": { owner: true, admin: true, member: false, viewer: false },
   "policy.manage": { owner: true, admin: true, member: false, viewer: false },
   "run.dispatchTeam": { owner: true, admin: true, member: true, viewer: false },
   "task.edit": { owner: true, admin: true, member: true, viewer: false },

@@ -13,6 +13,7 @@ import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
 import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
 import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
+import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
 import { RunPage } from "./features/run/RunPage";
 import { TaskPage } from "./features/task/TaskPage";
 
@@ -72,6 +73,16 @@ const boardRoute = createRoute({
   component: function BoardRouteComponent() {
     const { project } = boardRoute.useSearch();
     return <BoardPage projectId={project} />;
+  },
+  errorComponent: PageError,
+});
+
+const projectSettingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/projects/$projectId/settings",
+  component: function ProjectSettingsRouteComponent() {
+    const { projectId } = projectSettingsRoute.useParams();
+    return <ProjectSettingsPage key={projectId} projectId={projectId} />;
   },
   errorComponent: PageError,
 });
@@ -141,7 +152,14 @@ function PageError({ error }: ErrorComponentProps) {
 const routeTree = rootRoute.addChildren([
   loginRoute,
   indexRoute,
-  authedRoute.addChildren([boardRoute, taskRoute, runRoute, reviewRoute, needsYouRoute]),
+  authedRoute.addChildren([
+    boardRoute,
+    projectSettingsRoute,
+    taskRoute,
+    runRoute,
+    reviewRoute,
+    needsYouRoute,
+  ]),
 ]);
 
 export function createAppRouter(queryClient: QueryClient) {
