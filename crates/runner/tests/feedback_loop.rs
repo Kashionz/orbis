@@ -190,3 +190,60 @@ async fn 接不回原本的_session_時開新_session_並附上目前的變更()
     );
     wait_status(&mut conn, "r2", "awaiting_gate").await;
 }
+
+/// 沿用的 Worktree 帶著前一個 Run 的 Agent 改過的內容：即使設定檔已「永遠允許」，也要重新核准
+/// setup 等腳本；沿用還在的 Worktree 時不再跑一次 setup。
+#[tokio::test(flavor = "multi_thread")]
+async fn 沿用的_worktree_內容已改變時重新核准腳本且不重跑_setup() {
+    let config = "[worktree]\nsetup = \"git --version\"\n";
+    let mut env = Env::new(
+        &[("README.md", "a\n"), (support::cfg().as_str(), config)],
+        agents,
+    )
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "fake", "新增 fl.txt").await;
+    let ready = wait_run(&mut conn, "r1", "worktree_ready").await;
+    let trust = conn.wait_event("permission_request").await;
+    assert_eq!(trust["purpose"], "config_trust", "{trust}");
+    support::flow::answer(&mut conn, "r1-trust", &trust, "allow_always").await;
+    let session = wait_run(&mut conn, "r1", "agent_session").await;
+    wait_status(&mut conn, "r1", "awaiting_gate").await;
+    approve_and_push(&mut conn, "r1").await;
+    let base = ready["base_commit"].as_str().unwrap();
+    let session = session["session_id"].as_str().unwrap().to_owned();
+
+    offer_fix(&env, &mut conn, "fake", base, Some(session)).await;
+    let request = conn
+        .wait_for("r2 的設定檔核准", |v| {
+            v["type"] == "event"
+                && v["run_id"] == "r2"
+                && v["kind"] == "permission_request"
+                && v["purpose"] == "config_trust"
+        })
+        .await;
+    let result = conn
+        .control(
+            "r2",
+            "d-r2",
+            "r2-trust",
+            RunControlAction::PermissionResponse {
+                request_id: request["request_id"].as_str().unwrap().into(),
+                option_id: "allow_once".into(),
+            },
+        )
+        .await;
+    assert_eq!(
+        parse_result(&result).outcome,
+        RunControlOutcome::Applied,
+        "{result}"
+    );
+    wait_status(&mut conn, "r2", "awaiting_gate").await;
+    assert!(
+        !conn
+            .events
+            .iter()
+            .any(|e| e["run_id"] == "r2" && e["tool_call_id"] == "orbis-setup"),
+        "沿用還在的 Worktree 時不重跑 setup"
+    );
+}

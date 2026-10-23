@@ -460,6 +460,11 @@ impl Run {
             base,
             path,
         };
+        // 沿用還在的 Worktree 時已經跑過 setup，不再跑一次。
+        let reusing = request
+            .path
+            .as_ref()
+            .is_some_and(|p| p.join(".git").exists());
         let manager = self.ctx.worktrees.clone();
         let mut wt = self
             .interruptible(async move { manager.create(&request).await })
@@ -488,6 +493,20 @@ impl Run {
         {
             wt.scripts_approved = true;
         }
+        // Feedback Loop 沿用的 Worktree 帶著前一個 Run 的 Agent 改過的內容：和核准時的 base commit
+        // 不同時重新核准，避免已核准的 setup／preview 腳本執行到 Agent 改過的東西（例如 package.json）。
+        // 比對的是工作目錄（含尚未 commit 與未追蹤的檔案），不只是 HEAD。
+        if continuation.is_some() && wt.scripts_approved && !wt.config.scripts().is_empty() {
+            let git = wt.git();
+            let unchanged = git.succeeds(["diff", "--quiet", &wt.base_commit]).await
+                && git
+                    .run(["ls-files", "--others", "--exclude-standard"])
+                    .await
+                    .is_ok_and(|out| out.trim().is_empty());
+            if !unchanged {
+                wt.scripts_approved = false;
+            }
+        }
         self.emit(EventKind::WorktreeReady {
             // 設定了 [preview] 時是分配給這個 Worktree 的 port（Server 據此區分「沒有設定」與「啟動中」）
             preview_port: PreviewSpec::from_worktree(&wt).map(|spec| spec.port),
@@ -509,7 +528,11 @@ impl Run {
         }
         self.normalizer = Some(Normalizer::new(&wt.path, self.redactor.clone()));
         self.worktree = Some(wt);
-        let setup_in_background = self.run_setup().await?;
+        let setup_in_background = if reusing {
+            None
+        } else {
+            self.run_setup().await?
+        };
         self.start_preview(setup_in_background);
         self.load_settings_baseline().await;
         self.check_agent_settings(SettingsCheck::BeforePrompt)
