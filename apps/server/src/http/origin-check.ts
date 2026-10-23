@@ -21,7 +21,7 @@ export function requireTrustedOrigin(allowedOrigins: readonly string[]): Middlew
     if (!SAFE_METHODS.has(c.req.method) && getCookie(c, SESSION_COOKIE) !== undefined) {
       const origin = c.req.header("origin");
       if (origin !== undefined && !allowed.has(origin)) {
-        throw forbidden("請求的來源不是 Orbis 的 Web");
+        throw forbidden("請求的來源不是 Web 的 origin");
       }
     }
     await next();
