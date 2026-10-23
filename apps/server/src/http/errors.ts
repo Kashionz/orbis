@@ -17,7 +17,9 @@ export type ApiErrorCode =
   | "gone"
   | "payload_too_large"
   | "github_disabled"
-  | "repo_not_connected";
+  | "repo_not_connected"
+  | "repo_mismatch"
+  | "github_error";
 
 export class ApiError extends Error {
   override name = "ApiError";

@@ -25,6 +25,10 @@ export type GitHubApp = Pick<
   | "inspectRepo"
   | "listImportableIssues"
   | "importIssues"
+  | "refreshRepoInstallation"
+  | "startFeedbackTimer"
+  | "onFeedbackRunEnded"
+  | "commitRepoSpec"
 >;
 
 export interface OpenPullRequestInput {

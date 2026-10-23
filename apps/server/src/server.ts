@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { createAdaptorServer } from "@hono/node-server";
 import { createApp } from "./app";
 import type { GitHubOAuth } from "./auth/github-oauth";
+import { attachCollabEndpoint, type CollabEndpoint } from "./collab/endpoint";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
@@ -38,6 +39,8 @@ export interface ServerDeps {
   webAuthzRecheckMs?: number;
   /** 派工檢查的間隔；設為 0 時不啟動定期檢查（測試自行呼叫 dispatcher.kick()）。 */
   dispatcherIntervalMs?: number;
+  /** 測試用：共同編輯重新檢查權限的間隔。 */
+  collabAuthzRecheckMs?: number;
 }
 
 export interface RunningServer {
@@ -46,6 +49,7 @@ export interface RunningServer {
   services: Services;
   runnerEndpoint: RunnerEndpoint;
   webEndpoint: WebEndpoint;
+  collabEndpoint: CollabEndpoint;
   close(): Promise<void>;
 }
 
@@ -97,6 +101,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     dispatcher: services.dispatcher,
     ingest: services.ingest,
     runControls: services.runControls,
+    tools: services.tools,
     devPairingToken: deps.config.devPairingToken,
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
@@ -105,6 +110,10 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   const webEndpoint = attachWebEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,
     authzRecheckMs: deps.webAuthzRecheckMs,
+  });
+  const collabEndpoint = attachCollabEndpoint(router, services, {
+    publicUrl: deps.config.publicUrl,
+    authzRecheckMs: deps.collabAuthzRecheckMs,
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -116,6 +125,8 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   });
   const { port } = server.address() as AddressInfo;
   const intervalMs = deps.dispatcherIntervalMs ?? 1000;
+  // Feedback Loop 的零散留言在 2 分鐘時間窗後送出（packages/github 每 15 秒檢查一次）。
+  const feedbackTimer = intervalMs > 0 ? services.github.app?.startFeedbackTimer() : undefined;
   if (intervalMs > 0) {
     services.dispatcher.start(intervalMs);
     services.blobCleanup.start();
@@ -127,15 +138,20 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     services,
     runnerEndpoint,
     webEndpoint,
+    collabEndpoint,
     close: async () => {
       services.dispatcher.stop();
+      feedbackTimer?.stop();
       services.blobCleanup.stop();
       services.sessionCleanup.stop();
       await services.dispatcher.idle();
+      await services.tools.idle();
       await services.githubIdle();
       router.close();
       await runnerEndpoint.close();
       await webEndpoint.close();
+      await collabEndpoint.close();
+      await services.collab.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
         server.closeAllConnections();

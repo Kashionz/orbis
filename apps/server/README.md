@@ -4,8 +4,16 @@ Orbis 的 Server（B 軌）：Hono API、Runner 與 Web 的 WebSocket、Drizzle�
 
 ```sh
 pnpm --filter @orbis/server dev    # 讀 repo 根目錄的 .env，變數見 .env.example
-pnpm --filter @orbis/server test   # DB 測試以 Testcontainers 啟動 Postgres，需要 Docker
+pnpm --filter @orbis/server test   # DB 測試的 Postgres：見下方「測試用的 Postgres」
 ```
+
+## 測試用的 Postgres
+
+DB 測試與 `e2e:stack` 一律在「測試用的 Postgres」上建立自己的 database（`test_<亂數>`、`e2e_<亂數>`），用完刪除，**不使用開發 DB**（`ORBIS_DATABASE_URL`）。
+
+- 有設定 `ORBIS_TEST_DATABASE_URL`（admin 連線，需要 CREATEDB 權限）時用那個 Postgres，不需要 Docker。CI 在三平台都把安裝的原生 Postgres 傳進來。
+- 沒有設定時以 Testcontainers 啟動 Postgres 17（需要 Docker）。CI 上沒有設定、又不是 Linux 時，DB 測試明確略過並印出原因。
+- `ORBIS_TEST_DATABASE_URL` 與 `ORBIS_DATABASE_URL` 指向同一個 database 時直接失敗。
 
 ## 完整系統 e2e 的啟動腳本（`e2e:stack`）
 
@@ -29,7 +37,8 @@ cargo build -p orbis-runner -p orbis-fake-agent
 pnpm --filter @orbis/server e2e:stack
 ```
 
-- **Postgres**：有設定 `ORBIS_DATABASE_URL` 時用它，`pnpm` 會讀 repo 根目錄的 `.env`。沒有設定時以 Testcontainers 啟動 Postgres 17（需要 Docker）。啟動後都會先跑 migration。
+- **Postgres**：見「測試用的 Postgres」。有設定 `ORBIS_TEST_DATABASE_URL` 時在那個 Postgres 上建立 `e2e_<亂數>` database，結束時刪除；沒有設定時以 Testcontainers 啟動 Postgres 17（需要 Docker）。啟動後都會先跑 migration。
+  - 腳本不讀 `ORBIS_DATABASE_URL`，`e2e:stack` 也不載入 repo 根目錄的 `.env`，所以不會寫進開發 DB。
   - 有設定時完全不會載入 Testcontainers，所以在沒有 Docker 的 macOS、Windows 上，接原生 Postgres 也能用（CI 在三平台都這樣跑）。
 - **Server**：在同一個程序內啟動。
   - port 取自 `ORBIS_SERVER_PORT`，預設 4000，所以 Web 的 Vite proxy 不用改。
@@ -85,7 +94,7 @@ M1 劇本在退回時要求 prompt 包含「改成第二版」，例如在 diff 
 | `--agent-script <path>` | `ORBIS_E2E_AGENT_SCRIPT` | `crates/fake-agent/scripts/m1.yaml` |
 | `--port <port>` | `ORBIS_SERVER_PORT` | `4000` |
 | `--runner-config-out <dir>` | — | 未指定時 stack 自己啟動 Runner |
-| — | `ORBIS_DATABASE_URL` | 未設定時用 Testcontainers |
+| — | `ORBIS_TEST_DATABASE_URL` | 未設定時用 Testcontainers |
 | — | `ORBIS_PUBLIC_URL` | `http://localhost:5173` |
 | — | `ORBIS_RUNNER_HEARTBEAT_INTERVAL_MS` | `1000` |
 | — | `ORBIS_LOG_LEVEL` | `info` |
@@ -133,7 +142,7 @@ M1 劇本在退回時要求 prompt 包含「改成第二版」，例如在 diff 
 
 1. 停掉 Runner：先以 sidecar 的方式關閉 stdin，10 秒內沒有結束就連同子程序強制結束，Windows 用 `taskkill /T`。
 2. 關閉 Server 與資料庫連線。
-3. 停掉 Testcontainers。
+3. 刪除 stack 建立的 database，或停掉 Testcontainers。
 4. 刪除暫存目錄。
 
 Runner 意外結束時，腳本也會清理並以 1 結束。
@@ -167,5 +176,6 @@ const { status, pullRequest } = await sendPullRequestMergedWebhook(ready, { bran
 - `test/system-e2e-stack.test.ts` 以子程序執行這支腳本，可以參考它的寫法。它涵蓋：
   - 走過 M1 劇本到 merged webhook → Done；
   - `--runner-config-out` 模式；
-  - 關閉後沒有殘留的程序。
-- `test/system-e2e-stack.test.ts` 的執行條件：有 Docker 的 Linux（Testcontainers），或有設定 `ORBIS_DATABASE_URL`（傳給 stack）時執行，其他情況明確略過並印出原因。
+  - 關閉後沒有殘留的程序，stack 建立的 database 已刪除；
+  - 不使用開發 DB（環境中放一個指向哨兵 database 的 `ORBIS_DATABASE_URL`，跑完後哨兵仍是空的）。
+- `test/system-e2e-stack.test.ts` 與其他 DB 測試共用同一個測試用的 Postgres（以 `ORBIS_TEST_DATABASE_URL` 傳給 stack），執行條件同 DB 測試。

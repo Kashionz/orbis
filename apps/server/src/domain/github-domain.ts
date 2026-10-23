@@ -5,7 +5,12 @@
 // - 由 GitHub 觸發的狀態轉換：Issue 關閉／PR merge → Done（有進行中的 Run 時拒絕）、
 //   Issue 重開 → Backlog、PR 沒 merge 就關閉 → Review Gate、PR 重開 → PR Open。
 
-import { formatTaskKey, type TaskStatus } from "@orbis/api-contract";
+import {
+  formatTaskKey,
+  parseMentions,
+  replaceMentions,
+  type TaskStatus,
+} from "@orbis/api-contract";
 import type {
   AcceptanceCriterionRecord,
   DomainService,
@@ -17,7 +22,7 @@ import type {
   TransitionCause,
   TransitionResult,
 } from "@orbis/github";
-import { and, asc, count, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { authorize, effectiveRole } from "../authz/capabilities";
 import type { Database } from "../db/client";
 import {
@@ -53,6 +58,8 @@ const toMemberRecord = (row: typeof members.$inferSelect): MemberRecord => ({
   githubLogin: row.githubLogin,
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class GitHubDomainService implements DomainService {
   constructor(
     private readonly db: Database,
@@ -68,14 +75,14 @@ export class GitHubDomainService implements DomainService {
     return row ? this.toTaskRecord(row.task, row.specPath) : null;
   }
 
-  private toTaskRecord(row: TaskRow, specPath: string | null): TaskRecord {
+  private async toTaskRecord(row: TaskRow, specPath: string | null): Promise<TaskRecord> {
     return {
       id: row.id,
       key: row.key,
       projectId: row.projectId,
       repoId: row.repoId,
       title: row.title,
-      description: row.description,
+      description: await this.issueBody(row.description, row.projectId),
       status: row.status,
       doneReason: row.doneReason,
       assigneeMemberId: row.assigneeMemberId,
@@ -94,6 +101,31 @@ export class GitHubDomainService implements DomainService {
           .where(eq(repoSpecs.id, row.repoSpecId))
       : [];
     return this.toTaskRecord(row, spec?.path ?? null);
+  }
+
+  /**
+   * 同步到 GitHub Issue 的 body：Member 的 mention 換成 `@<GitHub login>`；Agent 的 mention
+   * 與找不到（或不在這個 Team）的 Member 只留顯示名稱，避免 GitHub 通知到同名的其他帳號。
+   */
+  private async issueBody(description: string, projectId: string): Promise<string> {
+    // 契約的 Member ID 只要求非空字串；不是 UUID 的不查（資料庫的欄位是 uuid，查了會出錯）。
+    const memberIds = parseMentions(description).flatMap((m) =>
+      m.target.type === "member" && UUID.test(m.target.memberId)
+        ? [m.target.memberId.toLowerCase()]
+        : [],
+    );
+    if (memberIds.length === 0) return description;
+    const rows = await this.db
+      .select({ id: members.id, login: members.githubLogin })
+      .from(members)
+      .innerJoin(projects, eq(projects.teamId, members.teamId))
+      .where(and(eq(projects.id, projectId), inArray(members.id, memberIds)));
+    const logins = new Map(rows.map((r) => [r.id, r.login]));
+    return replaceMentions(description, (m) => {
+      const login =
+        m.target.type === "member" ? logins.get(m.target.memberId.toLowerCase()) : undefined;
+      return login ? `@${login}` : m.label;
+    });
   }
 
   async getRepo(repoId: string): Promise<RepoRecord | null> {

@@ -36,6 +36,11 @@ import {
   sessions,
   teams,
 } from "../src/db/schema";
+import {
+  createScratchDatabase,
+  readTestDatabaseUrl,
+  TEST_DATABASE_URL_ENV,
+} from "../src/db/test-database";
 import { createLogger } from "../src/logger";
 import { SESSION_COOKIE } from "../src/routes/auth";
 import { createPairingToken } from "../src/runner/service";
@@ -70,8 +75,9 @@ const SEED = {
 } as const;
 
 /** 腳本讀取的環境變數（名稱一律由名稱常數組出）。 */
+// 不讀 DATABASE_URL（開發 DB），也不載入 `.env`：stack 一律在測試用的 Postgres 上建立自己的 database。
 export const E2E_STACK_ENV = {
-  databaseUrl: envVar("DATABASE_URL"),
+  testDatabaseUrl: TEST_DATABASE_URL_ENV,
   port: envVar("SERVER_PORT"),
   publicUrl: envVar("PUBLIC_URL"),
   heartbeatIntervalMs: envVar("RUNNER_HEARTBEAT_INTERVAL_MS"),
@@ -170,12 +176,25 @@ async function createRepos(tempDir: string): Promise<{ bare: string; checkout: s
 /** TOML 的 basic string（JSON 的跳脫規則是它的子集合）。 */
 const tomlString = (value: string) => JSON.stringify(value);
 
+/**
+ * 連上 stack 專用的 database：有 TEST_DATABASE_URL 時在那個 Postgres 上建立新的 database，
+ * 結束時刪除；沒有時以 Testcontainers 啟動 Postgres。絕不使用開發 DB（DATABASE_URL）。
+ */
 async function connectDatabase(): Promise<DatabaseHandle & { url: string }> {
-  let url = env("databaseUrl");
-  if (!url) {
+  let url: string;
+  const adminUrl = readTestDatabaseUrl();
+  if (adminUrl) {
+    const scratch = await createScratchDatabase(adminUrl, "e2e");
+    onCleanup("e2e 的 database", () => scratch.drop());
+    logger.info(
+      { database: scratch.name },
+      `在 ${TEST_DATABASE_URL_ENV} 的 Postgres 上建立 database`,
+    );
+    url = scratch.url;
+  } else {
     logger.info(
       { image: POSTGRES_IMAGE },
-      `沒有設定 ${E2E_STACK_ENV.databaseUrl}，以 Testcontainers 啟動 Postgres`,
+      `沒有設定 ${TEST_DATABASE_URL_ENV}，以 Testcontainers 啟動 Postgres`,
     );
     const { PostgreSqlContainer } = await import("@testcontainers/postgresql");
     const container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
@@ -470,6 +489,8 @@ async function main(): Promise<void> {
         taskKeyPrefix: SEED.projectKey,
         defaultPermissionPolicy: "manual",
         autoCreateIssues: false,
+        // M1 劇本沒有 Planning（Fake Agent 不產出 plan），所以關閉 Plan Gate。
+        planGateEnabled: false,
       })
       .returning();
     if (!project) throw new Error("建立 Project 失敗");

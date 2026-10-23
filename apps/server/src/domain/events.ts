@@ -7,9 +7,10 @@ import type { TransitionTrigger } from "./task-state-machine";
 
 /**
  * 變更的來源；`github` 表示由 GitHub 整合（Issue 同步、PR webhook）寫入，
- * Server 不再對它呼叫 onTaskChanged，避免同步回音。
+ * Server 不再對它呼叫 onTaskChanged，避免同步回音。`collab` 表示由共同編輯的文件回寫
+ * （照常同步到 GitHub，但不再寫回文件）。
  */
-export type ChangeSource = "api" | "github" | "system";
+export type ChangeSource = "api" | "github" | "system" | "collab";
 
 interface TaskEventBase {
   taskId: string;

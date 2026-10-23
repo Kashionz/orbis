@@ -164,6 +164,8 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
   async function openReviewGate(started: Awaited<ReturnType<typeof startedRun>>) {
     await started.send(RUN_DIFF);
     await started.send(AWAITING_REVIEW);
+    // Agent 結束回合後 Server 要求 Verification；全部通過後進入 Review Gate。
+    await started.mine.answerVerification(started.offer.dispatch_id, started.run.id);
     const list = await as("viewer").get(`/api/tasks/${started.task.id}/gates`);
     const open = expectContract(z.array(Gate), list.body).find((g) => g.decision === null);
     if (!open) throw new Error("沒有等待中的 Gate");
@@ -841,6 +843,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
     // 第一次交回 → 退回。
     await send(RUN_DIFF);
     await send(AWAITING_REVIEW);
+    await mine.answerVerification(offer.dispatch_id, run.id);
     const [firstGateItem] = await needsYou("member");
     expect(firstGateItem).toMatchObject({ kind: "gate", gateKind: "review" });
     const firstGate = (
@@ -857,6 +860,7 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
     // 第二次交回 → 核准 → push → 開 PR。
     await send(RUN_DIFF);
     await send(AWAITING_REVIEW);
+    await mine.answerVerification(offer.dispatch_id, run.id);
     const gateList = expectContract(
       z.array(Gate),
       (await as("member").get(`/api/tasks/${task.id}/gates`)).body,

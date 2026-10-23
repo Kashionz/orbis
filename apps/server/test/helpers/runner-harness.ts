@@ -1,5 +1,6 @@
 // 模擬 Runner 的測試 harness：真實的 Server（HTTP 與 WebSocket）＋直接使用協定型別的 Runner client。
 
+import { randomUUID } from "node:crypto";
 import type { RunnerKind } from "@orbis/api-contract";
 import type { AgentAvailability, EventKind, RunnerToServer, ServerToRunner } from "@orbis/protocol";
 import { PROTOCOL_VERSION, RUNNER_WS_PATH } from "@orbis/protocol";
@@ -137,6 +138,89 @@ export class MockRunner {
     return this.next("event_ack", (a) => a.run_id === runId && a.seq >= used);
   }
 
+  /**
+   * 回應 Server 送來的 `verify`：回 applied，逐條回報結果（`outcomes` 依條件 id 指定，未指定的通過），
+   * 送 `verification_completed`，再回到 `awaiting_gate(review)`。回傳收到的 `verify`。
+   */
+  async answerVerification(
+    dispatchId: string,
+    runId: string,
+    outcomes: Record<string, "passed" | "failed" | "error"> = {},
+  ) {
+    const frame = await this.next(
+      "run_control",
+      (f) => f.run_id === runId && f.action === "verify",
+    );
+    if (frame.action !== "verify") throw new Error("unreachable");
+    this.send({
+      type: "run_control_result",
+      control_id: frame.control_id,
+      run_id: runId,
+      dispatch_id: frame.dispatch_id,
+      outcome: "applied",
+    });
+    const { verification_id, attempt } = frame;
+    await this.eventAcked(dispatchId, runId, {
+      kind: "status_changed",
+      status: "verifying",
+      gate: null,
+      message: null,
+    });
+    let overall: "passed" | "failed" | "error" = "passed";
+    for (const criterion of frame.criteria) {
+      const outcome = outcomes[criterion.criterion_id] ?? "passed";
+      if (outcome === "failed") overall = "failed";
+      else if (outcome === "error" && overall === "passed") overall = "error";
+      await this.eventAcked(dispatchId, runId, {
+        kind: "verification_result",
+        verification_id,
+        attempt,
+        criterion_id: criterion.criterion_id,
+        outcome,
+        summary: outcome === "passed" ? "通過" : `${criterion.description} 沒有通過`,
+        evidence:
+          criterion.kind === "command"
+            ? [
+                {
+                  type: "command_output",
+                  command: criterion.command ?? "pnpm test",
+                  exit_code: outcome === "passed" ? 0 : 1,
+                  output: { type: "inline", text: outcome === "passed" ? "ok" : "1 failed" },
+                  truncated: false,
+                },
+              ]
+            : [{ type: "text", text: "判定理由" }],
+        judged_by_run_id: null,
+      });
+    }
+    await this.eventAcked(dispatchId, runId, {
+      kind: "verification_completed",
+      verification_id,
+      attempt,
+      outcome: overall,
+    });
+    await this.eventAcked(dispatchId, runId, {
+      kind: "status_changed",
+      status: "awaiting_gate",
+      gate: "review",
+      message: null,
+    });
+    return frame;
+  }
+
+  /** 送出 Orbis MCP 工具呼叫並等結果（`call_id` 未指定時自動產生）。 */
+  async toolCall(
+    dispatchId: string,
+    runId: string,
+    call: Record<string, unknown>,
+    callId: string = randomUUID(),
+    timeoutMs = 5000,
+  ) {
+    this.send({ type: "tool_call", call_id: callId, run_id: runId, dispatch_id: dispatchId, call });
+    const frame = await this.next("tool_result", (f) => f.call_id === callId, timeoutMs);
+    return { callId, result: frame.result };
+  }
+
   setSeq(runId: string, seq: number): void {
     this.seq.set(runId, seq);
   }
@@ -176,11 +260,12 @@ export interface Harness {
 
 export async function startHarness(
   db: Database,
-  options: { webAuthzRecheckMs?: number } = {},
+  options: { webAuthzRecheckMs?: number; previewDomain?: string } = {},
 ): Promise<Harness> {
   const ctx = createTestContext(db, {
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
     offerTimeoutMs: OFFER_TIMEOUT_MS,
+    previewDomain: options.previewDomain,
   });
   const server = await startServer({
     config: {

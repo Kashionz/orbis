@@ -64,13 +64,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 完整系統 e2e 用的原生 Postgres（macOS 與 Windows 的 runner 不能跑 Linux container）。
-      # 只有完整系統 e2e 的步驟會拿到 DATABASE_URL，其他 DB 測試照舊用 Testcontainers。
+      # DB 測試與完整系統 e2e 用的原生 Postgres（macOS 與 Windows 的 runner 不能跑 Linux container，
+      # Linux 也不再從 Docker Hub 拉映像）。以 TEST_DATABASE_URL 傳給測試與 e2e:stack，
+      # 它們各自在上面建立獨立的 database，用完刪除。
       # 固定在 master 的 commit：v8 的 Linux 安裝用 apt-key，ubuntu-latest（26.04）已經沒有這個指令，
       # master 已改用 /etc/apt/keyrings，但還沒有發新版
       - name: Install Postgres
         id: postgres
-        if: env.SYSTEM_E2E == 'true'
         uses: ikalnytskyi/action-setup-postgres@0f1fdf59c857aabfa61ab1a2619e9af34de678d3
         with:
           postgres-version: "17"
@@ -98,9 +98,10 @@ jobs:
       - name: Drizzle schema 與 migration 一致性檢查
         run: pnpm --filter @orbis/server db:check
 
-      # DB 測試（Testcontainers）只在 Linux 跑：GitHub 的 macOS runner 沒有 Docker，
-      # Windows runner 只能跑 Windows container。測試會在其他平台明確 skip 並印出原因。
+      # DB 測試三平台都跑，接上面安裝的原生 Postgres（沒有設定時才用 Testcontainers）。
       - name: pnpm test
+        env:
+          ORBIS_TEST_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: pnpm -r test
 
       - name: Script tests
@@ -118,11 +119,11 @@ jobs:
         run: pnpm --filter @orbis/web test:e2e
 
       # 完整系統的 M1 e2e：真實 Server + Postgres + Local Runner + Fake Agent（apps/server 的 e2e:stack）。
-      # stack 接上面安裝的原生 Postgres。
+      # stack 在上面安裝的原生 Postgres 上建立自己的 database。
       - name: Playwright（Web 完整系統 M1）
         if: env.SYSTEM_E2E == 'true'
         env:
-          ORBIS_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
+          ORBIS_TEST_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: |
           cargo build -p orbis-runner -p orbis-fake-agent
           pnpm --filter @orbis/web test:e2e:system
@@ -142,7 +143,7 @@ jobs:
       - name: Playwright（Desktop 完整系統 M1）
         if: env.SYSTEM_E2E == 'true'
         env:
-          ORBIS_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
+          ORBIS_TEST_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: |
           cargo build -p orbis-runner -p orbis-fake-agent
           if [ "$RUNNER_OS" = "Linux" ]; then

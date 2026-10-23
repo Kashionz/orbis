@@ -24,6 +24,8 @@ export const TRANSITION_TRIGGERS = [
   "pull_request",
   /** GitHub 的 Issue webhook（關閉、重開），由 D 軌呼叫。 */
   "issue",
+  /** Feedback Loop 的修正 Run（ARCHITECTURE §5.2）。 */
+  "feedback_loop",
 ] as const;
 export type TransitionTrigger = (typeof TRANSITION_TRIGGERS)[number];
 
@@ -96,6 +98,25 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
     description: "PR 重新打開",
   },
   { from: "done", to: "backlog", trigger: "issue", description: "Issue 重開" },
+  {
+    from: "pr_open",
+    to: "running",
+    trigger: "feedback_loop",
+    description: "Feedback Loop：PR 上的回饋送回 Agent 修正",
+  },
+  {
+    from: "verifying",
+    to: "pr_open",
+    trigger: "feedback_loop",
+    description:
+      "Feedback Loop 的修正通過 Verification 直接 push（不經過 Review Gate），或 Run 沒有 push 就結束",
+  },
+  {
+    from: "running",
+    to: "pr_open",
+    trigger: "feedback_loop",
+    description: "Feedback Loop 的修正 Run 沒有 push 就結束，PR 維持原樣",
+  },
   ...IN_FLIGHT.map(
     (from): TaskTransition => ({
       from,

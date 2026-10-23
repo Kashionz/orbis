@@ -20,6 +20,7 @@ import {
   requireProjectCapability,
   type TaskRow,
 } from "../authz/scope";
+import { collabDocRef } from "../collab/doc-name";
 import {
   acceptanceCriteria,
   members,
@@ -341,6 +342,10 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
       return updated;
     });
     if (!row) throw notFound("Acceptance Criterion");
+    // 共同編輯中的文件以新的描述為準。
+    if (input.description !== undefined) {
+      await s.collab.applyMarkdown(collabDocRef("acceptance-criterion", row.id), row.description);
+    }
     return c.json(toAcceptanceCriterion(row));
   });
 

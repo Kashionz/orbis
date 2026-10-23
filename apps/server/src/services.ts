@@ -5,10 +5,12 @@ import { SessionCleanup } from "./auth/session-cleanup";
 import { BlobCleanup } from "./blobs/cleanup";
 import { type BlobStore, FileSystemBlobStore } from "./blobs/store";
 import { type Clock, systemClock } from "./clock";
+import { CollabHub } from "./collab/hub";
+import { type CollabStore, PostgresCollabStore } from "./collab/store";
 import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_PUBLIC_URL } from "./config";
 import type { Database } from "./db/client";
 import { DomainEvents } from "./domain/events";
-import { type LifecycleHooks, TaskLifecycleService } from "./domain/task-lifecycle";
+import { TaskLifecycleService } from "./domain/task-lifecycle";
 import { createGitHubApp, type GitHubAppOptions } from "./github/app";
 import {
   createGitHubUserLookup,
@@ -19,12 +21,21 @@ import {
 } from "./github/integration";
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
+import { MentionService } from "./mentions/service";
+import { DesktopChannel, InAppChannel, WebPushHub } from "./notifications/channels";
+import { NotificationService } from "./notifications/service";
 import { createPreviewService, type PreviewService } from "./preview";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
 import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
+import { FeedbackRunService } from "./runs/feedback";
 import { RunControlService } from "./runs/run-control";
+import { VerificationService } from "./runs/verification";
+import { delegationToolHandlers } from "./tools/delegation-tools";
+import { RunWatch } from "./tools/run-watch";
+import { OrbisToolService } from "./tools/service";
+import { taskToolHandlers } from "./tools/task-tools";
 
 export interface Services {
   db: Database;
@@ -45,6 +56,20 @@ export interface Services {
   blobStore: BlobStore;
   blobCleanup: BlobCleanup;
   sessionCleanup: SessionCleanup;
+  verification: VerificationService;
+  /** Feedback Loop 的修正 Run（GitHub 整合的 FeedbackRunPort）。 */
+  feedbackRuns: FeedbackRunService;
+  /** Orbis MCP 工具呼叫的處理。 */
+  tools: OrbisToolService;
+  /** Run 狀態變化的程序內通知（阻塞的工具呼叫在這裡等）。 */
+  watch: RunWatch;
+  notify: NotificationService;
+  /** @mention 的處理（通知、@agent 建立 consult Run）。 */
+  mentions: MentionService;
+  /** 每位 Member 的 Web 連線（推送通知）。 */
+  webPush: WebPushHub;
+  /** 共同編輯的文件（載入、寫回、與資料庫內容同步）。 */
+  collab: CollabHub;
   heartbeatIntervalMs: number;
   /** Preview 網址的換票與登入保護（E 軌，src/preview/）。 */
   preview: PreviewService;
@@ -63,7 +88,6 @@ export interface ServicesOptions {
   };
   /** Web 的 origin（GitHub Issue 中的 Task 連結），預設 DEFAULT_PUBLIC_URL。 */
   publicUrl?: string;
-  lifecycleHooks?: LifecycleHooks;
   heartbeatIntervalMs?: number;
   offerTimeoutMs?: number;
   rejectCooldownMs?: number;
@@ -72,6 +96,10 @@ export interface ServicesOptions {
   blobDir?: string;
   /** Preview 網域（CONFIG_ENV.previewDomain）；未提供時不提供 Preview 網址。 */
   previewDomain?: string | null;
+  /** 共同編輯文件的快照儲存，預設存在 Postgres。 */
+  collabStore?: CollabStore;
+  /** 共同編輯文件修改後多久寫回（測試用）。 */
+  collabPersistDebounceMs?: number;
 }
 
 export function createServices(options: ServicesOptions): Services {
@@ -79,24 +107,15 @@ export function createServices(options: ServicesOptions): Services {
   const clock = options.clock ?? systemClock;
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const events = new DomainEvents(logger);
-  const lifecycle = new TaskLifecycleService(events, options.lifecycleHooks);
-  const githubApp = options.github?.app
-    ? createGitHubApp(options.github.app, {
-        db,
-        lifecycle,
-        events,
-        clock,
-        logger,
-        publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
-      })
-    : null;
-  const github: GitHubIntegration = {
-    userLookup: options.github?.userLookup ?? createGitHubUserLookup(),
-    app: githubApp?.app ?? null,
-    installUrl: githubApp?.installUrl ?? null,
-    pullRequestOpener:
-      options.github?.pullRequestOpener ?? createPullRequestOpener(githubApp?.app ?? null, logger),
-  };
+  const lifecycle = new TaskLifecycleService(events);
+  const webPush = new WebPushHub();
+  const notify = new NotificationService({
+    db,
+    clock,
+    logger,
+    channels: [new InAppChannel(webPush), new DesktopChannel()],
+  });
+  notify.watch(events);
   const hub = new RunnerHub();
   const eventStore = new EventStore(db);
   const dispatcher = new Dispatcher({
@@ -109,9 +128,43 @@ export function createServices(options: ServicesOptions): Services {
     offerTimeoutMs: options.offerTimeoutMs,
     rejectCooldownMs: options.rejectCooldownMs,
   });
+  const feedbackRuns = new FeedbackRunService({ db, lifecycle, hub, dispatcher });
+  const githubApp = options.github?.app
+    ? createGitHubApp(options.github.app, {
+        db,
+        lifecycle,
+        events,
+        clock,
+        logger,
+        notify,
+        feedbackRuns,
+        publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
+      })
+    : null;
+  const github: GitHubIntegration = {
+    userLookup: options.github?.userLookup ?? createGitHubUserLookup(),
+    app: githubApp?.app ?? null,
+    installUrl: githubApp?.installUrl ?? null,
+    pullRequestOpener:
+      options.github?.pullRequestOpener ?? createPullRequestOpener(githubApp?.app ?? null, logger),
+  };
   const blobStore =
     options.blobStore ?? new FileSystemBlobStore(options.blobDir ?? DEFAULT_BLOB_DIR);
   const sessionCleanup = new SessionCleanup({ db, clock, hub, dispatcher }, logger);
+  const runControls = new RunControlService(
+    db,
+    hub,
+    clock,
+    logger,
+    github.pullRequestOpener,
+    notify,
+  );
+  const verification = new VerificationService({ lifecycle, runControls, notify, clock, logger });
+  const watch = new RunWatch();
+  const mentions = new MentionService({ notify, dispatcher, logger });
+  const tools = new OrbisToolService({ db, hub, clock, logger });
+  tools.register(taskToolHandlers(db));
+  tools.register(delegationToolHandlers({ db, dispatcher, watch, notify, clock }));
   return {
     db,
     logger,
@@ -124,11 +177,39 @@ export function createServices(options: ServicesOptions): Services {
     hub,
     eventStore,
     dispatcher,
-    ingest: new EventIngest(db, eventStore, lifecycle, clock, logger),
-    runControls: new RunControlService(db, hub, clock, logger, github.pullRequestOpener),
+    ingest: new EventIngest({
+      db,
+      store: eventStore,
+      lifecycle,
+      verification,
+      runControls,
+      watch,
+      notify,
+      clock,
+      logger,
+      onFeedbackRunEnded: async (runId) => {
+        await githubApp?.app.onFeedbackRunEnded({ runId });
+      },
+    }),
+    runControls,
+    verification,
+    feedbackRuns,
+    tools,
+    watch,
+    webPush,
+    mentions,
+    notify,
     blobStore,
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     sessionCleanup,
+    collab: new CollabHub({
+      db,
+      mentions,
+      store: options.collabStore ?? new PostgresCollabStore(db),
+      events,
+      logger,
+      persistDebounceMs: options.collabPersistDebounceMs,
+    }),
     heartbeatIntervalMs,
     preview: createPreviewService({
       db,

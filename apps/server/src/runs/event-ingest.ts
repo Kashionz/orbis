@@ -2,27 +2,47 @@
 //
 // 1. 確認 dispatch_id 是這台 Runner 上、這個 Run 目前已接受的 Dispatch；否則拒絕（不 ack）。
 // 2. 以 (run_id, seq) 去除重複後寫入 run_events。
-// 3. 只對第一次寫入的 Event 套用副作用（投影）：Run 欄位、Run 狀態、Task 狀態、Gate、Needs You。
+// 3. 只對第一次寫入的 Event 套用副作用（投影）：Run 欄位、Run 狀態、Task 狀態、Gate、Verification、
+//    Needs You。只有主 Run（domain/run-status.ts 的 isPrimaryRun）會推動 Task 的狀態。
 // 4. commit 後回 event_ack（連續保存的最大 seq），並通知 Web 推送。
 
-import type { EventAck, EventKindName, RunStatus } from "@orbis/protocol";
+import type { EventAck, RunStatus } from "@orbis/protocol";
 import {
   GATE_KINDS,
   PERMISSION_OPTION_KINDS,
   PERMISSION_PURPOSES,
   RUN_STATUSES,
+  VERIFICATION_OUTCOMES,
 } from "@orbis/protocol";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
-import { dispatches, gates, needsYouItems, runEvents, runs, tasks } from "../db/schema";
+import {
+  childQuestions,
+  dispatches,
+  needsYouItems,
+  runControls,
+  runEvents,
+  runnerCredentials,
+  runs,
+  taskComments,
+  tasks,
+} from "../db/schema";
 import { inTransaction, type UnitOfWork } from "../db/tx";
-import { isTerminalRunStatus } from "../domain/run-status";
+import { isPrimaryRun, isTerminalRunStatus } from "../domain/run-status";
 import type { TaskLifecycleService } from "../domain/task-lifecycle";
 import { isInFlight } from "../domain/task-state-machine";
 import type { Logger } from "../logger";
+import { permissionRequestRecipients } from "../notifications/recipients";
+import type { Notify } from "../notifications/types";
+import { addQuestionToNeedsYou } from "../tools/delegation-tools";
+import type { RunWatch } from "../tools/run-watch";
+import { cancelChildren } from "./children";
 import type { EventStore } from "./event-store";
+import { gateRecipients, openGate } from "./gates";
+import type { RunControlService } from "./run-control";
+import type { VerificationService } from "./verification";
 
 /** event frame 的外層；各 kind 的內容只在套用副作用時才驗證。 */
 const EventFrameEnvelope = z.looseObject({
@@ -79,8 +99,35 @@ const UsageBody = z.object({
   cost: z.object({ amount: z.number(), currency: z.string() }).nullable(),
 });
 
-/** Review 用完整 diff 的 Event kind（協定的 `run_diff`）。 */
-export const RUN_DIFF_EVENT_KIND = "run_diff" satisfies EventKindName;
+export { RUN_DIFF_EVENT_KIND } from "./gates";
+
+const VerificationOutcomeSchema = z.enum(VERIFICATION_OUTCOMES);
+
+const VerificationResultBody = z.object({
+  verification_id: z.uuid(),
+  attempt: z.number().int().positive(),
+  criterion_id: z.uuid(),
+  outcome: VerificationOutcomeSchema,
+  summary: z.string(),
+  evidence: z.array(z.looseObject({ type: z.string() })),
+  judged_by_run_id: z.uuid().nullable(),
+});
+
+const VerificationCompletedBody = z.object({
+  verification_id: z.uuid(),
+  attempt: z.number().int().positive(),
+  outcome: VerificationOutcomeSchema,
+});
+
+const AgentSessionBody = z.object({ session_id: z.string().min(1) });
+
+const RateLimitedBody = z.object({
+  resets_at: z.iso.datetime({ offset: true }).nullable(),
+  message: z.string(),
+});
+
+/** rate limit 沒有恢復時間時，Credential 暫停派工多久。 */
+export const DEFAULT_RATE_LIMIT_PAUSE_MS = 5 * 60_000;
 
 export type IngestResult =
   | { ok: true; ack: EventAck; inserted: boolean }
@@ -89,14 +136,34 @@ export type IngestResult =
 type RunRow = typeof runs.$inferSelect;
 type TaskRow = typeof tasks.$inferSelect;
 
+export interface EventIngestDeps {
+  db: Database;
+  store: EventStore;
+  lifecycle: TaskLifecycleService;
+  verification: VerificationService;
+  runControls: RunControlService;
+  watch: RunWatch;
+  /** Feedback Loop 的修正 Run 沒有 push 就結束（GitHub 整合的 onFeedbackRunEnded）。 */
+  onFeedbackRunEnded?: (runId: string) => void | Promise<void>;
+  notify: Notify;
+  clock: Clock;
+  logger: Logger;
+}
+
 export class EventIngest {
-  constructor(
-    private readonly db: Database,
-    private readonly store: EventStore,
-    private readonly lifecycle: TaskLifecycleService,
-    private readonly clock: Clock,
-    private readonly logger: Logger,
-  ) {}
+  private readonly db: Database;
+  private readonly store: EventStore;
+  private readonly lifecycle: TaskLifecycleService;
+  private readonly clock: Clock;
+  private readonly logger: Logger;
+
+  constructor(private readonly deps: EventIngestDeps) {
+    this.db = deps.db;
+    this.store = deps.store;
+    this.lifecycle = deps.lifecycle;
+    this.clock = deps.clock;
+    this.logger = deps.logger;
+  }
 
   async ingest(runnerId: string, frame: unknown): Promise<IngestResult> {
     const parsed = EventFrameEnvelope.safeParse(frame);
@@ -141,7 +208,11 @@ export class EventIngest {
       );
       return { ok: false, reason: "stale_dispatch" };
     }
-    if (inserted) this.store.notifyAppended(run_id);
+    if (inserted) {
+      this.store.notifyAppended(run_id);
+      // 喚醒等待這個 Run 的工具呼叫（父 Run 的 wait_run）。
+      this.deps.watch.changed(run_id);
+    }
     const last = await this.store.lastContiguousSeq(run_id);
     return { ok: true, inserted, ack: { run_id, seq: last } };
   }
@@ -218,6 +289,19 @@ export class EventIngest {
             })),
           },
         });
+        await this.deps.notify.notify(uow, {
+          kind: "permission_request",
+          recipients: await permissionRequestRecipients(
+            tx,
+            context.run,
+            context.task,
+            body.purpose,
+          ),
+          taskId: context.task.id,
+          runId,
+          title: `${context.task.key} 的 Agent 在等待權限`,
+          body: body.title,
+        });
         return;
       }
       case "permission_resolved": {
@@ -243,6 +327,50 @@ export class EventIngest {
         const body = parse(StatusChangedBody);
         if (!body) return;
         await this.onStatusChanged(uow, runId, body.status, body.gate, body.message);
+        return;
+      }
+      case "rate_limited": {
+        const body = parse(RateLimitedBody);
+        if (!body) return;
+        const context = await this.runContext(uow, runId);
+        if (!context?.run.runnerId || !context.run.credential) return;
+        // 這組 Credential 到恢復前不派新的 Run（ARCHITECTURE §7）；Agent 沒有提供恢復時間時先暫停一段時間。
+        const until = body.resets_at
+          ? new Date(body.resets_at)
+          : new Date(this.clock.now().getTime() + DEFAULT_RATE_LIMIT_PAUSE_MS);
+        await tx
+          .insert(runnerCredentials)
+          .values({
+            runnerId: context.run.runnerId,
+            credential: context.run.credential,
+            rateLimitedUntil: until,
+          })
+          .onConflictDoUpdate({
+            target: [runnerCredentials.runnerId, runnerCredentials.credential],
+            set: { rateLimitedUntil: until, updatedAt: this.clock.now() },
+          });
+        return;
+      }
+      case "agent_session": {
+        const body = parse(AgentSessionBody);
+        if (!body) return;
+        await tx.update(runs).set({ agentSessionId: body.session_id }).where(eq(runs.id, runId));
+        return;
+      }
+      case "verification_result": {
+        const body = parse(VerificationResultBody);
+        if (!body) return;
+        const context = await this.runContext(uow, runId);
+        if (context) await this.deps.verification.onResult(uow, context.run, body);
+        return;
+      }
+      case "verification_completed": {
+        const body = parse(VerificationCompletedBody);
+        if (!body) return;
+        const context = await this.runContext(uow, runId);
+        if (context && isPrimaryRun(context.run)) {
+          await this.deps.verification.onCompleted(uow, context.run, context.task, body);
+        }
         return;
       }
       default:
@@ -298,15 +426,20 @@ export class EventIngest {
       }),
     );
 
-    const topLevel = run.parentRunId === null;
+    const primary = isPrimaryRun(run);
 
-    if (status === "awaiting_gate" && gate === "review" && topLevel) {
-      await this.openReviewGate(uow, run, task);
+    if (status === "awaiting_gate") {
+      // 回合結束：還沒回答的 Child Run 問題改由人在 Needs You 回答。
+      await this.moveOpenQuestionsToNeedsYou(uow, run, task);
+    }
+
+    if (status === "awaiting_gate" && gate === "review" && primary) {
+      // Agent 結束回合：開始 Verification（Verification 結束後 Runner 再送一次，那時不做事）。
+      await this.deps.verification.onTurnEnded(uow, run, task, run.status);
       return;
     }
-    if (status === "awaiting_gate" && gate === "plan") {
-      // TODO(B2, #15)：Planning 與 Plan Gate。
-      this.logger.warn({ runId }, "B1 尚未支援 Plan Gate，忽略");
+    if (status === "awaiting_gate" && gate === "plan" && primary) {
+      await this.openPlanGate(uow, run, task);
       return;
     }
     if (!terminal) return;
@@ -315,6 +448,12 @@ export class EventIngest {
       .update(dispatches)
       .set({ status: "completed" })
       .where(and(eq(dispatches.runId, runId), eq(dispatches.status, "accepted")));
+    // 父 Run 結束時連同 Child Run 一起結束。
+    const canceled = await cancelChildren(uow, runId, this.deps.runControls, now);
+    uow.afterCommit(() => {
+      for (const id of canceled) this.deps.watch.changed(id);
+    });
+    if (run.origin === "mention") await this.postMentionReply(uow, run, status, message);
     // Run 結束後，還沒回覆的權限請求與等待中的 Gate 都不必再處理。
     await tx
       .update(needsYouItems)
@@ -326,49 +465,88 @@ export class EventIngest {
           isNull(needsYouItems.resolvedAt),
         ),
       );
-    if (status !== "completed" && topLevel && isInFlight(task.status)) {
+    if (run.origin === "feedback_loop") {
+      // Feedback Loop 的修正 Run：PR 還開著，Task 回到 PR Open；沒有 push 就結束時通知 GitHub 整合。
+      if (task.status === "running" || task.status === "verifying") {
+        await this.lifecycle.transition(uow, task.id, "pr_open", "feedback_loop");
+      }
+      const pushed = await uow.tx
+        .select({ id: runControls.controlId })
+        .from(runControls)
+        .where(and(eq(runControls.runId, runId), eq(runControls.outcome, "branch_pushed")));
+      if (pushed.length === 0) uow.afterCommit(() => this.deps.onFeedbackRunEnded?.(runId));
+      return;
+    }
+    if (status !== "completed" && primary && isInFlight(task.status)) {
       await this.lifecycle.transition(uow, task.id, "ready", "run_stopped");
     }
   }
 
-  /** Agent 做完：Task 經 Verifying（直接通過）進入 Review Gate，建立 Gate 與 Needs You。 */
-  private async openReviewGate(uow: UnitOfWork, run: RunRow, task: TaskRow): Promise<void> {
-    const { tx } = uow;
-    if (task.status !== "running") {
+  /** @agent 的 consult Run 結束：把 Agent 最後的回覆貼回成 Task 留言（作者是這個 Run）。 */
+  private async postMentionReply(
+    uow: UnitOfWork,
+    run: RunRow,
+    status: RunStatus,
+    message: string | null,
+  ): Promise<void> {
+    const [last] = await uow.tx
+      .select({ payload: runEvents.payload })
+      .from(runEvents)
+      .where(and(eq(runEvents.runId, run.id), eq(runEvents.kind, "final_message")))
+      .orderBy(desc(runEvents.seq))
+      .limit(1);
+    const text = (last?.payload as { text?: { type: string; text?: string } } | undefined)?.text;
+    const reply =
+      text?.type === "inline" && text.text
+        ? text.text
+        : status === "completed"
+          ? "（Agent 沒有留下回覆）"
+          : `（Run 沒有完成：${message ?? status}）`;
+    await uow.tx
+      .insert(taskComments)
+      .values({ taskId: run.taskId, authorRunId: run.id, body: reply });
+  }
+
+  private async moveOpenQuestionsToNeedsYou(
+    uow: UnitOfWork,
+    run: RunRow,
+    task: TaskRow,
+  ): Promise<void> {
+    const open = await uow.tx
+      .select()
+      .from(childQuestions)
+      .where(and(eq(childQuestions.parentRunId, run.id), isNull(childQuestions.answeredAt)));
+    for (const question of open) {
+      await addQuestionToNeedsYou(
+        uow,
+        { task },
+        run,
+        question.id,
+        question.question,
+        this.deps.notify,
+      );
+    }
+  }
+
+  /** plan 產出：Task Planning → Plan Gate，建立 Gate、Needs You 與通知。 */
+  private async openPlanGate(uow: UnitOfWork, run: RunRow, task: TaskRow): Promise<void> {
+    if (task.status !== "planning") {
       this.logger.warn(
         { runId: run.id, taskStatus: task.status },
-        "Task 不在 Running，略過進入 Review Gate",
+        "Task 不在 Planning，略過進入 Plan Gate",
       );
       return;
     }
-    const updated = await this.lifecycle.agentFinished(uow, task.id);
-    if (updated.status !== "review_gate") return;
-
-    // 送審的是當下最新的一份 diff（之後 Runner 又送新的 diff 時，Gate 仍記得審的是哪一份）。
-    const [diff] = await tx
-      .select({ seq: runEvents.seq })
-      .from(runEvents)
-      .where(and(eq(runEvents.runId, run.id), eq(runEvents.kind, RUN_DIFF_EVENT_KIND)))
-      .orderBy(desc(runEvents.seq))
-      .limit(1);
-    const [created] = await tx
-      .insert(gates)
-      .values({
-        taskId: task.id,
-        runId: run.id,
-        kind: "review",
-        assigneeMemberIdAtCreation: updated.assigneeMemberId,
-        subject: { reviewDiffSeq: diff?.seq ?? null },
-      })
-      .returning();
-    if (!created) throw new Error("建立 Gate 失敗");
-    await tx.insert(needsYouItems).values({
-      projectId: task.projectId,
-      memberId: updated.assigneeMemberId ?? run.requestedByMemberId,
-      kind: "gate",
+    const updated = await this.lifecycle.transition(uow, task.id, "plan_gate", "run");
+    const gate = await openGate(uow, "plan", run, updated);
+    await this.deps.notify.notify(uow, {
+      kind: "gate_pending",
+      recipients: await gateRecipients(uow.tx, gate),
       taskId: task.id,
       runId: run.id,
-      gateId: created.id,
+      gateId: gate.id,
+      title: `${task.key} 的 plan 等待核准`,
+      body: task.title,
     });
   }
 }

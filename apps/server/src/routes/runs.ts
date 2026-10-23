@@ -6,6 +6,7 @@ import {
   type DispatchOptions,
   type ReviewDiff,
   type RunEvent,
+  VerificationDecisionInput,
 } from "@orbis/api-contract";
 import type { RunDiff } from "@orbis/protocol";
 import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
@@ -27,11 +28,13 @@ import {
   runs,
   taskDependencies,
   tasks,
+  verifications,
 } from "../db/schema";
 import { inTransaction } from "../db/tx";
-import { isTerminalRunStatus } from "../domain/run-status";
+import { isPrimaryRun, isTerminalRunStatus } from "../domain/run-status";
+import { planGateEnabled } from "../domain/task-lifecycle";
 import { isInFlight } from "../domain/task-state-machine";
-import { toRun, toRunEvent } from "../http/dto";
+import { toRun, toRunEvent, toVerifications } from "../http/dto";
 import { ApiError, conflict, notFound, readId, readJson, readQuery } from "../http/errors";
 import type { AppEnv } from "../http/session";
 import { summarizeDispatchTarget } from "../runner/dispatch-options";
@@ -87,7 +90,9 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
         .where(and(eq(taskDependencies.taskId, scope.task.id), ne(tasks.status, "done")));
       if ((blocking?.n ?? 0) > 0) throw conflict("相依的 Task 還沒完成，不能派工");
 
-      const task = await s.lifecycle.startRun(uow, scope.task.id);
+      const task = await s.lifecycle.startRun(uow, scope.task.id, {
+        planGate: planGateEnabled(scope.task, scope.project),
+      });
       const [created] = await tx
         .insert(runs)
         .values({
@@ -170,6 +175,38 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
   });
 
   /** 最新一份 review diff（Runner 進入 Review Gate 前送出的 `run_diff` Event）。還沒有時回 404。 */
+  /** 這個 Run 的每一輪 Verification 與每條條件的結果、證據（ARCHITECTURE §5.1）。 */
+  app.get(API_ROUTES.runVerifications, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
+    requireProjectCapability(actor, scope, "view");
+    const rows = await db
+      .select()
+      .from(verifications)
+      .where(eq(verifications.runId, scope.run.id))
+      .orderBy(asc(verifications.startedAt), asc(verifications.id));
+    return c.json(await toVerifications(db, rows));
+  });
+
+  /**
+   * Verification 超過重試上限、Task 停在 Verifying 時人的決定：附意見再試、略過失敗進入 Review Gate、
+   * 中止。略過失敗等於核准這一版的修改，需要核准 Gate 的權限；其他需要編輯 Task 的權限。
+   */
+  app.post(API_ROUTES.runVerificationDecision, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
+    const input = await readJson(c, VerificationDecisionInput);
+    requireProjectCapability(actor, scope, input.action === "skip" ? "approve_gate" : "edit_task");
+    if (!isPrimaryRun(scope.run)) throw conflict("這個 Run 不經過 Verification");
+    await inTransaction(db, (uow) => s.verification.decide(uow, scope.run, input, actor.memberId));
+    const rows = await db
+      .select()
+      .from(verifications)
+      .where(eq(verifications.runId, scope.run.id))
+      .orderBy(asc(verifications.startedAt), asc(verifications.id));
+    return c.json(await toVerifications(db, rows));
+  });
+
   app.get(API_ROUTES.runReviewDiff, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));

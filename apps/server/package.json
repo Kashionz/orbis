@@ -15,7 +15,7 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:check": "tsx scripts/db-check.ts",
-    "e2e:stack": "tsx --env-file-if-exists=../../.env scripts/system-e2e-stack.ts"
+    "e2e:stack": "tsx scripts/system-e2e-stack.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.5",
@@ -24,10 +24,14 @@
     "@orbis/protocol": "workspace:*",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
+    "lib0": "0.2.119",
+    "marked": "18.1.0",
     "pg": "8.23.1",
     "pino": "10.4.0",
     "uuid": "14.0.3",
     "ws": "8.22.0",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33",
     "zod": "4.6.7"
   },
   "devDependencies": {
@@ -40,6 +44,7 @@
     "testcontainers": "12.2.1",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "y-websocket": "3.1.0"
   }
 }

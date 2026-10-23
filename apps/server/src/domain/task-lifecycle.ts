@@ -13,27 +13,8 @@ export type TaskRow = typeof tasks.$inferSelect;
 
 export type ReadyRequirement = (typeof READY_REQUIREMENTS)[number];
 
-/**
- * Planning 與 Verification 的掛鉤。B1 一律「直接通過」；B2 換成真正的流程
- * （產出 plan 後進 Plan Gate、依 Acceptance Criterion 做 Verification）。
- */
-export interface LifecycleHooks {
-  /** 派工後是否直接跳過 Planning。回傳 false 時 Task 停在 Planning，等 Runner 回報 plan。 */
-  planningPassesImmediately(task: TaskRow): boolean;
-  /** Agent 回報完成後是否直接通過 Verification。回傳 false 時 Task 停在 Verifying。 */
-  verificationPassesImmediately(task: TaskRow): boolean;
-}
-
-export const PASS_THROUGH_HOOKS: LifecycleHooks = {
-  planningPassesImmediately: () => true,
-  verificationPassesImmediately: () => true,
-};
-
 export class TaskLifecycleService {
-  constructor(
-    private readonly events: DomainEvents,
-    private readonly hooks: LifecycleHooks = PASS_THROUGH_HOOKS,
-  ) {}
+  constructor(private readonly events: DomainEvents) {}
 
   /**
    * 把 Task 轉到 `to`。不合法的轉換丟出 409 `invalid_transition`；
@@ -106,19 +87,27 @@ export class TaskLifecycleService {
     return this.events.emit(event);
   }
 
-  /** 派工：Ready → Planning，Planning 直接通過時再轉到 Running。 */
-  async startRun(uow: UnitOfWork, taskId: string): Promise<TaskRow> {
+  /**
+   * 派工：Ready → Planning。Plan Gate 開啟時停在 Planning，等 Runner 送出 plan；
+   * 關閉時直接轉到 Running（ARCHITECTURE §5）。
+   */
+  async startRun(
+    uow: UnitOfWork,
+    taskId: string,
+    options: { planGate: boolean },
+  ): Promise<TaskRow> {
     const planning = await this.transition(uow, taskId, "planning", "dispatch");
-    if (!this.hooks.planningPassesImmediately(planning)) return planning;
+    if (options.planGate) return planning;
     return this.transition(uow, taskId, "running", "planning");
   }
+}
 
-  /** Agent 回報完成：Running → Verifying，Verification 直接通過時再轉到 Review Gate。 */
-  async agentFinished(uow: UnitOfWork, taskId: string): Promise<TaskRow> {
-    const verifying = await this.transition(uow, taskId, "verifying", "run");
-    if (!this.hooks.verificationPassesImmediately(verifying)) return verifying;
-    return this.transition(uow, taskId, "review_gate", "verification");
-  }
+/** Task 的 Plan Gate 是否開啟：Task 的覆寫優先，否則看 Project 的設定。 */
+export function planGateEnabled(
+  task: Pick<TaskRow, "planGateEnabled">,
+  project: { planGateEnabled: boolean },
+): boolean {
+  return task.planGateEnabled ?? project.planGateEnabled;
 }
 
 /** 每個 Ready 條件給人看的說明。 */

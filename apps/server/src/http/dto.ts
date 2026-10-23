@@ -2,9 +2,12 @@
 
 import type {
   AcceptanceCriterion,
+  DraftTask,
   Gate,
   Member,
   NeedsYouItem,
+  Notification,
+  PreviewComment,
   Project,
   Repo,
   ReviewComment,
@@ -13,15 +16,19 @@ import type {
   RunEvent,
   RunUsage,
   Task,
+  TaskNote,
   Team,
+  Verification,
 } from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
-import { asc, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import {
-  type acceptanceCriteria,
+  acceptanceCriteria,
+  type draftTasks,
   type gates,
   type members,
-  type needsYouItems,
+  needsYouItems,
+  type notifications,
   type projects,
   repoSpecs,
   type repos,
@@ -29,10 +36,14 @@ import {
   type runEvents,
   type runs,
   taskDependencies,
+  type taskNotes,
   type tasks,
   type teams,
+  verificationResults,
+  type verifications,
 } from "../db/schema";
 import type { Executor } from "../db/tx";
+import type { GateSubject } from "../runs/gates";
 
 const iso = (date: Date) => date.toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
@@ -239,7 +250,23 @@ export function toReviewComment(row: ReviewCommentRow): ReviewComment {
   };
 }
 
+/** `kind = preview` 的列（DB 的 check 保證 url 有值）。 */
+export function toPreviewComment(row: ReviewCommentRow): PreviewComment {
+  return {
+    id: row.id,
+    gateId: row.gateId,
+    body: row.body,
+    url: row.url ?? "",
+    selector: row.selector,
+    screenshotBlobId: row.screenshotBlobId,
+    authorMemberId: row.authorMemberId,
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
 export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
+  const subject = (row.subject ?? {}) as GateSubject;
   return {
     id: row.id,
     taskId: row.taskId,
@@ -252,11 +279,11 @@ export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
     reviewComments: comments
       .filter((c) => c.gateId === row.id && c.kind === "diff")
       .map(toReviewComment),
-    // W5–7 契約新增；Preview 留言（`kind = preview`）由 B2／E2 寫入後在這裡轉換。
-    previewComments: [],
-    // W5–7 契約新增；Plan Gate 與送審內容的 seq 由 B2 寫入 gates.subject 後填入。
-    planSeq: null,
-    reviewDiffSeq: null,
+    previewComments: comments
+      .filter((c) => c.gateId === row.id && c.kind === "preview")
+      .map(toPreviewComment),
+    planSeq: row.kind === "plan" ? (subject.planSeq ?? null) : null,
+    reviewDiffSeq: row.kind === "review" ? (subject.reviewDiffSeq ?? null) : null,
     createdAt: iso(row.createdAt),
   };
 }
@@ -319,4 +346,118 @@ export function toNeedsYou(
         question: String(payload.question ?? ""),
       };
   }
+}
+
+type VerificationRow = typeof verifications.$inferSelect;
+
+/** 一次查出多輪 Verification 的結果，組成 API 回應（結果依 Task 中條件的順序）。 */
+export async function toVerifications(
+  db: Executor,
+  rows: VerificationRow[],
+): Promise<Verification[]> {
+  if (rows.length === 0) return [];
+  const results = await db
+    .select({ result: verificationResults, position: acceptanceCriteria.position })
+    .from(verificationResults)
+    .innerJoin(acceptanceCriteria, eq(acceptanceCriteria.id, verificationResults.criterionId))
+    .where(
+      inArray(
+        verificationResults.verificationId,
+        rows.map((r) => r.id),
+      ),
+    )
+    .orderBy(asc(acceptanceCriteria.position));
+  // 停下來等人決定的那一輪（verification.ts 建立「停下來的 Run」時記下 verificationId）。
+  const waiting = await db
+    .select({ payload: needsYouItems.payload })
+    .from(needsYouItems)
+    .where(
+      and(
+        inArray(
+          needsYouItems.runId,
+          rows.map((r) => r.runId),
+        ),
+        eq(needsYouItems.kind, "stopped_run"),
+        isNull(needsYouItems.resolvedAt),
+      ),
+    );
+  const awaiting = new Set(
+    waiting.map((w) => (w.payload as { verificationId?: string }).verificationId),
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    runId: row.runId,
+    taskId: row.taskId,
+    attempt: row.attempt,
+    awaitingDecision: awaiting.has(row.id),
+    status: row.status,
+    resolution: row.resolution,
+    resolvedByMemberId: row.resolvedByMemberId,
+    comment: row.comment,
+    results: results
+      .filter(({ result }) => result.verificationId === row.id)
+      .map(({ result }) => ({
+        criterionId: result.criterionId,
+        outcome: result.outcome,
+        summary: result.summary,
+        evidence: result.evidence as Verification["results"][number]["evidence"],
+        judgedByRunId: result.judgedByRunId,
+        createdAt: iso(result.createdAt),
+      })),
+    startedAt: iso(row.startedAt),
+    completedAt: isoOrNull(row.completedAt),
+  }));
+}
+
+/** Draft Task（DB 的 draft_tasks）。 */
+export function toDraftTask(row: typeof draftTasks.$inferSelect): DraftTask {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    batchId: row.batchId,
+    position: row.position,
+    proposedByRunId: row.proposedByRunId,
+    repoId: row.repoId,
+    spec: row.spec,
+    title: row.title,
+    description: row.description,
+    acceptanceCriteria: row.acceptanceCriteria as DraftTask["acceptanceCriteria"],
+    dependsOn: row.dependsOn as string[],
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
+  };
+}
+
+/** Task note（DB 的 task_notes）。 */
+export function toTaskNote(row: typeof taskNotes.$inferSelect): TaskNote {
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    runId: row.runId,
+    source: row.source,
+    body: row.body,
+    url: row.url,
+    createdAt: iso(row.createdAt),
+  };
+}
+
+/** 通知（DB 的 notifications）；呼叫端提供 Task Key。 */
+export function toNotification(
+  row: typeof notifications.$inferSelect,
+  taskKey: string | null,
+): Notification {
+  return {
+    id: row.id,
+    kind: row.kind,
+    taskId: row.taskId,
+    taskKey,
+    runId: row.runId,
+    gateId: row.gateId,
+    actorMemberId: row.actorMemberId,
+    title: row.title,
+    body: row.body,
+    url: row.url,
+    readAt: isoOrNull(row.readAt),
+    createdAt: iso(row.createdAt),
+  };
 }

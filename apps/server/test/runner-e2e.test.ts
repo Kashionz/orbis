@@ -1,7 +1,7 @@
 // 跨元件的端到端測試：真實的 orbis-runner 執行檔連上真實的 Server（Testcontainers Postgres），
 // 驗證 Pairing、AgentAvailability 與 Heartbeat 都走通，而且 Server 的 log 看得到 Heartbeat（M0）。
 
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,9 +14,9 @@ import type { GitHubOAuth } from "../src/auth/github-oauth";
 import { runners, teams } from "../src/db/schema";
 import { createLogger } from "../src/logger";
 import { type RunningServer, startServer } from "../src/server";
+import { buildRunnerBinaries } from "./helpers/binaries";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 
-const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const runnerBinary = fileURLToPath(
   new URL(
     `../../../target/debug/${NAMES.productSlug}-runner${process.platform === "win32" ? ".exe" : ""}`,
@@ -59,10 +59,7 @@ describe.skipIf(dbSkipReason !== null)("Runner 執行檔連上 Server（端到�
 
   beforeAll(async () => {
     // CI 中 cargo test 已先編譯過，這裡只是確保執行檔存在且是最新的。
-    execFileSync("cargo", ["build", "--quiet", "-p", `${NAMES.productSlug}-runner`], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
+    buildRunnerBinaries();
     expect(existsSync(runnerBinary)).toBe(true);
 
     runnerHome = await mkdtemp(path.join(tmpdir(), `${NAMES.productSlug}-e2e-home-`));

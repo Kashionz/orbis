@@ -122,11 +122,12 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Runner 回報 `verifying`，逐條執行。`command` 在 Worktree 執行；`agent`、`browser` 以 Orbis MCP 的 `delegate`（`purpose = verification`）請 Server 建立 `consult` Child Run 判定，`browser` 另外注入 Playwright MCP。
   - 每條條件一筆 `verification_result` Event（`passed`、`failed`，或無法判定的 `error`，附證據），全部結束送 `verification_completed`，再回到 `awaiting_gate`（review）。
   - 結果與證據存在 `verifications` 與 `verification_results`，最新一次也寫回 Acceptance Criterion。
-- **失敗重試**：Verification 失敗時，Server 自動把失敗原因以 `prompt` 送回原 Run 重試，**預設最多 3 次**（Project 可以設定），超過就停在 Verifying 並加入 Needs You。人可以選擇：
+- **失敗重試**：Verification 失敗時，Server 自動把失敗原因以 `prompt` 送回原 Run 重試，第一輪之後**預設最多重試 3 次**（Project 可以設定，所以最多 4 輪），超過就停在 Verifying，加入 Needs You 並通知。`error`（無法判定）視為失敗。人可以選擇：
   - 附上意見再試一次（次數重新計算）。
   - 略過失敗，進入 Review Gate（Review 時看得到失敗的結果）。
   - 中止 Run，Task 回到 Ready。
-- **`manual`**：在 Review Gate 由人打勾，全部打勾後才能核准。
+- **`manual`**：在 Review Gate 由人打勾，全部打勾後才能核准。打勾必須是這個 Review Gate 建立之後做的：每次進入 Review Gate 都要針對這一版的修改重新打勾；Runner 回報的結果不能改到 `manual` 條件。
+- Verification 結束後 Runner 會再送一次 `awaiting_gate`（review），Server 不把它當成新的回合結束（Run 之前的狀態是 `verifying`）。
 
 ### 5.2 Feedback Loop（PR 開出之後）
 
@@ -146,6 +147,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - check run 的 output 與 log 由建立它的 App 決定，這些內容會放進修正 prompt。
   - Phase 1 不設 CI App 的白名單，理由是只有 repo 的 admin 能把 App 裝到 repo 上，而且 CI 失敗就應該觸發。
   - 緩解：output 與 log 放在 code block 中當資料，並限制長度；prompt 中註明它們是 CI 產生的資料，不是給 Agent 的指示。
+- **修正 Run**：Server 開一個新的主 Run（`origin = feedback_loop`），派給前一個 Run 所在的 Runner，沿用同一個分支與 Worktree，並以前一個 Run 的 session id 接續。Task PR Open → Running；修正照常經過 Verifying，通過後直接 push（不經過 Review Gate），Task 回到 PR Open。Run 沒有 push 就結束時，Task 也回到 PR Open。前一個 Run 的 Runner 不在線上時不開 Run。
 - **次數上限**：每個 PR 自動修正最多 **5 次**，CI 與 review 分開計數。超過就停下並通知 Task 負責人。
   - 開成 Run 的修正才計入次數，之後 Run 失敗也算；Server 開不成 Run 的不算。
   - 第一次超過上限時，在 PR 上說明並通知負責人；之後同一個來源再觸發只記 log。
@@ -221,6 +223,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 沒有對應時 `copy` 不生效，因為 Runner 自己的 clone 中沒有 `.env` 這類檔案。
   - `ORBIS_ROOT_PATH` 是這份來源 repo 的路徑。
 - **分支名稱**：由 Server 產生，格式是 `orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。同一個 Task 的第 2 個以後的 Run（例如失敗後重新派工），分支加上 `-r<序號>`，例如 `orbis/ORB-12-login-fix-r2`，避免和前一個 Run 保留下來的分支衝突。
+  - slug 取自 Task 標題：NFKC 正規化後保留字母與數字（含中文等 Unicode 字母，不做音譯），其他字元換成 `-`，最多 40 個字元；全是符號時用 `task`。所以分支名稱不會有 git 不允許的字元。
   - **注意**：分支名稱不可以用 `/c<n>` 當後綴，因為 git 不允許 `a` 與 `a/b` 兩個分支同時存在。
 - **Base**：
   - Task 的 Run 從 Repo 的 base ref 開出，預設是 `origin/<default-branch>`。
@@ -318,6 +321,9 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - 每組 Credential 的並行上限**預設 30**，超過的 Run 進佇列排隊。
   - 偵測到 rate limit 時，該 Run 暫停，等額度恢復後再繼續。**不會自動改用其他 Agent。**
   - UI 顯示各組 Credential 的用量與排隊數。
+  - Server 依 Credential 排隊：派工時選定 Credential（放在 `dispatch_offer`），佔用名額的是 `dispatched` 到 `awaiting_gate`、`rate_limited` 的 Run（含 Child Run）。有效上限＝Admin 在 Server 的覆寫 ?? Runner 回報。
+  - 一組 Credential 回報 rate limit 後，到恢復時間之前不派新的 Run 給它；Agent 沒有提供恢復時間時暫停 5 分鐘。
+  - 沒有 Credential 的 Agent 不受 Server 的並行上限限制，由 Runner 自己控管。
 
 ---
 
@@ -335,7 +341,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
 - **誰的 Needs You 清單會出現**：
   - 權限請求依「誰有權回覆」即時決定（見下方「誰可以回覆」）。Team 內所有未回覆、而且本人有權回覆的請求，都會出現在本人的清單。
   - Gate 與停下來的 Run 仍指派給特定的 Member（Task 負責人；沒有負責人時給派工者），清單中會濾掉本人不能核准的 Gate。
-  - Project 禁止核准自己的 Task 時，Review Gate 該通知誰，留到之後的通知設計再決定。
+  - Project 禁止核准自己的 Task、而且負責人在這個 Project 的有效 Role 是 Member 時，負責人不能核准，Gate 的 Needs You 不指派給特定的人：清單依授權即時計算，Project 中所有能核准的人都看得到，也都會收到通知。Plan Gate 與 Review Gate 都一樣。
 - **`yolo` 的使用時機**：Team Runner 的容器中可以直接使用；Local Runner 要手動選擇，而且 UI 會顯示警告。
 - **Child Run**：權限繼承父 Run，只能更嚴格，不能更寬鬆。
 - **Phase 1 不做 OS 層級沙盒**。
@@ -384,6 +390,9 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - Project 可以設定允許分派的 Agent，或直接關閉 Delegation。
 - **UI**：Child Run 以樹狀結構顯示在 Task 下，每個節點標示 Agent、model、狀態與用量，可以單獨中止。
 - **人也能觸發**：在留言中 @agent（例如 `@claude 幫我看這段`）會建立一個 `consult` Run（§12）。
+- **派給哪台 Runner**：Child Run 一律派給父 Run 所在的 Runner；那台 Runner 沒有這個 Agent 時拒絕 `delegate`。判定 Verification 的 `consult` Child Run 不受 Project 的 Delegation 設定限制，但仍受深度、數量與 Permission Policy 的限制。
+- **父 Run 結束時**：還沒結束的 Child Run 一併取消；Child Run 的狀態不會改變 Task 的狀態。
+- **ask_parent**：父 Run 的回合已經結束時，問題加入父 Run 負責人的 Needs You，由人回答。
 - **權限限制**：Agent 不能直接修改 Task 的狀態、指派對象與 Acceptance Criterion。
 
 ---
@@ -398,7 +407,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 內容是每個檔案的完整新舊內容，大檔放 blob（§14）。
   - Server 保存這份 diff，所以 Runner 離線時仍然可以 review，重播時也看得到。
 - **行內留言**存在獨立的資料表中，每則一筆（之後的 @mention 與通知會用到）。退回時打包成 prompt 送回 Agent。
-- **Preview 留言**（§13）和行內留言存在同一個資料表，種類是 `preview`，帶 URL、selector（一般瀏覽器中沒有）與截圖的 blob。退回時一起打包成 prompt，截圖以圖片附上。
+- **Preview 留言**（§13）和行內留言存在同一個資料表，種類是 `preview`，帶 URL、selector（一般瀏覽器中沒有）與截圖的 blob。URL 必須是這個 Run 的 Preview 網址，截圖必須是這個 Run 的 blob；沒有設定 Preview 網域時不接受 Preview 留言。退回時一起打包成 prompt，截圖以圖片附上。
 
 ---
 
@@ -442,6 +451,8 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 - **範圍**：Task 描述、Acceptance Criterion，以及存在資料庫的 Spec。
 - **技術**：Yjs、TipTap，經由 Server 的 WebSocket 同步；顯示其他人的游標與在線狀態。Yjs 文件的快照存在 Postgres。
+  - 第一次開啟時，Server 以資料庫中的內容（Task 描述、Acceptance Criterion 的描述）建立文件並立刻保存。修改後 debounce 1 秒寫回快照，並把文件轉成 markdown 回寫描述（Task 描述照常同步到 GitHub）。描述被 REST 或 GitHub 改掉時，Server 以新的內容取代文件。
+  - 在線狀態中的 `memberId` 由 Server 填入；一條連線不能使用別人的 client id。
 - **Repo 內的 Spec**：在 UI 中共同編輯一份草稿，按下「提交到 repo」後才變成 commit。Agent 要修改時，以 PR 的形式提出，不直接覆蓋草稿。
   - **提交到 repo**：
     - 從 default branch 開新的分支，以 GitHub App 身分 commit 草稿（`Co-authored-by` 提交者），再開 PR。提交者要能在該 Project 編輯 Task。只能提交 repo 內 `.github/` 以外的 `.md` 檔。
@@ -481,7 +492,10 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 被指派 Task
   - 自己的 Task 被 merge 或被退回
 - **@mention 可以用在**：Task 留言、Spec 共同編輯、diff 行內留言。
-- **@agent**：觸發一個 `consult` Run。
+- **@agent**：觸發一個 `consult` Run，prompt 帶入留言與 Task 的上下文；Run 結束後 Agent 最後的回覆貼回成 Task 留言（作者是那個 Run）。
+  - diff 行內留言讀被 review 的 Run 的 Worktree；Task 留言讀 Task 最近一個保留 Worktree 的主 Run。只有那個 Run 在 Team Runner 或留言者自己的 Local Runner 上時才沿用；否則派到留言者自己的 Local Runner，從 base ref 開唯讀 Worktree。不會在別人的電腦上替留言者跑 Agent，Run 一律記在留言者名下。
+  - 留言者要能派工（Viewer 的 @agent 只記錄）；Repo Spec 草稿中的 @agent 只記錄（沒有 Task）。
+- **@member**：通知被提及的人（同一個 Team 的 Member）。留言修改、共同編輯文件存檔時，只有新出現的 mention 才處理。共同編輯文件中只處理由 client 加入的 mention 節點（記錄加入的人與當時的目標），由描述重建的節點不算。
 - **個人設定**：可以依事件類型關閉通知，也可以設定勿擾時段。
   - 依事件類型關閉時，App 內與桌面都不送。
   - 勿擾時段只抑制桌面推送，App 內照常記錄，結束後也不補推。
@@ -648,7 +662,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 
 - **Fake Agent**（`crates/fake-agent`）：依 YAML 劇本送出訊息、tool call、diff、權限請求、plan、錯誤、rate limit。**所有整合測試都用它**，不呼叫真實模型。
 - **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS、Linux 三平台都跑。
-- **Server**：用 Testcontainers 啟動真實的 Postgres 來測試。
+- **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在三平台安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
 - **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上三平台都跑；完整系統的 M1 e2e 在 PR 上只跑 Linux，push 到 `main` 時三平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
 - **真實 Agent 煙霧測試**：Claude Code、Codex、Gemini、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。

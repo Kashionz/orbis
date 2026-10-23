@@ -13,7 +13,7 @@
 //
 // 並行上限的完整控管留給 B2。
 
-import { NAMES } from "@orbis/api-contract";
+import { NAMES, type QueueWaitingReason } from "@orbis/api-contract";
 import type {
   ContentBlock,
   DispatchAccept,
@@ -31,14 +31,23 @@ import {
   projects,
   repoSpecs,
   repos,
+  runnerCredentials,
   runners,
   runs,
   tasks,
 } from "../db/schema";
 import type { Executor } from "../db/tx";
-import { NON_TERMINAL_RUN_STATUSES } from "../domain/run-status";
+import { isPrimaryRun, NON_TERMINAL_RUN_STATUSES } from "../domain/run-status";
+import { planGateEnabled } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
+import { childSequence, runDepth } from "../runs/children";
 import type { EventStore } from "../runs/event-store";
+import {
+  CREDENTIAL_OCCUPYING_STATUSES,
+  type CredentialLoad,
+  credentialCapacity,
+  effectiveMaxConcurrency,
+} from "./capacity";
 import type { RunnerHub } from "./hub";
 
 export const DEFAULT_OFFER_TIMEOUT_MS = 30_000;
@@ -59,6 +68,41 @@ export interface DispatcherOptions {
 }
 
 type RunRow = typeof runs.$inferSelect;
+
+/** 派工的結果：派給哪台 Runner、用哪組 Credential，或還在佇列的原因。 */
+export type Placement =
+  | { runnerId: string; credential: string | null }
+  | { reason: QueueWaitingReason };
+
+/** 一組 Credential 目前的負載：佔用名額的 Run、有效上限與 rate limit。 */
+export async function credentialLoad(
+  db: Executor,
+  runnerId: string,
+  credential: string,
+  reported: number,
+): Promise<CredentialLoad> {
+  const [settings] = await db
+    .select()
+    .from(runnerCredentials)
+    .where(
+      and(eq(runnerCredentials.runnerId, runnerId), eq(runnerCredentials.credential, credential)),
+    );
+  const [{ active } = { active: 0 }] = await db
+    .select({ active: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.runnerId, runnerId),
+        eq(runs.credential, credential),
+        inArray(runs.status, [...CREDENTIAL_OCCUPYING_STATUSES]),
+      ),
+    );
+  return {
+    maxConcurrency: effectiveMaxConcurrency(settings?.maxConcurrentRunsOverride, reported),
+    active,
+    rateLimitedUntil: settings?.rateLimitedUntil ?? null,
+  };
+}
 
 export class Dispatcher {
   private readonly db: Database;
@@ -186,7 +230,7 @@ export class Dispatcher {
   private async requeue(db: Executor, runId: string): Promise<void> {
     await db
       .update(runs)
-      .set({ status: "queued", runnerId: null })
+      .set({ status: "queued", runnerId: null, credential: null })
       .where(and(eq(runs.id, runId), inArray(runs.status, NON_TERMINAL_RUN_STATUSES)));
   }
 
@@ -198,53 +242,99 @@ export class Dispatcher {
       .orderBy(asc(runs.createdAt), asc(runs.id))
       .limit(100);
     for (const run of queued) {
-      const runnerId = await this.pickRunner(run, now);
-      if (runnerId) await this.offer(run, runnerId, now);
+      const placement = await this.placement(run, now);
+      if ("runnerId" in placement) {
+        await this.offer(run, placement.runnerId, placement.credential, now);
+      }
     }
   }
 
-  private async pickRunner(run: RunRow, now: Date): Promise<string | null> {
-    if (run.target === "local" && !run.requestedByMemberId) return null;
+  /**
+   * 這個 Run 現在能派給哪台 Runner、用哪組 Credential；不能派時回傳原因（Team Runner 佇列的顯示也用它）。
+   * Credential 的有效並行上限＝Admin 的覆寫 ?? Runner 回報；撞到 rate limit 時到恢復前不派（ARCHITECTURE §7）。
+   */
+  async placement(run: RunRow, now: Date): Promise<Placement> {
+    if (run.target === "local" && !run.requestedByMemberId) return { reason: "no_runner" };
     const [owner] = await this.db
       .select({ teamId: projects.teamId })
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(tasks.id, run.taskId));
-    if (!owner) return null;
+    if (!owner) return { reason: "no_runner" };
+    // Child Run、讀別的 Run Worktree 的 consult Run、Feedback Loop 接續的 Run 只能派給那個 Run 所在的
+    // Runner（要用同一個 Worktree）。那個 Run 不在任何 Runner 上時留在佇列。
+    const pinned = run.parentRunId ?? run.consultOfRunId ?? run.resumesRunId;
+    let pinnedRunnerId: string | undefined;
+    if (pinned) {
+      const [source] = await this.db
+        .select({ runnerId: runs.runnerId })
+        .from(runs)
+        .where(eq(runs.id, pinned));
+      if (!source?.runnerId) return { reason: "no_runner" };
+      pinnedRunnerId = source.runnerId;
+    }
+    const eligible = and(
+      eq(runners.teamId, owner.teamId),
+      isNull(runners.revokedAt),
+      eq(runners.kind, run.target),
+      pinnedRunnerId ? eq(runners.id, pinnedRunnerId) : undefined,
+      run.target === "local" && run.requestedByMemberId
+        ? eq(runners.memberId, run.requestedByMemberId)
+        : undefined,
+    );
     const candidates = await this.db
-      .select({ id: runners.id })
+      .select({
+        id: runners.id,
+        credential: agentAvailabilities.credential,
+        reported: agentAvailabilities.maxConcurrency,
+      })
       .from(runners)
       .innerJoin(agentAvailabilities, eq(agentAvailabilities.runnerId, runners.id))
       .where(
         and(
-          eq(runners.teamId, owner.teamId),
-          isNull(runners.revokedAt),
-          eq(runners.kind, run.target),
-          run.target === "local" && run.requestedByMemberId
-            ? eq(runners.memberId, run.requestedByMemberId)
-            : undefined,
+          eligible,
           eq(agentAvailabilities.agent, run.agent),
           eq(agentAvailabilities.available, true),
         ),
       )
-      .orderBy(asc(runners.createdAt), asc(runners.id));
+      .orderBy(asc(runners.createdAt), asc(runners.id), asc(agentAvailabilities.credential));
+    if (candidates.length === 0) {
+      const [any] = await this.db.select({ id: runners.id }).from(runners).where(eligible).limit(1);
+      return { reason: any ? "agent_unavailable" : "no_runner" };
+    }
+    let blocked: "concurrency_limit" | "rate_limited" | null = null;
+    let reachable = false;
     for (const candidate of candidates) {
       if (!this.options.hub.isOnline(candidate.id)) continue;
       if (!this.options.hub.isAcceptingDispatches(candidate.id)) continue;
       const cooldown = this.cooldowns.get(`${run.id}:${candidate.id}`);
       if (cooldown !== undefined && cooldown > now.getTime()) continue;
-      return candidate.id;
+      reachable = true;
+      // 沒有 Credential 的 Agent 不受 Server 的並行上限限制（Runner 自己仍會檢查）。
+      if (candidate.credential === "") return { runnerId: candidate.id, credential: null };
+      const capacity = credentialCapacity(
+        await credentialLoad(this.db, candidate.id, candidate.credential, candidate.reported),
+        now,
+      );
+      if (capacity.ok) return { runnerId: candidate.id, credential: candidate.credential };
+      if (blocked !== "rate_limited") blocked = capacity.reason;
     }
-    return null;
+    if (!reachable) return { reason: "no_runner" };
+    return { reason: blocked ?? "concurrency_limit" };
   }
 
   /** 建立 Dispatch 並送出 Offer。 */
-  private async offer(run: RunRow, runnerId: string, now: Date): Promise<void> {
+  private async offer(
+    run: RunRow,
+    runnerId: string,
+    credential: string | null,
+    now: Date,
+  ): Promise<void> {
     const expiresAt = new Date(now.getTime() + this.offerTimeoutMs);
     const dispatch = await this.db.transaction(async (tx) => {
       const [claimed] = await tx
         .update(runs)
-        .set({ status: "dispatched", runnerId })
+        .set({ status: "dispatched", runnerId, credential })
         .where(and(eq(runs.id, run.id), eq(runs.status, "queued")))
         .returning({ id: runs.id });
       if (!claimed) return null;
@@ -256,7 +346,7 @@ export class Dispatcher {
     });
     if (!dispatch) return;
 
-    const offer = await this.buildOffer(run, dispatch.id, expiresAt);
+    const offer = await this.buildOffer({ ...run, runnerId, credential }, dispatch.id, expiresAt);
     const sent = this.options.hub.send(runnerId, { type: "dispatch_offer", ...offer });
     this.log.info(
       { runId: run.id, runnerId, dispatchId: dispatch.id, sent },
@@ -273,12 +363,18 @@ export class Dispatcher {
 
   async buildOffer(run: RunRow, dispatchId: string, expiresAt: Date): Promise<DispatchOffer> {
     const [row] = await this.db
-      .select({ task: tasks, repo: repos })
+      .select({ task: tasks, repo: repos, project: projects })
       .from(tasks)
       .innerJoin(repos, eq(repos.id, tasks.repoId))
+      .innerJoin(projects, eq(projects.id, tasks.projectId))
       .where(eq(tasks.id, run.taskId));
     if (!row) throw new Error(`Run ${run.id} 的 Task 或 Repo 不存在`);
-    const { task, repo } = row;
+    const { task, repo, project } = row;
+    const criteria = await this.db
+      .select()
+      .from(acceptanceCriteria)
+      .where(eq(acceptanceCriteria.taskId, task.id))
+      .orderBy(asc(acceptanceCriteria.position));
     const defaultBranch = repo.defaultBranch ?? "main";
     return {
       dispatch_id: dispatchId,
@@ -296,11 +392,46 @@ export class Dispatcher {
       agent: run.agent,
       model: run.model,
       permission_policy: run.permissionPolicy,
-      prompt: await buildPrompt(this.db, task),
-      // TODO(B2, #15)：Planning 與 Plan Gate 在 B2 實作；B1 一律不進 plan 模式。
-      plan_gate: false,
-      delegation: null,
+      // Child Run、@agent、Feedback Loop 的 Run 有自己的 prompt；其他 Run 由 Task 組出。
+      prompt: (run.prompt as ContentBlock[] | null) ?? (await buildPrompt(this.db, task)),
+      ...(run.promptSource && { prompt_source: run.promptSource }),
+      // 只有主 Run 會經過 Planning 與 Plan Gate（ARCHITECTURE §5）。
+      plan_gate: isPrimaryRun(run) && run.origin === "dispatch" && planGateEnabled(task, project),
+      delegation:
+        run.parentRunId && run.delegationMode
+          ? {
+              parent_run_id: run.parentRunId,
+              mode: run.delegationMode,
+              depth: await runDepth(this.db, run),
+              child_seq: await childSequence(this.db, run),
+            }
+          : null,
+      ...(run.consultOfRunId && { consult_of_run_id: run.consultOfRunId }),
+      ...(await this.continuation(run)),
       last_event_seq: await this.options.eventStore.lastContiguousSeq(run.id),
+      acceptance_criteria: criteria.map((c) => ({
+        criterion_id: c.id,
+        kind: c.kind,
+        description: c.description,
+        // command 為 null 時 Runner 沿用 Repo 設定檔的 `[verify].commands`。
+        command: c.kind === "command" ? c.command : null,
+      })),
+      origin: run.origin,
+      ...(run.credential && { credential: run.credential }),
+    };
+  }
+
+  /** Feedback Loop 接續的 Run：沿用前一個 Run 的 Worktree、session 與 base commit（ARCHITECTURE §5.2）。 */
+  private async continuation(run: RunRow): Promise<Pick<DispatchOffer, "continuation">> {
+    if (!run.resumesRunId) return {};
+    const [previous] = await this.db.select().from(runs).where(eq(runs.id, run.resumesRunId));
+    if (!previous?.baseCommit) return {};
+    return {
+      continuation: {
+        previous_run_id: previous.id,
+        session_id: previous.agentSessionId,
+        base_commit: previous.baseCommit,
+      },
     };
   }
 
@@ -400,21 +531,32 @@ export async function runSequence(db: Executor, run: RunRow): Promise<number> {
   return Math.max(1, row?.n ?? 1);
 }
 
+/** 分支 slug 的最大長度（以字元計，不是 UTF-16 code unit）。 */
+const BRANCH_SLUG_MAX_CHARS = 40;
+
+/**
+ * Task 標題的分支 slug：NFKC 正規化後只保留字母與數字（含中文等 Unicode 字母，不做音譯），
+ * 其他字元一律換成 `-`，最多 BRANCH_SLUG_MAX_CHARS 個字元；全是符號時退回 `task`。
+ * 結果只含 `\p{L}`、`\p{N}` 與 `-`，所以不會出現 git 不允許的 `..`、`@{`、結尾的 `.lock`、
+ * 控制字元與空白。
+ */
+export function branchSlug(title: string): string {
+  const slug = title
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  const truncated = Array.from(slug).slice(0, BRANCH_SLUG_MAX_CHARS).join("").replace(/-+$/g, "");
+  return truncated || "task";
+}
+
 /**
  * Run 的分支名稱：`<分支前綴><Task Key>-<slug>`（ARCHITECTURE §6.2）。
  * 同一個 Task 的第 2 個以後的 Run 加上 `-r<序號>`，避免與前一個 Run 的分支衝突。
  */
 export function branchName(taskKey: string, title: string, runSeq: number): string {
-  const slug =
-    title
-      .normalize("NFKD")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40)
-      .replace(/-+$/g, "") || "task";
   const suffix = runSeq > 1 ? `-r${runSeq}` : "";
-  return `${NAMES.branchPrefix}${taskKey}-${slug}${suffix}`;
+  return `${NAMES.branchPrefix}${taskKey}-${branchSlug(title)}${suffix}`;
 }
 
 /** 送給 Agent 的第一個 prompt：Task 標題、描述、Spec 連結與 Acceptance Criterion。 */
