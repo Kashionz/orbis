@@ -7,6 +7,8 @@ const isCI = Boolean(process.env.CI);
 export default defineConfig({
   testDir: "e2e",
   testMatch: "**/*.spec.ts",
+  // 完整系統 e2e 另外跑（playwright.system.config.ts）
+  testIgnore: "system/**",
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
   // 每個測試各自啟動一個 Electron 與 Runner，依序執行比較穩定
