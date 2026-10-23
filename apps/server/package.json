@@ -13,7 +13,8 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:check": "tsx scripts/db-check.ts"
+    "db:check": "tsx scripts/db-check.ts",
+    "e2e:stack": "tsx --env-file-if-exists=../../.env scripts/system-e2e-stack.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.5",
