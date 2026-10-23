@@ -1,0 +1,157 @@
+﻿2026-10-23T15:21:46.6266432Z Current runner version: '2.338.0'
+2026-10-23T15:21:46.6300882Z ##[group]Runner Image Provisioner
+2026-10-23T15:21:46.6302092Z Hosted Compute Agent
+2026-10-23T15:21:46.6302944Z Version: 20261012.601
+2026-10-23T15:21:46.6303827Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-23T15:21:46.6304881Z Build Date: 2026-10-12T17:48:21Z
+2026-10-23T15:21:46.6305860Z Worker ID: {045d136f-7c55-4903-ba63-42dffe0af61e}
+2026-10-23T15:21:46.6306745Z Region: westus2
+2026-10-23T15:21:46.6307730Z Cloud: Azure
+2026-10-23T15:21:46.6308537Z ##[endgroup]
+2026-10-23T15:21:46.6310824Z ##[group]Operating System
+2026-10-23T15:21:46.6311808Z Ubuntu
+2026-10-23T15:21:46.6312564Z 26.04.1
+2026-10-23T15:21:46.6313245Z LTS
+2026-10-23T15:21:46.6313998Z ##[endgroup]
+2026-10-23T15:21:46.6314791Z ##[group]Runner Image
+2026-10-23T15:21:46.6315634Z Image: ubuntu-26.04
+2026-10-23T15:21:46.6316393Z Version: 20261012.163.1
+2026-10-23T15:21:46.6318499Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261012.163/images/ubuntu/Ubuntu2604-Readme.md
+2026-10-23T15:21:46.6320667Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261012.163
+2026-10-23T15:21:46.6322052Z ##[endgroup]
+2026-10-23T15:21:46.6323752Z ##[group]GITHUB_TOKEN Permissions
+2026-10-23T15:21:46.6326580Z Contents: read
+2026-10-23T15:21:46.6327778Z Metadata: read
+2026-10-23T15:21:46.6328579Z Packages: read
+2026-10-23T15:21:46.6329429Z ##[endgroup]
+2026-10-23T15:21:46.6332712Z Secret source: Actions
+2026-10-23T15:21:46.6334264Z Cache mode: write
+2026-10-23T15:21:46.6335430Z Prepare workflow directory
+2026-10-23T15:21:46.6951333Z Prepare all required actions
+2026-10-23T15:21:46.7027546Z Getting action download info
+2026-10-23T15:21:47.0724457Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-23T15:21:47.2670423Z Complete job name: test
+2026-10-23T15:21:47.3435036Z ##[group]Run actions/checkout@v4
+2026-10-23T15:21:47.3435829Z with:
+2026-10-23T15:21:47.3436338Z   repository: Kashionz/orbis-sandbox
+2026-10-23T15:21:47.3440381Z   token: ***
+2026-10-23T15:21:47.3440875Z   ssh-strict: true
+2026-10-23T15:21:47.3441379Z   ssh-user: git
+2026-10-23T15:21:47.3441897Z   persist-credentials: true
+2026-10-23T15:21:47.3442436Z   clean: true
+2026-10-23T15:21:47.3442950Z   sparse-checkout-cone-mode: true
+2026-10-23T15:21:47.3443542Z   fetch-depth: 1
+2026-10-23T15:21:47.3444065Z   fetch-tags: false
+2026-10-23T15:21:47.3444578Z   show-progress: true
+2026-10-23T15:21:47.3445070Z   lfs: false
+2026-10-23T15:21:47.3445574Z   submodules: false
+2026-10-23T15:21:47.3446078Z   set-safe-directory: true
+2026-10-23T15:21:47.3446616Z   allow-unsafe-pr-checkout: false
+2026-10-23T15:21:47.3447616Z ##[endgroup]
+2026-10-23T15:21:47.4566007Z Syncing repository: Kashionz/orbis-sandbox
+2026-10-23T15:21:47.4571811Z ##[group]Getting Git version info
+2026-10-23T15:21:47.4574277Z Working directory is '/home/runner/work/orbis-sandbox/orbis-sandbox'
+2026-10-23T15:21:47.4576734Z [command]/usr/bin/git version
+2026-10-23T15:21:47.4716719Z git version 2.55.0
+2026-10-23T15:21:47.4724151Z ##[endgroup]
+2026-10-23T15:21:47.4743152Z Temporarily overriding HOME='/home/runner/work/_temp/5d001fb7-33ee-4644-a676-2ad9a0cae942' before making global git config changes
+2026-10-23T15:21:47.4745215Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T15:21:47.4746908Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orbis-sandbox/orbis-sandbox
+2026-10-23T15:21:47.4755723Z Deleting the contents of '/home/runner/work/orbis-sandbox/orbis-sandbox'
+2026-10-23T15:21:47.4759860Z ##[group]Initializing the repository
+2026-10-23T15:21:47.4779235Z [command]/usr/bin/git init /home/runner/work/orbis-sandbox/orbis-sandbox
+2026-10-23T15:21:47.4970840Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-23T15:21:47.4973166Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-23T15:21:47.4975702Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-23T15:21:47.4983041Z hint: call:
+2026-10-23T15:21:47.4984543Z hint:
+2026-10-23T15:21:47.4985657Z hint: 	git config --global init.defaultBranch <name>
+2026-10-23T15:21:47.4986988Z hint:
+2026-10-23T15:21:47.4988334Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-23T15:21:47.4989934Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-23T15:21:47.4991178Z hint:
+2026-10-23T15:21:47.4992094Z hint: 	git branch -m <name>
+2026-10-23T15:21:47.4993097Z hint:
+2026-10-23T15:21:47.4994308Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-23T15:21:47.5000757Z Initialized empty Git repository in /home/runner/work/orbis-sandbox/orbis-sandbox/.git/
+2026-10-23T15:21:47.5004693Z [command]/usr/bin/git remote add origin https://github.com/Kashionz/orbis-sandbox
+2026-10-23T15:21:47.5091812Z ##[endgroup]
+2026-10-23T15:21:47.5093742Z ##[group]Disabling automatic garbage collection
+2026-10-23T15:21:47.5097952Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-23T15:21:47.5145335Z ##[endgroup]
+2026-10-23T15:21:47.5146746Z ##[group]Setting up auth
+2026-10-23T15:21:47.5148650Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T15:21:47.5213102Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T15:21:47.5840473Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T15:21:47.6123078Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T15:21:47.6228098Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T15:21:47.6262051Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T15:21:47.6483706Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-23T15:21:47.6524739Z ##[endgroup]
+2026-10-23T15:21:47.6526420Z ##[group]Fetching the repository
+2026-10-23T15:21:47.6535919Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +c9e027817933b49e24589e0004deae336da2098c:refs/remotes/pull/8/merge
+2026-10-23T15:21:48.2070103Z From https://github.com/Kashionz/orbis-sandbox
+2026-10-23T15:21:48.2079819Z  * [new ref]         c9e027817933b49e24589e0004deae336da2098c -> pull/8/merge
+2026-10-23T15:21:48.2096944Z ##[endgroup]
+2026-10-23T15:21:48.2098975Z ##[group]Determining the checkout info
+2026-10-23T15:21:48.2100480Z ##[endgroup]
+2026-10-23T15:21:48.2101579Z [command]/usr/bin/git sparse-checkout disable
+2026-10-23T15:21:48.3299172Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-23T15:21:48.3690250Z ##[group]Checking out the ref
+2026-10-23T15:21:48.3692065Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/8/merge
+2026-10-23T15:21:48.3759568Z Note: switching to 'refs/remotes/pull/8/merge'.
+2026-10-23T15:21:48.3761060Z 
+2026-10-23T15:21:48.3762378Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-23T15:21:48.3764873Z changes and commit them, and you can discard any commits you make in this
+2026-10-23T15:21:48.3774818Z state without impacting any branches by switching back to a branch.
+2026-10-23T15:21:48.3776632Z 
+2026-10-23T15:21:48.3777799Z If you want to create a new branch to retain commits you create, you may
+2026-10-23T15:21:48.3779319Z do so (now or later) by using -c with the switch command. Example:
+2026-10-23T15:21:48.3780270Z 
+2026-10-23T15:21:48.3780591Z   git switch -c <new-branch-name>
+2026-10-23T15:21:48.3781373Z 
+2026-10-23T15:21:48.3781917Z Or undo this operation with:
+2026-10-23T15:21:48.3782862Z 
+2026-10-23T15:21:48.3783504Z   git switch -
+2026-10-23T15:21:48.3783912Z 
+2026-10-23T15:21:48.3785160Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-23T15:21:48.3786220Z 
+2026-10-23T15:21:48.3787550Z HEAD is now at c9e0278 Merge d79b717163784200e6e3f05258d4af7e4a44f740 into f6fbfabdf30382125cdaf1eb5b113461f74573d3
+2026-10-23T15:21:48.3792823Z ##[endgroup]
+2026-10-23T15:21:48.3880444Z [command]/usr/bin/git log -1 --format=%H
+2026-10-23T15:21:48.3909465Z c9e027817933b49e24589e0004deae336da2098c
+2026-10-23T15:21:48.4325199Z ##[group]Run echo "安裝依賴"
+2026-10-23T15:21:48.4326125Z [36;1mecho "安裝依賴"[0m
+2026-10-23T15:21:48.4737986Z shell: /usr/bin/bash -e {0}
+2026-10-23T15:21:48.4738931Z ##[endgroup]
+2026-10-23T15:21:48.5092103Z 安裝依賴
+2026-10-23T15:21:48.5276343Z ##[group]Run echo "執行測試"
+2026-10-23T15:21:48.5277180Z [36;1mecho "執行測試"[0m
+2026-10-23T15:21:48.5278256Z [36;1mif [ -f FAIL_TEST ]; then[0m
+2026-10-23T15:21:48.5279376Z [36;1m  echo "FAIL test/calculator.test.js > 加法 > 1 + 1 = 2"[0m
+2026-10-23T15:21:48.5280603Z [36;1m  echo "AssertionError: expected 3 to be 2"[0m
+2026-10-23T15:21:48.5281567Z [36;1m  exit 1[0m
+2026-10-23T15:21:48.5282118Z [36;1mfi[0m
+2026-10-23T15:21:48.5282692Z [36;1mecho "全部通過"[0m
+2026-10-23T15:21:48.5322053Z shell: /usr/bin/bash -e {0}
+2026-10-23T15:21:48.5322824Z ##[endgroup]
+2026-10-23T15:21:48.5391210Z 執行測試
+2026-10-23T15:21:48.5392313Z FAIL test/calculator.test.js > 加法 > 1 + 1 = 2
+2026-10-23T15:21:48.5395054Z AssertionError: expected 3 to be 2
+2026-10-23T15:21:48.5410779Z ##[error]Process completed with exit code 1.
+2026-10-23T15:21:48.5842032Z Post job cleanup.
+2026-10-23T15:21:48.6848628Z [command]/usr/bin/git version
+2026-10-23T15:21:48.6939931Z git version 2.55.0
+2026-10-23T15:21:48.6990575Z Temporarily overriding HOME='/home/runner/work/_temp/d6766ea7-d936-4fa3-8146-089575c7e98d' before making global git config changes
+2026-10-23T15:21:48.6995885Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-23T15:21:48.7000021Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orbis-sandbox/orbis-sandbox
+2026-10-23T15:21:48.8872557Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-23T15:21:48.8879939Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-23T15:21:48.9113199Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-23T15:21:48.9132151Z http.https://github.com/.extraheader
+2026-10-23T15:21:48.9144318Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-23T15:21:49.1181795Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-23T15:21:49.1320489Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-23T15:21:49.1381923Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-23T15:21:49.1773489Z Cleaning up orphan processes
+2026-10-23T15:21:49.2257242Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

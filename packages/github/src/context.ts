@@ -2,7 +2,16 @@
 
 import type { GitHubClient, RepoRef } from "./client/types";
 import type { KeyedMutex } from "./keyed-mutex";
-import type { DomainService, GitHubStore, Logger, Notifier, RepoRecord, TaskRecord } from "./ports";
+import type {
+  DomainService,
+  FeedbackDependencies,
+  GitHubStore,
+  Logger,
+  Notifier,
+  RepoRecord,
+  RepoSpecDependencies,
+  TaskRecord,
+} from "./ports";
 import type { WebhookSender } from "./webhook/payloads";
 
 export interface IntegrationContext {
@@ -18,6 +27,10 @@ export interface IntegrationContext {
   now: () => Date;
   /** 以 Task ID 為 key，序列化同一個 Task 的同步。 */
   taskLocks: KeyedMutex;
+  /** Feedback Loop 的依賴；Server 沒有提供時為 null（Feedback Loop 停用）。 */
+  feedback: FeedbackDependencies | null;
+  /** Repo Spec 提交的依賴；Server 沒有提供時為 null。 */
+  repoSpecs: RepoSpecDependencies | null;
 }
 
 /** 已安裝 App、可以呼叫 API 的 Repo。 */

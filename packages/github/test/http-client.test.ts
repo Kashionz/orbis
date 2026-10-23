@@ -2,7 +2,7 @@
 
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { createHttpGitHubClient } from "../src/client/http";
+import { createHttpGitHubClient, readTail } from "../src/client/http";
 import { GitHubApiError } from "../src/client/types";
 import { fixture } from "./helpers/world";
 
@@ -225,6 +225,43 @@ describe("HTTP GitHubClient", () => {
     ]);
   });
 
+  it("listReviewComments 從 PR 的行內留言中取出這份 review 的（帶行號），並翻頁", async () => {
+    const comment = (id: number, reviewId: number, line: number | null) => ({
+      id,
+      pull_request_review_id: reviewId,
+      user: { id: 1, login: "alice", type: "User" },
+      body: `留言 ${id}`,
+      path: "src/a.ts",
+      line,
+      start_line: null,
+      side: "RIGHT",
+      diff_hunk: "@@ -1 +1 @@",
+      html_url: `https://github.com/acme/app/pull/3#discussion_r${id}`,
+    });
+    const { client, requests } = setup([
+      tokenRoute,
+      (req) =>
+        req.url === "https://gh.test/repos/acme/app/pulls/3/comments?per_page=100"
+          ? json([comment(1, 40, 7), comment(2, 41, 9)], {
+              headers: {
+                "content-type": "application/json",
+                link: '<https://gh.test/repos/acme/app/pulls/3/comments?per_page=100&page=2>; rel="next"',
+              },
+            })
+          : undefined,
+      (req) =>
+        req.url.endsWith("/pulls/3/comments?per_page=100&page=2")
+          ? json([comment(3, 40, 12)])
+          : undefined,
+    ]);
+    const comments = await client.listReviewComments(5, { owner: "acme", name: "app" }, 3, 40);
+    expect(comments.map((c) => [c.id, c.reviewId, c.line, c.side])).toEqual([
+      [1, 40, 7, "RIGHT"],
+      [3, 40, 12, "RIGHT"],
+    ]);
+    expect(requests.some((r) => r.url.includes("/reviews/"))).toBe(false);
+  });
+
   it("getCollaboratorRole 回傳 role_name；不是 collaborator（404）時是 none", async () => {
     const { client } = setup([
       tokenRoute,
@@ -237,5 +274,31 @@ describe("HTTP GitHubClient", () => {
     expect(await client.getCollaboratorRole(5, repo, { login: "nobody", id: 12 })).toBe("none");
     // login 已經屬於另一個帳號（改名後被別人註冊）
     expect(await client.getCollaboratorRole(5, repo, { login: "alice", id: 99 })).toBe("none");
+  });
+});
+
+describe("readTail（job log 只讀最後的部分）", () => {
+  function streamed(parts: string[]): Response {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of parts) controller.enqueue(encoder.encode(part));
+        controller.close();
+      },
+    });
+    return new Response(body);
+  }
+
+  it("沒有超過上限時原樣回傳", async () => {
+    expect(await readTail(streamed(["a\n", "b\n"]), 100)).toBe("a\nb\n");
+  });
+
+  it("超過上限時只保留最後的部分，並丟掉被截斷的第一行", async () => {
+    const parts = Array.from({ length: 1000 }, (_, i) => `第 ${i} 行\n`);
+    const text = await readTail(streamed(parts), 200);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(200);
+    expect(text.endsWith("第 999 行\n")).toBe(true);
+    expect(text.startsWith("第 ")).toBe(true);
+    expect(text).not.toContain("第 0 行");
   });
 });

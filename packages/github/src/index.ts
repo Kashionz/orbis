@@ -11,6 +11,12 @@ export {
   loadGitHubAppConfig,
 } from "./config";
 export { appBotLogin } from "./context";
+export { type FlushOutcome, LOOSE_COMMENT_DELAY_MS } from "./feedback/dispatch";
+export {
+  FAILING_CONCLUSIONS,
+  type FeedbackEventOutcome,
+  type FeedbackIgnoreReason,
+} from "./feedback/trigger";
 export {
   createGitHubIntegration,
   type GitHubIntegration,
@@ -19,10 +25,16 @@ export {
 export type { ImportableIssue, ImportResult } from "./issues/import";
 export { RepoNotConnectedError } from "./issues/import";
 export type { IssueEventOutcome, PushOutcome } from "./issues/sync";
-export { PULL_REQUEST_MARKER, SUMMARY_MARKER } from "./markdown";
+export { PULL_REQUEST_MARKER, REPO_SPEC_PULL_REQUEST_MARKER, SUMMARY_MARKER } from "./markdown";
 export * from "./ports";
 export type { BranchPushed, OpenPullRequestResult, PullRequestEventOutcome } from "./pull-requests";
-export { installUrl, type RepoInspection } from "./repos";
+export type {
+  CommitRepoSpecInput,
+  CommitRepoSpecResult,
+  RepoSpecPullRequestOutcome,
+} from "./repo-specs";
+export { isCommittableSpecPath } from "./repo-specs";
+export { installUrl, type RepoInspection, type RepoInstallationRefresh } from "./repos";
 export { createGitHubWebhookRoutes } from "./routes";
 export {
   DELIVERY_STALE_AFTER_MS,

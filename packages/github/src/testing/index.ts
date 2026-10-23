@@ -4,10 +4,12 @@ export { TestClock } from "./clock";
 export {
   type DomainClock,
   FakeDomainService,
+  FakeFeedbackRuns,
+  FakeRepoSpecs,
   MemoryLogger,
   type RecordedNotification,
   type RecordedTransition,
   RecordingNotifier,
 } from "./fake-domain";
-export { type FakeCall, type FakeComment, FakeGitHub, type FakeRepo } from "./fake-github";
+export { blobSha, type FakeCall, type FakeComment, FakeGitHub, type FakeRepo } from "./fake-github";
 export { InMemoryGitHubStore } from "./memory-store";

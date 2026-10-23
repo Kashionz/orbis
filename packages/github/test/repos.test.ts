@@ -82,6 +82,143 @@ describe("Repo 登記", () => {
   });
 });
 
+describe("重新檢查 App 安裝狀態", () => {
+  const INSTALL_URL = "https://github.com/apps/acme-pm/installations/new";
+
+  /** 登記 Repo 時 App 還沒安裝，之後在 GitHub 上安裝了，但 installation webhook 沒有送到。 */
+  function missedWebhook() {
+    const w = createWorld();
+    w.github.addRepo({
+      id: 4242,
+      owner: "Acme",
+      name: "Later",
+      defaultBranch: "trunk",
+      installationId: 9_000,
+    });
+    w.domain.addRepo({
+      id: "repo-later",
+      projectId: PROJECT_ID,
+      owner: "Acme",
+      name: "Later",
+      githubRepoId: null,
+      defaultBranch: "main",
+      installationId: null,
+    });
+    w.github.roles.set(w.alice.githubLogin, "write");
+    return w;
+  }
+
+  it("漏掉 webhook 之後重新檢查：補上 installation、repo id 與 default branch", async () => {
+    const w = missedWebhook();
+    expect(await w.integration.refreshRepoInstallation("repo-later", w.alice.id)).toEqual({
+      status: "installed",
+      installationId: 9_000,
+      githubRepoId: 4242,
+      defaultBranch: "trunk",
+      changed: true,
+    });
+    expect(w.domain.repos.get("repo-later")).toMatchObject({
+      installationId: 9_000,
+      githubRepoId: 4242,
+      defaultBranch: "trunk",
+    });
+  });
+
+  it("狀態已經正確時不寫入", async () => {
+    const w = createWorld();
+    expect(await w.integration.refreshRepoInstallation(REPO_ID, w.alice.id)).toMatchObject({
+      status: "installed",
+      changed: false,
+    });
+    expect(w.domain.repoUpdates).toEqual([]);
+  });
+
+  it("提出請求的 Member 本人沒有寫入權限：回應與沒有安裝相同，不改資料", async () => {
+    const w = missedWebhook();
+    for (const role of ["none", "read", "triage"] as const) {
+      w.github.roles.set(w.alice.githubLogin, role);
+      expect(await w.integration.refreshRepoInstallation("repo-later", w.alice.id), role).toEqual({
+        status: "not_installed",
+        installUrl: INSTALL_URL,
+        changed: false,
+      });
+    }
+    expect(await w.integration.refreshRepoInstallation("repo-later", "no-such-member")).toEqual({
+      status: "not_installed",
+      installUrl: INSTALL_URL,
+      changed: false,
+    });
+    expect(w.domain.repoUpdates).toEqual([]);
+  });
+
+  it("提出請求的人不是這個 Project 的 Member：就算對 repo 有寫入權限也不查詢、不改資料", async () => {
+    const w = missedWebhook();
+    const carol = w.domain.addMember(
+      { id: "member-carol", githubUserId: 4004, githubLogin: "carol" },
+      ["other-project"],
+    );
+    w.github.addUser({ id: carol.githubUserId, login: carol.githubLogin, type: "User" });
+    w.github.roles.set(carol.githubLogin, "admin");
+    expect(await w.integration.refreshRepoInstallation("repo-later", carol.id)).toEqual({
+      status: "not_installed",
+      installUrl: INSTALL_URL,
+      changed: false,
+    });
+    expect(w.github.callsTo("findRepoInstallation")).toEqual([]);
+    expect(w.domain.repoUpdates).toEqual([]);
+  });
+
+  it("repo 在 GitHub 上改名（以舊名稱查不到）：原本的 installation 還能存取這個 repo id，不清掉", async () => {
+    const w = createWorld();
+    w.repo.name = "renamed";
+    expect(await w.integration.refreshRepoInstallation(REPO_ID, w.alice.id)).toMatchObject({
+      status: "not_installed",
+      changed: false,
+    });
+    expect(w.domain.repos.get(REPO_ID)?.installationId).toBe(w.repo.installationId);
+  });
+
+  it("App 已經從 repo 移除（也漏掉 webhook）：清掉 installation", async () => {
+    const w = createWorld();
+    w.repo.installationId = null;
+    expect(await w.integration.refreshRepoInstallation(REPO_ID, w.alice.id)).toEqual({
+      status: "not_installed",
+      installUrl: INSTALL_URL,
+      changed: true,
+    });
+    expect(w.domain.repos.get(REPO_ID)?.installationId).toBeNull();
+    // 再檢查一次不會重複寫入
+    await w.integration.refreshRepoInstallation(REPO_ID, w.alice.id);
+    expect(w.domain.repoUpdates).toHaveLength(1);
+  });
+
+  it("GitHub 上同名 repo 的 id 與登記時不同：不改綁，回 repo_mismatch", async () => {
+    const w = createWorld();
+    // repo 被刪掉後，有人以同樣的名稱重建（id 不同），而且安裝了 App
+    w.github.repos.splice(0, 1);
+    w.github.addRepo({
+      id: 999_999,
+      owner: w.repo.owner,
+      name: w.repo.name,
+      defaultBranch: "main",
+      installationId: 7_777,
+    });
+    expect(await w.integration.refreshRepoInstallation(REPO_ID, w.alice.id)).toEqual({
+      status: "repo_mismatch",
+      githubRepoId: 999_999,
+      registeredGithubRepoId: w.repo.id,
+    });
+    expect(w.domain.repoUpdates).toEqual([]);
+  });
+
+  it("Repo 不存在：not_found", async () => {
+    const w = createWorld();
+    expect(await w.integration.refreshRepoInstallation("no-such-repo", w.alice.id)).toEqual({
+      status: "not_found",
+    });
+  });
+});
+
 describe("installation webhook", () => {
   it("deleted：清掉 Repo 的 installation 與 token 快取", async () => {
     const w = createWorld();

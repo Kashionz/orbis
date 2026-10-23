@@ -1,7 +1,8 @@
 // 手動驗證用的 dev harness：真實的 GitHub App ＋ in-memory 的 Task（FakeDomainService）。
-// Server（B 軌）完成前，用它在測試 repo 上走過 Issue 雙向同步、開 PR、merge 後轉 Done。
+// Server（B 軌）完成前，用它在測試 repo 上走過 Issue 雙向同步、開 PR、merge 後轉 Done，
+// 以及 Feedback Loop 的觸發與紀錄（修正的 Run 用 FakeFeedbackRuns，不真的執行 Agent）。
 //
-//   pnpm --filter @orbis/github dev:harness --repo Kashionz/orbis-sandbox --member Kashionz:13392701 [--port 4402]
+//   pnpm --filter @orbis/github dev:harness --repo Kashionz/orbis-sandbox --member Kashionz:13392701 [--port 4402] [--bot <login>]
 //
 // webhook 用 smee.io 轉到本機：npx smee-client --url <channel> --target http://localhost:4402/api/webhooks/github
 //
@@ -10,7 +11,10 @@
 //   POST  /dev/tasks                      { title, description?, labels?, assignee?(login), status? } 建立 Task 並同步
 //   PATCH /dev/tasks/:id                  { title?, description?, labels?, assignee?, status? } 修改 Task 並同步
 //   PUT   /dev/tasks/:id/criteria         [{ kind, description, result }] 設定 Acceptance Criterion 並同步
-//   POST  /dev/tasks/:id/branch-pushed    { branch, commitSha } 模擬 Runner push 完成 → 開 PR
+//   POST  /dev/tasks/:id/branch-pushed    { branch, commitSha, runId? } 模擬 Runner push 完成 → 開 PR；
+//                                         runId 是 Feedback Loop 修正的 Run（fix-run-N）時結束那次修正
+//   POST  /dev/feedback/runs/:runId/ended  模擬修正的 Run 沒有 push 就結束
+//   GET   /dev/feedback                   Feedback Loop 的批次、紀錄、送出的 prompt、Task note
 //   GET   /dev/importable-issues
 //   POST  /dev/import                     { issueNumbers }
 
@@ -24,6 +28,7 @@ import type { AcceptanceCriterionRecord, TaskRecord } from "../src/ports";
 import { createGitHubWebhookRoutes } from "../src/routes";
 import {
   FakeDomainService,
+  FakeFeedbackRuns,
   InMemoryGitHubStore,
   MemoryLogger,
   RecordingNotifier,
@@ -37,6 +42,8 @@ const { values } = parseArgs({
     repo: { type: "string" },
     member: { type: "string", multiple: true, default: [] },
     port: { type: "string", default: "4402" },
+    /** Feedback Loop 的 bot 白名單（可以重複指定）。 */
+    bot: { type: "string", multiple: true, default: [] },
   },
 });
 if (!values.repo?.includes("/")) throw new Error("請用 --repo <owner>/<name> 指定測試 repo");
@@ -70,6 +77,10 @@ const consoleLogger = {
   },
 };
 
+const feedbackRuns = new FakeFeedbackRuns();
+const taskNotes: { taskId: string; runId: string | null; body: string; url: string | null }[] = [];
+const botAllowlist = values.bot;
+
 const port = Number(values.port);
 const github = createGitHubIntegration({
   config,
@@ -78,7 +89,17 @@ const github = createGitHubIntegration({
   notifier,
   logger: consoleLogger,
   taskUrl: (task) => `http://localhost:${port}/dev/tasks/${task.id}`,
+  feedback: {
+    store,
+    runs: feedbackRuns,
+    botAllowlist: async () => botAllowlist,
+    addTaskNote: async (note) => {
+      taskNotes.push(note);
+      console.log(`[task note] ${note.body} ${note.url ?? ""}`);
+    },
+  },
 });
+github.startFeedbackTimer(5_000);
 
 // harness 的第一個 --member 視為登記 Repo 的人
 const requester = values.member[0]?.split(":") ?? [];
@@ -172,10 +193,31 @@ app.put("/dev/tasks/:id/criteria", async (c) => {
 });
 
 app.post("/dev/tasks/:id/branch-pushed", async (c) => {
-  const input = (await c.req.json()) as { branch: string; commitSha: string };
+  const input = (await c.req.json()) as { branch: string; commitSha: string; runId?: string };
   const taskId = c.req.param("id");
-  return c.json(await github.onBranchPushed({ taskId, runId: `dev-run-${taskId}`, ...input }));
+  return c.json(
+    await github.onBranchPushed({
+      taskId,
+      runId: input.runId ?? `dev-run-${taskId}`,
+      branch: input.branch,
+      commitSha: input.commitSha,
+    }),
+  );
 });
+
+app.post("/dev/feedback/runs/:runId/ended", async (c) =>
+  c.json(await github.onFeedbackRunEnded({ runId: c.req.param("runId") })),
+);
+
+app.get("/dev/feedback", (c) =>
+  c.json({
+    batches: [...store.feedbackBatches.values()],
+    fixes: [...store.feedbackFixes.values()],
+    requests: feedbackRuns.requests,
+    taskNotes,
+    notifications: notifier.sent,
+  }),
+);
 
 app.get("/dev/importable-issues", async (c) => c.json(await github.listImportableIssues(REPO_ID)));
 

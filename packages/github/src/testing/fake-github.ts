@@ -1,15 +1,22 @@
 // in-memory 的 GitHub：實作 GitHubClient，並提供「有人在 GitHub 上操作」的輔助方法。
 // 每次寫入時鐘前進 1 秒，讓 updated_at 嚴格遞增。
 
+import { createHash } from "node:crypto";
 import type { InstallationToken } from "../auth/installation-tokens";
 import {
   GitHubApiError,
+  type GitHubCheckAnnotation,
+  type GitHubCheckRun,
+  type GitHubCheckSuite,
   type GitHubClient,
+  type GitHubFileContent,
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepository,
+  type GitHubReviewComment,
   type GitHubUserRef,
   type IssuePatch,
+  type PutFileInput,
   type RepoRef,
   type RepoRole,
   type TokenScope,
@@ -34,6 +41,16 @@ export interface FakeCall {
 
 const clone = <T>(value: T): T => structuredClone(value);
 
+/** git 的 blob SHA（與 `git hash-object` 相同）。 */
+export function blobSha(content: string): string {
+  return createHash("sha1")
+    .update(`blob ${Buffer.byteLength(content)}\0${content}`)
+    .digest("hex");
+}
+
+/** commit：完整的檔案快照（路徑 → 內容）。 */
+type Snapshot = Map<string, string>;
+
 export class FakeGitHub implements GitHubClient {
   readonly repos: FakeRepo[] = [];
   readonly issues = new Map<number, GitHubIssue[]>();
@@ -45,6 +62,20 @@ export class FakeGitHub implements GitHubClient {
   readonly forgotten: number[] = [];
   /** 各帳號對 repo 的角色；沒有設定的是 `none`。 */
   readonly roles = new Map<string, RepoRole>();
+  /** review 的行內留言，以 review id 為 key。 */
+  readonly reviewComments = new Map<number, GitHubReviewComment[]>();
+  /** 各 commit 的 check suite 與 check run，以 SHA 為 key。 */
+  readonly checkSuites = new Map<string, GitHubCheckSuite[]>();
+  readonly checkRuns = new Map<string, GitHubCheckRun[]>();
+  /** check run 的 annotations 與 GitHub Actions 的 job log，以 check run id 為 key。 */
+  readonly annotations = new Map<number, GitHubCheckAnnotation[]>();
+  readonly jobLogs = new Map<number, string>();
+  /** App 沒有 `actions: read` 權限：讀 job log 時回 403。 */
+  actionsReadDenied = false;
+  /** git 的最小模型：commit SHA → 檔案快照；各 repo 的分支 → commit SHA。 */
+  readonly commits = new Map<string, Snapshot>();
+  readonly branches = new Map<number, Map<string, string>>();
+  #commitCounter = 0;
   #nextId = 1000;
   #failures: { method: keyof GitHubClient; error: Error }[] = [];
 
@@ -60,7 +91,57 @@ export class FakeGitHub implements GitHubClient {
     this.issues.set(full.id, []);
     this.comments.set(full.id, []);
     this.pulls.set(full.id, []);
+    this.branches.set(full.id, new Map([[full.defaultBranch, this.#commit(new Map())]]));
     return full;
+  }
+
+  #commit(snapshot: Snapshot): string {
+    const sha = createHash("sha1")
+      .update(`commit ${++this.#commitCounter}`)
+      .digest("hex");
+    this.commits.set(sha, new Map(snapshot));
+    return sha;
+  }
+
+  #snapshot(repoId: number, ref: string): Snapshot | null {
+    const sha = this.branches.get(repoId)?.get(ref) ?? ref;
+    return this.commits.get(sha) ?? null;
+  }
+
+  /** 檔案在分支或 commit 上的內容；不存在時回傳 null。 */
+  fileAt(repoId: number, ref: string, path: string): string | null {
+    return this.#snapshot(repoId, ref)?.get(path) ?? null;
+  }
+
+  /** 有人直接 commit 到分支上（例如在 default branch 上修改 Spec 檔）。回傳新的 commit。 */
+  humanCommit(repoId: number, branch: string, path: string, content: string): string {
+    const snapshot = new Map(this.#snapshot(repoId, branch) ?? []);
+    snapshot.set(path, content);
+    const sha = this.#commit(snapshot);
+    this.branches.get(repoId)?.set(branch, sha);
+    return sha;
+  }
+
+  /** 有人在 GitHub 上 merge PR：head 的檔案疊到 base 上，回傳 merge commit。 */
+  humanMergePullRequest(repoId: number, number: number): string {
+    const pull = this.pulls.get(repoId)?.find((p) => p.number === number);
+    if (!pull) throw new Error(`沒有 PR #${number}`);
+    const merged = new Map([
+      ...(this.#snapshot(repoId, pull.baseRef) ?? []),
+      ...(this.#snapshot(repoId, pull.headRef) ?? []),
+    ]);
+    const sha = this.#commit(merged);
+    this.branches.get(repoId)?.set(pull.baseRef, sha);
+    pull.state = "closed";
+    pull.merged = true;
+    return sha;
+  }
+
+  /** 有人在 GitHub 上關閉 PR（沒有 merge）。 */
+  humanClosePullRequest(repoId: number, number: number): void {
+    const pull = this.pulls.get(repoId)?.find((p) => p.number === number);
+    if (!pull) throw new Error(`沒有 PR #${number}`);
+    pull.state = "closed";
   }
 
   addUser(user: GitHubUserRef): void {
@@ -273,7 +354,10 @@ export class FakeGitHub implements GitHubClient {
   ) {
     this.#record("createIssueComment", [installationId, ref, issueNumber, body]);
     const repo = this.#repo(ref, installationId);
-    this.issue(repo.id, issueNumber);
+    // PR 也可以留言（PR 的對話串就是 Issue 的留言）
+    if (!this.pulls.get(repo.id)?.some((p) => p.number === issueNumber)) {
+      this.issue(repo.id, issueNumber);
+    }
     const comment = { id: this.#nextId++, issueNumber, body, author: this.bot.login };
     this.comments.get(repo.id)?.push(comment);
     return { id: comment.id };
@@ -318,6 +402,95 @@ export class FakeGitHub implements GitHubClient {
     this.#tick();
     this.pulls.get(repo.id)?.push(pull);
     return clone(pull);
+  }
+
+  async listReviewComments(
+    installationId: number,
+    ref: RepoRef,
+    pullNumber: number,
+    reviewId: number,
+  ) {
+    this.#record("listReviewComments", [installationId, ref, pullNumber, reviewId]);
+    this.#repo(ref, installationId);
+    return clone(this.reviewComments.get(reviewId) ?? []);
+  }
+
+  async listCheckSuites(installationId: number, ref: RepoRef, sha: string) {
+    this.#record("listCheckSuites", [installationId, ref, sha]);
+    this.#repo(ref, installationId);
+    return clone(this.checkSuites.get(sha) ?? []);
+  }
+
+  async listCheckRuns(installationId: number, ref: RepoRef, sha: string) {
+    this.#record("listCheckRuns", [installationId, ref, sha]);
+    this.#repo(ref, installationId);
+    return clone(this.checkRuns.get(sha) ?? []);
+  }
+
+  async listCheckRunAnnotations(installationId: number, ref: RepoRef, checkRunId: number) {
+    this.#record("listCheckRunAnnotations", [installationId, ref, checkRunId]);
+    this.#repo(ref, installationId);
+    return clone(this.annotations.get(checkRunId) ?? []);
+  }
+
+  async getActionsJobLog(installationId: number, ref: RepoRef, jobId: number) {
+    this.#record("getActionsJobLog", [installationId, ref, jobId]);
+    this.#repo(ref, installationId);
+    if (this.actionsReadDenied) {
+      throw new GitHubApiError(403, "Resource not accessible by integration");
+    }
+    return this.jobLogs.get(jobId) ?? null;
+  }
+
+  async getBranchHead(installationId: number, ref: RepoRef, branch: string) {
+    this.#record("getBranchHead", [installationId, ref, branch]);
+    const repo = this.#repo(ref, installationId);
+    return this.branches.get(repo.id)?.get(branch) ?? null;
+  }
+
+  async createBranch(installationId: number, ref: RepoRef, branch: string, sha: string) {
+    this.#record("createBranch", [installationId, ref, branch, sha]);
+    const repo = this.#repo(ref, installationId);
+    const branches = this.branches.get(repo.id);
+    if (!branches || branches.has(branch)) {
+      throw new GitHubApiError(422, "Reference already exists");
+    }
+    if (!this.commits.has(sha)) throw new GitHubApiError(422, "Object does not exist");
+    branches.set(branch, sha);
+  }
+
+  async getFileContent(
+    installationId: number,
+    ref: RepoRef,
+    path: string,
+    gitRef: string,
+  ): Promise<GitHubFileContent | null> {
+    this.#record("getFileContent", [installationId, ref, path, gitRef]);
+    const repo = this.#repo(ref, installationId);
+    const content = this.fileAt(repo.id, gitRef, path);
+    return content === null ? null : { sha: blobSha(content), content };
+  }
+
+  async putFile(installationId: number, ref: RepoRef, input: PutFileInput) {
+    this.#record("putFile", [installationId, ref, input]);
+    const repo = this.#repo(ref, installationId);
+    const snapshot = this.#snapshot(repo.id, input.branch);
+    if (!snapshot || !this.branches.get(repo.id)?.has(input.branch)) {
+      throw new GitHubApiError(404, "Branch not found");
+    }
+    const current = snapshot.get(input.path);
+    if (current !== undefined && input.sha !== blobSha(current)) {
+      throw new GitHubApiError(409, "sha does not match");
+    }
+    if (current === undefined && input.sha !== undefined) {
+      throw new GitHubApiError(422, "sha given for a new file");
+    }
+    const next = new Map(snapshot);
+    next.set(input.path, input.content);
+    const commitSha = this.#commit(next);
+    this.branches.get(repo.id)?.set(input.branch, commitSha);
+    this.#tick();
+    return { commitSha, blobSha: blobSha(input.content) };
   }
 
   // ── 模擬有人在 GitHub 上操作 ──────────────────────────────────

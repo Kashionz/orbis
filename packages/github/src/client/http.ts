@@ -6,9 +6,14 @@ import { createAppJwtSigner } from "../auth/app-jwt";
 import { type InstallationToken, InstallationTokenCache } from "../auth/installation-tokens";
 import {
   GitHubApiError,
+  type GitHubCheckAnnotation,
+  type GitHubCheckRun,
+  type GitHubCheckSuite,
   type GitHubClient,
+  type GitHubFileContent,
   type GitHubIssue,
   type GitHubPullRequest,
+  type GitHubReviewComment,
   type RepoRef,
   type RepoRole,
   type TokenScope,
@@ -65,6 +70,73 @@ const PullRequestResponse = z.object({
   base: z.object({ ref: z.string() }),
 });
 
+const ReviewCommentResponse = z.object({
+  id: z.number(),
+  pull_request_review_id: z.number().nullable().optional(),
+  user: UserRef,
+  body: z.string(),
+  path: z.string(),
+  line: z.number().nullable().optional(),
+  start_line: z.number().nullable().optional(),
+  side: z.enum(["LEFT", "RIGHT"]).nullable().optional().catch(null),
+  diff_hunk: z.string(),
+  html_url: z.string(),
+});
+
+const AppRef = z.object({ slug: z.string() }).nullable().optional();
+
+const CheckSuitesResponse = z.object({
+  check_suites: z.array(
+    z.object({
+      id: z.number(),
+      app: AppRef,
+      status: z.string().nullable(),
+      conclusion: z.string().nullable(),
+      latest_check_runs_count: z.number().optional(),
+    }),
+  ),
+});
+
+const CheckRunsResponse = z.object({
+  check_runs: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      status: z.string(),
+      conclusion: z.string().nullable(),
+      app: AppRef,
+      html_url: z.string().nullable(),
+      output: z
+        .object({ title: z.string().nullable(), summary: z.string().nullable() })
+        .partial()
+        .optional(),
+    }),
+  ),
+});
+
+const AnnotationsResponse = z.array(
+  z.object({
+    path: z.string(),
+    start_line: z.number().nullable().optional(),
+    end_line: z.number().nullable().optional(),
+    annotation_level: z.string().nullable().optional(),
+    title: z.string().nullable().optional(),
+    message: z.string(),
+  }),
+);
+
+const RefResponse = z.object({ object: z.object({ sha: z.string() }) });
+const ContentResponse = z.object({
+  type: z.string(),
+  sha: z.string(),
+  content: z.string().optional(),
+  encoding: z.string().optional(),
+});
+const PutFileResponse = z.object({
+  content: z.object({ sha: z.string() }),
+  commit: z.object({ sha: z.string() }),
+});
+
 const PermissionResponse = z.object({
   permission: z.string(),
   role_name: z.string().optional(),
@@ -109,6 +181,53 @@ function toPullRequest(raw: z.infer<typeof PullRequestResponse>): GitHubPullRequ
     headSha: raw.head.sha,
     baseRef: raw.base.ref,
   };
+}
+
+function toReviewComment(raw: z.infer<typeof ReviewCommentResponse>): GitHubReviewComment {
+  return {
+    id: raw.id,
+    reviewId: raw.pull_request_review_id ?? null,
+    user: { id: raw.user.id, login: raw.user.login, type: raw.user.type },
+    body: raw.body,
+    path: raw.path,
+    line: raw.line ?? null,
+    startLine: raw.start_line ?? null,
+    side: raw.side ?? null,
+    diffHunk: raw.diff_hunk,
+    htmlUrl: raw.html_url,
+  };
+}
+
+/** job log 最多讀幾個 byte。log 可能很大，只保留最後的部分（錯誤通常在最後）。 */
+export const MAX_JOB_LOG_BYTES = 8 * 1024 * 1024;
+
+/** 以串流讀取 body，只保留最後 `maxBytes`；有截掉時丟掉第一個不完整的行。 */
+export async function readTail(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let dropped = false;
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+    size += chunk.byteLength;
+    // 去掉前面的 chunk，但至少保留 maxBytes
+    while (chunks.length > 1 && size - (chunks[0]?.byteLength ?? 0) >= maxBytes) {
+      size -= chunks.shift()?.byteLength ?? 0;
+      dropped = true;
+    }
+  }
+  let bytes = Buffer.concat(chunks);
+  if (bytes.byteLength > maxBytes) {
+    bytes = bytes.subarray(bytes.byteLength - maxBytes);
+    dropped = true;
+  }
+  const text = bytes.toString("utf8");
+  return dropped ? text.slice(text.indexOf("\n") + 1) : text;
+}
+
+/** repo 內的路徑（以 `/` 分隔）逐段編碼。 */
+function contentPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 function repoPath(repo: RepoRef): string {
@@ -394,6 +513,173 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
           }),
         ),
       );
+    },
+
+    async listReviewComments(installationId, repo, pullNumber, reviewId) {
+      // `GET /pulls/{n}/reviews/{id}/comments` 的回應沒有 line、start_line、side，
+      // 所以列出 PR 的所有行內留言，再以 pull_request_review_id 過濾。
+      const comments: GitHubReviewComment[] = [];
+      let url: string | null = `${repoPath(repo)}/pulls/${pullNumber}/comments?per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request(
+          "GET",
+          url,
+          inst(installationId),
+          z.array(ReviewCommentResponse),
+        );
+        if (!result) break;
+        comments.push(
+          ...result.data.filter((c) => c.pull_request_review_id === reviewId).map(toReviewComment),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return comments;
+    },
+
+    async listCheckSuites(installationId, repo, sha) {
+      const suites: GitHubCheckSuite[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/commits/${encodeURIComponent(sha)}/check-suites?per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request("GET", url, inst(installationId), CheckSuitesResponse);
+        if (!result) break;
+        suites.push(
+          ...result.data.check_suites.map((s) => ({
+            id: s.id,
+            appSlug: s.app?.slug ?? "",
+            status: s.status ?? "queued",
+            conclusion: s.conclusion,
+            latestCheckRunsCount: s.latest_check_runs_count ?? 0,
+          })),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return suites;
+    },
+
+    async listCheckRuns(installationId, repo, sha) {
+      const runs: GitHubCheckRun[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/commits/${encodeURIComponent(sha)}/check-runs?filter=latest&per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request("GET", url, inst(installationId), CheckRunsResponse);
+        if (!result) break;
+        runs.push(
+          ...result.data.check_runs.map((r) => ({
+            id: r.id,
+            name: r.name,
+            status: r.status,
+            conclusion: r.conclusion,
+            appSlug: r.app?.slug ?? "",
+            htmlUrl: r.html_url ?? "",
+            outputTitle: r.output?.title ?? null,
+            outputSummary: r.output?.summary ?? null,
+          })),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return runs;
+    },
+
+    async listCheckRunAnnotations(installationId, repo, checkRunId) {
+      const annotations: GitHubCheckAnnotation[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/check-runs/${checkRunId}/annotations?per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request("GET", url, inst(installationId), AnnotationsResponse, {
+          allowNotFound: true,
+        });
+        if (!result) break;
+        annotations.push(
+          ...result.data.map((a) => ({
+            path: a.path,
+            startLine: a.start_line ?? null,
+            endLine: a.end_line ?? null,
+            level: a.annotation_level ?? "notice",
+            title: a.title || null,
+            message: a.message,
+          })),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return annotations;
+    },
+
+    async getActionsJobLog(installationId, repo, jobId) {
+      // 回應是 302 轉到暫時的下載網址；fetch 會跟著轉址，跨網域轉址時不會帶上 authorization。
+      const path = `${repoPath(repo)}/actions/jobs/${jobId}/logs`;
+      const auth = inst(installationId);
+      let response = await send("GET", path, auth);
+      if (response.status === 401) {
+        tokens.invalidate(installationId);
+        response = await send("GET", path, auth);
+      }
+      if (response.status === 404 || response.status === 410) return null;
+      if (!response.ok) {
+        throw new GitHubApiError(
+          response.status,
+          `GitHub API GET ${path} 失敗：HTTP ${response.status}`,
+        );
+      }
+      return readTail(response, MAX_JOB_LOG_BYTES);
+    },
+
+    async getBranchHead(installationId, repo, branch) {
+      const result = await request(
+        "GET",
+        `${repoPath(repo)}/git/ref/heads/${contentPath(branch)}`,
+        inst(installationId),
+        RefResponse,
+        { allowNotFound: true },
+      );
+      return result ? result.data.object.sha : null;
+    },
+
+    async createBranch(installationId, repo, branch, sha) {
+      await must(
+        request("POST", `${repoPath(repo)}/git/refs`, inst(installationId), RefResponse, {
+          body: { ref: `refs/heads/${branch}`, sha },
+        }),
+      );
+    },
+
+    async getFileContent(installationId, repo, path, ref): Promise<GitHubFileContent | null> {
+      const query = new URLSearchParams({ ref });
+      const result = await request(
+        "GET",
+        `${repoPath(repo)}/contents/${contentPath(path)}?${query}`,
+        inst(installationId),
+        ContentResponse,
+        { allowNotFound: true },
+      );
+      if (!result) return null;
+      const data = result.data;
+      if (data.type !== "file") throw new GitHubApiError(422, `${path} 不是檔案`);
+      const content =
+        data.encoding === "base64"
+          ? Buffer.from((data.content ?? "").replace(/\s/g, ""), "base64").toString("utf8")
+          : (data.content ?? "");
+      return { sha: data.sha, content };
+    },
+
+    async putFile(installationId, repo, input) {
+      const data = await must(
+        request(
+          "PUT",
+          `${repoPath(repo)}/contents/${contentPath(input.path)}`,
+          inst(installationId),
+          PutFileResponse,
+          {
+            body: {
+              message: input.message,
+              content: Buffer.from(input.content, "utf8").toString("base64"),
+              branch: input.branch,
+              ...(input.sha ? { sha: input.sha } : {}),
+            },
+          },
+        ),
+      );
+      return { commitSha: data.commit.sha, blobSha: data.content.sha };
     },
   };
 }

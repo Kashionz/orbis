@@ -3,9 +3,11 @@
 import { senderCanWrite } from "./authz";
 import { GitHubApiError } from "./client/types";
 import { connectedRepo, type IntegrationContext, taskOwner } from "./context";
+import { finishFeedbackFix } from "./feedback/dispatch";
 import { pushTask } from "./issues/sync";
 import { pullRequestTitle, renderPullRequestBody } from "./markdown";
 import type { PullRequestLink } from "./ports";
+import { handleRepoSpecPullRequestEvent, type RepoSpecPullRequestOutcome } from "./repo-specs";
 import type { PullRequestPayload } from "./webhook/payloads";
 
 export interface BranchPushed {
@@ -94,6 +96,8 @@ export async function openPullRequest(
       state: "open",
     };
     await ctx.store.savePullRequestLink(link);
+    // Feedback Loop 的修正 push 了：更新紀錄，並送出修正期間累積的回饋。
+    await finishFeedbackFix(ctx, pushed.runId, { pushed: true, commitSha: pushed.commitSha });
     return { ok: true, number: pr.number, url: pr.htmlUrl, created };
   } catch (error) {
     if (!(error instanceof GitHubApiError)) throw error;
@@ -113,6 +117,10 @@ export async function openPullRequest(
 
 export type PullRequestEventOutcome =
   | { kind: "ignored"; reason: "unhandled_action" | "not_linked" | "already_handled" }
+  /** PR 有新的 commit：記下目前的 head（Feedback Loop 只採用 head 的 CI 結果）。 */
+  | { kind: "synchronized"; headSha: string }
+  /** 提交 Repo Spec 開出的 PR。 */
+  | { kind: "repo_spec"; outcome: RepoSpecPullRequestOutcome }
   | { kind: "merged"; taskId: string; transitioned: boolean }
   | { kind: "closed"; taskId: string; transitioned: boolean }
   | { kind: "reopened"; taskId: string; transitioned: boolean }
@@ -130,11 +138,26 @@ export async function handlePullRequestEvent(
   ctx: IntegrationContext,
   payload: PullRequestPayload,
 ): Promise<PullRequestEventOutcome> {
-  if (payload.action !== "closed" && payload.action !== "reopened") {
+  if (
+    payload.action !== "closed" &&
+    payload.action !== "reopened" &&
+    payload.action !== "synchronize"
+  ) {
     return { kind: "ignored", reason: "unhandled_action" };
+  }
+  const specPullRequest = await ctx.repoSpecs?.store.findRepoSpecPullRequest(
+    payload.repository.id,
+    payload.number,
+  );
+  if (specPullRequest) {
+    return {
+      kind: "repo_spec",
+      outcome: await handleRepoSpecPullRequestEvent(ctx, specPullRequest, payload),
+    };
   }
   const link = await ctx.store.findPullRequestLink(payload.repository.id, payload.number);
   if (!link) return { kind: "ignored", reason: "not_linked" };
+  if (payload.action === "synchronize") return recordHead(ctx, link, payload.pull_request.head.sha);
 
   return ctx.taskLocks.run(
     `pr:${link.githubRepoId}:${link.number}`,
@@ -237,4 +260,19 @@ export async function handlePullRequestEvent(
       return { kind, taskId: task.id, transitioned };
     },
   );
+}
+
+/** 記下 PR 目前的 head commit（有人直接 push 到 PR 的分支時，Runner 不會回報）。 */
+async function recordHead(
+  ctx: IntegrationContext,
+  link: PullRequestLink,
+  headSha: string,
+): Promise<PullRequestEventOutcome> {
+  return ctx.taskLocks.run(`pr:${link.githubRepoId}:${link.number}`, async () => {
+    const current = (await ctx.store.findPullRequestLink(link.githubRepoId, link.number)) ?? link;
+    if (current.headSha !== headSha) {
+      await ctx.store.savePullRequestLink({ ...current, headSha });
+    }
+    return { kind: "synchronized", headSha } as const;
+  });
 }

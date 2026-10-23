@@ -13,6 +13,8 @@ export const APP_PERMISSIONS = {
   contents: "write",
   /** D2：讀取 CI 結果。 */
   checks: "read",
+  /** D2：讀取 GitHub Actions 的 job log，擷取 CI 失敗的段落給 Feedback Loop。 */
+  actions: "read",
   /** 所有 App 都需要。 */
   metadata: "read",
 } as const;

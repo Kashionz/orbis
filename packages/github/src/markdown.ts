@@ -7,6 +7,8 @@ import type { AcceptanceCriterionRecord, RunSummary, TaskRecord } from "./ports"
 export const SUMMARY_MARKER = `<!-- ${NAMES.productSlug}:summary -->`;
 /** PR body 的隱藏標記。 */
 export const PULL_REQUEST_MARKER = `<!-- ${NAMES.productSlug}:pull-request -->`;
+/** 提交 Repo Spec 的 PR body 的隱藏標記。 */
+export const REPO_SPEC_PULL_REQUEST_MARKER = `<!-- ${NAMES.productSlug}:repo-spec -->`;
 
 /** PR body 中 Spec 摘要的長度上限（字元）。 */
 export const SPEC_SUMMARY_MAX_CHARS = 1500;
