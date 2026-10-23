@@ -4,14 +4,12 @@
 use anyhow::{Context, bail};
 use orbis_protocol::RUNNER_WS_PATH;
 use orbis_protocol::connection::RunnerInfo;
-use orbis_protocol::names;
+use orbis_protocol::names::{self, ENV_PAIRING_TOKEN, ENV_SERVER_URL};
 
 use crate::home::Settings;
 
-/// 環境變數名稱的後綴，完整名稱由 [`names::env_var`] 組出。
-pub const ENV_SERVER_URL: &str = "SERVER_URL";
-pub const ENV_PAIRING_TOKEN: &str = "PAIRING_TOKEN";
 /// tracing 的過濾設定（`EnvFilter` 語法），未設定時為 `info`。
+/// 這是環境變數名稱的後綴，完整名稱由 [`names::env_var`] 組出。
 pub const ENV_LOG: &str = "LOG";
 
 /// 連上 Server 所需的一切。
@@ -44,10 +42,7 @@ impl ConnectConfig {
         settings: &Settings,
         lookup_env: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
-        let from_env = |suffix: &str| {
-            let name = names::env_var(suffix);
-            lookup_env(&name).filter(|v| !v.trim().is_empty())
-        };
+        let from_env = |name: &str| lookup_env(name).filter(|v| !v.trim().is_empty());
         let server = args
             .server
             .or_else(|| from_env(ENV_SERVER_URL))
@@ -55,8 +50,8 @@ impl ConnectConfig {
             .with_context(|| {
                 format!(
                     "缺少 Server 網址：請指定 --server、設定環境變數 {}，或寫在 {} 的 server",
-                    names::env_var(ENV_SERVER_URL),
-                    crate::contract::RUNNER_CONFIG_FILE
+                    ENV_SERVER_URL,
+                    names::RUNNER_CONFIG_FILE
                 )
             })?;
         let pairing_token = args
@@ -156,7 +151,7 @@ mod tests {
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: HashMap<String, String> = pairs
             .iter()
-            .map(|(k, v)| (names::env_var(k), (*v).to_owned()))
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect();
         move |name| map.get(name).cloned()
     }
@@ -212,9 +207,6 @@ mod tests {
     fn missing_server_names_the_environment_variable() {
         let err = ConnectConfig::resolve(ConfigArgs::default(), &Settings::default(), env(&[]))
             .unwrap_err();
-        assert!(
-            err.to_string().contains(&names::env_var(ENV_SERVER_URL)),
-            "{err}"
-        );
+        assert!(err.to_string().contains(ENV_SERVER_URL), "{err}");
     }
 }

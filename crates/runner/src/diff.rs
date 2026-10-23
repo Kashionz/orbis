@@ -5,9 +5,9 @@ use std::path::Path;
 
 use orbis_protocol::event::TextBody;
 
-use crate::contract::{FileChange, RunDiff, RunDiffFile};
 use crate::git::{Git, GitError};
 use crate::secrets::Redactor;
+use orbis_protocol::event::{FileChange, RunDiff, RunDiffFile};
 
 /// 一邊（修改前或修改後）的內容。
 enum Content {

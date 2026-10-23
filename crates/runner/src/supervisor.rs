@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use orbis_protocol::availability::{AgentAvailability, AgentInfo, CredentialInfo};
+use orbis_protocol::connection::Heartbeat;
 use orbis_protocol::control::{
     RunControl, RunControlOutcome, RunControlRejectReason, RunControlResult,
 };
@@ -20,7 +21,6 @@ use tokio::sync::{mpsc, watch};
 
 use crate::agent::{self, Profiles};
 use crate::connection::now;
-use crate::contract::{self, OutgoingKind};
 use crate::home::RunnerHome;
 use crate::outbox::Outbox;
 use crate::run::{self, RunContext, RunHandle, RunInput};
@@ -88,7 +88,7 @@ impl Supervisor {
         for (run_id, _dispatch, last) in self.outbox.recovered_runs() {
             let terminal = matches!(
                 last,
-                Some(OutgoingKind::Protocol(EventKind::StatusChanged { status, .. })) if status.is_terminal()
+                Some(EventKind::StatusChanged { status, .. }) if status.is_terminal()
             );
             if terminal {
                 continue;
@@ -106,7 +106,7 @@ impl Supervisor {
                     message: Some(message.clone()),
                 },
             ] {
-                if let Err(e) = self.outbox.emit(&run_id, now(), kind.into()) {
+                if let Err(e) = self.outbox.emit(&run_id, now(), kind) {
                     tracing::warn!(error = %e, "無法補上 Run 中止的 Event");
                 }
             }
@@ -145,9 +145,9 @@ impl Supervisor {
         ids
     }
 
-    pub fn heartbeat(&self) -> contract::Heartbeat {
+    pub fn heartbeat(&self) -> Heartbeat {
         self.publish_snapshot();
-        contract::Heartbeat {
+        Heartbeat {
             ts: now(),
             active_run_ids: self.active_run_ids(),
             accepting_dispatches: !self.is_paused(),

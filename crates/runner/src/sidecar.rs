@@ -10,15 +10,15 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
-use crate::contract::{
-    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SidecarCommand, SidecarOutput,
-    SidecarState, SidecarStatus,
-};
 use crate::supervisor::Supervisor;
+use orbis_protocol::sidecar::{
+    SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SidecarCommand,
+    SidecarConnectionState, SidecarOutput, SidecarStatus,
+};
 
 /// Runner 的結束碼（E1 依此決定要不要重新啟動）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(i32)]
 pub enum ExitCode {
     /// 正常結束（收到 shutdown、stdin EOF 或中斷訊號）。
     Normal = 0,
@@ -34,7 +34,7 @@ pub enum ExitCode {
 /// 狀態輸出：連線狀態或 Supervisor 的狀態改變時，在 stdout 寫一行 JSON。
 pub async fn report_status(
     supervisor: Arc<Supervisor>,
-    mut connection: watch::Receiver<(SidecarState, Option<String>)>,
+    mut connection: watch::Receiver<(SidecarConnectionState, Option<String>)>,
 ) {
     let mut snapshot = supervisor.snapshot();
     let mut stdout = tokio::io::stdout();
@@ -44,7 +44,7 @@ pub async fn report_status(
         let snap = snapshot.borrow_and_update().clone();
         let status = SidecarStatus {
             state,
-            runner_id,
+            runner_id: runner_id.map(Into::into),
             active_runs: snap.active_runs,
             claiming_paused: snap.claiming_paused,
         };

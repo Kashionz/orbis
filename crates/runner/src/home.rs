@@ -21,11 +21,7 @@ use orbis_protocol::names;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-pub use crate::contract::ENV_RUNNER_STATE_DIR;
-use crate::contract::{RUNNER_CONFIG_FILE, RUNNER_STATE_DIR};
-
-/// 覆寫本機目錄的環境變數後綴（完整名稱由 [`names::env_var`] 組出）。
-pub const ENV_HOME: &str = "HOME";
+use orbis_protocol::names::{RUNNER_CONFIG_FILE, RUNNER_STATE_DIR};
 
 /// 預設的 port 範圍（含兩端）。
 pub const DEFAULT_PORT_RANGE: (u16, u16) = (41000, 41999);
@@ -46,7 +42,7 @@ impl RunnerHome {
         Self::open_with(root, None)
     }
 
-    /// 同 [`open`](Self::open)，`state_dir` 另外指定狀態目錄（[`ENV_RUNNER_STATE_DIR`]）；
+    /// 同 [`open`](Self::open)，`state_dir` 另外指定狀態目錄（[`names::ENV_RUNNER_STATE_DIR`]）；
     /// 設定檔仍從 `root` 讀取。
     pub fn open_with(root: Option<PathBuf>, state_dir: Option<PathBuf>) -> anyhow::Result<Self> {
         let user_home = user_home_dir().context("找不到家目錄")?;

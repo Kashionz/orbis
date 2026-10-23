@@ -10,12 +10,10 @@ use orbis_protocol::control::RunControlAction;
 use orbis_protocol::dispatch::DispatchDelegation;
 use orbis_protocol::enums::DelegationMode;
 use orbis_protocol::frame::ServerToRunner;
-use orbis_protocol::{PROTOCOL_VERSION, names};
-use orbis_runner::config::{ENV_PAIRING_TOKEN, ENV_SERVER_URL};
-use orbis_runner::contract::{
+use orbis_protocol::sidecar::{
     SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SIDECAR_FLAG,
 };
-use orbis_runner::home::ENV_RUNNER_STATE_DIR;
+use orbis_protocol::{PROTOCOL_VERSION, names};
 use support::server::{
     FakeServer, RunnerOptions, fake_agent_toml, offer, send_offer, spawn_runner, write_runner_toml,
 };
@@ -172,7 +170,7 @@ async fn exits_with_needs_pairing_code_when_pairing_is_rejected() {
     let status = runner.wait_exit().await;
     assert_eq!(
         status.code(),
-        Some(SIDECAR_EXIT_NEEDS_PAIRING.into()),
+        Some(SIDECAR_EXIT_NEEDS_PAIRING),
         "stderr：{}",
         runner.stderr()
     );
@@ -195,7 +193,7 @@ async fn exits_with_version_mismatch_code_on_version_mismatch() {
     let status = runner.wait_exit().await;
     assert_eq!(
         status.code(),
-        Some(SIDECAR_EXIT_VERSION_MISMATCH.into()),
+        Some(SIDECAR_EXIT_VERSION_MISMATCH),
         "stderr：{}",
         runner.stderr()
     );
@@ -211,9 +209,11 @@ async fn exits_with_needs_pairing_code_without_any_identity() {
     opts.pairing_token = None;
     let mut runner = spawn_runner(opts);
     let status = runner.wait_exit().await;
-    assert_eq!(status.code(), Some(SIDECAR_EXIT_NEEDS_PAIRING.into()));
+    assert_eq!(status.code(), Some(SIDECAR_EXIT_NEEDS_PAIRING));
     assert!(
-        runner.stderr().contains(&names::env_var(ENV_PAIRING_TOKEN)),
+        runner
+            .stderr()
+            .contains(&names::ENV_PAIRING_TOKEN.to_owned()),
         "{}",
         runner.stderr()
     );
@@ -229,7 +229,7 @@ async fn missing_server_names_the_environment_variable() {
     let status = runner.wait_exit().await;
     assert!(!status.success());
     assert!(
-        runner.stderr().contains(&names::env_var(ENV_SERVER_URL)),
+        runner.stderr().contains(&names::ENV_SERVER_URL.to_owned()),
         "{}",
         runner.stderr()
     );
@@ -244,8 +244,8 @@ async fn reads_connection_settings_from_environment() {
     opts.server = None;
     opts.pairing_token = None;
     opts.env = vec![
-        (names::env_var(ENV_SERVER_URL), server.base_url()),
-        (names::env_var(ENV_PAIRING_TOKEN), "pt_env".into()),
+        (names::ENV_SERVER_URL.to_owned(), server.base_url()),
+        (names::ENV_PAIRING_TOKEN.to_owned(), "pt_env".into()),
     ];
     let _runner = spawn_runner(opts);
     let mut conn = server.accept().await;
@@ -364,6 +364,13 @@ async fn sidecar_reports_status_and_follows_commands() {
     let home = temp_dir("orbis home");
     let base = server.base_url();
     let mut opts = RunnerOptions::new(&base, home.path());
+    // 和 Desktop 一樣：Server 網址與 Pairing token 以環境變數傳入，不放在命令列。
+    opts.server = None;
+    opts.pairing_token = None;
+    opts.env = vec![
+        (names::ENV_SERVER_URL.to_owned(), base.clone()),
+        (names::ENV_PAIRING_TOKEN.to_owned(), "pt_sidecar".into()),
+    ];
     opts.extra_args = vec![SIDECAR_FLAG.into()];
     opts.stdin_piped = true;
     opts.stdout_piped = true;
@@ -380,23 +387,14 @@ async fn sidecar_reports_status_and_follows_commands() {
             .unwrap_or_else(|e| panic!("stdout 只能有 JSON 狀態：{e}：{line}"))
     };
 
+    // 啟動後立刻送出一行 status，不等連線狀態改變。
     let first = next_status().await;
     assert_eq!(first["type"], "status", "{first}");
     assert_eq!(first["state"], "connecting", "{first}");
-    let mut conn = server.accept().await;
-    conn.handshake(Vec::new(), Some("rt_1")).await;
-    let connected = loop {
-        let s = next_status().await;
-        if s["state"] == "connected" {
-            break s;
-        }
-    };
-    assert_eq!(
-        connected["runner_id"],
-        "0192f3a0-0000-7000-8000-000000000001"
-    );
-    assert_eq!(connected["claiming_paused"], false);
+    assert_eq!(first["claiming_paused"], false, "{first}");
 
+    // 一啟動就接受指令：Desktop 在 spawn 後馬上送 pause_claiming（恢復上次的暫停狀態），
+    // 連上 Server 之前收到的指令也要生效。
     stdin
         .write_all(b"{\"type\":\"pause_claiming\"}\n")
         .await
@@ -407,11 +405,30 @@ async fn sidecar_reports_status_and_follows_commands() {
             break s;
         }
     };
+    assert_eq!(paused["state"], "connecting", "還沒連上 Server：{paused}");
     assert_eq!(paused["active_runs"], 0);
-    conn.wait_for("暫停後的 heartbeat", |v| {
-        v["type"] == "heartbeat" && v["accepting_dispatches"] == false
-    })
-    .await;
+
+    let mut conn = server.accept().await;
+    let hello = conn.handshake(Vec::new(), Some("rt_1")).await;
+    assert_eq!(hello["pairing"]["token"], "pt_sidecar", "{hello}");
+    let connected = loop {
+        let s = next_status().await;
+        if s["state"] == "connected" {
+            break s;
+        }
+    };
+    assert_eq!(
+        connected["runner_id"],
+        "0192f3a0-0000-7000-8000-000000000001"
+    );
+    assert_eq!(connected["claiming_paused"], true);
+    let hb = conn
+        .wait_for("heartbeat", |v| v["type"] == "heartbeat")
+        .await;
+    assert_eq!(
+        hb["accepting_dispatches"], false,
+        "連線前的暫停要生效：{hb}"
+    );
     // 暫停時收到的 Dispatch 一律拒絕。
     let remote = Remote::new(&[("README.md", "a\n")]);
     conn.send(&send_offer(offer(
@@ -426,6 +443,22 @@ async fn sidecar_reports_status_and_follows_commands() {
         .wait_for("reject", |v| v["type"] == "dispatch_reject")
         .await;
     assert_eq!(reply["reason"], "agent_unavailable");
+
+    // 恢復領取。
+    stdin
+        .write_all(b"{\"type\":\"resume_claiming\"}\n")
+        .await
+        .unwrap();
+    loop {
+        let s = next_status().await;
+        if s["claiming_paused"] == false {
+            break;
+        }
+    }
+    conn.wait_for("恢復後的 heartbeat", |v| {
+        v["type"] == "heartbeat" && v["accepting_dispatches"] == true
+    })
+    .await;
 
     // stdin 關閉（Electron 當掉）：Runner 自己結束。
     drop(stdin);
@@ -461,7 +494,7 @@ async fn sidecar_exits_for_re_pairing_when_runner_token_is_revoked() {
     let status = runner.wait_exit().await;
     assert_eq!(
         status.code(),
-        Some(SIDECAR_EXIT_NEEDS_PAIRING.into()),
+        Some(SIDECAR_EXIT_NEEDS_PAIRING),
         "stderr：{}",
         runner.stderr()
     );
@@ -478,7 +511,7 @@ async fn state_dir_variable_moves_only_the_state() {
     let base = server.base_url();
     let mut opts = RunnerOptions::new(&base, home.path());
     opts.env = vec![(
-        names::env_var(ENV_RUNNER_STATE_DIR),
+        names::ENV_RUNNER_STATE_DIR.to_owned(),
         state.path().to_string_lossy().into_owned(),
     )];
     let _runner = spawn_runner(opts);
@@ -491,7 +524,7 @@ async fn state_dir_variable_moves_only_the_state() {
     assert!(
         !home
             .path()
-            .join(orbis_runner::contract::RUNNER_STATE_DIR)
+            .join(names::RUNNER_STATE_DIR)
             .join("credentials.json")
             .exists(),
         "狀態不應寫到本機目錄"

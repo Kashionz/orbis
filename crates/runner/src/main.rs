@@ -5,10 +5,10 @@ use std::time::Duration;
 use clap::Parser;
 use orbis_protocol::connection::HelloRejectReason;
 use orbis_protocol::names;
+use orbis_protocol::sidecar::SidecarConnectionState;
 use orbis_runner::config::{ConfigArgs, ConnectConfig, ENV_LOG};
 use orbis_runner::connection::{NeedsPairing, Rejected};
-use orbis_runner::contract::SidecarState;
-use orbis_runner::home::{ENV_HOME, ENV_RUNNER_STATE_DIR, RunnerHome};
+use orbis_runner::home::RunnerHome;
 use orbis_runner::sidecar::{self, ExitCode};
 use orbis_runner::supervisor::Supervisor;
 use tokio::sync::watch;
@@ -89,15 +89,15 @@ fn exit_code(e: &anyhow::Error) -> ExitCode {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    let env_path = |suffix: &str| {
-        std::env::var_os(names::env_var(suffix))
+    let env_path = |name: &str| {
+        std::env::var_os(name)
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     };
-    let home_dir = cli.home.or_else(|| env_path(ENV_HOME));
+    let home_dir = cli.home.or_else(|| env_path(names::ENV_HOME));
     let home = Arc::new(RunnerHome::open_with(
         home_dir,
-        env_path(ENV_RUNNER_STATE_DIR),
+        env_path(names::ENV_RUNNER_STATE_DIR),
     )?);
     info!(
         home = %home.root().display(),
@@ -119,7 +119,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     };
     let (supervisor, frames) = Supervisor::new(home)?;
     let (shutdown_tx, shutdown) = watch::channel(false);
-    let (state_tx, state) = watch::channel((SidecarState::Connecting, None));
+    let (state_tx, state) = watch::channel((SidecarConnectionState::Connecting, None));
 
     if cli.sidecar {
         tokio::spawn(sidecar::report_status(supervisor.clone(), state));

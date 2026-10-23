@@ -24,8 +24,8 @@ use orbis_protocol::control::{
 use orbis_protocol::dispatch::DispatchOffer;
 use orbis_protocol::enums::{GateDecision, GateKind, RunStatus};
 use orbis_protocol::event::{
-    EventKind, PermissionOption, PermissionOptionKind, RunErrorCode, TextBody, ToolCall,
-    ToolCallContent, ToolCallStatus, ToolKind,
+    EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose, RunErrorCode, TextBody,
+    ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use orbis_protocol::frame::RunnerToServer;
 use orbis_protocol::ids::{PermissionRequestId, RunId, Timestamp};
@@ -34,7 +34,6 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::agent::AgentProfile;
 use crate::agent::acp::{AcpSession, AgentError, AgentNotice};
 use crate::connection::now;
-use crate::contract::{OutgoingKind, PermissionPurpose, PermissionRequestKind, RunDiffKind};
 use crate::home::RunnerHome;
 use crate::normalize::{self, Normalizer};
 use crate::outbox::Outbox;
@@ -229,9 +228,8 @@ impl Run {
 
     // ── Event 與狀態 ────────────────────────────────────────────────────────────
 
-    fn emit(&self, kind: impl Into<OutgoingKind>) {
-        let kind = kind.into();
-        let name = kind.name();
+    fn emit(&self, kind: EventKind) {
+        let name = kind.name().as_str();
         if let Err(e) = self.ctx.outbox.emit(self.run_id(), now(), kind) {
             tracing::error!(run_id = %self.run_id(), kind = name, error = %e, "無法記錄 Event");
         }
@@ -415,7 +413,7 @@ impl Run {
                 }]),
                 locations: None,
             });
-            if let Err(e) = outbox.emit(&run_id, now(), event.into()) {
+            if let Err(e) = outbox.emit(&run_id, now(), event) {
                 tracing::error!(error = %e, "無法記錄 setup 的結果");
             }
             (ok, output)
@@ -508,13 +506,13 @@ impl Run {
     ) -> Result<String, Stop> {
         let request_id: PermissionRequestId = uuid::Uuid::now_v7().to_string().into();
         let previous = *self.status_tx.borrow();
-        self.emit(OutgoingKind::PermissionRequest(PermissionRequestKind {
+        self.emit(EventKind::PermissionRequest {
             request_id: request_id.clone(),
             tool_call_id,
             title: self.redactor.redact(&title),
             options: options.clone(),
             purpose,
-        }));
+        });
         self.set_status(RunStatus::AwaitingPermission, None, None);
         loop {
             let Some(input) = self.rx.recv().await else {
@@ -807,8 +805,7 @@ impl Run {
                     EventKind::PermissionResolved {
                         request_id,
                         selected_option_id: None,
-                    }
-                    .into(),
+                    },
                 )
                 .ok();
         }
@@ -902,13 +899,13 @@ impl Run {
                 options: options.iter().map(|o| o.option_id.clone()).collect(),
             },
         );
-        self.emit(OutgoingKind::PermissionRequest(PermissionRequestKind {
+        self.emit(EventKind::PermissionRequest {
             request_id,
             tool_call_id: Some(request.tool_call.tool_call_id.0.to_string().into()),
             title: self.redactor.redact(&format!("{tool_title}（{reason}）")),
             options,
             purpose: PermissionPurpose::Tool,
-        }));
+        });
         if self.pending.len() == 1 {
             self.set_status(RunStatus::AwaitingPermission, None, None);
         }
@@ -941,7 +938,7 @@ impl Run {
         )
         .await
         {
-            Ok(diff) => self.emit(OutgoingKind::RunDiff(RunDiffKind { diff })),
+            Ok(diff) => self.emit(EventKind::RunDiff(diff)),
             Err(e) => self.emit(EventKind::Error {
                 code: e.code,
                 message: self.redactor.redact(&format!("無法計算 diff：{e}")),

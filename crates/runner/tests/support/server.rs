@@ -9,15 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use orbis_protocol::RUNNER_BLOB_PATH;
 use orbis_protocol::connection::{HelloAck, RunResume};
 use orbis_protocol::control::{RunControl, RunControlAction, RunControlResult};
 use orbis_protocol::dispatch::{DispatchOffer, DispatchRepo, DispatchTask};
 use orbis_protocol::enums::PermissionPolicy;
 use orbis_protocol::event::ContentBlock;
 use orbis_protocol::{PROTOCOL_VERSION, RUNNER_WS_PATH, names};
-use orbis_runner::config::{ENV_PAIRING_TOKEN, ENV_SERVER_URL};
-use orbis_runner::contract::RUNNER_BLOB_PATH;
-use orbis_runner::home::ENV_HOME;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -456,9 +454,10 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
             cmd.env_remove(key);
         }
     }
-    cmd.env_remove(names::env_var(ENV_SERVER_URL))
-        .env_remove(names::env_var(ENV_PAIRING_TOKEN))
-        .env_remove(names::env_var(ENV_HOME))
+    cmd.env_remove(names::ENV_SERVER_URL)
+        .env_remove(names::ENV_PAIRING_TOKEN)
+        .env_remove(names::ENV_HOME)
+        .env_remove(names::ENV_RUNNER_STATE_DIR)
         .env(names::env_var("LOG"), "info,orbis_runner=debug")
         .envs(super::GIT_IDENTITY)
         .envs(opts.env)
@@ -492,7 +491,7 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
 /// 在 Runner 本機目錄寫入 runner.toml。
 pub fn write_runner_toml(home: &Path, content: &str) -> PathBuf {
     std::fs::create_dir_all(home).unwrap();
-    let path = home.join(orbis_runner::contract::RUNNER_CONFIG_FILE);
+    let path = home.join(names::RUNNER_CONFIG_FILE);
     std::fs::write(&path, content).unwrap();
     path
 }

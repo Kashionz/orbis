@@ -25,10 +25,11 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tracing::{debug, info, warn};
 
 use crate::config::ConnectConfig;
-use crate::contract::{RUNNER_BLOB_PATH, SidecarState};
 use crate::home::StoredToken;
 use crate::outbox::Spooled;
 use crate::supervisor::Supervisor;
+use orbis_protocol::RUNNER_BLOB_PATH;
+use orbis_protocol::sidecar::SidecarConnectionState;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -71,7 +72,7 @@ impl fmt::Display for NeedsPairing {
         write!(
             f,
             "這台 Runner 還沒有和 Server 完成 Pairing：請指定 --pairing-token 或設定環境變數 {}",
-            orbis_protocol::names::env_var(crate::config::ENV_PAIRING_TOKEN)
+            orbis_protocol::names::ENV_PAIRING_TOKEN
         )
     }
 }
@@ -121,7 +122,7 @@ impl Backoff {
 }
 
 /// 連線狀態的回報（sidecar 用）。
-pub type StateSender = watch::Sender<(SidecarState, Option<String>)>;
+pub type StateSender = watch::Sender<(SidecarConnectionState, Option<String>)>;
 
 /// 持續連線直到 `shutdown` 變成 `true`。被 Server 拒絕時回傳 [`Rejected`]。
 pub async fn run(
@@ -135,7 +136,7 @@ pub async fn run(
     let mut backoff = Backoff::new(backoff_base, Duration::from_secs(60));
     let mut runner_id = None;
     loop {
-        state.send_replace((SidecarState::Connecting, runner_id.clone()));
+        state.send_replace((SidecarConnectionState::Connecting, runner_id.clone()));
         info!(url = %config.url, name = %config.runner.name, "連線到 Server");
         let outcome = connect_once(config, &supervisor, &mut frames, &state, &mut shutdown).await;
         match outcome {
@@ -168,7 +169,7 @@ pub async fn run(
                 warn!(error = format!("{e:#}"), "連線中斷");
             }
         }
-        state.send_replace((SidecarState::Offline, runner_id.clone()));
+        state.send_replace((SidecarConnectionState::Offline, runner_id.clone()));
         let delay = backoff.next_with_jitter();
         info!(delay_ms = delay.as_millis() as u64, "稍後重新連線");
         tokio::select! {
@@ -235,7 +236,7 @@ async fn connect_once(
         bail!("Server 指定的 heartbeat_interval_ms 是 0");
     }
     let id = Some(ack.runner_id.to_string());
-    state.send_replace((SidecarState::Connected, id.clone()));
+    state.send_replace((SidecarConnectionState::Connected, id.clone()));
     supervisor.on_connected(&ack.resume);
     let session = Session {
         conn,
@@ -435,12 +436,12 @@ impl Session {
             }
             let bytes = outbox.blob_bytes(&blob.blob_id)?;
             self.uploader
-                .upload(item.frame.run_id.as_str(), blob, bytes)
+                .upload(item.frame.event.run_id.as_str(), blob, bytes)
                 .await?;
             outbox.mark_uploaded(&blob.blob_id);
         }
         self.conn.send_typed("event", &item.frame).await?;
-        outbox.mark_sent(&item.frame.run_id, item.frame.seq);
+        outbox.mark_sent(&item.frame.event.run_id, item.frame.event.seq);
         Ok(())
     }
 

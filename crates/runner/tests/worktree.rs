@@ -525,8 +525,8 @@ async fn copy_不跟著連結複製到_checkout_以外() {
 
 #[tokio::test]
 async fn review_用的_diff_帶完整新舊內容() {
+    use orbis_protocol::event::FileChange;
     use orbis_protocol::event::TextBody;
-    use orbis_runner::contract::FileChange;
     let remote = Remote::new(&[
         ("README.md", "# web\n"),
         ("old-name.txt", "搬家的內容\n"),

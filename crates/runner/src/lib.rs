@@ -4,7 +4,6 @@
 pub mod agent;
 pub mod config;
 pub mod connection;
-pub mod contract;
 pub mod diff;
 pub mod git;
 pub mod home;

@@ -15,12 +15,13 @@ use std::sync::Mutex;
 
 use anyhow::Context;
 use orbis_protocol::connection::RunResume;
-use orbis_protocol::event::{BlobRef, EventKind, TextBody, ToolCallContent};
+use orbis_protocol::event::{
+    BlobRef, EventEnvelope, EventFrame, EventKind, TextBody, ToolCallContent,
+};
 use orbis_protocol::ids::{BlobId, DispatchId, RunId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-use crate::contract::{EventFrame, OutgoingKind};
 use crate::repo_config::sha256_hex;
 
 /// 內嵌與 blob 的門檻：超過 64 KiB 的文字改送 blob 參照。
@@ -92,12 +93,12 @@ impl Outbox {
                 let _ = std::fs::remove_file(&path);
                 continue;
             };
-            let first_seq = pending.front().map_or(1, |s| s.frame.seq);
+            let first_seq = pending.front().map_or(1, |s| s.frame.event.seq);
             runs.insert(
-                last.frame.run_id.clone(),
+                last.frame.event.run_id.clone(),
                 RunSpool {
                     dispatch_id: last.frame.dispatch_id.clone(),
-                    next_seq: last.frame.seq + 1,
+                    next_seq: last.frame.event.seq + 1,
                     sent_upto: first_seq - 1,
                     acked: first_seq - 1,
                     pending,
@@ -114,14 +115,14 @@ impl Outbox {
     }
 
     /// 上次 Runner 結束時還沒送完的 Run（Run 本身已經不在了）。
-    pub fn recovered_runs(&self) -> Vec<(RunId, DispatchId, Option<OutgoingKind>)> {
+    pub fn recovered_runs(&self) -> Vec<(RunId, DispatchId, Option<EventKind>)> {
         lock(&self.runs)
             .iter()
             .map(|(id, spool)| {
                 (
                     id.clone(),
                     spool.dispatch_id.clone(),
-                    spool.pending.back().map(|s| s.frame.kind.clone()),
+                    spool.pending.back().map(|s| s.frame.event.kind.clone()),
                 )
             })
             .collect()
@@ -162,7 +163,7 @@ impl Outbox {
         &self,
         run_id: &RunId,
         ts: orbis_protocol::ids::Timestamp,
-        kind: OutgoingKind,
+        kind: EventKind,
     ) -> anyhow::Result<u64> {
         let (kind, blobs) = self.externalize(kind)?;
         let mut runs = lock(&self.runs);
@@ -173,10 +174,12 @@ impl Outbox {
         let item = Spooled {
             frame: EventFrame {
                 dispatch_id: spool.dispatch_id.clone(),
-                run_id: run_id.clone(),
-                seq,
-                ts,
-                kind,
+                event: EventEnvelope {
+                    run_id: run_id.clone(),
+                    seq,
+                    ts,
+                    kind,
+                },
             },
             blobs,
         };
@@ -253,7 +256,7 @@ impl Outbox {
             spool
                 .pending
                 .iter()
-                .find(|s| s.frame.seq > spool.sent_upto)
+                .find(|s| s.frame.event.seq > spool.sent_upto)
                 .cloned()
         })
     }
@@ -273,7 +276,11 @@ impl Outbox {
         spool.acked = spool.acked.max(seq);
         let before = spool.pending.len();
         let mut freed = Vec::new();
-        while spool.pending.front().is_some_and(|s| s.frame.seq <= seq) {
+        while spool
+            .pending
+            .front()
+            .is_some_and(|s| s.frame.event.seq <= seq)
+        {
             let item = spool.pending.pop_front().expect("剛剛檢查過");
             freed.extend(item.blobs.into_iter().map(|b| b.blob_id));
         }
@@ -329,7 +336,7 @@ impl Outbox {
     }
 
     /// 把大型的 `TextBody` 改存成 blob。
-    fn externalize(&self, kind: OutgoingKind) -> anyhow::Result<(OutgoingKind, Vec<BlobRef>)> {
+    fn externalize(&self, kind: EventKind) -> anyhow::Result<(EventKind, Vec<BlobRef>)> {
         let mut blobs = Vec::new();
         let mut convert = |body: &mut Option<TextBody>| -> anyhow::Result<()> {
             if let Some(b) = body {
@@ -339,7 +346,7 @@ impl Outbox {
         };
         let mut kind = kind;
         match &mut kind {
-            OutgoingKind::Protocol(EventKind::ToolCall(call)) => {
+            EventKind::ToolCall(call) => {
                 for content in call.content.iter_mut().flatten() {
                     match content {
                         ToolCallContent::Diff { old, new, .. } => {
@@ -355,8 +362,8 @@ impl Outbox {
                     }
                 }
             }
-            OutgoingKind::RunDiff(diff) => {
-                for file in &mut diff.diff.files {
+            EventKind::RunDiff(diff) => {
+                for file in &mut diff.files {
                     convert(&mut file.old)?;
                     convert(&mut file.new)?;
                 }
@@ -431,8 +438,8 @@ mod tests {
         (dir, outbox)
     }
 
-    fn thought(text: &str) -> OutgoingKind {
-        EventKind::ThoughtChunk { text: text.into() }.into()
+    fn thought(text: &str) -> EventKind {
+        EventKind::ThoughtChunk { text: text.into() }
     }
 
     fn ts() -> orbis_protocol::ids::Timestamp {
@@ -447,10 +454,10 @@ mod tests {
         assert_eq!(outbox.emit(&run, ts(), thought("a")).unwrap(), 6);
         assert_eq!(outbox.emit(&run, ts(), thought("b")).unwrap(), 7);
         let next = outbox.next_unsent().unwrap();
-        assert_eq!(next.frame.seq, 6);
+        assert_eq!(next.frame.event.seq, 6);
         assert_eq!(next.frame.dispatch_id.as_str(), "d1");
         outbox.mark_sent(&run, 6);
-        assert_eq!(outbox.next_unsent().unwrap().frame.seq, 7);
+        assert_eq!(outbox.next_unsent().unwrap().frame.event.seq, 7);
         outbox.mark_sent(&run, 7);
         assert!(outbox.next_unsent().is_none());
     }
@@ -474,7 +481,7 @@ mod tests {
         }]);
         assert!(orphaned.is_empty());
         let next = outbox.next_unsent().unwrap();
-        assert_eq!(next.frame.seq, 3, "從 last_seq + 1 補送");
+        assert_eq!(next.frame.event.seq, 3, "從 last_seq + 1 補送");
         outbox.mark_sent(&run, 3);
         outbox.ack(&run, 3);
         assert!(!outbox.has_pending(&run));
@@ -519,7 +526,7 @@ mod tests {
             run_id: "r1".into(),
             last_seq: 1,
         }]);
-        assert_eq!(outbox.next_unsent().unwrap().frame.seq, 2);
+        assert_eq!(outbox.next_unsent().unwrap().frame.event.seq, 2);
         // 接續編號
         assert_eq!(outbox.emit(&"r1".into(), ts(), thought("c")).unwrap(), 3);
     }
@@ -542,14 +549,14 @@ mod tests {
             }]),
             locations: None,
         });
-        outbox.emit(&run, ts(), kind.into()).unwrap();
+        outbox.emit(&run, ts(), kind).unwrap();
         let item = outbox.next_unsent().unwrap();
         assert_eq!(item.blobs.len(), 1);
         let blob = &item.blobs[0];
         assert_eq!(blob.size, big.len() as u64);
         assert_eq!(blob.sha256, sha256_hex(big.as_bytes()));
         assert_eq!(outbox.blob_bytes(&blob.blob_id).unwrap(), big.as_bytes());
-        let OutgoingKind::Protocol(EventKind::ToolCall(call)) = &item.frame.kind else {
+        let EventKind::ToolCall(call) = &item.frame.event.kind else {
             panic!()
         };
         let ToolCallContent::Diff { old, new, .. } = &call.content.as_ref().unwrap()[0] else {

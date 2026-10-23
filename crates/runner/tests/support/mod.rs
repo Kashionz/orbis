@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
 use orbis_protocol::dispatch::DispatchRepo;
-use orbis_runner::contract::RUNNER_CONFIG_FILE;
+use orbis_protocol::names::RUNNER_CONFIG_FILE;
 use orbis_runner::home::RunnerHome;
 use tempfile::TempDir;
 
