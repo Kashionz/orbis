@@ -3,8 +3,9 @@
 // （push 回本機 bare repo → 以 App 開 PR → merged webhook → Task Done），最後確認關閉後
 // 沒有殘留的子程序與暫存目錄。另外測試 `--runner-config-out`（不啟動 Runner）模式。
 //
-// 有設定 DATABASE_URL 時傳給腳本（CI 在三平台安裝原生 Postgres）；沒有設定時腳本自己以
-// Testcontainers 啟動 Postgres，和其他 DB 測試一樣只在有 Docker 的 Linux 上跑。
+// 腳本與其他 DB 測試共用同一個測試用的 Postgres（global-setup 提供：TEST_DATABASE_URL 或
+// Testcontainers），以 TEST_DATABASE_URL 傳給腳本，由腳本建立自己的 database、結束時刪除。
+// 另外在環境中放一個指向「哨兵 database」的 DATABASE_URL，確認腳本不會使用開發 DB。
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -23,15 +24,40 @@ import {
   type Runner,
   type Task,
 } from "@orbis/api-contract";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import pg from "pg";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { parseReadyLine, type ReadyLine, sendPullRequestMergedWebhook } from "../e2e";
+import { createScratchDatabase, type ScratchDatabase } from "../src/db/test-database";
 import { dbSkipReason } from "./helpers/db";
 
-/** CI 在三平台安裝原生 Postgres 時，以這個資料庫執行 stack（不需要 Docker）。 */
-const externalDatabaseUrl = process.env[envVar("DATABASE_URL")]?.trim() || undefined;
-const skipStack = dbSkipReason !== null && externalDatabaseUrl === undefined;
-if (skipStack)
-  console.warn(`[e2e-stack] 略過：${dbSkipReason}，而且沒有設定 ${envVar("DATABASE_URL")}`);
+const skipStack = dbSkipReason !== null;
+if (skipStack) console.warn(`[e2e-stack] 略過：${dbSkipReason}`);
+
+/** 假裝是開發 DB 的 database：腳本不可以在裡面建立任何東西。 */
+let sentinel: ScratchDatabase | undefined;
+
+async function sentinelDatabase(): Promise<ScratchDatabase> {
+  const adminUrl = inject("postgresAdminUrl");
+  if (!adminUrl) throw new Error("沒有可用的測試 Postgres");
+  sentinel ??= await createScratchDatabase(adminUrl, "sentinel");
+  return sentinel;
+}
+
+async function query<T extends pg.QueryResultRow>(
+  url: string,
+  sql: string,
+  params: unknown[] = [],
+) {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    return (await client.query<T>(sql, params)).rows;
+  } finally {
+    await client.end();
+  }
+}
+
+const databaseName = (url: string) => decodeURIComponent(new URL(url).pathname.slice(1));
 
 const serverDir = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -94,8 +120,9 @@ async function startStack(extraArgs: string[] = []): Promise<StartedStack> {
       Object.entries(process.env).filter(([key]) => !key.startsWith(NAMES.envPrefix)),
     ),
     [envVar("SERVER_PORT")]: String(await freePort()),
+    [envVar("TEST_DATABASE_URL")]: inject("postgresAdminUrl") ?? "",
+    [envVar("DATABASE_URL")]: (await sentinelDatabase()).url,
   };
-  if (externalDatabaseUrl) env[envVar("DATABASE_URL")] = externalDatabaseUrl;
   const child = spawn(
     process.execPath,
     ["--import", "tsx", "scripts/system-e2e-stack.ts", ...extraArgs],
@@ -192,6 +219,8 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
 
   afterAll(async () => {
     if (stack && stack.exitCode === null) stack.kill("SIGKILL");
+    await sentinel?.drop();
+    sentinel = undefined;
   });
 
   it("stdout 只有一行 ready JSON，欄位齊全", () => {
@@ -219,6 +248,17 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
       },
     });
     expect(ready.databaseUrl).toMatch(/^postgres(ql)?:\/\//);
+  });
+
+  it("不使用開發 DB：在測試用的 Postgres 上另建 database，DATABASE_URL 指向的 database 沒有被寫入", async () => {
+    const dev = await sentinelDatabase();
+    expect(databaseName(ready.databaseUrl)).toMatch(/^e2e_[0-9a-f]{12}$/);
+    expect(databaseName(ready.databaseUrl)).not.toBe(dev.name);
+    const tables = await query(
+      dev.url,
+      "select table_name from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema')",
+    );
+    expect(tables).toEqual([]);
   });
 
   it("以 session cookie 呼叫 API；Local Runner 在線、接受派工、Fake Agent 可用", async () => {
@@ -335,6 +375,12 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(children.filter(isAlive)).toEqual([]);
     expect(existsSync(ready.tempDir)).toBe(false);
+    // stack 自己建立的 database 已刪除。
+    const adminUrl = inject("postgresAdminUrl") as string;
+    const left = await query(adminUrl, "select 1 from pg_database where datname = $1", [
+      databaseName(ready.databaseUrl),
+    ]);
+    expect(left).toEqual([]);
   }, 120_000);
 });
 
@@ -351,6 +397,8 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本：--runner-config-o
   afterAll(async () => {
     if (started?.child.exitCode === null) started.child.kill("SIGKILL");
     if (configDir) await rm(configDir, { recursive: true, force: true });
+    await sentinel?.drop();
+    sentinel = undefined;
   });
 
   it("寫出對應好的 runner.toml，不啟動 Runner；ready 行的 runnerId、runnerPid 是 null", async () => {
