@@ -18,11 +18,12 @@ use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, Content, ContentBlock, ContentChunk, Cost, Diff,
     Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
     McpServer, NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, Plan,
-    PlanEntry, PromptRequest, PromptResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionId, SessionMode,
-    SessionModeState, SessionNotification, SessionResumeCapabilities, SessionUpdate,
-    SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCall, ToolCallContent,
-    ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
+    PlanEntry, PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
+    SessionId, SessionMode, SessionModeState, SessionNotification, SessionResumeCapabilities,
+    SessionUpdate, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCall,
+    ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{self as acp, BoxFuture, Client, ConnectionTo, Responder};
 use serde_json::json;
@@ -75,6 +76,8 @@ pub struct Options {
     pub modes: Vec<String>,
     /// 新 session 一開始的 mode，預設是 `modes` 的第一個。
     pub initial_mode: Option<String>,
+    /// 宣告 prompt 可以帶圖片（`promptCapabilities.image`）。
+    pub image: bool,
 }
 
 /// `echo_session_mode` 回報的前綴。
@@ -259,6 +262,7 @@ impl FakeAgent {
             .agent_capabilities(
                 AgentCapabilities::new()
                     .load_session(persistent)
+                    .prompt_capabilities(PromptCapabilities::new().image(self.options.image))
                     .session_capabilities(sessions),
             )
             .agent_info(Implementation::new(
@@ -491,6 +495,7 @@ async fn run_turn(
     let mut runtime = session.runtime.lock().await;
     let mut runner = TurnRunner {
         cx,
+        prompt: &request.prompt,
         session,
         runtime: &mut runtime,
         cancel,
@@ -524,6 +529,8 @@ type StepResult = Result<Flow, acp::Error>;
 
 struct TurnRunner<'a> {
     cx: ConnectionTo<Client>,
+    /// 這個回合收到的 prompt（`echo_prompt` 步驟回報）。
+    prompt: &'a [ContentBlock],
     session: &'a Session,
     runtime: &'a mut SessionRuntime,
     cancel: watch::Receiver<bool>,
@@ -628,6 +635,21 @@ impl TurnRunner<'_> {
                     () = tokio::time::sleep(std::time::Duration::from_millis(*ms)) => {}
                     () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
                 }
+            }
+            Step::EchoPrompt => {
+                let lines: Vec<String> = self
+                    .prompt
+                    .iter()
+                    .map(|block| match block {
+                        ContentBlock::Text(t) => format!("text:{}", t.text),
+                        ContentBlock::Image(i) => format!("image:{}:{}", i.mime_type, i.data),
+                        ContentBlock::ResourceLink(l) => format!("resource_link:{}", l.uri),
+                        _ => "other".to_owned(),
+                    })
+                    .collect();
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(lines.join("\n")),
+                )))?;
             }
             Step::EchoSessionMode => {
                 let mode = lock(&self.session.mode)

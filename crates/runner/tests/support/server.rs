@@ -50,9 +50,15 @@ impl FakeServer {
                 let tx = tx.clone();
                 let blobs = blobs_for_task.clone();
                 tokio::spawn(async move {
-                    let mut peek = [0u8; 4];
-                    if stream.peek(&mut peek).await.is_ok() && &peek == b"PUT " {
+                    let mut peek = [0u8; 64];
+                    let n = stream.peek(&mut peek).await.unwrap_or(0);
+                    let head = &peek[..n];
+                    if head.starts_with(b"PUT ") {
                         handle_put(stream, blobs).await;
+                        return;
+                    }
+                    if head.starts_with(format!("GET {RUNNER_BLOB_PATH}/").as_bytes()) {
+                        handle_get(stream, blobs).await;
                         return;
                     }
                     #[allow(clippy::result_large_err)]
@@ -154,6 +160,55 @@ async fn handle_put(stream: TcpStream, blobs: Blobs) {
                 .as_bytes(),
         )
         .await;
+}
+
+/// 極簡的 blob 下載（`GET <RUNNER_BLOB_PATH>/<blob_id>`，要有 Runner token）：回傳存著的內容，
+/// 沒有時回 404。
+async fn handle_get(stream: TcpStream, blobs: Blobs) {
+    let mut reader = BufReader::new(stream);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line).await.unwrap();
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_owned();
+    let mut authorized = false;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if line
+            .to_ascii_lowercase()
+            .starts_with("authorization: bearer ")
+        {
+            authorized = true;
+        }
+    }
+    let id = path
+        .strip_prefix(&format!("{RUNNER_BLOB_PATH}/"))
+        .map(|rest| rest.split_once('?').map_or(rest, |(id, _)| id))
+        .unwrap_or_default();
+    let body = blobs.lock().unwrap().get(id).cloned();
+    let (status, body) = match (authorized, body) {
+        (false, _) => ("401 Unauthorized", Vec::new()),
+        (true, None) => ("404 Not Found", Vec::new()),
+        (true, Some(body)) => ("200 OK", body),
+    };
+    let mut stream = reader.into_inner();
+    let _ = stream
+        .write_all(
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await;
+    let _ = stream.write_all(&body).await;
 }
 
 /// Server 端看到的一條 Runner 連線。

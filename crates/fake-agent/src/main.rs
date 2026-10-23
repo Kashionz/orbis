@@ -34,6 +34,10 @@ struct Cli {
     /// 新 session 一開始的 mode，預設是 `--modes` 的第一個。
     #[arg(long)]
     initial_mode: Option<String>,
+
+    /// 宣告 prompt 可以帶圖片。
+    #[arg(long)]
+    image: bool,
 }
 
 #[tokio::main]
@@ -57,6 +61,7 @@ async fn main() -> ExitCode {
         resume: !cli.no_resume,
         modes: cli.modes,
         initial_mode: cli.initial_mode,
+        image: cli.image,
     };
     match agent::serve_stdio_with(script, options).await {
         Ok(()) => ExitCode::SUCCESS,
