@@ -191,7 +191,7 @@ async fn 接不回原本的_session_時開新_session_並附上目前的變更()
     wait_status(&mut conn, "r2", "awaiting_gate").await;
 }
 
-/// 沿用的 Worktree 帶著前一個 Run 的 Agent 改過的內容：即使設定檔已「永遠允許」，也要重新核准
+/// 沿用還在的 Worktree（帶著前一個 Run 的 Agent 改過的內容）：即使設定檔已「永遠允許」，也要重新核准
 /// setup 等腳本；沿用還在的 Worktree 時不再跑一次 setup。
 #[tokio::test(flavor = "multi_thread")]
 async fn 沿用的_worktree_內容已改變時重新核准腳本且不重跑_setup() {

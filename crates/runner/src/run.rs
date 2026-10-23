@@ -493,19 +493,20 @@ impl Run {
         {
             wt.scripts_approved = true;
         }
-        // Feedback Loop 沿用的 Worktree 帶著前一個 Run 的 Agent 改過的內容：和核准時的 base commit
-        // 不同時重新核准，避免已核准的 setup／preview 腳本執行到 Agent 改過的東西（例如 package.json）。
-        // 比對的是工作目錄（含尚未 commit 與未追蹤的檔案），不只是 HEAD。
-        if continuation.is_some() && wt.scripts_approved && !wt.config.scripts().is_empty() {
-            let git = wt.git();
-            let unchanged = git.succeeds(["diff", "--quiet", &wt.base_commit]).await
-                && git
-                    .run(["ls-files", "--others", "--exclude-standard"])
-                    .await
-                    .is_ok_and(|out| out.trim().is_empty());
-            if !unchanged {
-                wt.scripts_approved = false;
-            }
+        // Feedback Loop 的 Worktree 帶著前一個 Run 的 Agent 改過的內容，已核准的 setup／preview 腳本
+        // 可能執行到 Agent 改過的東西（例如 package.json）：沿用還在的 Worktree 時一律重新核准
+        // （被 .gitignore 忽略的檔案也可能被改過，無法可靠比對）；從分支重建時，內容和核准時的
+        // base commit 不同才重新核准。
+        if continuation.is_some()
+            && wt.scripts_approved
+            && !wt.config.scripts().is_empty()
+            && (reusing
+                || !wt
+                    .git()
+                    .succeeds(["diff", "--quiet", &wt.base_commit])
+                    .await)
+        {
+            wt.scripts_approved = false;
         }
         self.emit(EventKind::WorktreeReady {
             // 設定了 [preview] 時是分配給這個 Worktree 的 port（Server 據此區分「沒有設定」與「啟動中」）
