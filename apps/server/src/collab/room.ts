@@ -8,6 +8,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { Logger } from "../logger";
 import type { CollabDocRef } from "./doc-name";
+import { COLLAB_FRAGMENT, fragmentToMarkdown, replaceFragmentWithMarkdown } from "./markdown";
 import type { CollabStore } from "./store";
 
 /** y-websocket 協定的訊息種類（第一個 varUint）。 */
@@ -16,6 +17,9 @@ export const MESSAGE_AWARENESS = 1;
 export const MESSAGE_QUERY_AWARENESS = 3;
 /** 一條連線最多能宣告幾個 awareness client id（同一個分頁重新載入 Y.Doc 時會換新的 id）。 */
 export const MAX_AWARENESS_IDS_PER_PEER = 4;
+
+/** Server 以 REST／GitHub 的內容取代文件時的 transaction origin。 */
+const EXTERNAL_ORIGIN = Symbol("external");
 
 /** 房間中的一個 client。 */
 export interface CollabPeer {
@@ -78,10 +82,40 @@ export class CollabRoom {
     );
   }
 
-  /** 從 CollabStore 載入快照。 */
-  async load(): Promise<void> {
+  /**
+   * 從 CollabStore 載入快照。還沒有快照時以 `seed()` 的 markdown 建立內容，並立刻保存：
+   * 否則 Server 在寫回前重新啟動、又重建一次時，client 手上的舊文件會和新建的內容重複。
+   */
+  async load(seed: () => Promise<string | null>): Promise<void> {
     const state = await this.store.load(this.ref);
-    if (state) Y.applyUpdate(this.doc, state, this.store);
+    if (state) {
+      Y.applyUpdate(this.doc, state, this.store);
+      return;
+    }
+    const markdown = await seed();
+    if (!markdown) return;
+    replaceFragmentWithMarkdown(this.fragment, markdown, this.store);
+    await this.store.save(this.ref, Y.encodeStateAsUpdate(this.doc));
+  }
+
+  /** TipTap 編輯的內容。 */
+  get fragment(): Y.XmlFragment {
+    return this.doc.getXmlFragment(COLLAB_FRAGMENT);
+  }
+
+  /** 目前內容的 markdown。 */
+  markdown(): string {
+    return fragmentToMarkdown(this.fragment);
+  }
+
+  /**
+   * 以 markdown 取代內容（描述被 REST 或 GitHub 改掉時，最後寫入者為準）。
+   * 內容相同時不做任何事，回傳是否有修改。
+   */
+  replaceMarkdown(markdown: string): boolean {
+    if (this.markdown() === markdown.trim()) return false;
+    replaceFragmentWithMarkdown(this.fragment, markdown, EXTERNAL_ORIGIN);
+    return true;
   }
 
   /** 連上的 client 數，包含正在完成 upgrade 的。 */

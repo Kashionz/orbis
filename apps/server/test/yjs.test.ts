@@ -10,6 +10,11 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 import { collabDocName } from "../src/collab/doc-name";
 import { COLLAB_PATH_PREFIX } from "../src/collab/endpoint";
+import {
+  COLLAB_FRAGMENT,
+  fragmentToMarkdown,
+  replaceFragmentWithMarkdown,
+} from "../src/collab/markdown";
 import { MemoryCollabStore } from "../src/collab/store";
 import {
   acceptanceCriteria,
@@ -20,6 +25,7 @@ import {
 } from "../src/db/schema";
 import { type RunningServer, startServer } from "../src/server";
 import {
+  client,
   createTestContext,
   resetDatabase,
   type SeededMember,
@@ -27,6 +33,7 @@ import {
   seedProject,
   seedReadyTask,
   seedTeam,
+  type TestContext,
   unusedGitHubOAuth,
 } from "./helpers/api";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
@@ -42,8 +49,10 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
   let taskId: string;
   const providers: WebsocketProvider[] = [];
 
+  let ctx: TestContext;
+
   async function start(): Promise<RunningServer> {
-    const ctx = createTestContext(database.db);
+    ctx = createTestContext(database.db, { collabStore: store, collabPersistDebounceMs: 20 });
     return startServer({
       config: {
         port: 0,
@@ -57,9 +66,7 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       githubOAuth: unusedGitHubOAuth,
       services: ctx.services,
       dispatcherIntervalMs: 0,
-      collabStore: store,
       collabAuthzRecheckMs: 50,
-      collabPersistDebounceMs: 20,
     });
   }
 
@@ -218,7 +225,17 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
     const a = connect(team.members.member, name);
     await synced(a.provider);
     a.doc.getText("content").insert(0, "重啟前的內容");
-    await waitUntil(() => store.snapshots.has(name), 5000, "寫回快照");
+    await waitUntil(
+      () => {
+        const snapshot = store.snapshots.get(name);
+        if (!snapshot) return false;
+        const saved = new Y.Doc();
+        Y.applyUpdate(saved, snapshot);
+        return text(saved) === "重啟前的內容";
+      },
+      5000,
+      "寫回快照",
+    );
     a.provider.destroy();
     await server.close();
 
@@ -237,10 +254,10 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
     a.doc.getText("content").insert(0, "x");
     // 另一個 client 收到修改，表示 Server 已經套用。
     await waitUntil(() => text(b.doc) === "x", 5000, "Server 收到修改");
-    expect(server.collabEndpoint.openDocumentCount()).toBe(1);
+    expect(server.services.collab.openDocumentCount).toBe(1);
     a.provider.destroy();
     b.provider.destroy();
-    await waitUntil(() => server.collabEndpoint.openDocumentCount() === 0, 5000, "卸載文件");
+    await waitUntil(() => server.services.collab.openDocumentCount === 0, 5000, "卸載文件");
     const snapshot = store.snapshots.get(name);
     if (!snapshot) throw new Error("沒有快照");
     const restored = new Y.Doc();
@@ -324,5 +341,103 @@ describe.skipIf(dbSkipReason !== null)("共同編輯（Yjs）", () => {
       .delete(sessions)
       .where(eq(sessions.githubUserId, team.members.owner.githubUserId));
     expect(await owner.closed).toBe(4401);
+  });
+
+  describe("與資料庫的內容同步", () => {
+    const markdownOf = (doc: Y.Doc) => fragmentToMarkdown(doc.getXmlFragment(COLLAB_FRAGMENT));
+    const description = async () =>
+      (await database.db.select().from(tasks).where(eq(tasks.id, taskId)))[0]?.description;
+
+    it("第一次開啟時以 Task 描述建立文件，並立刻保存快照", async () => {
+      const name = collabDocName("task-description", taskId);
+      const a = connect(team.members.member, name);
+      await synced(a.provider);
+      await waitUntil(() => markdownOf(a.doc) === "用 GitHub 登入", 5000, "讀到描述");
+      expect(store.snapshots.has(name)).toBe(true);
+    });
+
+    it("編輯後回寫 Task 描述，並發出 task.updated（source = collab）", async () => {
+      const seen: string[] = [];
+      server.services.events.subscribe((event) => {
+        if (event.type === "task.updated" && event.taskId === taskId) seen.push(event.source);
+      });
+      const a = connect(team.members.member, collabDocName("task-description", taskId));
+      await synced(a.provider);
+      await waitUntil(() => markdownOf(a.doc) !== "", 5000, "讀到描述");
+      replaceFragmentWithMarkdown(a.doc.getXmlFragment(COLLAB_FRAGMENT), "## 新的描述\n\n- 第一點");
+      await waitUntil(
+        async () => (await description()) === "## 新的描述\n\n- 第一點",
+        5000,
+        "回寫描述",
+      );
+      expect(seen).toEqual(["collab"]);
+    });
+
+    it("描述被 REST 改掉時，連上的 client 立刻看到新的內容（不會再回寫一次）", async () => {
+      const seen: string[] = [];
+      server.services.events.subscribe((event) => {
+        if (event.type === "task.updated" && event.taskId === taskId) seen.push(event.source);
+      });
+      const a = connect(team.members.member, collabDocName("task-description", taskId));
+      await synced(a.provider);
+      await waitUntil(() => markdownOf(a.doc) !== "", 5000, "讀到描述");
+      const res = await client(ctx.app, team.members.admin.cookie).patch(`/api/tasks/${taskId}`, {
+        description: "REST 改的 **描述**",
+      });
+      expect(res.status).toBe(200);
+      await waitUntil(() => markdownOf(a.doc) === "REST 改的 **描述**", 5000, "client 看到新描述");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(seen).toEqual(["api"]);
+      expect(await description()).toBe("REST 改的 **描述**");
+    });
+
+    it("文件沒有載入時，描述的修改寫進快照；下次開啟看到新的內容", async () => {
+      const name = collabDocName("task-description", taskId);
+      const a = connect(team.members.member, name);
+      await synced(a.provider);
+      await waitUntil(() => markdownOf(a.doc) !== "", 5000, "讀到描述");
+      a.provider.destroy();
+      await waitUntil(() => server.services.collab.openDocumentCount === 0, 5000, "卸載文件");
+
+      await client(ctx.app, team.members.admin.cookie).patch(`/api/tasks/${taskId}`, {
+        description: "離線時改的",
+      });
+      const b = connect(team.members.member, name);
+      await synced(b.provider);
+      await waitUntil(() => markdownOf(b.doc) === "離線時改的", 5000, "看到新的描述");
+    });
+
+    it("Acceptance Criterion：以描述建立文件、編輯後回寫、REST 修改時同步", async () => {
+      const [criterion] = await database.db
+        .select()
+        .from(acceptanceCriteria)
+        .where(eq(acceptanceCriteria.taskId, taskId));
+      if (!criterion) throw new Error("沒有 Acceptance Criterion");
+      const a = connect(team.members.member, collabDocName("acceptance-criterion", criterion.id));
+      await synced(a.provider);
+      await waitUntil(() => markdownOf(a.doc) === "測試通過", 5000, "讀到描述");
+
+      replaceFragmentWithMarkdown(a.doc.getXmlFragment(COLLAB_FRAGMENT), "所有測試通過");
+      const current = async () =>
+        (
+          await database.db
+            .select()
+            .from(acceptanceCriteria)
+            .where(eq(acceptanceCriteria.id, criterion.id))
+        )[0]?.description;
+      await waitUntil(async () => (await current()) === "所有測試通過", 5000, "回寫描述");
+
+      const res = await client(ctx.app, team.members.admin.cookie).patch(
+        `/api/acceptance-criteria/${criterion.id}`,
+        { description: "lint 與測試通過" },
+      );
+      expect(res.status).toBe(200);
+      await waitUntil(() => markdownOf(a.doc) === "lint 與測試通過", 5000, "client 看到新描述");
+
+      // 清空文件時保留原本的描述（Acceptance Criterion 的描述不可以是空的）。
+      replaceFragmentWithMarkdown(a.doc.getXmlFragment(COLLAB_FRAGMENT), "");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(await current()).toBe("lint 與測試通過");
+    });
   });
 });

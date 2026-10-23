@@ -5,6 +5,8 @@ import { SessionCleanup } from "./auth/session-cleanup";
 import { BlobCleanup } from "./blobs/cleanup";
 import { type BlobStore, FileSystemBlobStore } from "./blobs/store";
 import { type Clock, systemClock } from "./clock";
+import { CollabHub } from "./collab/hub";
+import { type CollabStore, MemoryCollabStore } from "./collab/store";
 import { DEFAULT_BLOB_DIR, DEFAULT_HEARTBEAT_INTERVAL_MS, DEFAULT_PUBLIC_URL } from "./config";
 import type { Database } from "./db/client";
 import { DomainEvents } from "./domain/events";
@@ -45,6 +47,8 @@ export interface Services {
   blobStore: BlobStore;
   blobCleanup: BlobCleanup;
   sessionCleanup: SessionCleanup;
+  /** 共同編輯的文件（載入、寫回、與資料庫內容同步）。 */
+  collab: CollabHub;
   heartbeatIntervalMs: number;
   /** Preview 網址的換票與登入保護（E 軌，src/preview/）。 */
   preview: PreviewService;
@@ -72,6 +76,10 @@ export interface ServicesOptions {
   blobDir?: string;
   /** Preview 網域（CONFIG_ENV.previewDomain）；未提供時不提供 Preview 網址。 */
   previewDomain?: string | null;
+  /** 共同編輯文件的快照儲存。TODO(contract): 契約 v2 的 collab 文件表合併後預設改用 Postgres。 */
+  collabStore?: CollabStore;
+  /** 共同編輯文件修改後多久寫回（測試用）。 */
+  collabPersistDebounceMs?: number;
 }
 
 export function createServices(options: ServicesOptions): Services {
@@ -129,6 +137,13 @@ export function createServices(options: ServicesOptions): Services {
     blobStore,
     blobCleanup: new BlobCleanup(db, blobStore, clock, logger),
     sessionCleanup,
+    collab: new CollabHub({
+      db,
+      store: options.collabStore ?? new MemoryCollabStore(),
+      events,
+      logger,
+      persistDebounceMs: options.collabPersistDebounceMs,
+    }),
     heartbeatIntervalMs,
     preview: createPreviewService({
       db,

@@ -6,7 +6,6 @@ import { createAdaptorServer } from "@hono/node-server";
 import { createApp } from "./app";
 import type { GitHubOAuth } from "./auth/github-oauth";
 import { attachCollabEndpoint, type CollabEndpoint } from "./collab/endpoint";
-import { type CollabStore, MemoryCollabStore } from "./collab/store";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
@@ -40,11 +39,8 @@ export interface ServerDeps {
   webAuthzRecheckMs?: number;
   /** 派工檢查的間隔；設為 0 時不啟動定期檢查（測試自行呼叫 dispatcher.kick()）。 */
   dispatcherIntervalMs?: number;
-  /** 共同編輯文件的快照儲存。TODO(contract): 契約 v2 合併後預設改用 Postgres。 */
-  collabStore?: CollabStore;
-  /** 測試用：共同編輯重新檢查權限的間隔與寫回的 debounce。 */
+  /** 測試用：共同編輯重新檢查權限的間隔。 */
   collabAuthzRecheckMs?: number;
-  collabPersistDebounceMs?: number;
 }
 
 export interface RunningServer {
@@ -116,9 +112,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   });
   const collabEndpoint = attachCollabEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,
-    store: deps.collabStore ?? new MemoryCollabStore(),
     authzRecheckMs: deps.collabAuthzRecheckMs,
-    persistDebounceMs: deps.collabPersistDebounceMs,
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -152,6 +146,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       await runnerEndpoint.close();
       await webEndpoint.close();
       await collabEndpoint.close();
+      await services.collab.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
         server.closeAllConnections();

@@ -7,8 +7,8 @@
 // - 連線期間定期重新檢查 session 與權限：session 失效時以 4401 關閉，不能再查看時以 4403 關閉，
 //   不能再編輯時改成唯讀。
 //
-// 文件的生命週期：第一個 client 連上時從 CollabStore 載入；修改後 debounce 寫回；
-// 最後一個 client 離開時寫回並卸載；Server 關閉時全部寫回。
+// 文件的載入、寫回與卸載由 CollabHub（services.collab）負責：第一個 client 連上時載入，
+// 最後一個 client 離開時寫回並卸載。
 
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
@@ -21,16 +21,13 @@ import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
 import type { UpgradeRouter } from "../ws-upgrade";
 import { type CollabAccess, collabAccess } from "./authz";
-import { type CollabDocRef, parseCollabDocName } from "./doc-name";
-import { type CollabPeer, type CollabPersistHook, CollabRoom } from "./room";
-import type { CollabStore } from "./store";
+import { parseCollabDocName } from "./doc-name";
+import type { CollabPeer, CollabRoom } from "./room";
 
 // TODO(contract): 路徑改用 packages/api-contract 的 API_ROUTES（ORB-3 契約 v2）。
 export const COLLAB_PATH_PREFIX = "/api/collab/";
 /** 權限檢查結果的有效時間。 */
 export const COLLAB_AUTHZ_RECHECK_MS = 30_000;
-/** 文件修改後多久寫回 CollabStore。 */
-export const COLLAB_PERSIST_DEBOUNCE_MS = 1_000;
 /** 單一訊息的大小上限。 */
 const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
 const CLOSE_UNAUTHORIZED = 4401;
@@ -40,20 +37,12 @@ const CLOSE_INVALID_MESSAGE = 4400;
 export interface CollabEndpointOptions {
   /** Web 的 origin；upgrade 請求的 Origin 必須與它相同。 */
   publicUrl: string;
-  store: CollabStore;
   /** 測試用：權限檢查結果的有效時間。 */
   authzRecheckMs?: number;
-  /** 測試用：寫回的 debounce。 */
-  persistDebounceMs?: number;
-  onPersisted?: CollabPersistHook;
 }
 
 export interface CollabEndpoint {
   connectedCount(): number;
-  /** 目前載入中的文件數（測試用）。 */
-  openDocumentCount(): number;
-  /** 把所有載入中的文件寫回 CollabStore。 */
-  flush(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -63,37 +52,11 @@ export function attachCollabEndpoint(
   options: CollabEndpointOptions,
 ): CollabEndpoint {
   const log = services.logger.child({ component: "collab" });
+  const hub = services.collab;
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   const allowedOrigin = new URL(options.publicUrl).origin;
-  const rooms = new Map<string, Promise<CollabRoom>>();
   const connections = new Set<CollabConnection>();
   const recheckMs = options.authzRecheckMs ?? COLLAB_AUTHZ_RECHECK_MS;
-
-  const openRoom = (ref: CollabDocRef): Promise<CollabRoom> => {
-    let room = rooms.get(ref.name);
-    if (!room) {
-      const created = new CollabRoom(
-        ref,
-        options.store,
-        log,
-        options.persistDebounceMs ?? COLLAB_PERSIST_DEBOUNCE_MS,
-        options.onPersisted,
-      );
-      room = created.load().then(() => created);
-      room.catch(() => rooms.delete(ref.name));
-      rooms.set(ref.name, room);
-    }
-    return room;
-  };
-
-  /** 最後一個 client 離開後寫回並卸載（寫回期間又有人連上就保留）。 */
-  const releaseRoom = async (room: CollabRoom): Promise<void> => {
-    if (room.peerCount > 0) return;
-    await room.flush();
-    if (room.peerCount > 0 || (await rooms.get(room.ref.name)) !== room) return;
-    rooms.delete(room.ref.name);
-    room.destroy();
-  };
 
   router.registerPrefix(COLLAB_PATH_PREFIX, (request, socket, head) => {
     handleUpgrade(request, socket, head).catch((error: unknown) => {
@@ -129,13 +92,13 @@ export function attachCollabEndpoint(
       socket.end(`HTTP/1.1 ${error.status} ${text ?? "Bad Request"}\r\n\r\n`);
       return;
     }
-    const room = await openRoom(ref);
+    const room = await hub.open(ref);
     room.reserve();
     let joined = false;
     socket.once("close", () => {
       if (joined) return;
       room.unreserve();
-      void releaseRoom(room);
+      void hub.release(room);
     });
     wss.handleUpgrade(request, socket, head, (ws) => {
       joined = true;
@@ -146,33 +109,21 @@ export function attachCollabEndpoint(
         connection.stop();
         connections.delete(connection);
         room.leave(connection);
-        releaseRoom(room).catch((error: unknown) =>
-          log.error({ err: error, doc: ref.name }, "卸載共同編輯文件失敗"),
-        );
+        hub
+          .release(room)
+          .catch((error: unknown) =>
+            log.error({ err: error, doc: ref.name }, "卸載共同編輯文件失敗"),
+          );
       });
     });
   }
 
-  const flushAll = async () => {
-    const opened = await Promise.allSettled([...rooms.values()]);
-    await Promise.all(
-      opened.flatMap((result) => (result.status === "fulfilled" ? [result.value.flush()] : [])),
-    );
-  };
-
   return {
     connectedCount: () => connections.size,
-    openDocumentCount: () => rooms.size,
-    flush: flushAll,
     close: async () => {
       for (const connection of connections) connection.stop();
       for (const ws of wss.clients) ws.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
-      await flushAll();
-      for (const room of await Promise.allSettled([...rooms.values()])) {
-        if (room.status === "fulfilled") room.value.destroy();
-      }
-      rooms.clear();
     },
   };
 }

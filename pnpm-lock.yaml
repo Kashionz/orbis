@@ -87,6 +87,9 @@ importers:
       lib0:
         specifier: 0.2.119
         version: 0.2.119
+      marked:
+        specifier: 18.1.0
+        version: 18.1.0
       pg:
         specifier: 8.23.1
         version: 8.23.1
@@ -1868,6 +1871,11 @@ packages:
   marked@14.0.0:
     resolution: {integrity: sha512-uIj4+faQ+MgHgwUW1l2PsPglZLOLOT1uErt06dAPtx2kjteLAkbsd/0FiYg/MGS+i7ZKLb7w2WClxHkzOOuryQ==}
     engines: {node: '>= 18'}
+    hasBin: true
+
+  marked@18.1.0:
+    resolution: {integrity: sha512-PamYXWWWg2nboG3oX5Ffzpy3EFZROqZJK9hSlMmUnekp7TxPs5DcT95vwd46m73/exfKCRVMtgXoPMI4FEJL6w==}
+    engines: {node: '>= 20'}
     hasBin: true
 
   mdast-util-from-markdown@2.1.0:
@@ -3901,6 +3909,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   marked@14.0.0: {}
+
+  marked@18.1.0: {}
 
   mdast-util-from-markdown@2.1.0:
     dependencies:
