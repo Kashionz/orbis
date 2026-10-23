@@ -5,7 +5,7 @@
 // 依事件類型關閉＝兩個 Channel 都不送。勿擾時段只抑制桌面推送，App 內照常記錄，結束後也不補推。
 
 import { z } from "zod";
-import { Id, Timestamp } from "./common";
+import { AppPath, Id, Timestamp } from "./common";
 import { NotificationKind } from "./enums";
 import { TaskKey } from "./task";
 
@@ -21,8 +21,8 @@ export const Notification = z.object({
   actorMemberId: Id.nullable(),
   title: z.string().min(1),
   body: z.string().nullable(),
-  /** 點擊後前往的 Web 路徑或網址。 */
-  url: z.string().min(1).nullable(),
+  /** 點擊後前往的站內路徑，例如 `/tasks/ORB-12`。 */
+  url: AppPath.nullable(),
   /** 已讀的時間；未讀時為 null。 */
   readAt: Timestamp.nullable(),
   createdAt: Timestamp,

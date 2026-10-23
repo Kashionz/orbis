@@ -36,7 +36,10 @@ export const Verification = z.object({
   id: Id,
   runId: Id,
   taskId: Id,
-  /** 這個 Run 的第幾輪，從 1 開始；人選擇「附意見再試」後重新從 1 算。 */
+  /**
+   * 這個 Run 的第幾輪，從 1 開始；人選擇「附意見再試」後重新從 1 算。第一輪之後最多自動重試
+   * `ProjectPolicy.verificationMaxRetries` 次（預設 3，所以最多 4 輪）。
+   */
   attempt: z.number().int().positive(),
   status: VerificationStatus,
   /** 超過重試上限後人的決定；還沒有決定，或不需要決定時為 null。 */
@@ -44,6 +47,11 @@ export const Verification = z.object({
   resolvedByMemberId: Id.nullable(),
   /** 「附意見再試」時附的意見。 */
   comment: z.string().nullable(),
+  /**
+   * 這一輪失敗、已達重試上限、還沒有人做決定（`resolution` 為 null），Task 停在 Verifying 等人以
+   * `POST` runVerificationDecision 決定。只有最新的一輪可能是 true。
+   */
+  awaitingDecision: z.boolean(),
   /** 已收到的結果，依 Task 中條件的順序；還在進行中時可能不完整。 */
   results: z.array(VerificationResultItem),
   startedAt: Timestamp,

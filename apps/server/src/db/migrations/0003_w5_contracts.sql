@@ -25,7 +25,7 @@ CREATE TABLE "collab_documents" (
 --> statement-breakpoint
 CREATE TABLE "mentions" (
 	"id" uuid PRIMARY KEY NOT NULL,
-	"task_id" uuid NOT NULL,
+	"task_id" uuid,
 	"source_kind" "mention_source" NOT NULL,
 	"source_id" text NOT NULL,
 	"node_id" text NOT NULL,
@@ -35,7 +35,8 @@ CREATE TABLE "mentions" (
 	"consult_run_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "mentions_source_node_unique" UNIQUE("source_kind","source_id","node_id"),
-	CONSTRAINT "mentions_single_target" CHECK (("mentions"."member_id" IS NULL) <> ("mentions"."agent" IS NULL))
+	CONSTRAINT "mentions_single_target" CHECK (("mentions"."member_id" IS NULL) <> ("mentions"."agent" IS NULL)),
+	CONSTRAINT "mentions_task_required_outside_collab" CHECK ("mentions"."task_id" IS NOT NULL OR "mentions"."source_kind" = 'collab_document')
 );
 --> statement-breakpoint
 CREATE TABLE "task_comments" (
@@ -106,6 +107,7 @@ CREATE TABLE "feedback_fixes" (
 	"run_id" uuid,
 	"trigger" jsonb NOT NULL,
 	"status" "feedback_fix_status" NOT NULL,
+	"pr_comment_id" bigint,
 	"commit_sha" text,
 	"message" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

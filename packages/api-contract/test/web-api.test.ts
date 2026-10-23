@@ -251,6 +251,7 @@ describe("Gate 與 Review", () => {
             side: "old",
             body: "x",
             authorMemberId: null,
+            consultRunIds: [],
             createdAt: NOW,
             updatedAt: NOW,
           },

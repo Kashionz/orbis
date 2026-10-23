@@ -3,7 +3,20 @@
 // - 文件內容是 TipTap 的 `Y.XmlFragment`（欄位名稱 `COLLAB_FRAGMENT`）。Server 存檔時把它轉成 markdown，
 //   回寫 Task 描述或 Acceptance Criterion 的描述；Repo Spec 草稿只存快照，提交時才轉成 markdown。
 // - Server 與 Web 只使用下面列出的節點與 mark，轉換時遇到其他種類一律當成純文字。
-// - 權限沿用 Role：能查看 Task 的人可以連線（唯讀），能編輯 Task 的人才能寫入。
+// - 權限沿用 Role：能查看 Task 的人可以連線（唯讀），能編輯 Task 的人才能寫入。唯讀連線（例如 Viewer）
+//   送出的 update 一律丟棄，不斷線。
+// - 共同編輯開啟後，REST 的 PATCH（例如 Task 描述）仍然可以用：Server 以最後寫入者為準，
+//   以一個 transaction 取代文件內容（GitHub 同步改了描述時也一樣）。
+
+/** collab WebSocket 的 close code（以 session cookie 與 Origin 認證，同 `/api/ws`）。 */
+export const COLLAB_CLOSE_CODES = {
+  /** 未登入或 session 失效。 */
+  unauthorized: 4401,
+  /** 沒有權限查看這份文件。 */
+  forbidden: 4403,
+  /** 找不到文件（名稱不合法，或所屬的 Task、條件、Repo Spec 不存在）。 */
+  notFound: 4404,
+} as const;
 
 /** 共同編輯文件的種類。 */
 export const COLLAB_DOCUMENT_KINDS = [

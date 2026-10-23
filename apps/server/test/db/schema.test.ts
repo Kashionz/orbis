@@ -695,6 +695,22 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
         }),
         PG.checkViolation,
       );
+      // Repo Spec 草稿中的 mention 沒有 Task；只有共同編輯文件可以沒有 Task
+      await db.insert(mentions).values({
+        sourceKind: "collab_document",
+        sourceId: "repo-spec-draft:0195f0a0-0000-7000-8000-000000000201",
+        nodeId: "0195f0a0-0000-7000-8000-000000000202",
+        memberId: member.id,
+      });
+      await expectPgError(
+        db.insert(mentions).values({
+          sourceKind: "task_comment",
+          sourceId: comment.id,
+          nodeId: "2",
+          memberId: member.id,
+        }),
+        PG.checkViolation,
+      );
 
       // 通知與設定
       await db
@@ -770,6 +786,7 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
         taskId: task.id,
         previousRunId: parent.id,
         runId: fix.id,
+        prCommentId: 1234567890123,
         githubRepoId: 1,
         prNumber: 3,
         source: "ci",

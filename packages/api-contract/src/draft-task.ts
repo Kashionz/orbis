@@ -21,7 +21,10 @@ export type DraftAcceptanceCriterion = z.infer<typeof DraftAcceptanceCriterion>;
 
 /**
  * 依賴：同一批的另一個 Draft Task（`#<n>`，從 1 開始，對應 `position`），或既有的 Task Key。
- * 確認時 Server 換成實際的 Task；同一批還沒確認的 Draft Task 不能被依賴（回 409）。
+ * - 確認時 Server 換成實際的 Task；依賴的 Draft Task 還沒確認時回 409。
+ * - 批次確認依相依順序建立（被依賴的先建立）。
+ * - 確認後，同一批其他草稿中指向它的 `#<n>` 改寫成新的 Task Key。
+ * - 捨棄某一筆時，同一批其他草稿中指向它的相依直接移除。
  */
 const DraftDependency = z.string().regex(/^(#[1-9][0-9]*|[A-Z][A-Z0-9]{1,9}-[1-9][0-9]*)$/, {
   error: "依賴必須是 #<n> 或 Task Key",

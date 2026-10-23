@@ -32,7 +32,10 @@ export const API_ROUTES = {
   projectMentionCandidates: "/api/projects/:projectId/mention-candidates",
   /** GET：Project 的 Role 覆寫清單（單筆的設定與刪除用 `projectRole`）。 */
   projectRoles: "/api/projects/:projectId/roles",
-  /** POST：重新讀取 Repo 的 GitHub App 安裝狀態。 */
+  /**
+   * POST：重新讀取 Repo 的 GitHub App 安裝狀態。成功回更新後的 `Repo`；GitHub 上同名 repo 的 id
+   * 與登記時不同時回 409，`error` 為 `repo_mismatch`。
+   */
   repoRefreshInstallation: "/api/repos/:repoId/github/refresh",
   /** GET／POST：Repo 的 Spec 清單與登記。 */
   repoSpecs: "/api/repos/:repoId/specs",
@@ -48,6 +51,8 @@ export const API_ROUTES = {
   taskRuns: "/api/tasks/:taskId/runs",
   taskGates: "/api/tasks/:taskId/gates",
   taskNotes: "/api/tasks/:taskId/notes",
+  /** GET：Task 上所有的 @mention（含共同編輯文件中的 mention 節點與 @agent 建立的 Run）。 */
+  taskMentions: "/api/tasks/:taskId/mentions",
   /** GET／POST：Task 留言。 */
   taskComments: "/api/tasks/:taskId/comments",
   /** PATCH／DELETE：修改或刪除自己的留言。 */
@@ -88,9 +93,11 @@ export const API_ROUTES = {
   /** GET／PUT：個人的通知設定。 */
   notificationPreferences: "/api/notification-preferences",
 
+  /** GET：Member 以上可以看。 */
   credentials: "/api/credentials",
   /** PATCH：覆寫 Credential 的並行上限（Admin 以上）。 */
   runnerCredential: "/api/runners/:runnerId/credentials/:credential",
+  /** GET：Member 以上可以看。 */
   teamRunnerQueue: "/api/team-runner-queue",
 
   runners: "/api/runners",

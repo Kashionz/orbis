@@ -78,6 +78,7 @@ export type UpdateAcceptanceCriterionInput = z.input<typeof UpdateAcceptanceCrit
 /**
  * 在 Review Gate 為 `manual` 類型的條件打勾或取消（`POST` acceptanceCriterionCheck）。
  * 其他類型回 422；所有 `manual` 條件都打勾後才能核准 Review Gate（否則 409）。
+ * 回應是更新後的 `AcceptanceCriterion`；取消打勾時 `result` 回到 `pending`。
  */
 export const CheckAcceptanceCriterionInput = z.object({ checked: z.boolean() }).strict();
 export type CheckAcceptanceCriterionInput = z.infer<typeof CheckAcceptanceCriterionInput>;

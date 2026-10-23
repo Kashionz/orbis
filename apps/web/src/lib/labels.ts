@@ -119,7 +119,7 @@ export const RUN_ERROR_LABELS: Record<RunErrorCode, string> = {
   setup_failed: "Worktree 設定失敗",
   git_failed: "git 操作失敗",
   path_too_long: "路徑太長",
-  merge_child_conflict: "merge_child 的衝突未解決",
+  merge_child_conflict: "合併 Child Run 時的衝突未解決",
   session_resume_failed: "無法恢復原本的 session",
   internal: "內部錯誤",
 };

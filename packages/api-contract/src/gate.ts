@@ -27,6 +27,8 @@ export const ReviewComment = z.object({
   body: z.string().min(1),
   /** 作者；Member 被移除後為 null。 */
   authorMemberId: Id.nullable(),
+  /** 這則留言中的 @agent 建立的 `consult` Run。 */
+  consultRunIds: z.array(Id),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

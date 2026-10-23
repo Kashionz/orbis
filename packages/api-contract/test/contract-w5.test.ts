@@ -7,6 +7,7 @@ import {
   API_ROUTES,
   apiPath,
   CheckAcceptanceCriterionInput,
+  COLLAB_CLOSE_CODES,
   CreateRepoSpecInput,
   CreateTaskCommentInput,
   CredentialStatus,
@@ -17,6 +18,7 @@ import {
   Gate,
   GateDecisionInput,
   MarkNotificationsReadInput,
+  Mention,
   type MentionTarget,
   NEEDS_YOU_KINDS,
   NeedsYouItem,
@@ -211,6 +213,7 @@ describe("Verification", () => {
     resolution: null,
     resolvedByMemberId: null,
     comment: null,
+    awaitingDecision: true,
     results: [
       {
         criterionId: ID,
@@ -241,6 +244,12 @@ describe("Verification", () => {
       ...verification,
       results: [{ ...verification.results[0], evidence: ["log"] }],
     });
+  });
+
+  it("awaitingDecision 是必填的布林值", () => {
+    const { awaitingDecision: _, ...withoutFlag } = verification;
+    expectInvalid(Verification, withoutFlag);
+    expectInvalid(Verification, { ...verification, awaitingDecision: "yes" });
   });
 
   it("超過上限後的決定：再試（可附意見）、略過、中止", () => {
@@ -366,6 +375,58 @@ describe("@mention 的寫法", () => {
     expect(parseMentions("@[x](member:)")).toEqual([]);
   });
 
+  it("略過 fenced code block 與行內程式碼中的 token", () => {
+    const token = formatMention("octocat", member);
+    const text = [
+      `請 ${token} 看`,
+      "```ts",
+      `const x = "${token}";`,
+      "```",
+      `行內 \`${token}\` 不算`,
+      `雙反引號 \`\` ${token} \`\` 也不算`,
+      "~~~",
+      token,
+      "~~~",
+      `最後 ${formatMention("claude", agent)}`,
+    ].join("\n");
+    expect(parseMentions(text).map((m) => m.label)).toEqual(["octocat", "claude"]);
+    expect(parseMentions(text)[0]?.start).toBe(2);
+  });
+
+  it("沒有結束的 fence 到文末都算程式碼", () => {
+    const text = `${formatMention("a", member)}\n\`\`\`\n${formatMention("b", member)}`;
+    expect(parseMentions(text).map((m) => m.label)).toEqual(["a"]);
+  });
+
+  it("replaceMentions 保留程式碼中的 token 原樣", () => {
+    const token = formatMention("octocat", member);
+    const text = `${token} 與 \`${token}\`\n\`\`\`\n${token}\n\`\`\``;
+    expect(replaceMentions(text, () => "@octocat")).toBe(
+      `@octocat 與 \`${token}\`\n\`\`\`\n${token}\n\`\`\``,
+    );
+  });
+
+  it("Mention 資源帶對象與 @agent 建立的 Run", () => {
+    expectValid(Mention, {
+      id: ID,
+      sourceKind: "collab_document",
+      sourceId: `repo-spec-draft:${ID2}`,
+      nodeId: "0195f0a0-0000-7000-8000-0000000000ff",
+      target: agent,
+      consultRunId: ID2,
+      createdAt: NOW,
+    });
+    expectInvalid(Mention, {
+      id: ID,
+      sourceKind: "task",
+      sourceId: ID2,
+      nodeId: "x",
+      target: member,
+      consultRunId: null,
+      createdAt: NOW,
+    });
+  });
+
   it("同步到 GitHub 時換成 @login", () => {
     const text = `${formatMention("octocat", member)}：${formatMention("claude", agent)} 說好了`;
     expect(replaceMentions(text, (m) => (m.target.type === "member" ? "@octocat" : m.label))).toBe(
@@ -393,6 +454,16 @@ describe("通知", () => {
   it("接受合法的通知；拒絕不存在的種類", () => {
     expectValid(Notification, notification);
     expectInvalid(Notification, { ...notification, kind: "build_failed" });
+    for (const url of [
+      "https://evil.example.com/",
+      "//evil.example.com",
+      "/\\evil",
+      "tasks/ORB-12",
+      "javascript:alert(1)",
+    ]) {
+      expectInvalid(Notification, { ...notification, url });
+    }
+    expectValid(Notification, { ...notification, url: "/runs/r1/review?tab=diff" });
     expectValid(NotificationDesktopFeed, { items: [notification], cursor: "c1" });
   });
 
@@ -451,6 +522,7 @@ describe("Credential 與佇列", () => {
       taskId: ID2,
       taskKey: "ORB-12",
       agent: "claude-code",
+      credential: "claude-subscription",
       position: 1,
       waitingReason: "rate_limited",
       queuedAt: NOW,
@@ -461,6 +533,7 @@ describe("Credential 與佇列", () => {
 describe("Repo Spec", () => {
   it("路徑必須是 repo 內的相對 .md 路徑", () => {
     expectValid(CreateRepoSpecInput, { path: "docs/specs/auth.md" });
+    expectValid(CreateRepoSpecInput, { path: "docs/.github/a.md" });
     for (const path of [
       "/docs/a.md",
       "docs/../a.md",
@@ -470,6 +543,8 @@ describe("Repo Spec", () => {
       "docs/\n../a.md",
       "docs/a\u0000.md",
       "./a.md",
+      ".github/workflows/a.md",
+      ".GitHub/a.md",
     ]) {
       expectInvalid(CreateRepoSpecInput, { path });
     }
@@ -495,6 +570,10 @@ describe("共同編輯的文件名稱", () => {
     const name = formatCollabDocName({ kind: "task-description", id: ID });
     expect(name).toBe(`task-description:${ID}`);
     expect(parseCollabDocName(name)).toEqual({ kind: "task-description", id: ID });
+  });
+
+  it("close code 與 /api/ws 的 4401 一致", () => {
+    expect(COLLAB_CLOSE_CODES).toEqual({ unauthorized: 4401, forbidden: 4403, notFound: 4404 });
   });
 
   it("拒絕不認得的種類與不合法的 ID", () => {

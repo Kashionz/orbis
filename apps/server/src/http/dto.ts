@@ -232,6 +232,8 @@ export function toReviewComment(row: ReviewCommentRow): ReviewComment {
     side: row.side ?? "new",
     body: row.body,
     authorMemberId: row.authorMemberId,
+    // W5–7 契約新增；@agent 建立的 Run 由 B2 從 mentions 查出後填入。
+    consultRunIds: [],
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };

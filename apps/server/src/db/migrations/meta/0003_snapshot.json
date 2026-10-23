@@ -1,5 +1,5 @@
 {
-  "id": "78960c1f-7a82-4ac2-b47a-e551d2ae2127",
+  "id": "32e1132e-d1f2-4316-bf31-6c9d277adfd1",
   "prevId": "1b890104-b4c3-43ad-94d1-2a1e3ca1fac2",
   "version": "7",
   "dialect": "postgresql",
@@ -201,7 +201,7 @@
           "name": "task_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "source_kind": {
           "name": "source_kind",
@@ -337,6 +337,10 @@
         "mentions_single_target": {
           "name": "mentions_single_target",
           "value": "(\"mentions\".\"member_id\" IS NULL) <> (\"mentions\".\"agent\" IS NULL)"
+        },
+        "mentions_task_required_outside_collab": {
+          "name": "mentions_task_required_outside_collab",
+          "value": "\"mentions\".\"task_id\" IS NOT NULL OR \"mentions\".\"source_kind\" = 'collab_document'"
         }
       },
       "isRLSEnabled": false
@@ -1439,6 +1443,12 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "pr_comment_id": {
+          "name": "pr_comment_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
         },
         "commit_sha": {
           "name": "commit_sha",

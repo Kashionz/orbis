@@ -83,6 +83,8 @@ test.describe("Diff review", () => {
         action: "reject",
         comment: "請修正後再送",
         reviewComments: [{ path: "hello.txt", line: 1, side: "new", body: "結尾不要換行" }],
+        // W5–7 契約新增，契約的 schema 補上預設值
+        previewComments: [],
       },
     ]);
     await expect(page.getByTestId("timeline")).toContainText("收到 review 留言");

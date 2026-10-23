@@ -167,6 +167,8 @@ export const feedbackFixes = pgTable(
     /** 觸發的批次（FeedbackBatch），格式由 packages/github 定義。 */
     trigger: jsonb("trigger").notNull(),
     status: feedbackFixStatusEnum("status").notNull(),
+    /** PR 上這次修正的紀錄留言 id；push 後在同一則留言補上新的 commit。 */
+    prCommentId: bigint("pr_comment_id", { mode: "number" }),
     /** 修正 push 出去的 commit（`pushed` 時）。 */
     commitSha: text("commit_sha"),
     /** 失敗的原因（`failed` 時）。 */

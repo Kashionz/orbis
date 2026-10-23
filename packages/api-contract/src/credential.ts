@@ -3,6 +3,7 @@
 // Credential 本身只存在 Runner 主機上（ADR-0007），Server 只知道各 Runner 回報的名稱與並行上限。
 // Admin 可以在 Server 覆寫並行上限：有效上限＝覆寫 ?? Runner 回報（預設 30）。
 // Credential 撞到 rate limit 時，到恢復前不派新的 Run 給它。
+// 這兩個資源 Member 以上都可以看；只有 Admin 以上能覆寫並行上限。
 
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
@@ -20,7 +21,7 @@ export const CredentialStatus = z.object({
   online: z.boolean(),
   /** Runner 上的 Credential 名稱。 */
   credential: z.string().min(1),
-  /** 使用這組 Credential 的 Agent。 */
+  /** 使用這組 Credential 的 Agent。沒有 Credential 的 Agent 不會出現在任何一組中。 */
   agents: z.array(z.string().min(1)),
   /** Runner 回報的並行上限。 */
   reportedMaxConcurrentRuns: z.number().int().positive(),
@@ -74,6 +75,8 @@ export const TeamRunnerQueueItem = z.object({
   taskId: Id,
   taskKey: TaskKey,
   agent: z.string().min(1),
+  /** 等待的 Credential；還沒選定（例如沒有任何 Runner 有這個 Agent）時為 null。 */
+  credential: z.string().min(1).nullable(),
   /** 在佇列中的順位，從 1 開始。 */
   position: z.number().int().positive(),
   waitingReason: QueueWaitingReason,

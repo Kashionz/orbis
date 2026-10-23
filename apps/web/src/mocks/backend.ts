@@ -1023,6 +1023,7 @@ export class MockBackend {
               id: this.newId("review-comment"),
               gateId: gate.id,
               authorMemberId: ME_ID,
+              consultRunIds: [],
               createdAt: time,
               updatedAt: time,
             }))
