@@ -530,6 +530,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **Server 的資料庫不存任何 Agent Credential。** Server 只知道各 Runner 能跑哪些 Agent，以及各 Credential 的並行上限。
 - `.env` 這類檔案只在 Runner 本機複製，**不會上傳到 Server**。
 - **登入方式**：GitHub OAuth；Runner 用 Pairing token；Preview 網址需要登入 session。
+- **寫入型 API 檢查 Origin**：帶 session cookie 的寫入請求（GET、HEAD、OPTIONS 以外）有 Origin header 時，必須是 Web 或 Server 自己的 origin，否則回 403。Preview 的子網域和 Web 是 same-site，Agent 寫的頁面送出的請求會帶上 SameSite=Lax 的 cookie，要靠這項檢查擋下。WebSocket（`/api/ws`、共同編輯）在 upgrade 時同樣檢查 Origin。
 
 ---
 
