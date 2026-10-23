@@ -14,9 +14,10 @@ use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::Implementation;
 use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, LoadSessionRequest,
-    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, ResumeSessionRequest, SessionId, SessionModeId, SessionModeState,
-    SessionNotification, SessionUpdate, SetSessionModeRequest, StopReason,
+    McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest, SessionId,
+    SessionModeId, SessionModeState, SessionNotification, SessionUpdate, SetSessionModeRequest,
+    StopReason,
 };
 use agent_client_protocol::{self as acp, Agent, ByteStreams, ConnectionTo};
 use anyhow::Context;
@@ -96,9 +97,10 @@ impl AcpSession {
         cwd: &Path,
         notices: mpsc::UnboundedSender<AgentNotice>,
         resume: Option<&str>,
+        mcp_servers: Vec<McpServer>,
     ) -> Result<Self, AgentError> {
         let mut session = Self::connect(profile, spec, cwd, notices).await?;
-        if let Err(error) = session.handshake(profile, cwd, resume).await {
+        if let Err(error) = session.handshake(profile, cwd, resume, mcp_servers).await {
             return Err(session.fail(error).await);
         }
         Ok(session)
@@ -259,6 +261,7 @@ impl AcpSession {
         profile: &AgentProfile,
         cwd: &Path,
         resume: Option<&str>,
+        mcp_servers: Vec<McpServer>,
     ) -> Result<(), AgentError> {
         let init = self.initialize(profile).await?;
         let caps = &init.agent_capabilities;
@@ -268,6 +271,7 @@ impl AcpSession {
                     .cx
                     .send_request(
                         ResumeSessionRequest::new(id.to_owned(), cwd)
+                            .mcp_servers(mcp_servers)
                             .meta(profile.session_meta.clone()),
                     )
                     .block_task()
@@ -282,6 +286,7 @@ impl AcpSession {
                     .cx
                     .send_request(
                         LoadSessionRequest::new(id.to_owned(), cwd)
+                            .mcp_servers(mcp_servers)
                             .meta(profile.session_meta.clone()),
                     )
                     .block_task()
@@ -294,7 +299,11 @@ impl AcpSession {
             _ => {
                 let response = self
                     .cx
-                    .send_request(NewSessionRequest::new(cwd).meta(profile.session_meta.clone()))
+                    .send_request(
+                        NewSessionRequest::new(cwd)
+                            .mcp_servers(mcp_servers)
+                            .meta(profile.session_meta.clone()),
+                    )
                     .block_task()
                     .await
                     .map_err(AgentError::Acp)?;

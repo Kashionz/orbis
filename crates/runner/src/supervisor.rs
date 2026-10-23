@@ -54,6 +54,8 @@ pub struct Supervisor {
     rate_limits: Arc<crate::rate_limit::RateLimits>,
     /// 從 Server 下載 blob（prompt 中的圖片）。
     blobs: Arc<crate::blobs::BlobFetcher>,
+    /// Orbis MCP 的工具呼叫（ARCHITECTURE §9）。
+    mcp: Arc<crate::orbis_mcp::hub::McpHub>,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -71,6 +73,7 @@ impl Supervisor {
         let outbox = Arc::new(Outbox::open(home.spool_dir())?);
         let (frames, frames_rx) = mpsc::unbounded_channel();
         let profiles = Profiles::from_settings(home.settings());
+        let mcp = crate::orbis_mcp::hub::McpHub::start(frames.clone(), outbox.clone())?;
         let supervisor = Arc::new(Self {
             worktrees: Arc::new(WorktreeManager::new(home.clone())),
             home,
@@ -89,6 +92,7 @@ impl Supervisor {
             availability_changed: Arc::new(tokio::sync::Notify::new()),
             rate_limits: Arc::new(crate::rate_limit::RateLimits::default()),
             blobs: Arc::new(crate::blobs::BlobFetcher::default()),
+            mcp,
         });
         supervisor.recover();
         // 在背景探測各 Agent 的能力旗標，不拖慢第一次的 AgentAvailability（每個 Agent 最多等
@@ -109,6 +113,11 @@ impl Supervisor {
     /// 正在執行的 Preview（Preview 的 relay 使用）。
     pub fn previews(&self) -> &Arc<PreviewRegistry> {
         &self.previews
+    }
+
+    /// Orbis MCP 的 hub（連線收到 `tool_result` 時交給它）。
+    pub fn mcp(&self) -> &Arc<crate::orbis_mcp::hub::McpHub> {
+        &self.mcp
     }
 
     /// 下載 blob 用的 client（連線交握後設定 Server 網址與 Runner token）。
@@ -368,6 +377,7 @@ impl Supervisor {
                         availability_changed: self.availability_changed.clone(),
                         rate_limits: self.rate_limits.clone(),
                         blobs: self.blobs.clone(),
+                        mcp: self.mcp.clone(),
                     },
                 );
                 lock(&self.runs).insert(handle.run_id.clone(), handle);
@@ -510,6 +520,7 @@ impl Supervisor {
     /// 新的連線完成交握：依 `resume` 補送 Event；Server 已不認得的 Run 一律中止（不再送 Event）。
     pub fn on_connected(&self, resume: &[orbis_protocol::connection::RunResume]) {
         let orphaned = self.outbox.begin_connection(resume);
+        self.mcp.resend_pending();
         let mut runs = lock(&self.runs);
         for run_id in orphaned {
             if let Some(handle) = runs.remove(&run_id) {

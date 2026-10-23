@@ -87,6 +87,8 @@ pub struct RunContext {
     pub rate_limits: Arc<crate::rate_limit::RateLimits>,
     /// 從 Server 下載 blob（prompt 中的圖片）。
     pub blobs: Arc<crate::blobs::BlobFetcher>,
+    /// Orbis MCP 的工具呼叫（ARCHITECTURE §9）。
+    pub mcp: Arc<crate::orbis_mcp::hub::McpHub>,
 }
 
 /// 送給 Run 的訊息。
@@ -147,6 +149,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         turn_text: String::new(),
         last_source: PromptSource::User,
         approved_verify_commands: std::collections::HashSet::new(),
+        mcp_token: None,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
@@ -263,6 +266,8 @@ struct Run {
     last_source: PromptSource,
     /// 這個 Run 中已經被允許的 Verification 指令（Task 指定、不在 Repo 設定檔中的指令）。
     approved_verify_commands: std::collections::HashSet<String>,
+    /// Orbis MCP 的 token（Agent 啟動時登記，Run 結束時取消）。
+    mcp_token: Option<String>,
 }
 
 impl Run {
@@ -296,6 +301,9 @@ impl Run {
                 });
                 self.set_status(RunStatus::Failed, None, Some(message));
             }
+        }
+        if let Some(token) = self.mcp_token.take() {
+            self.ctx.mcp.unregister(&token);
         }
         // Run 不再佔用並行數。
         self.ctx.availability_changed.notify_one();
@@ -580,6 +588,7 @@ impl Run {
     /// 啟動 Agent。`resume` 是要接續的 session ID；回傳是否真的接續了（Agent 不支援時開新的）。
     async fn start_agent(&mut self, resume: Option<String>) -> Result<bool, Stop> {
         let wt = self.wt().clone();
+        let mcp_servers = vec![self.orbis_mcp_server()];
         let agents_dir = self.ctx.home.agents_dir();
         let profile = self.profile.clone();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -600,7 +609,7 @@ impl Run {
                 .map_err(AgentError::Start)?
                 .envs(wt.env())
                 .unattended_git();
-            AcpSession::start(&profile, spec, &wt.path, tx, resume.as_deref()).await
+            AcpSession::start(&profile, spec, &wt.path, tx, resume.as_deref(), mcp_servers).await
         };
         let session = self
             .interruptible(start)
@@ -632,6 +641,29 @@ impl Run {
         }
         self.notices = Some(rx);
         Ok(resumed)
+    }
+
+    /// 注入到 session 的 Orbis MCP server（ARCHITECTURE §9）。第一次呼叫時在 hub 登記這個 Run。
+    fn orbis_mcp_server(&mut self) -> agent_client_protocol::schema::v1::McpServer {
+        let delegation = self.offer.delegation.clone();
+        let judge = self.offer.origin == Some(orbis_protocol::enums::RunOrigin::Verification);
+        let token = match &self.mcp_token {
+            Some(token) => token.clone(),
+            None => {
+                let token = self.ctx.mcp.register(crate::orbis_mcp::hub::Caller {
+                    run_id: self.offer.run_id.clone(),
+                    dispatch_id: self.offer.dispatch_id.clone(),
+                    worktree: self.wt().clone(),
+                    depth: delegation.as_ref().map_or(0, |d| d.depth.unwrap_or(1)),
+                    parent: delegation.as_ref().map(|d| d.parent_run_id.clone()),
+                    mode: delegation.as_ref().map(|d| d.mode),
+                    judge,
+                });
+                self.mcp_token = Some(token.clone());
+                token
+            }
+        };
+        crate::orbis_mcp::session_server(self.ctx.mcp.endpoint(), &token, judge)
     }
 
     /// 結束 Agent、把設定檔還原成已接受的內容，再重新啟動 Agent，盡量接續同一個 session。
@@ -1461,9 +1493,19 @@ impl Run {
             return;
         }
         let mut decision = policy::decide(&subject, &policy_ctx);
+        // Orbis 自己的 MCP 工具：防護規則由 Server 套用，不轉給人（Planning 中也可以用）。
+        let is_orbis_call = request
+            .tool_call
+            .fields
+            .title
+            .as_deref()
+            .is_some_and(crate::orbis_mcp::is_orbis_tool);
+        if is_orbis_call {
+            decision = Decision::Allow;
+        }
         // Planning 中（plan 核准之前）不可以修改檔案；指令與其他操作可能間接修改，原本會自動
         // 允許的也改成問人（不論 Permission Policy 的等級）。
-        if self.planning {
+        if self.planning && !is_orbis_call {
             match subject {
                 crate::policy::PermissionSubject::Write { .. }
                 | crate::policy::PermissionSubject::Delete { .. } => {

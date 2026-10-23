@@ -46,6 +46,10 @@ struct Cli {
     /// 由 Desktop 代管：stdout 輸出 JSON 狀態、從 stdin 讀指令，stdin 關閉時結束。
     #[arg(long)]
     sidecar: bool,
+
+    /// 以 stdio 提供 Orbis MCP server（Runner 注入到 Agent 的 session，ARCHITECTURE §9）。
+    #[arg(long, hide = true)]
+    mcp_bridge: bool,
 }
 
 #[tokio::main]
@@ -60,6 +64,16 @@ async fn main() -> std::process::ExitCode {
             }
         }
         return std::process::ExitCode::SUCCESS;
+    }
+    if cli.mcp_bridge {
+        // stdout 是 MCP 的通道，不輸出 log。
+        return match orbis_runner::orbis_mcp::bridge::serve_stdio().await {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e:#}");
+                std::process::ExitCode::FAILURE
+            }
+        };
     }
     init_tracing();
     let code = match run(cli).await {

@@ -9,6 +9,7 @@ pub mod diff;
 pub mod git;
 pub mod home;
 pub mod normalize;
+pub mod orbis_mcp;
 pub mod outbox;
 pub mod paths;
 pub mod policy;

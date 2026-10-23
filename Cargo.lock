@@ -1457,6 +1457,7 @@ dependencies = [
  "rand 0.9.5",
  "regex",
  "reqwest",
+ "rmcp",
  "serde",
  "serde_json",
  "sha2",
