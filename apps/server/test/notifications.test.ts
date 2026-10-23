@@ -174,7 +174,7 @@ describe.skipIf(dbSkipReason !== null)("通知系統", () => {
         kind: "permission_request",
         request_id: "req-2",
         tool_call_id: null,
-        title: "信任 .orbis 設定",
+        title: "信任 Repo 設定檔",
         options: [{ option_id: "trust", name: "信任", kind: "allow_once" }],
         purpose: "config_trust",
       });

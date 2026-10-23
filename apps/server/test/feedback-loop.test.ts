@@ -249,7 +249,7 @@ describe.skipIf(dbSkipReason !== null)("Feedback Loop", () => {
         previousRunId: started.run.id,
         source: "ci",
         prompt: "CI 的 test 失敗了",
-        pullRequestUrl: "https://github.com/acme/orbis/pull/1",
+        pullRequestUrl: "https://github.com/acme/app/pull/1",
       });
       if (!result.ok) throw new Error(result.message);
       expect(await runRow(database.db, result.runId)).toMatchObject({
@@ -281,7 +281,7 @@ describe.skipIf(dbSkipReason !== null)("Feedback Loop", () => {
         previousRunId: started.run.id,
         source: "review",
         prompt: "請處理 review",
-        pullRequestUrl: "https://github.com/acme/orbis/pull/1",
+        pullRequestUrl: "https://github.com/acme/app/pull/1",
       });
       if (!result.ok) throw new Error(result.message);
       await flow.h.ctx.services.dispatcher.kick();
@@ -316,7 +316,7 @@ describe.skipIf(dbSkipReason !== null)("Feedback Loop", () => {
         previousRunId: started.run.id,
         source: "ci",
         prompt: "修正",
-        pullRequestUrl: "https://github.com/acme/orbis/pull/1",
+        pullRequestUrl: "https://github.com/acme/app/pull/1",
       });
       if (!result.ok) throw new Error(result.message);
       await flow.h.ctx.services.dispatcher.kick();
@@ -339,7 +339,7 @@ describe.skipIf(dbSkipReason !== null)("Feedback Loop", () => {
         previousRunId: started.run.id,
         source: "ci" as const,
         prompt: "x",
-        pullRequestUrl: "https://github.com/acme/orbis/pull/1",
+        pullRequestUrl: "https://github.com/acme/app/pull/1",
       };
       expect(await port().requestFix({ ...request, previousRunId: randomUUID() })).toMatchObject({
         ok: false,
