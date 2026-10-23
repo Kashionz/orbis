@@ -4,7 +4,7 @@ import {
   ACCEPTANCE_CRITERION_KINDS,
   DELEGATION_MODES,
   DISPATCH_STATUSES,
-  FEEDBACK_ATTEMPT_STATUSES,
+  FEEDBACK_FIX_STATUSES,
   FEEDBACK_SOURCES,
   GATE_DECISIONS,
   GATE_KINDS,
@@ -67,8 +67,5 @@ export const notificationKindEnum = pgEnum("notification_kind", NOTIFICATION_KIN
 export const mentionSourceEnum = pgEnum("mention_source", MENTION_SOURCES);
 export const taskNoteSourceEnum = pgEnum("task_note_source", TASK_NOTE_SOURCES);
 export const feedbackSourceEnum = pgEnum("feedback_source", FEEDBACK_SOURCES);
-export const feedbackAttemptStatusEnum = pgEnum(
-  "feedback_attempt_status",
-  FEEDBACK_ATTEMPT_STATUSES,
-);
+export const feedbackFixStatusEnum = pgEnum("feedback_fix_status", FEEDBACK_FIX_STATUSES);
 export const reviewCommentKindEnum = pgEnum("review_comment_kind", REVIEW_COMMENT_KINDS);

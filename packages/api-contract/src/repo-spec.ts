@@ -5,14 +5,25 @@
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
 
-/** Repo 內的相對路徑，以 `/` 分隔，結尾是 `.md`。 */
+/** 路徑中不允許的字元：控制字元，以及 Windows 不允許的 `\ : * ? " < > |`。 */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 要排除的正是控制字元
+const FORBIDDEN_PATH_CHARS = /[\u0000-\u001f\u007f\\:*?"<>|]/;
+
+/**
+ * Repo 內的相對路徑，以 `/` 分隔，結尾是 `.md`。逐段檢查：每一段不可以是空的、`.` 或 `..`，
+ * 整個路徑不可以有控制字元（會被放進 git 指令與 GitHub API 的路徑）。
+ */
 export const RepoSpecPath = z
   .string()
   .min(4)
   .max(255)
-  .regex(/^(?!\/)(?!.*\/\/)(?!.*(^|\/)\.\.?(\/|$))[^\\:*?"<>|]+\.md$/, {
-    error: "Spec 路徑必須是 repo 內以 / 分隔的相對路徑，結尾是 .md",
-  });
+  .refine(
+    (path) =>
+      path.endsWith(".md") &&
+      !FORBIDDEN_PATH_CHARS.test(path) &&
+      path.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
+    { error: "Spec 路徑必須是 repo 內以 / 分隔的相對路徑，結尾是 .md" },
+  );
 
 export const RepoSpec = z.object({
   id: Id,

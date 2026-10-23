@@ -191,10 +191,13 @@ export const FEEDBACK_SOURCES = ["review", "ci"] as const;
 export const FeedbackSource = z.enum(FEEDBACK_SOURCES);
 export type FeedbackSource = z.infer<typeof FeedbackSource>;
 
-/** 一次 Feedback Loop 自動修正的狀態。 */
-export const FEEDBACK_ATTEMPT_STATUSES = ["sent", "pushed", "failed", "limit_reached"] as const;
-export const FeedbackAttemptStatus = z.enum(FEEDBACK_ATTEMPT_STATUSES);
-export type FeedbackAttemptStatus = z.infer<typeof FeedbackAttemptStatus>;
+/**
+ * 一次 Feedback Loop 自動修正的狀態：已開新的 Run 修正、修正已 push、失敗（沒有開成 Run，或 Run
+ * 沒有 push 就結束）、已達次數上限而沒有送出。
+ */
+export const FEEDBACK_FIX_STATUSES = ["sent", "pushed", "failed", "limit_reached"] as const;
+export const FeedbackFixStatus = z.enum(FEEDBACK_FIX_STATUSES);
+export type FeedbackFixStatus = z.infer<typeof FeedbackFixStatus>;
 
 /** Review Gate 留言的種類：diff 行內留言，或在 Preview 上點選元素的留言。 */
 export const REVIEW_COMMENT_KINDS = ["diff", "preview"] as const;

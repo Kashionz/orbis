@@ -9,7 +9,8 @@ import {
   collabDocuments,
   dispatches,
   draftTasks,
-  feedbackAttempts,
+  feedbackBatches,
+  feedbackFixes,
   gates,
   members,
   mentions,
@@ -74,8 +75,8 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
           "collab_documents",
           "dispatches",
           "draft_tasks",
-          "feedback_attempts",
           "feedback_batches",
+          "feedback_fixes",
           "gates",
           "github_webhook_deliveries",
           "members",
@@ -764,17 +765,26 @@ describe.skipIf(dbSkipReason !== null)("資料庫 schema", () => {
         PG.checkViolation,
       );
 
-      // Feedback Loop 的紀錄連到修正用的 Run
-      await db.insert(feedbackAttempts).values({
+      // Feedback Loop 的紀錄連到修正用的 Run；CI 的批次一定要有 head_sha
+      await db.insert(feedbackFixes).values({
         taskId: task.id,
+        previousRunId: parent.id,
         runId: fix.id,
         githubRepoId: 1,
         prNumber: 3,
         source: "ci",
-        seq: 1,
-        trigger: { checks: ["test"] },
+        trigger: { source: "ci", headSha: "a".repeat(40), items: [] },
         status: "sent",
       });
+      await expectPgError(
+        db.insert(feedbackBatches).values({
+          githubRepoId: 1,
+          prNumber: 3,
+          source: "ci",
+          dueAt: new Date(),
+        }),
+        PG.checkViolation,
+      );
     });
   });
 });

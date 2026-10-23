@@ -148,6 +148,9 @@ describe("Review Gate 的 Preview 留言", () => {
       screenshotBlobId: null,
     });
     expectInvalid(PreviewCommentInput, { body: "x", url: "not a url" });
+    // 會顯示成連結，只接受 http(s)
+    expectInvalid(PreviewCommentInput, { body: "x", url: "javascript:alert(1)" });
+    expectInvalid(PreviewCommentInput, { body: "x", url: "file:///etc/passwd" });
     expectInvalid(PreviewCommentInput, { body: "x", url: "https://x/", line: 1 });
   });
 
@@ -458,7 +461,16 @@ describe("Credential 與佇列", () => {
 describe("Repo Spec", () => {
   it("路徑必須是 repo 內的相對 .md 路徑", () => {
     expectValid(CreateRepoSpecInput, { path: "docs/specs/auth.md" });
-    for (const path of ["/docs/a.md", "docs/../a.md", "docs\\a.md", "docs/a.txt", "a//b.md"]) {
+    for (const path of [
+      "/docs/a.md",
+      "docs/../a.md",
+      "docs\\a.md",
+      "docs/a.txt",
+      "a//b.md",
+      "docs/\n../a.md",
+      "docs/a\u0000.md",
+      "./a.md",
+    ]) {
       expectInvalid(CreateRepoSpecInput, { path });
     }
   });

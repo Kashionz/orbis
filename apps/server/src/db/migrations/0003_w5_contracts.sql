@@ -1,4 +1,4 @@
-CREATE TYPE "public"."feedback_attempt_status" AS ENUM('sent', 'pushed', 'failed', 'limit_reached');--> statement-breakpoint
+CREATE TYPE "public"."feedback_fix_status" AS ENUM('sent', 'pushed', 'failed', 'limit_reached');--> statement-breakpoint
 CREATE TYPE "public"."feedback_source" AS ENUM('review', 'ci');--> statement-breakpoint
 CREATE TYPE "public"."mention_source" AS ENUM('task_comment', 'review_comment', 'collab_document');--> statement-breakpoint
 CREATE TYPE "public"."notification_kind" AS ENUM('permission_request', 'gate_pending', 'verification_failed', 'feedback_limit_reached', 'mentioned', 'task_assigned', 'task_merged', 'task_rejected', 'run_stopped');--> statement-breakpoint
@@ -83,32 +83,33 @@ CREATE TABLE "orbis_tool_calls" (
 	CONSTRAINT "orbis_tool_calls_result_complete" CHECK (("orbis_tool_calls"."result" IS NULL) = ("orbis_tool_calls"."completed_at" IS NULL))
 );
 --> statement-breakpoint
-CREATE TABLE "feedback_attempts" (
-	"id" uuid PRIMARY KEY NOT NULL,
-	"task_id" uuid NOT NULL,
-	"run_id" uuid,
-	"github_repo_id" bigint NOT NULL,
-	"pr_number" integer NOT NULL,
-	"source" "feedback_source" NOT NULL,
-	"seq" integer NOT NULL,
-	"trigger" jsonb NOT NULL,
-	"status" "feedback_attempt_status" NOT NULL,
-	"pr_comment_id" bigint,
-	"fix_commit_sha" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "feedback_attempts_seq_positive" CHECK ("feedback_attempts"."seq" >= 1)
-);
---> statement-breakpoint
 CREATE TABLE "feedback_batches" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"github_repo_id" bigint NOT NULL,
 	"pr_number" integer NOT NULL,
 	"source" "feedback_source" NOT NULL,
+	"head_sha" text,
 	"items" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"due_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "feedback_batches_pr_source_unique" UNIQUE("github_repo_id","pr_number","source")
+	CONSTRAINT "feedback_batches_pr_source_unique" UNIQUE("github_repo_id","pr_number","source"),
+	CONSTRAINT "feedback_batches_head_sha_only_for_ci" CHECK (("feedback_batches"."source"::text = 'ci') = ("feedback_batches"."head_sha" IS NOT NULL))
+);
+--> statement-breakpoint
+CREATE TABLE "feedback_fixes" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"task_id" uuid NOT NULL,
+	"github_repo_id" bigint NOT NULL,
+	"pr_number" integer NOT NULL,
+	"source" "feedback_source" NOT NULL,
+	"previous_run_id" uuid,
+	"run_id" uuid,
+	"trigger" jsonb NOT NULL,
+	"status" "feedback_fix_status" NOT NULL,
+	"commit_sha" text,
+	"message" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "repo_spec_pull_requests" (
@@ -197,7 +198,6 @@ ALTER TABLE "review_comments" ADD COLUMN "kind" "review_comment_kind" DEFAULT 'd
 ALTER TABLE "review_comments" ADD COLUMN "url" text;--> statement-breakpoint
 ALTER TABLE "review_comments" ADD COLUMN "selector" text;--> statement-breakpoint
 ALTER TABLE "review_comments" ADD COLUMN "screenshot_blob_id" uuid;--> statement-breakpoint
-ALTER TABLE "pull_requests" ADD COLUMN "ci_handled_sha" text;--> statement-breakpoint
 ALTER TABLE "projects" ADD COLUMN "feedback_bot_allowlist" text[] DEFAULT '{}'::text[] NOT NULL;--> statement-breakpoint
 ALTER TABLE "repo_specs" ADD COLUMN "version" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "repo_specs" ADD COLUMN "committed_sha" text;--> statement-breakpoint
@@ -227,8 +227,9 @@ ALTER TABLE "child_questions" ADD CONSTRAINT "child_questions_parent_run_id_runs
 ALTER TABLE "child_questions" ADD CONSTRAINT "child_questions_answered_by_run_id_runs_id_fk" FOREIGN KEY ("answered_by_run_id") REFERENCES "public"."runs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "child_questions" ADD CONSTRAINT "child_questions_answered_by_member_id_members_id_fk" FOREIGN KEY ("answered_by_member_id") REFERENCES "public"."members"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orbis_tool_calls" ADD CONSTRAINT "orbis_tool_calls_run_id_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "feedback_attempts" ADD CONSTRAINT "feedback_attempts_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "feedback_attempts" ADD CONSTRAINT "feedback_attempts_run_id_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."runs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "feedback_fixes" ADD CONSTRAINT "feedback_fixes_task_id_tasks_id_fk" FOREIGN KEY ("task_id") REFERENCES "public"."tasks"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "feedback_fixes" ADD CONSTRAINT "feedback_fixes_previous_run_id_runs_id_fk" FOREIGN KEY ("previous_run_id") REFERENCES "public"."runs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "feedback_fixes" ADD CONSTRAINT "feedback_fixes_run_id_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."runs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "repo_spec_pull_requests" ADD CONSTRAINT "repo_spec_pull_requests_repo_spec_id_repo_specs_id_fk" FOREIGN KEY ("repo_spec_id") REFERENCES "public"."repo_specs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "repo_spec_pull_requests" ADD CONSTRAINT "repo_spec_pull_requests_created_by_member_id_members_id_fk" FOREIGN KEY ("created_by_member_id") REFERENCES "public"."members"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notification_preferences" ADD CONSTRAINT "notification_preferences_member_id_members_id_fk" FOREIGN KEY ("member_id") REFERENCES "public"."members"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -252,9 +253,10 @@ CREATE INDEX "child_questions_parent_run_id_open_idx" ON "child_questions" USING
 CREATE INDEX "child_questions_child_run_id_idx" ON "child_questions" USING btree ("child_run_id");--> statement-breakpoint
 CREATE INDEX "orbis_tool_calls_run_id_idx" ON "orbis_tool_calls" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "orbis_tool_calls_pending_idx" ON "orbis_tool_calls" USING btree ("run_id") WHERE "orbis_tool_calls"."completed_at" IS NULL;--> statement-breakpoint
-CREATE INDEX "feedback_attempts_pr_idx" ON "feedback_attempts" USING btree ("github_repo_id","pr_number","source");--> statement-breakpoint
-CREATE INDEX "feedback_attempts_task_id_idx" ON "feedback_attempts" USING btree ("task_id");--> statement-breakpoint
 CREATE INDEX "feedback_batches_due_at_idx" ON "feedback_batches" USING btree ("due_at");--> statement-breakpoint
+CREATE INDEX "feedback_fixes_pr_idx" ON "feedback_fixes" USING btree ("github_repo_id","pr_number","created_at");--> statement-breakpoint
+CREATE INDEX "feedback_fixes_run_id_idx" ON "feedback_fixes" USING btree ("run_id");--> statement-breakpoint
+CREATE INDEX "feedback_fixes_task_id_idx" ON "feedback_fixes" USING btree ("task_id");--> statement-breakpoint
 CREATE INDEX "repo_spec_pull_requests_repo_spec_id_idx" ON "repo_spec_pull_requests" USING btree ("repo_spec_id");--> statement-breakpoint
 CREATE INDEX "notifications_member_id_created_at_idx" ON "notifications" USING btree ("member_id","created_at");--> statement-breakpoint
 CREATE INDEX "notifications_member_id_unread_idx" ON "notifications" USING btree ("member_id") WHERE "notifications"."read_at" IS NULL;--> statement-breakpoint

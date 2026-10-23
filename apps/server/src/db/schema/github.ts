@@ -16,7 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
 import {
-  feedbackAttemptStatusEnum,
+  feedbackFixStatusEnum,
   feedbackSourceEnum,
   githubWebhookDeliveryStatusEnum,
   pullRequestStateEnum,
@@ -99,12 +99,10 @@ export const pullRequests = pgTable(
     headSha: text("head_sha").notNull(),
     url: text("url").notNull(),
     state: pullRequestStateEnum("state").notNull().default("open"),
-    /** CI 失敗觸發的自動修正次數（上限 5）。 */
+    /** CI 失敗觸發的自動修正次數。W5–7 起不再使用，次數由 feedback_fixes 數出（保留欄位，不刪除）。 */
     ciFixCount: integer("ci_fix_count").notNull().default(0),
-    /** review 留言觸發的自動修正次數（上限 5，與 CI 分開計數）。 */
+    /** review 留言觸發的自動修正次數。W5–7 起不再使用，次數由 feedback_fixes 數出（保留欄位，不刪除）。 */
     reviewFixCount: integer("review_fix_count").notNull().default(0),
-    /** 已處理過 CI 結果的 head SHA，同一個 commit 的 CI 結果不會重複觸發。 */
-    ciHandledSha: text("ci_handled_sha"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -119,8 +117,9 @@ export const pullRequests = pgTable(
 );
 
 /**
- * Feedback Loop 待送的批次（ARCHITECTURE §5.2 的合併再送）。每個 PR 的每種來源最多一筆：
- * 新的回饋併入 items，due_at 到了（或 review 送出）才組成修正 prompt 送出，送出後刪除。
+ * Feedback Loop 待送的批次（ARCHITECTURE §5.2 的合併再送），讀寫由 packages/github 的 FeedbackStore 定義。
+ * 每個 PR 的每種來源最多一筆：新的回饋併入 items，due_at 到了（或 review 送出）才組成修正 prompt
+ * 送出，送出後刪除。CI 的批次記下所屬的 head_sha，不是 PR 目前的 head 時整批作廢。
  */
 export const feedbackBatches = pgTable(
   "feedback_batches",
@@ -129,6 +128,7 @@ export const feedbackBatches = pgTable(
     githubRepoId: bigint("github_repo_id", { mode: "number" }).notNull(),
     prNumber: integer("pr_number").notNull(),
     source: feedbackSourceEnum("source").notNull(),
+    headSha: text("head_sha"),
     /** 收集到的留言或 check，格式由 packages/github 定義。 */
     items: jsonb("items").notNull().default(sql`'[]'::jsonb`),
     dueAt: timestamptz("due_at").notNull(),
@@ -137,40 +137,47 @@ export const feedbackBatches = pgTable(
   (t) => [
     unique("feedback_batches_pr_source_unique").on(t.githubRepoId, t.prNumber, t.source),
     index("feedback_batches_due_at_idx").on(t.dueAt),
+    check(
+      "feedback_batches_head_sha_only_for_ci",
+      sql`(${t.source}::text = 'ci') = (${t.headSha} IS NOT NULL)`,
+    ),
   ],
 );
 
 /**
- * 每一次 Feedback Loop 自動修正的紀錄。run_id 是修正用的新 Run（origin = feedback_loop）。
- * seq 是該 PR、該來源的第幾次（從 1 開始），送出成功才遞增 pull_requests 的計數。
+ * 每一次 Feedback Loop 自動修正的紀錄（packages/github 的 FeedbackFix）。修正會開一個新的 Run
+ * （origin = feedback_loop），接續 previous_run_id 的 session；run_id 是那個新 Run，沒有開成時為 null。
+ * 每個 PR 每種來源的修正次數由這張表數出（pull_requests 的兩個計數不再使用）；
+ * trigger 是觸發的批次，CI 的批次也用來判斷同一個 check 是否已經觸發過。
  * Task 上顯示的紀錄另外寫成 task_notes（source = feedback_loop）。
  */
-export const feedbackAttempts = pgTable(
-  "feedback_attempts",
+export const feedbackFixes = pgTable(
+  "feedback_fixes",
   {
     id: id(),
     taskId: uuid("task_id")
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
-    runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
     githubRepoId: bigint("github_repo_id", { mode: "number" }).notNull(),
     prNumber: integer("pr_number").notNull(),
     source: feedbackSourceEnum("source").notNull(),
-    seq: integer("seq").notNull(),
-    /** 觸發的 review、留言或 check 與連結，格式由 packages/github 定義。 */
+    /** 要接續 session 的 Run（開出 PR 或上一次修正的 Run）。 */
+    previousRunId: uuid("previous_run_id").references(() => runs.id, { onDelete: "set null" }),
+    runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+    /** 觸發的批次（FeedbackBatch），格式由 packages/github 定義。 */
     trigger: jsonb("trigger").notNull(),
-    status: feedbackAttemptStatusEnum("status").notNull(),
-    /** PR 上的紀錄留言。 */
-    prCommentId: bigint("pr_comment_id", { mode: "number" }),
-    /** 修正後 push 的 commit。 */
-    fixCommitSha: text("fix_commit_sha"),
+    status: feedbackFixStatusEnum("status").notNull(),
+    /** 修正 push 出去的 commit（`pushed` 時）。 */
+    commitSha: text("commit_sha"),
+    /** 失敗的原因（`failed` 時）。 */
+    message: text("message"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
-    index("feedback_attempts_pr_idx").on(t.githubRepoId, t.prNumber, t.source),
-    index("feedback_attempts_task_id_idx").on(t.taskId),
-    check("feedback_attempts_seq_positive", sql`${t.seq} >= 1`),
+    index("feedback_fixes_pr_idx").on(t.githubRepoId, t.prNumber, t.createdAt),
+    index("feedback_fixes_run_id_idx").on(t.runId),
+    index("feedback_fixes_task_id_idx").on(t.taskId),
   ],
 );
 

@@ -1,7 +1,7 @@
 // Gate、Review Gate 的行內留言、Preview 留言與決定（ARCHITECTURE §5、§10、§13）。
 
 import { z } from "zod";
-import { Id, Timestamp } from "./common";
+import { HttpUrl, Id, Timestamp } from "./common";
 import { GateDecision, GateKind, ReviewCommentSide } from "./enums";
 
 /** 新增一則行內留言（退回時一起送出）。 */
@@ -39,8 +39,8 @@ export type ReviewComment = z.infer<typeof ReviewComment>;
 export const PreviewCommentInput = z
   .object({
     body: z.string().trim().min(1),
-    /** 留言時 Preview 的網址。 */
-    url: z.url(),
+    /** 留言時 Preview 的網址。Server 另外檢查是不是這個 Run 的 Preview。 */
+    url: HttpUrl,
     /** 點選的元素的 CSS selector；瀏覽器版只能附整頁截圖，為 null。 */
     selector: z.string().min(1).nullable().default(null),
     /** 以 `POST` runPreviewScreenshots 上傳的截圖；沒有截圖時為 null。 */
@@ -54,7 +54,7 @@ export const PreviewComment = z.object({
   id: Id,
   gateId: Id,
   body: z.string().min(1),
-  url: z.url(),
+  url: HttpUrl,
   selector: z.string().min(1).nullable(),
   screenshotBlobId: Id.nullable(),
   /** 作者；Member 被移除後為 null。 */

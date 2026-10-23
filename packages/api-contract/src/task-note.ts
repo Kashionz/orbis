@@ -2,7 +2,7 @@
 // 或 Feedback Loop 每次自動修正的紀錄（§5.2）。只能由系統寫入，Web 只讀。
 
 import { z } from "zod";
-import { Id, Timestamp } from "./common";
+import { HttpUrl, Id, Timestamp } from "./common";
 import { TaskNoteSource } from "./enums";
 
 export const TaskNote = z.object({
@@ -14,7 +14,7 @@ export const TaskNote = z.object({
   /** markdown。 */
   body: z.string().min(1),
   /** 相關的連結，例如 Feedback Loop 在 PR 上的紀錄留言；沒有時為 null。 */
-  url: z.url().nullable(),
+  url: HttpUrl.nullable(),
   createdAt: Timestamp,
 });
 export type TaskNote = z.infer<typeof TaskNote>;
