@@ -312,10 +312,35 @@ describe("Web 的 WebSocket 訊息", () => {
         runId: ID,
       }).success,
     ).toBe(true);
+    expect(
+      WebServerMessage.safeParse({
+        type: "error",
+        code: "limit_exceeded",
+        message: "訂閱數超過上限",
+        runId: null,
+      }).success,
+    ).toBe(true);
   });
 
-  it("錯誤回應的格式", () => {
+  it("錯誤回應的格式：可以帶驗證問題或 Ready 缺少的項目", () => {
     expect(ApiError.safeParse({ error: "forbidden", message: "沒有權限" }).success).toBe(true);
+    expect(
+      ApiError.safeParse({
+        error: "not_ready",
+        message: "Task 還不能進入 Ready",
+        missing: ["repo", "acceptance_criteria"],
+      }).success,
+    ).toBe(true);
+    expect(
+      ApiError.safeParse({
+        error: "invalid_input",
+        message: "輸入格式錯誤",
+        issues: [{ path: ["policy", "defaultPermissionPolicy"], message: "不合法的值" }],
+      }).success,
+    ).toBe(true);
+    expect(
+      ApiError.safeParse({ error: "not_ready", message: "x", missing: ["title"] }).success,
+    ).toBe(false);
   });
 });
 

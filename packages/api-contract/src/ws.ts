@@ -20,7 +20,15 @@ export const WebClientMessage = z.discriminatedUnion("type", [
 ]);
 export type WebClientMessage = z.infer<typeof WebClientMessage>;
 
-export const WEB_WS_ERROR_CODES = ["invalid_message", "not_found", "forbidden"] as const;
+/** 每條連線最多同時訂閱的 Run 數；超過時回 `limit_exceeded`。 */
+export const WEB_WS_MAX_SUBSCRIPTIONS = 50;
+
+export const WEB_WS_ERROR_CODES = [
+  "invalid_message",
+  "not_found",
+  "forbidden",
+  "limit_exceeded",
+] as const;
 
 /** Server → Web。 */
 export const WebServerMessage = z.discriminatedUnion("type", [

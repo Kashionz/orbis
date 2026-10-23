@@ -8,8 +8,8 @@ import { RunnerKind } from "./enums";
 export const AgentAvailabilityItem = z.object({
   /** Agent Profile 的 id，例如 `claude-code`。 */
   agent: z.string().min(1),
-  /** Runner 自訂的 Credential 名稱。 */
-  credential: z.string(),
+  /** Runner 自訂的 Credential 名稱；Agent 不需要 Credential 時為 null（同協定的 AgentInfo）。 */
+  credential: z.string().nullable(),
   available: z.boolean(),
   maxConcurrency: z.number().int().positive(),
   /** Runner 回報的其他資訊（版本、model、能力、無法使用的原因）；格式保留彈性。 */
