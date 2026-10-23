@@ -15,9 +15,14 @@ use support::{runner_script, toml_string};
 
 /// runner.toml：內建 profile `id` 的啟動指令換成 Fake Agent（加上 `extra` 參數）。
 fn builtin_as_fake(id: &str, wt: &Path, extra: &[&str]) -> String {
+    builtin_with_script(id, wt, "profile-check.yaml", extra)
+}
+
+/// 同 [`builtin_as_fake`]，指定 Runner 測試的劇本。
+fn builtin_with_script(id: &str, wt: &Path, script: &str, extra: &[&str]) -> String {
     let mut args = vec![
         toml_string("--script"),
-        toml_string(&runner_script("profile-check.yaml").to_string_lossy()),
+        toml_string(&runner_script(script).to_string_lossy()),
     ];
     args.extend(extra.iter().map(|a| toml_string(a)));
     format!(
@@ -160,4 +165,55 @@ async fn agent_availability_回報_initialize_的能力旗標() {
             "內建 profile {id} 要出現在清單中：{availability}"
         );
     }
+}
+
+/// Agent 有模式清單、卻沒有 profile 需要的模式（例如 Codex 沒有 read-only）時不啟動：
+/// 可能停在會自動核准的模式（fail closed）。
+#[tokio::test(flavor = "multi_thread")]
+async fn 沒有需要的_session_mode_時拒絕啟動() {
+    let extra = [
+        "--modes",
+        "agent,agent-full-access",
+        "--initial-mode",
+        "agent",
+    ];
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        builtin_as_fake(CODEX, wt, &extra)
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", CODEX, "做事").await;
+    let error = conn.wait_event("error").await;
+    assert_eq!(error["code"], "agent_start_failed", "{error}");
+    assert!(
+        error["message"].as_str().unwrap().contains("read-only"),
+        "{error}"
+    );
+    conn.wait_status("failed").await;
+}
+
+/// Gemini CLI 在受保護的 `.gemini/` 目錄中新增檔案（不經過權限請求）：session 中途中止並問人。
+#[tokio::test(flavor = "multi_thread")]
+async fn gemini_在受保護的目錄新增設定時中途問人() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        builtin_with_script(GEMINI, wt, "gemini-settings.yaml", &[])
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", GEMINI, "做事").await;
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
+    assert!(
+        request["title"]
+            .as_str()
+            .unwrap()
+            .contains(".gemini/policies/allow.toml"),
+        "{request}"
+    );
+    support::flow::answer(&mut conn, "c1", &request, "allow_once").await;
+    conn.wait_for("第二回合", |v| {
+        v["kind"] == "message_chunk" && v["content"]["text"] == "第二回合完成。"
+    })
+    .await;
+    conn.wait_status("awaiting_gate").await;
 }

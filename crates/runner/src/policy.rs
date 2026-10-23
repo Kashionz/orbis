@@ -55,8 +55,9 @@ pub struct PolicyContext<'a> {
     pub allow_commands: &'a [String],
     /// Repo 的主分支名稱，例如 `main`。
     pub default_branch: &'a str,
-    /// Agent 自己的設定檔（相對於 Worktree，`/` 分隔），例如 `.claude/settings.json`。
-    /// 寫入這些檔案可能讓 Agent 之後繞過 Permission Policy，`auto` 下一律問人。
+    /// Agent 自己的設定（相對於 Worktree，`/` 分隔），例如 `.claude/settings.json`；
+    /// 以 `/` 結尾的是整個目錄，例如 `.gemini/`。寫入它們可能讓 Agent 之後繞過
+    /// Permission Policy，`auto` 下一律問人。
     pub protected_paths: &'a [String],
 }
 
@@ -191,28 +192,24 @@ fn decide_command(command: &str, ctx: &PolicyContext<'_>) -> Decision {
     Decision::Allow
 }
 
-/// 這個權限請求明確要寫入或刪除哪些受保護的設定檔（`protected_paths` 中的項目）。
+/// 這個權限請求明確要寫入或刪除哪些受保護的設定檔（相對於 Worktree、`/` 分隔的實際路徑）。
 /// 允許這個請求後，它對這些檔案的修改視為已接受。
 ///
 /// 指令只能字面判斷、不知道實際寫了什麼，一律回傳空清單：人允許了指令，指令之後對設定檔的
 /// 修改仍會在 session 中途被發現並另外問人。
 pub fn protected_targets(subject: &PermissionSubject, ctx: &PolicyContext<'_>) -> Vec<String> {
     match subject {
-        PermissionSubject::Write { paths } | PermissionSubject::Delete { paths } => ctx
-            .protected_paths
+        PermissionSubject::Write { paths } | PermissionSubject::Delete { paths } => paths
             .iter()
-            .filter(|p| {
-                paths.iter().any(|path| {
-                    is_protected(
-                        path,
-                        &PolicyContext {
-                            protected_paths: std::slice::from_ref(*p),
-                            ..ctx.clone()
-                        },
-                    )
-                })
+            .filter(|path| is_protected(path, ctx))
+            .filter_map(|path| {
+                let resolved = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    ctx.worktree.join(path)
+                };
+                paths::relative_slash(&resolved, ctx.worktree)
             })
-            .cloned()
             .collect(),
         PermissionSubject::Command { .. }
         | PermissionSubject::Read { .. }
@@ -226,15 +223,22 @@ fn is_protected(path: &Path, ctx: &PolicyContext<'_>) -> bool {
     } else {
         ctx.worktree.join(path)
     };
-    paths::relative_slash(&resolved, ctx.worktree).is_some_and(|rel| {
-        ctx.protected_paths.iter().any(|p| {
-            if cfg!(windows) {
-                p.eq_ignore_ascii_case(&rel)
-            } else {
-                *p == rel
-            }
-        })
-    })
+    paths::relative_slash(&resolved, ctx.worktree)
+        .is_some_and(|rel| ctx.protected_paths.iter().any(|p| protected_match(p, &rel)))
+}
+
+/// 相對路徑 `rel` 是否符合受保護的項目 `entry`（檔案相同，或在以 `/` 結尾的目錄之下）。
+/// Windows 不分大小寫。
+pub fn protected_match(entry: &str, rel: &str) -> bool {
+    let (entry, rel) = if cfg!(windows) {
+        (entry.to_ascii_lowercase(), rel.to_ascii_lowercase())
+    } else {
+        (entry.to_owned(), rel.to_owned())
+    };
+    match entry.strip_suffix('/') {
+        Some(dir) => rel == dir || rel.starts_with(&entry),
+        None => rel == entry,
+    }
 }
 
 /// 指令中的詞是否指向受保護的設定檔（比對路徑結尾，`\` 視同 `/`）。
@@ -253,6 +257,7 @@ fn mentions_protected(word: &str, ctx: &PolicyContext<'_>) -> bool {
         };
         // 提到受保護檔案所在的目錄（例如 `.claude`）就問人：指令可能經由 `cd`、glob 或
         // `..` 組出實際路徑，字面比對無法可靠判斷。
+        let p = p.trim_end_matches('/').to_owned();
         let dir = p.rsplit_once('/').map_or(p.as_str(), |(dir, _)| dir);
         word == p || word.ends_with(&format!("/{p}")) || word.split('/').any(|part| part == dir)
     })
@@ -1209,6 +1214,39 @@ mod tests {
         assert!(glob_match("*", "anything at all"));
         assert!(!glob_match("pnpm *", "pnpmx test"));
         assert!(glob_match("cargo * --quiet", "cargo test -p x --quiet"));
+    }
+
+    /// 以 `/` 結尾的受保護項目代表整個目錄（例如 Gemini 的 `.gemini/`）。
+    #[test]
+    fn 受保護的目錄() {
+        let wt = worktree();
+        let allow = allow();
+        let protected = [".gemini/".to_owned(), ".mcp.json".to_owned()];
+        let ctx = PolicyContext {
+            policy: PermissionPolicy::Auto,
+            worktree: &wt,
+            allow_commands: &allow,
+            default_branch: "main",
+            protected_paths: &protected,
+        };
+        let write = |rel: &str| PermissionSubject::Write {
+            paths: vec![wt.join(rel)],
+        };
+        for rel in [
+            ".gemini/settings.json",
+            ".gemini/policies/allow.toml",
+            ".mcp.json",
+        ] {
+            assert_eq!(kind(&decide(&write(rel), &ctx)), "ask", "{rel}");
+        }
+        assert_eq!(kind(&decide(&write("src/gemini.rs"), &ctx)), "allow");
+        assert_eq!(
+            protected_targets(&write(".gemini/policies/allow.toml"), &ctx),
+            [".gemini/policies/allow.toml"]
+        );
+        assert_eq!(kind(&decide(&cmd("pnpm exec ls .gemini"), &ctx)), "ask");
+        assert!(protected_match(".gemini/", ".gemini"));
+        assert!(!protected_match(".gemini/", ".gemini-backup/x"));
     }
 
     #[test]

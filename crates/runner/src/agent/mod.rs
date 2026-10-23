@@ -141,8 +141,8 @@ pub struct AgentProfile {
     pub session_mode: Option<&'static str>,
     /// 建立（或接續）session 時放在 `_meta` 的內容（Agent 專屬的選項）。
     pub session_meta: Option<serde_json::Map<String, serde_json::Value>>,
-    /// Agent 自己的設定檔（相對於 Worktree）。修改它們可能讓 Agent 繞過 Permission Policy，
-    /// `auto` 下寫入一律問人；每次送出 prompt 前和 base commit 比對，有差異就先問人。
+    /// Agent 自己的設定（相對於 Worktree，`/` 分隔；以 `/` 結尾的是整個目錄）。修改它們可能讓
+    /// Agent 繞過 Permission Policy，`auto` 下寫入一律問人；和已接受的內容比對，有差異就先問人。
     pub protected_paths: Vec<String>,
     /// 在 Permission Policy 下無法攔截的操作（ADR-0006），會回報給 Server 讓 UI 顯示。
     pub permission_gaps: Vec<String>,
@@ -208,6 +208,8 @@ impl AgentProfile {
             protected_paths: vec![
                 ".claude/settings.json".into(),
                 ".claude/settings.local.json".into(),
+                // 專案層級的 MCP server 設定。
+                ".mcp.json".into(),
             ],
             permission_gaps: vec![
                 claude_settings_gap(user_settings),
@@ -244,7 +246,7 @@ impl AgentProfile {
             },
             session_mode: Some("read-only"),
             session_meta: None,
-            protected_paths: vec![".codex/config.toml".into()],
+            protected_paths: vec![".codex/".into()],
             permission_gaps: vec![
                 "read-only 模式下，Codex 在自己的沙盒中直接執行它認為唯讀的指令（含讀取 Worktree 以外的檔案），不會詢問 Runner".into(),
                 "Codex 自己的設定與規則（~/.codex/config.toml、~/.codex/rules）中允許的指令不會詢問 Runner".into(),
@@ -279,7 +281,7 @@ impl AgentProfile {
             },
             session_mode: None,
             session_meta: None,
-            protected_paths: vec![".gemini/settings.json".into()],
+            protected_paths: vec![".gemini/".into()],
             permission_gaps: vec![
                 "Gemini 自己的設定（~/.gemini/settings.json、Repo 的 .gemini/settings.json）中允許的工具不會詢問 Runner".into(),
                 "Gemini 直接執行的唯讀工具（讀檔、搜尋）不會詢問 Runner".into(),
@@ -305,12 +307,13 @@ impl AgentProfile {
             id: GROK.into(),
             launch: Launch::Command {
                 command: PathBuf::from("grok"),
-                args: vec!["agent".into(), "stdio".into(), "--no-leader".into()],
+                // `--no-leader` 是 `grok agent` 的選項，要放在 `stdio` 之前（實機探測時發現）。
+                args: vec!["agent".into(), "--no-leader".into(), "stdio".into()],
                 env: BTreeMap::new(),
             },
             session_mode: None,
             session_meta: None,
-            protected_paths: Vec::new(),
+            protected_paths: vec![".grok/".into()],
             permission_gaps: vec!["Grok 自己的設定（~/.grok）中允許的工具不會詢問 Runner".into()],
             known_issues: vec![
                 "beta；需要 SuperGrok 系列訂閱".into(),
@@ -925,7 +928,7 @@ mod tests {
 
         let grok = AgentProfile::grok();
         assert!(matches!(&grok.launch, Launch::Command { command, args, .. }
-                if command == Path::new("grok") && args == &["agent", "stdio", "--no-leader"]));
+                if command == Path::new("grok") && args == &["agent", "--no-leader", "stdio"]));
         assert_eq!(grok.min_version, Some(GROK_MIN_VERSION));
 
         let profiles = Profiles::from_settings(&Settings::default());

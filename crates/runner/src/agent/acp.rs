@@ -308,27 +308,42 @@ impl AcpSession {
         profile: &AgentProfile,
         modes: Option<&SessionModeState>,
     ) -> Result<(), AgentError> {
-        if let (Some(wanted), Some(modes)) = (profile.session_mode, modes)
-            && modes.current_mode_id.0.as_ref() != wanted
-            && modes
-                .available_modes
-                .iter()
-                .any(|m| m.id.0.as_ref() == wanted)
-        {
-            tracing::info!(
-                from = %modes.current_mode_id.0,
-                to = wanted,
-                "切換 session mode"
-            );
-            self.cx
-                .send_request(SetSessionModeRequest::new(
-                    self.session_id.clone(),
-                    SessionModeId::new(wanted),
-                ))
-                .block_task()
-                .await
-                .map_err(AgentError::Acp)?;
+        let Some(wanted) = profile.session_mode else {
+            return Ok(());
+        };
+        let Some(modes) = modes else {
+            // 沒有 ACP session mode 的 Agent 沒有可以切換的模式（adapter 版本鎖定，模式的變化
+            // 由版本更新時的實機測試確認）。
+            tracing::warn!(agent = %profile.id, wanted, "Agent 沒有回報 session mode");
+            return Ok(());
+        };
+        if modes.current_mode_id.0.as_ref() == wanted {
+            return Ok(());
         }
+        // fail closed：有模式清單卻沒有需要的模式時不啟動（可能停在會自動核准的模式）。
+        if !modes
+            .available_modes
+            .iter()
+            .any(|m| m.id.0.as_ref() == wanted)
+        {
+            return Err(AgentError::Start(anyhow::anyhow!(
+                "Agent 沒有提供 session mode「{wanted}」（目前是「{}」），Permission Policy 需要這個模式才能啟動",
+                modes.current_mode_id.0
+            )));
+        }
+        tracing::info!(
+            from = %modes.current_mode_id.0,
+            to = wanted,
+            "切換 session mode"
+        );
+        self.cx
+            .send_request(SetSessionModeRequest::new(
+                self.session_id.clone(),
+                SessionModeId::new(wanted),
+            ))
+            .block_task()
+            .await
+            .map_err(AgentError::Acp)?;
         Ok(())
     }
 

@@ -232,8 +232,15 @@ impl Supervisor {
             .launch_spec(&agents_dir)
             .map_err(|e| format!("無法啟動：{e:#}"))?
             .unattended_git();
-        let cwd = std::env::temp_dir();
-        match tokio::time::timeout(PROBE_TIMEOUT, AcpSession::probe(profile, spec, &cwd)).await {
+        // 在 Runner 狀態目錄下一個全新的空目錄中探測：共用的暫存目錄可能有別人放的設定檔
+        // （Agent 會讀 cwd 的專案設定）。
+        let cwd = self.home.state_dir().join("probe").join(&profile.id);
+        let _ = std::fs::remove_dir_all(&cwd);
+        std::fs::create_dir_all(&cwd).map_err(|e| format!("無法建立 {}：{e}", cwd.display()))?;
+        let result =
+            tokio::time::timeout(PROBE_TIMEOUT, AcpSession::probe(profile, spec, &cwd)).await;
+        let _ = std::fs::remove_dir_all(&cwd);
+        match result {
             Ok(Ok(probe)) => {
                 self.learned.record(
                     &profile.id,

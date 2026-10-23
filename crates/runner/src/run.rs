@@ -694,17 +694,28 @@ impl Run {
 
     // ── Agent 設定檔的防護 ──────────────────────────────────────────────────────
 
+    /// 受保護設定的基準：base commit 中的內容。以 `/` 結尾的目錄展開成其中的每個檔案。
     async fn load_settings_baseline(&mut self) {
         let wt = self.wt().clone();
-        for path in &self.profile.protected_paths {
-            let content = wt
-                .git()
-                .show_file(&wt.base_commit, path)
-                .await
-                .ok()
-                .flatten()
-                .map(String::into_bytes);
-            self.settings_baseline.insert(path.clone(), content);
+        let git = wt.git();
+        for entry in &self.profile.protected_paths {
+            let files = if entry.ends_with('/') {
+                git.run(["ls-tree", "-r", "--name-only", &wt.base_commit, "--", entry])
+                    .await
+                    .map(|out| out.lines().map(str::to_owned).collect())
+                    .unwrap_or_default()
+            } else {
+                vec![entry.clone()]
+            };
+            for path in files {
+                let content = git
+                    .show_file(&wt.base_commit, &path)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(String::into_bytes);
+                self.settings_baseline.insert(path, content);
+            }
         }
     }
 
@@ -725,16 +736,22 @@ impl Run {
         let Some(wt) = self.worktree.as_ref() else {
             return Vec::new();
         };
-        let mut changed: Vec<_> = self
-            .settings_baseline
-            .iter()
-            .filter_map(|(path, accepted)| {
-                let current = std::fs::read(wt.path.join(path)).ok();
-                (&current != accepted).then(|| (path.clone(), current))
+        // 基準中的檔案，加上受保護目錄中目前存在的檔案（新增的檔案基準是「不存在」）。
+        let mut paths: std::collections::BTreeSet<String> =
+            self.settings_baseline.keys().cloned().collect();
+        for entry in &self.profile.protected_paths {
+            if let Some(dir) = entry.strip_suffix('/') {
+                paths.extend(files_under(&wt.path, dir));
+            }
+        }
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                let current = std::fs::read(wt.path.join(&path)).ok();
+                let accepted = self.settings_baseline.get(&path).cloned().flatten();
+                (current != accepted).then_some((path, current))
             })
-            .collect();
-        changed.sort_by(|a, b| a.0.cmp(&b.0));
-        changed
+            .collect()
     }
 
     /// Worktree 中 Agent 的設定檔和已接受的內容（一開始是 base commit）不同時，先問人
@@ -1400,6 +1417,28 @@ fn restore_protected_file(
         },
     };
     result.map_err(|e| e.to_string())
+}
+
+/// `worktree/<dir>` 之下的所有檔案（相對於 Worktree、`/` 分隔）。不跟著目錄連結走進去；
+/// 連結本身當成一個檔案（讀取時的內容是連結指向的檔案）。
+fn files_under(worktree: &std::path::Path, dir: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut pending = vec![dir.to_owned()];
+    while let Some(rel) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(worktree.join(&rel)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let child = format!("{rel}/{name}");
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => pending.push(child),
+                Ok(_) => out.push(child),
+                Err(_) => {}
+            }
+        }
+    }
+    out
 }
 
 /// 什麼時候檢查 Agent 的設定檔。
