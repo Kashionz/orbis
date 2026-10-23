@@ -293,7 +293,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
 - **誰可以回覆**：
   - Local Runner 上的權限請求，只有該 Runner 的擁有者能回覆。
   - Team Runner 上的權限請求，Project 中 Role 至少是 Member 的人都能回覆。
-  - 設定的信任核准（§6.2）只有 Admin 以上能回覆。
+  - 設定的信任核准（§6.2）一律只有 Project 中 Admin 以上能回覆，不論 Runner 種類：Local Runner 上的 Run 也一樣，Runner 擁有者不是 Admin 時不能回覆。
 - **派工時的選擇**：
   - 能派工的人都可以選 `manual` 或 `auto`，預設為 Project 的預設政策。
   - `yolo` 只能在「在我的電腦跑」時選，UI 會顯示警告。Team Runner 的 `yolo` 留到 Phase 2。
