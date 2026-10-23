@@ -24,6 +24,8 @@ export const project = {
     delegationAgents: null,
     forbidSelfApproval: false,
     memberCanDispatchToTeamRunner: true,
+    defaultPermissionPolicy: "auto",
+    autoCreateIssues: true,
   },
   createdAt: NOW,
   updatedAt: NOW,
@@ -35,6 +37,7 @@ export const repo = {
   owner: "acme",
   name: "web-app",
   defaultBranch: "main",
+  github: { installed: true, installUrl: null },
   createdAt: NOW,
   updatedAt: NOW,
 } satisfies Repo;
@@ -47,6 +50,7 @@ export const task = {
   title: "登入頁加上 GitHub 按鈕",
   description: "## 目標\n\n使用者可以用 GitHub 登入。",
   status: "backlog",
+  doneReason: null,
   assigneeMemberId: null,
   specPath: "docs/specs/login.md",
   dependsOn: ["0195f0a0-0000-7000-8000-000000000099"],
@@ -131,6 +135,7 @@ export const needsYouPermissionRequest = {
   permissionRequestId: "perm-1",
   toolCallId: "call-1",
   title: "執行 `npm install -g pnpm`",
+  purpose: "tool",
   options: [
     { optionId: "allow", name: "允許一次", kind: "allow_once" },
     { optionId: "reject", name: "拒絕", kind: "reject_once" },
