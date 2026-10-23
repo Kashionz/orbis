@@ -145,12 +145,10 @@ describe.skipIf(dbSkipReason !== null)("Role 的細部規則", () => {
     it("@agent 要讀 Team Runner 上的 Worktree 時，Member 不能建立 consult Run", async () => {
       const runner = await flow.h.pairRunner(flow.team.members.admin, "team");
       const task = await seedReadyTask(database.db, flow.project, flow.repoId);
-      const res = await flow
-        .as("admin")
-        .post<{ id: string }>(`/api/tasks/${task.id}/runs`, {
-          agent: "claude-code",
-          runnerKind: "team",
-        });
+      const res = await flow.as("admin").post<{ id: string }>(`/api/tasks/${task.id}/runs`, {
+        agent: "claude-code",
+        runnerKind: "team",
+      });
       await flow.h.ctx.services.dispatcher.kick();
       const offer = await runner.next("dispatch_offer", (o) => o.run_id === res.body.id);
       runner.send({ type: "dispatch_accept", dispatch_id: offer.dispatch_id });

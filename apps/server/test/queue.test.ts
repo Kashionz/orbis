@@ -195,6 +195,18 @@ describe.skipIf(dbSkipReason !== null)("並行佇列（Team Runner）", () => {
     await runner.next("dispatch_offer", (o) => o.run_id === second);
   });
 
+  it("Member 只看得到 Team Runner 與自己的 Local Runner 的 Credential", async () => {
+    await flow.h.pairRunner(flow.team.members.owner, "local");
+    const own = await flow.h.pairRunner(flow.team.members.member, "local");
+    const visible = (await credentials()).map((c) => c.runnerId).sort();
+    expect(visible).toEqual([runner.runnerId, own.runnerId].sort());
+    const all = expectContract(
+      CredentialListResponse,
+      (await flow.as("admin").get("/api/credentials")).body,
+    );
+    expect(all).toHaveLength(3);
+  });
+
   it("沒有在線的 Runner 時，佇列顯示等待 Runner", async () => {
     runner.close();
     await waitUntil(() => !flow.h.ctx.services.hub.isOnline(runner.runnerId));

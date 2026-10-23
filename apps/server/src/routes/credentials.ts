@@ -9,9 +9,9 @@ import {
   type TeamRunnerQueueResponse,
   UpdateRunnerCredentialInput,
 } from "@orbis/api-contract";
-import { and, asc, eq, gte, isNull } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
-import { roleAtLeast } from "../authz/capabilities";
+import { authorize, roleAtLeast } from "../authz/capabilities";
 import { requireTeamCapability } from "../authz/scope";
 import {
   agentAvailabilities,
@@ -40,11 +40,19 @@ export function createCredentialRoutes(s: Services): Hono<AppEnv> {
   app.get(API_ROUTES.credentials, auth, async (c) => {
     const actor = c.get("actor");
     requireMember(actor.teamRole);
+    const seeAll = authorize("manage_team", { memberId: actor.memberId, role: actor.teamRole }).ok;
     const rows = await db
       .select({ runner: runners, availability: agentAvailabilities })
       .from(agentAvailabilities)
       .innerJoin(runners, eq(runners.id, agentAvailabilities.runnerId))
-      .where(and(eq(runners.teamId, actor.teamId), isNull(runners.revokedAt)))
+      .where(
+        and(
+          eq(runners.teamId, actor.teamId),
+          isNull(runners.revokedAt),
+          // 與 Runner 清單相同：Admin 以上看得到全部，其他人只看得到 Team Runner 與自己的 Local Runner。
+          seeAll ? undefined : or(eq(runners.kind, "team"), eq(runners.memberId, actor.memberId)),
+        ),
+      )
       .orderBy(asc(runners.createdAt), asc(agentAvailabilities.credential));
     const now = s.clock.now();
     const groups = new Map<
