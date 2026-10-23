@@ -2,19 +2,25 @@
 // 另一位成員的修改（假後端模擬）、@mention。兩個瀏覽器 context 的同步在 e2e/system/collab.spec.ts。
 
 import type { Page } from "@playwright/test";
+import { placeCaretAtEnd } from "./collab-helpers";
 import { expect, test } from "./fixtures";
 
 const description = (page: Page) => page.getByRole("textbox", { name: "描述" });
 
+/** 等編輯器以文件內容渲染完成、連線同步之後再操作。 */
+async function ready(page: Page) {
+  await expect(page.getByTestId("collab-status").first()).toHaveText("已同步");
+  await expect(description(page)).toBeVisible();
+}
+
 async function typeAtEnd(page: Page, text: string) {
-  await description(page).click();
-  await page.keyboard.press("Control+End");
+  await placeCaretAtEnd(description(page));
   await page.keyboard.type(text);
 }
 
 test("Task 描述以 TipTap 共同編輯，內容保存後重新整理仍在，並回寫 Task 描述", async ({ page }) => {
   await page.goto("/tasks/ORB-1");
-  await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+  await ready(page);
   await expect(description(page)).toContainText("CI 的 pnpm store 加上快取。");
   await typeAtEnd(page, "");
   await page.keyboard.press("Enter");
@@ -22,7 +28,7 @@ test("Task 描述以 TipTap 共同編輯，內容保存後重新整理仍在，�
   await expect(description(page)).toContainText("第二段：加上 restore-keys。");
 
   await page.reload();
-  await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+  await ready(page);
   await expect(description(page).locator("p")).toHaveText([
     "CI 的 pnpm store 加上快取。",
     "第二段：加上 restore-keys。",
@@ -31,7 +37,7 @@ test("Task 描述以 TipTap 共同編輯，內容保存後重新整理仍在，�
 
 test("清空描述後 Ready 條件即時顯示還缺描述", async ({ page }) => {
   await page.goto("/tasks/ORB-1");
-  await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+  await ready(page);
   await description(page).click();
   await page.keyboard.press("Control+A");
   await page.keyboard.press("Delete");
@@ -42,7 +48,7 @@ test("清空描述後 Ready 條件即時顯示還缺描述", async ({ page }) =>
 
 test("在描述中 @agent：插入 mention 節點，顯示 consult Run 的連結", async ({ page }) => {
   await page.goto("/tasks/ORB-1");
-  await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+  await ready(page);
   await typeAtEnd(page, " @cla");
   const listbox = page.getByRole("listbox", { name: "提及的對象" });
   await expect(listbox.getByRole("option")).toHaveText(["@claude Agent（claude-code）"]);
@@ -96,8 +102,7 @@ test("Acceptance Criterion 的描述也可以共同編輯，結束後清單更�
   await first.getByRole("button", { name: "共同編輯描述" }).click();
   const editor = first.getByRole("textbox", { name: "條件「測試通過」的描述" });
   await expect(editor).toContainText("測試通過");
-  await editor.click();
-  await page.keyboard.press("End");
+  await placeCaretAtEnd(editor);
   await page.keyboard.type("（含 e2e）");
   await expect(editor).toContainText("測試通過（含 e2e）");
   await first.getByRole("button", { name: "結束共同編輯" }).click();

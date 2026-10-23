@@ -62,6 +62,8 @@ export function useCollabDocument(ref: CollabDocumentRef, user: CollabUser) {
   const [state, setState] = useState<CollabDocument | null>(null);
   const [status, setStatus] = useState<CollabStatus>("connecting");
   const [synced, setSynced] = useState(false);
+  /** 這份文件至少同步過一次（斷線重連時 synced 會暫時變回 false，編輯器不需要重建）。 */
+  const [everSynced, setEverSynced] = useState(false);
   const [failure, setFailure] = useState<CollabFailure | null>(null);
 
   useEffect(() => {
@@ -72,11 +74,15 @@ export function useCollabDocument(ref: CollabDocumentRef, user: CollabUser) {
     });
     provider.awareness.setLocalStateField("user", user);
     provider.on("status", ({ status }) => setStatus(status));
-    provider.on("sync", (value) => setSynced(value));
+    provider.on("sync", (value) => {
+      setSynced(value);
+      if (value) setEverSynced(true);
+    });
     provider.on("closed", ({ code }) => setFailure(FAILURES[code] ?? null));
     setState({ docName, doc, provider });
     setStatus("connecting");
     setSynced(false);
+    setEverSynced(false);
     setFailure(null);
     return () => {
       provider.destroy();
@@ -85,7 +91,7 @@ export function useCollabDocument(ref: CollabDocumentRef, user: CollabUser) {
     };
   }, [docName, user]);
 
-  return { document: state, status, synced, failure };
+  return { document: state, status, synced, everSynced, failure };
 }
 
 /** 文件中在線的人（不含自己），awareness 改變時更新。 */

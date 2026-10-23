@@ -1,5 +1,6 @@
 // Repo Spec 草稿（#40）：在 Project 設定頁登記，草稿頁共同編輯，「提交到 repo」後顯示 PR 連結。
 
+import { placeCaretAtEnd } from "./collab-helpers";
 import { expect, test } from "./fixtures";
 
 test("從 Project 設定頁進入 Spec 草稿，提交到 repo 後顯示 PR 連結；再次提交時更新同一個 PR", async ({
@@ -13,8 +14,7 @@ test("從 Project 設定頁進入 Spec 草稿，提交到 repo 後顯示 PR 連�
   await expect(page.locator(".page-header h1")).toHaveText("登入");
   const editor = page.getByRole("textbox", { name: "Spec 草稿" });
   await expect(editor).toContainText("使用 GitHub 帳號登入。");
-  await editor.click();
-  await page.keyboard.press("Control+End");
+  await placeCaretAtEnd(editor);
   await page.keyboard.type("也支援 SSO。");
 
   const form = page.getByRole("form", { name: "提交到 repo" });

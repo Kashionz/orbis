@@ -3,6 +3,7 @@
 
 import { API_ROUTES, apiPath, Task } from "@orbis/api-contract";
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { placeCaretAtEnd } from "../collab-helpers";
 import { readStack } from "./stack";
 
 const stack = readStack();
@@ -39,20 +40,12 @@ test("兩個 context 同時編輯 Task 描述，內容即時同步並回寫", as
   await expect(a.getByRole("list", { name: "正在編輯的人" })).toBeVisible();
   await expect(b.getByRole("list", { name: "正在編輯的人" })).toBeVisible();
 
-  // 點最後一段再按 End：游標一定在文件末尾
-  await editorA.locator("p").last().click();
-  // 點擊後立刻輸入時，偶爾游標會被重設到文件開頭（只在真實 Server 出現，原因待查），先等選取穩定
-  await a.waitForTimeout(300);
-  await a.keyboard.press("End");
+  await placeCaretAtEnd(editorA);
   await a.keyboard.press("Enter");
   await a.keyboard.type("A 寫的第二段。");
   await expect(editorB).toContainText("A 寫的第二段。");
 
-  // 點最後一段再按 End：游標一定在文件末尾
-  await editorB.locator("p").last().click();
-  // 點擊後立刻輸入時，偶爾游標會被重設到文件開頭（只在真實 Server 出現，原因待查），先等選取穩定
-  await b.waitForTimeout(300);
-  await b.keyboard.press("End");
+  await placeCaretAtEnd(editorB);
 
   await b.keyboard.press("Enter");
   await b.keyboard.type("B 寫的第三段。");

@@ -45,7 +45,7 @@ export function CollabEditor(props: CollabEditorProps) {
     () => ({ name: me.githubLogin, color: userColor(me.githubLogin) }),
     [me.githubLogin],
   );
-  const { document, status, synced, failure } = useCollabDocument(props.docRef, user);
+  const { document, status, synced, everSynced, failure } = useCollabDocument(props.docRef, user);
   const peers = useCollabPeers(document);
 
   return (
@@ -79,9 +79,14 @@ export function CollabEditor(props: CollabEditorProps) {
           {COLLAB_FAILURE_MESSAGES[failure]}
         </p>
       ) : (
-        document && (
+        // 第一次同步完成後才建立編輯器：之前綁定空文件時，ProseMirror 補上的空段落會寫進共同文件，
+        // 和 Server 的內容合併後順序錯亂，也會重設其他人的游標
+        document &&
+        (everSynced ? (
           <BoundEditor key={document.docName} document={document} user={user} {...props} />
-        )
+        ) : (
+          <p className="hint collab-loading">正在載入文件…</p>
+        ))
       )}
     </div>
   );
@@ -106,7 +111,8 @@ function BoundEditor({
       editable: canEdit,
       extensions: [
         // 共同編輯有自己的 undo（Collaboration），不用 StarterKit 的
-        StarterKit.configure({ undoRedo: false }),
+        // trailingNode 會在文件結尾自動補段落：每個 client 各補一次會產生重複的空段落
+        StarterKit.configure({ undoRedo: false, trailingNode: false }),
         Collaboration.configure({ document: document.doc, field: COLLAB_FRAGMENT }),
         CollaborationCaret.configure({ provider: document.provider, user }),
         collabMentionExtension(() => candidatesRef.current),
