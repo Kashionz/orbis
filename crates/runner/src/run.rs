@@ -23,7 +23,7 @@ use orbis_protocol::control::{
     RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason, RunControlResult,
 };
 use orbis_protocol::dispatch::DispatchOffer;
-use orbis_protocol::enums::{GateDecision, GateKind, PromptSource, RunStatus};
+use orbis_protocol::enums::{DelegationMode, GateDecision, GateKind, PromptSource, RunStatus};
 use orbis_protocol::event::{
     ContentBlock, EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose, PlanSource,
     RunErrorCode, TextBody, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
@@ -45,6 +45,10 @@ use crate::preview::{
 use crate::repo_config::CommitFields;
 use crate::secrets::Redactor;
 use crate::worktree::{Worktree, WorktreeManager, WorktreeRequest};
+
+/// Runner 自己產生的 RunControl（例如父 Run 結束時中止 Child Run）的 `control_id` 前綴：
+/// 照一般的 RunControl 處理，但不回 `run_control_result`。
+pub const INTERNAL_CONTROL_PREFIX: &str = "runner-internal:";
 
 /// 送出 `session/cancel` 後等 Agent 自己結束回合的時間，超過就直接結束程序樹。
 const CANCEL_GRACE: Duration = Duration::from_secs(10);
@@ -103,6 +107,8 @@ pub enum RunInput {
 #[derive(Debug)]
 pub struct RunHandle {
     pub run_id: RunId,
+    /// Child Run 的父 Run。
+    pub parent: Option<RunId>,
     pub dispatch_id: orbis_protocol::ids::DispatchId,
     pub agent: String,
     pub credential: String,
@@ -121,6 +127,7 @@ impl RunHandle {
 pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> RunHandle {
     let (tx, rx) = mpsc::unbounded_channel();
     let (status_tx, status) = watch::channel(RunStatus::Starting);
+    let parent = offer.delegation.as_ref().map(|d| d.parent_run_id.clone());
     let handle_info = (
         offer.run_id.clone(),
         offer.dispatch_id.clone(),
@@ -150,9 +157,11 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         last_source: PromptSource::User,
         approved_verify_commands: std::collections::HashSet::new(),
         mcp_token: None,
+        read_only: false,
     };
     let task = tokio::spawn(run.main());
     RunHandle {
+        parent,
         run_id: handle_info.0,
         dispatch_id: handle_info.1,
         agent: handle_info.2,
@@ -268,6 +277,8 @@ struct Run {
     approved_verify_commands: std::collections::HashSet<String>,
     /// Orbis MCP 的 token（Agent 啟動時登記，Run 結束時取消）。
     mcp_token: Option<String>,
+    /// `consult` 模式的 Child Run：在父 Run 的 Worktree 中唯讀，寫入一律拒絕。
+    read_only: bool,
 }
 
 impl Run {
@@ -342,6 +353,13 @@ impl Run {
     }
 
     fn respond(&self, control: &RunControl, outcome: RunControlOutcome) {
+        if control
+            .control_id
+            .as_str()
+            .starts_with(INTERNAL_CONTROL_PREFIX)
+        {
+            return;
+        }
         let _ = self
             .ctx
             .frames
@@ -374,18 +392,64 @@ impl Run {
     // ── 啟動 ───────────────────────────────────────────────────────────────────
 
     async fn start(&mut self) -> Result<(), Stop> {
+        let parent = self.parent_caller()?;
+        // `consult` 模式的 Child Run：在父 Run 的 Worktree 中唯讀執行，不另外開 Worktree、不跑 setup
+        // （父 Run 都做過了）。
+        if let Some(parent) = &parent
+            && parent.1 == DelegationMode::Consult
+        {
+            let mut wt = parent.0.worktree.clone();
+            wt.run_id = self.offer.run_id.clone();
+            wt.branch = None;
+            self.read_only = true;
+            self.emit(EventKind::WorktreeReady {
+                preview_port: None,
+                worktree_path: wt.path.to_string_lossy().into_owned(),
+                branch: None,
+                base_commit: wt.base_commit.clone(),
+            });
+            self.normalizer = Some(Normalizer::new(&wt.path, self.redactor.clone()));
+            self.worktree = Some(wt);
+            self.load_settings_baseline().await;
+            self.planning = self.offer.plan_gate;
+            self.start_agent(None).await?;
+            return self.enter_plan_mode().await;
+        }
+        // `branch` 模式的 Child Run：從父 Run 當下的 HEAD 開出子 Worktree，設定檔沿用父 Run 的
+        // base commit 與信任核准。
+        let base = match &parent {
+            Some((caller, _)) => {
+                let head = caller
+                    .worktree
+                    .git()
+                    .rev_parse_commit("HEAD")
+                    .await
+                    .map_err(|e| Stop::failed(RunErrorCode::GitFailed, e.to_string()))?;
+                Some(crate::worktree::BaseOverride {
+                    commit: head,
+                    config_commit: caller.worktree.base_commit.clone(),
+                })
+            }
+            None => None,
+        };
         let request = WorktreeRequest {
             run_id: self.offer.run_id.clone(),
             task_key: self.offer.task.task_key.clone(),
             run_seq: self.offer.run_seq,
             repo: self.offer.repo.clone(),
             branch: self.offer.branch.clone(),
+            base,
         };
         let manager = self.ctx.worktrees.clone();
         let mut wt = self
             .interruptible(async move { manager.create(&request).await })
             .await?
             .map_err(|e| Stop::failed(e.code, e.message))?;
+        if let Some((caller, _)) = &parent
+            && caller.worktree.scripts_approved
+        {
+            wt.scripts_approved = true;
+        }
         self.emit(EventKind::WorktreeReady {
             // 設定了 [preview] 時是分配給這個 Worktree 的 port（Server 據此區分「沒有設定」與「啟動中」）
             preview_port: PreviewSpec::from_worktree(&wt).map(|spec| spec.port),
@@ -415,6 +479,22 @@ impl Run {
         self.planning = self.offer.plan_gate;
         self.start_agent(None).await?;
         self.enter_plan_mode().await
+    }
+
+    /// Child Run 的父 Run（在這台 Runner 上，hub 中有登記）與 Delegation 模式；一般 Run 為 `None`。
+    fn parent_caller(
+        &self,
+    ) -> Result<Option<(crate::orbis_mcp::hub::Caller, DelegationMode)>, Stop> {
+        let Some(delegation) = &self.offer.delegation else {
+            return Ok(None);
+        };
+        match self.ctx.mcp.caller(&delegation.parent_run_id) {
+            Some(caller) => Ok(Some((caller, delegation.mode))),
+            None => Err(Stop::failed(
+                RunErrorCode::WorktreeFailed,
+                format!("父 Run {} 不在這台 Runner 上執行", delegation.parent_run_id),
+            )),
+        }
     }
 
     /// 信任核准（§6.2）：設定檔中的腳本第一次執行前、或內容改變後，要人核准。
@@ -1109,10 +1189,21 @@ impl Run {
                 }
                 TurnEnd::Done(reason) => {
                     self.send_run_diff().await;
+                    let mut message = stop_reason_text(reason);
+                    // merge_child 的衝突在回合結束時還沒解決：停下來等人處理（§9）。
+                    if self.unresolved_merge().await {
+                        let text = "merge_child 的衝突還沒有解決，Agent 已結束回合";
+                        self.emit(EventKind::Error {
+                            code: RunErrorCode::MergeChildConflict,
+                            message: text.to_owned(),
+                            fatal: false,
+                        });
+                        message = text.to_owned();
+                    }
                     self.set_status(
                         RunStatus::AwaitingGate,
                         Some(GateKind::Review),
-                        Some(stop_reason_text(reason)),
+                        Some(message),
                     );
                     match self.await_review().await? {
                         Some(next) => prompt = next,
@@ -1120,6 +1211,18 @@ impl Run {
                     }
                 }
             }
+        }
+    }
+
+    /// Worktree 是否停在還沒完成的 merge（`merge_child` 有衝突，Agent 還沒解決並 commit）。
+    async fn unresolved_merge(&self) -> bool {
+        match self.worktree.as_ref() {
+            Some(wt) if wt.branch.is_some() => {
+                wt.git()
+                    .succeeds(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+                    .await
+            }
+            _ => false,
         }
     }
 
@@ -1494,17 +1597,30 @@ impl Run {
         }
         let mut decision = policy::decide(&subject, &policy_ctx);
         // Orbis 自己的 MCP 工具：防護規則由 Server 套用，不轉給人（Planning 中也可以用）。
-        let is_orbis_call = request
-            .tool_call
-            .fields
-            .title
-            .as_deref()
-            .is_some_and(crate::orbis_mcp::is_orbis_tool);
-        if is_orbis_call {
+        // 只用在「其他」類的請求（不是指令、讀寫檔案），而且只把問人改成允許，不推翻拒絕。
+        let is_orbis_call = matches!(subject, crate::policy::PermissionSubject::Other { .. })
+            && request
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(crate::orbis_mcp::is_orbis_tool);
+        if is_orbis_call && matches!(decision, Decision::Ask { .. }) {
             decision = Decision::Allow;
         }
         // Planning 中（plan 核准之前）不可以修改檔案；指令與其他操作可能間接修改，原本會自動
         // 允許的也改成問人（不論 Permission Policy 的等級）。
+        if self.read_only
+            && matches!(
+                subject,
+                crate::policy::PermissionSubject::Write { .. }
+                    | crate::policy::PermissionSubject::Delete { .. }
+            )
+        {
+            decision = Decision::Deny {
+                reason: "consult 模式的 Child Run 是唯讀的".into(),
+            };
+        }
         if self.planning && !is_orbis_call {
             match subject {
                 crate::policy::PermissionSubject::Write { .. }

@@ -17,6 +17,7 @@ fn request(remote: &Remote, task_key: &str, run_seq: u32, branch: Option<&str>) 
         run_seq,
         repo: remote.dispatch_repo("web"),
         branch: branch.map(str::to_owned),
+        base: None,
     }
 }
 

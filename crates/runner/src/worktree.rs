@@ -65,6 +65,17 @@ pub struct WorktreeRequest {
     pub repo: DispatchRepo,
     /// `None` 時以 detached HEAD 開出（`consult` 模式的 Child Run）。
     pub branch: Option<String>,
+    /// 不從 `repo.base_ref` 開出時的基準（`branch` 模式的 Child Run：父 Run 當下的 HEAD）。
+    pub base: Option<BaseOverride>,
+}
+
+/// [`WorktreeRequest::base`]：開出 Worktree 的 commit，與讀取 Repo 設定檔的 commit。
+/// Repo 設定檔一律從 base commit 讀（§6.2），所以 Child Run 沿用父 Run 的 base commit 讀設定，
+/// Agent 在父 Worktree 中修改並 commit 的設定不會生效。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseOverride {
+    pub commit: String,
+    pub config_commit: String,
 }
 
 /// 建好的 Worktree。
@@ -263,9 +274,18 @@ impl WorktreeManager {
         let _guard = lock.lock().await;
 
         git.run(["fetch", "--prune", "origin"]).await?;
-        let base_commit = git.rev_parse_commit(&req.repo.base_ref).await?;
+        let (base_commit, config_commit) = match &req.base {
+            Some(base) => (
+                git.rev_parse_commit(&base.commit).await?,
+                git.rev_parse_commit(&base.config_commit).await?,
+            ),
+            None => {
+                let commit = git.rev_parse_commit(&req.repo.base_ref).await?;
+                (commit.clone(), commit)
+            }
+        };
         let config_text = git
-            .show_file(&base_commit, &repo_config::config_path())
+            .show_file(&config_commit, &repo_config::config_path())
             .await?
             .unwrap_or_default();
         let config = LoadedConfig::parse(&config_text).map_err(|e| {

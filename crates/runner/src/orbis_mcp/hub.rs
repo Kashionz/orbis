@@ -268,10 +268,12 @@ impl McpHub {
                 "outcome 只能是 passed 或 failed",
             );
         }
-        lock(&self.verdicts)
-            .entry(caller.run_id.clone())
-            .or_default()
-            .push(verdict);
+        let mut verdicts = lock(&self.verdicts);
+        let list = verdicts.entry(caller.run_id.clone()).or_default();
+        if list.iter().any(|v| v.criterion_id == verdict.criterion_id) {
+            return error(OrbisToolErrorCode::InvalidState, "這條條件已經回報過判定");
+        }
+        list.push(verdict);
         BridgeResponse::Ok {
             output: serde_json::json!({ "recorded": true }),
         }

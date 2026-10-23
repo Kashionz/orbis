@@ -75,21 +75,36 @@ pub fn session_server(endpoint: &str, token: &str, judge: bool) -> McpServer {
     )
 }
 
-/// 這個權限請求是不是 Agent 呼叫 Orbis 自己的 MCP 工具（不轉給人，由 Server 套用防護規則）。
-/// 各 Agent 的標題格式不同：Claude Code 是 `mcp__orbis__delegate`，其他常見的是 `orbis/delegate`、
-/// `orbis.delegate` 或 `orbis: delegate`。
+/// Orbis MCP server 提供的工具名稱。
+pub const TOOLS: &[&str] = &[
+    "delegate",
+    "get_run",
+    "wait_run",
+    "list_runs",
+    "merge_child",
+    "ask_parent",
+    "answer_child",
+    "propose_tasks",
+    "update_task_note",
+    REPORT_VERDICT,
+];
+
+/// 這個權限請求的標題是不是 Orbis 自己的某個 MCP 工具（不轉給人，由 Server 套用防護規則）。
+/// 只認完全相符的名稱：Claude Code 的 `mcp__orbis__<工具>`，或常見的 `orbis/<工具>`、
+/// `orbis.<工具>`、`orbis: <工具>`，工具名稱之後不能有其他內容。
 pub fn is_orbis_tool(title: &str) -> bool {
-    let name = server_name().to_ascii_lowercase();
-    let title = title.trim().to_ascii_lowercase();
-    title.starts_with(&format!("mcp__{name}__"))
-        || [
-            format!("{name}/"),
-            format!("{name}."),
-            format!("{name}:"),
-            format!("{name}__"),
+    let name = server_name();
+    let title = title.trim();
+    TOOLS.iter().any(|tool| {
+        [
+            format!("mcp__{name}__{tool}"),
+            format!("{name}/{tool}"),
+            format!("{name}.{tool}"),
+            format!("{name}: {tool}"),
         ]
         .iter()
-        .any(|prefix| title.starts_with(prefix.as_str()))
+        .any(|form| title == form)
+    })
 }
 
 #[cfg(test)]
@@ -104,5 +119,7 @@ mod tests {
         assert!(is_orbis_tool(&format!("{name}: ask_parent")));
         assert!(!is_orbis_tool("mcp__playwright__browser_navigate"));
         assert!(!is_orbis_tool(&format!("rm -rf {name}/x")));
+        assert!(!is_orbis_tool(&format!("{name}/delegate; rm -rf /")));
+        assert!(!is_orbis_tool(&format!("mcp__{name}__unknown")));
     }
 }

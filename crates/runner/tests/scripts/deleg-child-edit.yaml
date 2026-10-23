@@ -1,0 +1,12 @@
+# branch 模式的 Child Run 修改 shared.txt。
+description: Child Run 修改 shared.txt
+turns:
+  - steps:
+      - tool_call:
+          id: edit-shared
+          title: 修改 shared.txt
+          edit:
+            path: shared.txt
+            old_text: base
+            new_text: child
+      - stop: end_turn

@@ -297,6 +297,19 @@ impl RunnerSide {
         }
     }
 
+    /// 到目前為止收到的所有 frame。
+    pub fn frames(&self) -> &[Value] {
+        &self.frames
+    }
+
+    /// 在 `duration` 內持續收 frame（不等任何特定的 frame），用來確認某件事「沒有」發生。
+    pub async fn drain(&mut self, duration: Duration) {
+        let deadline = tokio::time::Instant::now() + duration;
+        while let Ok(Some(v)) = tokio::time::timeout_at(deadline, self.recv_value()).await {
+            self.frames.push(v);
+        }
+    }
+
     /// 等某個 kind 的 event。
     pub async fn wait_event(&mut self, kind: &str) -> Value {
         self.wait_for(kind, |v| v["type"] == "event" && v["kind"] == kind)

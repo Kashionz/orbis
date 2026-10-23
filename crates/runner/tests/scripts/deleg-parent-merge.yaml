@@ -1,0 +1,19 @@
+# merge_child：第一回合新增 shared.txt；第二回合（收到「請 merge」）呼叫 merge_child 合併 Child Run 的分支。
+description: 父 Run 合併 Child Run
+turns:
+  - steps:
+      - tool_call:
+          id: write-shared
+          title: 新增 shared.txt
+          edit:
+            path: shared.txt
+            content: "base\n"
+      - stop: end_turn
+  - expect_prompt_contains: 請 merge
+    steps:
+      - mcp_call:
+          id: merge
+          server: orbis
+          tool: merge_child
+          arguments: { run_id: c1 }
+      - stop: end_turn

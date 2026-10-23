@@ -1,0 +1,17 @@
+# consult 模式的 Child Run 想寫檔：Runner 一律拒絕（唯讀）。
+description: consult 想寫檔
+turns:
+  - steps:
+      - permission:
+          tool_call:
+            id: consult-write
+            title: 新增 consult.txt
+            raw_input: { file_path: consult.txt }
+            edit:
+              path: consult.txt
+              content: "不該寫入\n"
+          allow:
+            - stop: end_turn
+          reject:
+            - message: 唯讀，沒有寫入。
+            - stop: end_turn

@@ -36,6 +36,8 @@ pub struct Snapshot {
 }
 
 pub struct Supervisor {
+    /// 自己（父 Run 結束時中止 Child Run 的背景工作用）。
+    me: std::sync::Weak<Supervisor>,
     home: Arc<RunnerHome>,
     worktrees: Arc<WorktreeManager>,
     outbox: Arc<Outbox>,
@@ -74,7 +76,8 @@ impl Supervisor {
         let (frames, frames_rx) = mpsc::unbounded_channel();
         let profiles = Profiles::from_settings(home.settings());
         let mcp = crate::orbis_mcp::hub::McpHub::start(frames.clone(), outbox.clone())?;
-        let supervisor = Arc::new(Self {
+        let supervisor = Arc::new_cyclic(|me| Self {
+            me: me.clone(),
             worktrees: Arc::new(WorktreeManager::new(home.clone())),
             home,
             outbox,
@@ -380,6 +383,16 @@ impl Supervisor {
                         mcp: self.mcp.clone(),
                     },
                 );
+                // 父 Run 結束（中止、失敗、完成或 Runner 不再執行它）時，連同 Child Run 一起中止（§9）。
+                let mut status = handle.status.clone();
+                let me = self.me.clone();
+                let ended = handle.run_id.clone();
+                tokio::spawn(async move {
+                    let _ = status.wait_for(|s| s.is_terminal()).await;
+                    if let Some(supervisor) = me.upgrade() {
+                        supervisor.cancel_children(&ended);
+                    }
+                });
                 lock(&self.runs).insert(handle.run_id.clone(), handle);
                 self.publish_snapshot();
                 accept
@@ -412,11 +425,33 @@ impl Supervisor {
                 "這台 Runner 已暫停領取新的 Run".into(),
             ));
         }
-        if offer.delegation.is_some() {
-            return Err((
-                DispatchRejectReason::Unsupported,
-                "Delegation（Child Run）尚未支援".into(),
-            ));
+        if let Some(delegation) = &offer.delegation {
+            use crate::orbis_mcp::hub::{MAX_CHILDREN, MAX_DEPTH};
+            if delegation.depth.unwrap_or(1) > MAX_DEPTH {
+                return Err((
+                    DispatchRejectReason::Unsupported,
+                    format!("Delegation 最多 {MAX_DEPTH} 層"),
+                ));
+            }
+            if self.mcp.caller(&delegation.parent_run_id).is_none() {
+                return Err((
+                    DispatchRejectReason::Unsupported,
+                    format!(
+                        "父 Run {} 不在這台 Runner 上執行（Child Run 一律在父 Run 的 Runner 上執行）",
+                        delegation.parent_run_id
+                    ),
+                ));
+            }
+            let children = lock(&self.runs)
+                .values()
+                .filter(|h| h.is_active() && h.parent.as_ref() == Some(&delegation.parent_run_id))
+                .count();
+            if children >= MAX_CHILDREN {
+                return Err((
+                    DispatchRejectReason::Unsupported,
+                    format!("每個 Run 同時最多 {MAX_CHILDREN} 個 Child Run"),
+                ));
+            }
         }
         let Some(profile) = self.profiles.get(&offer.agent).cloned() else {
             return Err((
@@ -461,6 +496,27 @@ impl Supervisor {
             ));
         }
         Ok(profile)
+    }
+
+    /// 中止 `parent` 還在進行中的 Child Run（以 Runner 內部的 RunControl，不回 `run_control_result`）。
+    fn cancel_children(&self, parent: &RunId) {
+        for handle in lock(&self.runs).values() {
+            if handle.parent.as_ref() != Some(parent) || !handle.is_active() {
+                continue;
+            }
+            tracing::info!(run_id = %handle.run_id, parent = %parent, "父 Run 已結束，中止 Child Run");
+            let _ = handle.tx.send(RunInput::Control(RunControl {
+                control_id: format!(
+                    "{}parent-ended-{}",
+                    run::INTERNAL_CONTROL_PREFIX,
+                    uuid::Uuid::now_v7()
+                )
+                .into(),
+                run_id: handle.run_id.clone(),
+                dispatch_id: handle.dispatch_id.clone(),
+                action: orbis_protocol::control::RunControlAction::Cancel,
+            }));
+        }
     }
 
     /// 把 RunControl 交給對應的 Run；沒有這個 Run 或 Dispatch 不符時直接拒絕。
