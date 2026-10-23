@@ -267,10 +267,14 @@ async fn 領取到完成_退回後再次完成並_push() {
 
 /// C1 的 M1 完整系統 e2e 使用的劇本 `m1.yaml`：manual 政策下寫檔問人 → 允許 → diff
 /// → 退回的 prompt 改成第二版 → 核准 → push 回本機 bare repo（不需要網路）。
+/// 和 C1 的設定一樣，以 `[agents.claude-code]` 把內建的 Claude Code 換成 Fake Agent。
 #[tokio::test(flavor = "multi_thread")]
 async fn m1_劇本在_manual_政策下走完並_push_回本機_bare_repo() {
     let mut env = Env::new(&[("README.md", "# web\n")], |wt| {
-        fake_agent_toml(wt, &script("m1.yaml"))
+        fake_agent_toml(wt, &script("m1.yaml")).replace(
+            "[agents.fake]",
+            &format!("[agents.{}]", orbis_runner::agent::CLAUDE_CODE),
+        )
     })
     .await;
     let _runner = env.spawn();
@@ -280,7 +284,7 @@ async fn m1_劇本在_manual_政策下走完並_push_回本機_bare_repo() {
         "r1",
         "d-r1",
         env.remote.dispatch_repo("web"),
-        "fake",
+        orbis_runner::agent::CLAUDE_CODE,
         "請新增 m1.txt",
     );
     o.permission_policy = PermissionPolicy::Manual;
