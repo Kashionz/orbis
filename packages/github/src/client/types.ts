@@ -123,6 +123,16 @@ export interface GitHubCheckRun {
   outputSummary: string | null;
 }
 
+export interface GitHubCheckAnnotation {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+  /** `failure`、`warning` 或 `notice`。 */
+  level: string;
+  title: string | null;
+  message: string;
+}
+
 export interface TokenScope {
   repositoryIds: number[];
   permissions: Record<string, "read" | "write">;
@@ -206,6 +216,18 @@ export interface GitHubClient {
   listCheckSuites(installationId: number, repo: RepoRef, sha: string): Promise<GitHubCheckSuite[]>;
   /** 這個 commit 最新一輪的 check run（重新執行過的只取最新的）。 */
   listCheckRuns(installationId: number, repo: RepoRef, sha: string): Promise<GitHubCheckRun[]>;
+
+  /** check run 的 annotations（`failure`、`warning`、`notice`）。 */
+  listCheckRunAnnotations(
+    installationId: number,
+    repo: RepoRef,
+    checkRunId: number,
+  ): Promise<GitHubCheckAnnotation[]>;
+  /**
+   * GitHub Actions 的 job log（job id 與 check run id 相同）。需要 App 的 `actions: read` 權限，沒有時丟出
+   * 403 的 `GitHubApiError`；log 不存在或已過期時回傳 null。
+   */
+  getActionsJobLog(installationId: number, repo: RepoRef, jobId: number): Promise<string | null>;
 
   /** 分支目前指向的 commit；分支不存在時回傳 null。 */
   getBranchHead(installationId: number, repo: RepoRef, branch: string): Promise<string | null>;

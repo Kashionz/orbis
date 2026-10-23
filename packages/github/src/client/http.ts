@@ -6,6 +6,7 @@ import { createAppJwtSigner } from "../auth/app-jwt";
 import { type InstallationToken, InstallationTokenCache } from "../auth/installation-tokens";
 import {
   GitHubApiError,
+  type GitHubCheckAnnotation,
   type GitHubCheckRun,
   type GitHubCheckSuite,
   type GitHubClient,
@@ -112,6 +113,17 @@ const CheckRunsResponse = z.object({
     }),
   ),
 });
+
+const AnnotationsResponse = z.array(
+  z.object({
+    path: z.string(),
+    start_line: z.number().nullable().optional(),
+    end_line: z.number().nullable().optional(),
+    annotation_level: z.string().nullable().optional(),
+    title: z.string().nullable().optional(),
+    message: z.string(),
+  }),
+);
 
 const RefResponse = z.object({ object: z.object({ sha: z.string() }) });
 const ContentResponse = z.object({
@@ -537,6 +549,49 @@ export function createHttpGitHubClient(options: HttpGitHubClientOptions): GitHub
         url = nextPage(result.response.headers.get("link"));
       }
       return runs;
+    },
+
+    async listCheckRunAnnotations(installationId, repo, checkRunId) {
+      const annotations: GitHubCheckAnnotation[] = [];
+      let url: string | null =
+        `${repoPath(repo)}/check-runs/${checkRunId}/annotations?per_page=100`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const result = await request("GET", url, inst(installationId), AnnotationsResponse, {
+          allowNotFound: true,
+        });
+        if (!result) break;
+        annotations.push(
+          ...result.data.map((a) => ({
+            path: a.path,
+            startLine: a.start_line ?? null,
+            endLine: a.end_line ?? null,
+            level: a.annotation_level ?? "notice",
+            title: a.title || null,
+            message: a.message,
+          })),
+        );
+        url = nextPage(result.response.headers.get("link"));
+      }
+      return annotations;
+    },
+
+    async getActionsJobLog(installationId, repo, jobId) {
+      // 回應是 302 轉到暫時的下載網址；fetch 會跟著轉址，跨網域轉址時不會帶上 authorization。
+      const path = `${repoPath(repo)}/actions/jobs/${jobId}/logs`;
+      const auth = inst(installationId);
+      let response = await send("GET", path, auth);
+      if (response.status === 401) {
+        tokens.invalidate(installationId);
+        response = await send("GET", path, auth);
+      }
+      if (response.status === 404 || response.status === 410) return null;
+      if (!response.ok) {
+        throw new GitHubApiError(
+          response.status,
+          `GitHub API GET ${path} 失敗：HTTP ${response.status}`,
+        );
+      }
+      return response.text();
     },
 
     async getBranchHead(installationId, repo, branch) {

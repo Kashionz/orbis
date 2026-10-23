@@ -11,7 +11,7 @@ function fence(content: string): string {
   return "`".repeat(longest + 1);
 }
 
-function codeBlock(content: string, lang = ""): string {
+export function codeBlock(content: string, lang = ""): string {
   const f = fence(content);
   return `${f}${lang}\n${content.replace(/\n+$/, "")}\n${f}`;
 }

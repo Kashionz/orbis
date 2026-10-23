@@ -10,6 +10,7 @@ import type {
   FeedbackSource,
   PullRequestLink,
 } from "../ports";
+import { collectCiDetails } from "./ci-details";
 import { renderFeedbackPrompt } from "./prompt";
 
 /** 零散的留言在最後一則之後等這麼久才送出（同一段時間內的留言合併成一批）。 */
@@ -128,7 +129,12 @@ async function dispatchBatch(
       taskId: link.taskId,
       previousRunId: link.runId,
       source: batch.source,
-      prompt: renderFeedbackPrompt(batch, { pullRequestUrl: link.url }),
+      prompt: renderFeedbackPrompt(batch, {
+        pullRequestUrl: link.url,
+        ...(batch.source === "ci" && {
+          ciDetails: await collectCiDetails(ctx, link, batch.items),
+        }),
+      }),
       pullRequestUrl: link.url,
     });
     if (result.ok) {

@@ -12,6 +12,7 @@ GitHub 整合（D 軌）：GitHub App、webhook、Task 與 GitHub Issues 的雙�
 | Pull requests | Read & write | 開 PR、讀取 review（D2） |
 | Contents | Read & write | Team Runner 以 installation token push 分支；D2 的「提交 Spec 到 repo」 |
 | Checks | Read | D2：讀取 CI 結果 |
+| Actions | Read | D2：讀取 GitHub Actions 的 job log，擷取 CI 失敗的段落。沒有這個權限時，Feedback Loop 退回只用 annotations 與 check 的 output |
 | Metadata | Read | 所有 App 都需要 |
 
 ### 訂閱的 webhook 事件

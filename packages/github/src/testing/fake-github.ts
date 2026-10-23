@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import type { InstallationToken } from "../auth/installation-tokens";
 import {
   GitHubApiError,
+  type GitHubCheckAnnotation,
   type GitHubCheckRun,
   type GitHubCheckSuite,
   type GitHubClient,
@@ -66,6 +67,11 @@ export class FakeGitHub implements GitHubClient {
   /** 各 commit 的 check suite 與 check run，以 SHA 為 key。 */
   readonly checkSuites = new Map<string, GitHubCheckSuite[]>();
   readonly checkRuns = new Map<string, GitHubCheckRun[]>();
+  /** check run 的 annotations 與 GitHub Actions 的 job log，以 check run id 為 key。 */
+  readonly annotations = new Map<number, GitHubCheckAnnotation[]>();
+  readonly jobLogs = new Map<number, string>();
+  /** App 沒有 `actions: read` 權限：讀 job log 時回 403。 */
+  actionsReadDenied = false;
   /** git 的最小模型：commit SHA → 檔案快照；各 repo 的分支 → commit SHA。 */
   readonly commits = new Map<string, Snapshot>();
   readonly branches = new Map<number, Map<string, string>>();
@@ -419,6 +425,21 @@ export class FakeGitHub implements GitHubClient {
     this.#record("listCheckRuns", [installationId, ref, sha]);
     this.#repo(ref, installationId);
     return clone(this.checkRuns.get(sha) ?? []);
+  }
+
+  async listCheckRunAnnotations(installationId: number, ref: RepoRef, checkRunId: number) {
+    this.#record("listCheckRunAnnotations", [installationId, ref, checkRunId]);
+    this.#repo(ref, installationId);
+    return clone(this.annotations.get(checkRunId) ?? []);
+  }
+
+  async getActionsJobLog(installationId: number, ref: RepoRef, jobId: number) {
+    this.#record("getActionsJobLog", [installationId, ref, jobId]);
+    this.#repo(ref, installationId);
+    if (this.actionsReadDenied) {
+      throw new GitHubApiError(403, "Resource not accessible by integration");
+    }
+    return this.jobLogs.get(jobId) ?? null;
   }
 
   async getBranchHead(installationId: number, ref: RepoRef, branch: string) {
