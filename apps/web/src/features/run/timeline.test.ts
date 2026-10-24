@@ -8,7 +8,7 @@ function events(...kinds: EventKind[]): RunEvent[] {
   return kinds.map((event, index) => ({
     runId: "run-1",
     seq: index + 1,
-    ts: new Date(Date.UTC(2026, 9, 23, 8, 0, index)).toISOString(),
+    ts: at(index),
     event,
   }));
 }
@@ -17,6 +17,9 @@ const text = (value: string): EventKind => ({
   kind: "message_chunk",
   content: { type: "text", text: value },
 });
+
+/** `events()` 第 `index` 筆（從 0 開始）的時間。 */
+const at = (index: number) => new Date(Date.UTC(2026, 9, 23, 8, 0, index)).toISOString();
 
 function replay(list: readonly RunEvent[]): Timeline {
   return applyEvents(EMPTY_TIMELINE, list);
@@ -40,6 +43,8 @@ describe("applyEvents：訊息與思考", () => {
       {
         key: "message_chunk-1",
         seq: 1,
+        ts: at(0),
+        lastTs: at(2),
         type: "message",
         blocks: [{ type: "text", text: "你好！" }],
       },
@@ -74,7 +79,14 @@ describe("applyEvents：訊息與思考", () => {
       events({ kind: "thought_chunk", text: "先" }, { kind: "thought_chunk", text: "看看" }),
     );
     expect(timeline.items).toEqual([
-      { key: "thought_chunk-1", seq: 1, type: "thought", text: "先看看" },
+      {
+        key: "thought_chunk-1",
+        seq: 1,
+        ts: at(0),
+        lastTs: at(1),
+        type: "thought",
+        text: "先看看",
+      },
     ]);
   });
 });
@@ -106,6 +118,8 @@ describe("applyEvents：tool call", () => {
     expect(timeline.items[0]).toEqual({
       key: "tool_call-t1",
       seq: 1,
+      ts: at(0),
+      lastTs: at(2),
       type: "tool_call",
       toolCallId: "t1",
       title: "編輯 README.md",
@@ -211,7 +225,17 @@ describe("applyEvents：權限請求、狀態、用量與錯誤", () => {
         ],
       }),
     );
-    expect(timeline.items).toEqual([{ key: "run_diff-1", seq: 1, type: "run_diff", fileCount: 2 }]);
+    expect(timeline.items).toEqual([
+      {
+        key: "run_diff-1",
+        seq: 1,
+        ts: at(0),
+        lastTs: at(0),
+        type: "run_diff",
+        fileCount: 2,
+        paths: ["README.md", "logo.png"],
+      },
+    ]);
   });
 
   it("usage 取最新一筆、不出現在時間軸；status_changed 更新目前狀態", () => {
