@@ -75,6 +75,14 @@ import type {
   TextBody,
   VerificationEvidence,
 } from "@orbis/protocol";
+import type { BoardSummaryItem } from "../features/board/types";
+import type {
+  RunEffort,
+  RunEventActors,
+  RunSettings,
+  TaskPullRequest,
+  UpdateRunSettingsInput,
+} from "../features/run/types";
 import { MOCK_STATE_STORAGE_KEY, type MockConfig, mockConfig } from "./config";
 import {
   BASE_COMMIT,
@@ -144,6 +152,10 @@ export interface MockState {
   /** Credential 並行上限的覆寫，key 是 `<runnerId>/<credential>`。 */
   credentialOverrides: Record<string, number>;
   projectRoles: ProjectMemberRole[];
+  /** 工作區的後端缺口（U2）：執行中切換的設定，依 Run。 */
+  runSettings: Record<string, RunSettings>;
+  /** 工作區的後端缺口（U2）：執行中傳訊息的作者，依 Run 再依 seq。 */
+  promptAuthors: Record<string, Record<string, string>>;
 }
 
 /** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
@@ -234,6 +246,8 @@ export class MockBackend {
     this.state.repoSpecDrafts ??= {};
     this.state.credentialOverrides ??= {};
     this.state.projectRoles ??= [];
+    this.state.runSettings ??= {};
+    this.state.promptAuthors ??= {};
     this.save();
   }
 
@@ -440,6 +454,8 @@ export class MockBackend {
       repoSpecDrafts: { "spec-1": "# 登入\n\n使用 GitHub 帳號登入。" },
       credentialOverrides: {},
       projectRoles: [{ projectId: "project-1", memberId: "member-bob", role: "viewer" }],
+      runSettings: {},
+      promptAuthors: {},
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -2645,6 +2661,161 @@ export class MockBackend {
   }
 
   // ---------- Event 的副作用（真實系統中由 Server 處理） ----------
+
+  // ---------- 工作區的後端缺口（U2，見 features/run/types.ts 的 TODO(backend, …)） ----------
+
+  /** TODO(backend, run-prompt)：執行中傳訊息給 Agent，Agent 回覆後繼續原本的工作。 */
+  submitPrompt(runId: string, text: string): void {
+    this.requireEditor();
+    const run = this.run(runId);
+    if (["completed", "failed", "canceled"].includes(run.status)) {
+      throw new MockError(409, "conflict", "Run 已經結束");
+    }
+    const simulation = this.state.simulations[runId] ?? { queue: [], waiting: null };
+    this.state.simulations[runId] = simulation;
+    this.append(runId, [
+      { kind: "prompt_submitted", source: "user", prompt: [{ type: "text", text }] },
+    ]);
+    const seq = String(this.state.events[runId]?.length ?? 0);
+    this.state.promptAuthors[runId] = { ...this.state.promptAuthors[runId], [seq]: ME_ID };
+    simulation.queue.unshift({
+      type: "event",
+      event: {
+        kind: "message_chunk",
+        content: { type: "text", text: "收到，下一步照這個方向處理。" },
+      },
+    });
+    this.save();
+  }
+
+  /** TODO(backend, run-settings)：目前的推理強度與切換紀錄。 */
+  runSettings(runId: string): RunSettings {
+    this.run(runId);
+    return this.state.runSettings[runId] ?? { effort: "std", changes: [] };
+  }
+
+  /** TODO(backend, run-settings)：執行中切換模型（可以換 Agent）、推理強度、權限策略。 */
+  updateRunSettings(runId: string, input: UpdateRunSettingsInput): RunSettings {
+    this.requireEditor();
+    const run = this.run(runId);
+    if (["completed", "failed", "canceled"].includes(run.status)) {
+      throw new MockError(409, "conflict", "Run 已經結束");
+    }
+    if (input.permissionPolicy === "yolo" && run.runnerKind === "team") {
+      throw new MockError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
+    }
+    const settings = this.runSettings(runId);
+    const change = {
+      ts: now(),
+      memberId: ME_ID,
+      agent: null,
+      model: null,
+      effort: null,
+      permissionPolicy: null,
+    };
+    const changes = [...settings.changes];
+    let effort: RunEffort | null = settings.effort;
+    if (input.model !== undefined || input.agent !== undefined) {
+      run.agent = input.agent ?? run.agent;
+      run.model = input.model ?? run.model;
+      changes.push({ ...change, kind: "model", agent: run.agent, model: run.model });
+    }
+    if (input.effort !== undefined) {
+      effort = input.effort;
+      changes.push({ ...change, kind: "effort", effort });
+    }
+    if (input.permissionPolicy !== undefined) {
+      run.permissionPolicy = input.permissionPolicy;
+      changes.push({ ...change, kind: "policy", permissionPolicy: input.permissionPolicy });
+    }
+    run.updatedAt = now();
+    const next = { effort, changes };
+    this.state.runSettings[runId] = next;
+    this.save();
+    return next;
+  }
+
+  /** TODO(backend, event-actor)：prompt 是誰送的、權限請求是誰回覆的。 */
+  eventActors(runId: string): RunEventActors {
+    const run = this.run(runId);
+    const events = this.state.events[runId] ?? [];
+    const prompts: Record<string, string> = { ...this.state.promptAuthors[runId] };
+    const rejected = this.state.gates.filter(
+      (g) => g.runId === runId && g.decision === "rejected" && g.decidedByMemberId !== null,
+    );
+    const counters: Record<string, number> = {};
+    const permissions: Record<string, string> = {};
+    for (const { seq, event } of events) {
+      if (event.kind === "prompt_submitted") {
+        const key = String(seq);
+        if (prompts[key]) continue;
+        if (event.source === "user" && run.startedByMemberId) prompts[key] = run.startedByMemberId;
+        if (event.source === "plan_gate" || event.source === "review_gate") {
+          const kind = event.source === "plan_gate" ? "plan" : "review";
+          const index = counters[kind] ?? 0;
+          counters[kind] = index + 1;
+          const gate = rejected.filter((g) => g.kind === kind)[index];
+          if (gate?.decidedByMemberId) prompts[key] = gate.decidedByMemberId;
+        }
+      }
+      // 假後端只有目前的使用者會回覆權限請求
+      if (event.kind === "permission_resolved" && event.selected_option_id !== null) {
+        permissions[event.request_id] = ME_ID;
+      }
+    }
+    return { prompts, permissions };
+  }
+
+  /** TODO(backend, task-pull-request)：Review Gate 核准後開出的 PR。 */
+  taskPullRequest(taskId: string): TaskPullRequest | null {
+    const task = this.task(taskId);
+    if (task.status !== "pr_open" && !(task.status === "done" && task.doneReason === "completed")) {
+      return null;
+    }
+    const run = this.state.runs
+      .filter((r) => r.taskId === taskId && r.parentRunId === null && r.status === "completed")
+      .at(-1);
+    if (!run) return null;
+    const number = 100 + (Number(task.key.split("-")[1]) || 0);
+    return {
+      number,
+      url: `https://github.com/acme/demo/pull/${number}`,
+      state: task.status === "done" ? "merged" : "open",
+      runId: run.id,
+      openedAt: run.endedAt ?? run.updatedAt,
+      mergedAt: task.status === "done" ? task.updatedAt : null,
+    };
+  }
+
+  /** TODO(backend, board-summary)：看板每列的最新主 Run 與驗收進度。 */
+  boardSummary(projectId: string): BoardSummaryItem[] {
+    return this.tasks(projectId).map((task) => {
+      const run = this.state.runs
+        .filter((r) => r.taskId === task.id && r.parentRunId === null && r.origin !== "mention")
+        .at(-1);
+      const criteria = this.acceptanceCriteria(task.id);
+      const gate = run
+        ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "status_changed")
+            ?.event as Extract<EventKind, { kind: "status_changed" }> | undefined)
+        : undefined;
+      return {
+        taskId: task.id,
+        latestRun: run
+          ? {
+              id: run.id,
+              status: run.status,
+              gate: run.status === "awaiting_gate" ? (gate?.gate ?? null) : null,
+              agent: run.agent,
+            }
+          : null,
+        acceptance: {
+          passed: criteria.filter((c) => c.result === "passed").length,
+          failed: criteria.filter((c) => c.result === "failed").length,
+          total: criteria.length,
+        },
+      };
+    });
+  }
 
   private append(runId: string, kinds: EventKind[]): void {
     const list = this.state.events[runId] ?? [];
