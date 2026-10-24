@@ -1,0 +1,130 @@
+name: Release
+
+# Desktop 的發布（ARCHITECTURE §16）：
+# - push tag `v*`：在 Windows、macOS 建置 Runner 與 Desktop 安裝檔，由 electron-builder 上傳到 GitHub Release
+#   （draft）。協調者確認後 publish，Desktop 才會抓到更新。tag 必須和 apps/desktop/package.json 的版本一致。
+# - workflow_dispatch：只建置並上傳成 workflow artifact，不建立 Release（驗證打包用）。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # 不簽章：不要去找憑證
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            builder_args: --win --x64
+          - os: macos-latest
+            builder_args: --mac --arm64 --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: tag 與 Desktop 的版本一致
+        if: github.event_name == 'push'
+        run: |
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 與 apps/desktop/package.json 的版本 $version 不一致"
+            exit 1
+          fi
+
+      # 依 rust-toolchain.toml 安裝固定版本的 Rust
+      - name: Install Rust toolchain
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal
+          rustup show active-toolchain
+
+      - name: macOS 另外加 x64 的 target（在 arm64 的 runner 上交叉編譯）
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 依 package.json 的 packageManager 安裝 pnpm
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Runner 以 release 建置後放到 apps/desktop/build/runner/<os>-<arch>/，electron-builder 打包到 resources/bin/
+      - name: 建置 Runner（Windows x64）
+        if: runner.os == 'Windows'
+        run: pnpm --filter @orbis/desktop stage-runner --arch x64
+
+      - name: 建置 Runner（macOS arm64 與 x64）
+        if: runner.os == 'macOS'
+        run: |
+          pnpm --filter @orbis/desktop stage-runner --arch arm64
+          pnpm --filter @orbis/desktop stage-runner --arch x64 --target x86_64-apple-darwin
+
+      - name: 打包 Desktop 的程式碼（esbuild）
+        run: pnpm --filter @orbis/desktop build
+
+      - name: electron-builder（上傳到 GitHub Release draft）
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter @orbis/desktop exec electron-builder ${{ matrix.builder_args }} --publish always
+
+      - name: electron-builder（只打包，不發布）
+        if: github.event_name != 'push'
+        run: pnpm --filter @orbis/desktop exec electron-builder ${{ matrix.builder_args }} --publish never
+
+      # Runner 的單獨執行檔也附在 Release 上（Team Runner、手動安裝用）
+      - name: 整理 Runner 的單獨執行檔
+        run: |
+          mkdir -p apps/desktop/release/runner
+          for dir in apps/desktop/build/runner/*/; do
+            platform="$(basename "$dir")"
+            for file in "$dir"*; do
+              name="$(basename "$file")"
+              case "$name" in
+                *.exe) target="${name%.exe}-$platform.exe" ;;
+                *) target="$name-$platform" ;;
+              esac
+              cp "$file" "apps/desktop/release/runner/$target"
+            done
+          done
+          ls -la apps/desktop/release apps/desktop/release/runner
+
+      - name: 上傳 Runner 的執行檔到 Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" apps/desktop/release/runner/* --clobber
+
+      - name: 上傳安裝檔為 workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/*.yml
+            apps/desktop/release/runner/*
+          if-no-files-found: error

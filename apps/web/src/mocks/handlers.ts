@@ -5,6 +5,7 @@ import {
   AddMemberInput,
   AnswerChildQuestionInput,
   API_ROUTES,
+  API_VERSION,
   CheckAcceptanceCriterionInput,
   CreateAcceptanceCriterionInput,
   CreatePairingTokenInput,
@@ -34,6 +35,7 @@ import {
   WebClientMessage,
   type WebServerMessage,
 } from "@orbis/api-contract";
+import { PROTOCOL_VERSION } from "@orbis/protocol";
 import { HttpResponse, http, ws } from "msw";
 import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
@@ -169,6 +171,23 @@ export function createHandlers(backend: MockBackend) {
     eventsHandler,
     collabHandler,
 
+    // 版本相容（ARCHITECTURE §16）：依設定回不同的版本
+    http.get(API_ROUTES.health, () => {
+      const health = backend.config.health ?? "ok";
+      const api =
+        health === "web-outdated"
+          ? API_VERSION + 1
+          : health === "server-outdated"
+            ? API_VERSION - 1
+            : API_VERSION;
+      return HttpResponse.json({
+        ok: true,
+        apiOrigin: window.location.origin,
+        ...(health !== "no-versions" && {
+          versions: { server: "0.0.0-mock", api, protocol: PROTOCOL_VERSION },
+        }),
+      });
+    }),
     http.get(API_ROUTES.authMe, () => {
       if (session === "unauthorized" || backend.snapshot.loggedOut) {
         return HttpResponse.json({ error: "unauthorized", message: "尚未登入" }, { status: 401 });

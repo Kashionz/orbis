@@ -190,6 +190,17 @@ textarea {
   margin: 0.25rem 0 0;
 }
 
+/* Server 與 Web 版本不相容的提示（features/version） */
+.version-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: #fff4e5;
+  color: #7a3e00;
+  border-bottom: 1px solid #f0c48a;
+}
+
 .notice-inline {
   margin: 0 1rem;
   padding: 0.5rem 0.75rem;

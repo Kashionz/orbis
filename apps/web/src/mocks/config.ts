@@ -52,6 +52,11 @@ export interface MockConfig {
   collabPeer?: "online" | "edit";
   /** Repo Spec 提交時，default branch 上的檔案已經被別人改過。 */
   specUpstreamChanged?: boolean;
+  /**
+   * `/api/health` 回報的版本：`web-outdated`＝Server 的 API 版本比 Web 新（瀏覽器快取了舊的 Web）、
+   * `server-outdated`＝Server 比 Web 舊、`no-versions`＝比 Phase 1 更早、不回報版本的 Server。
+   */
+  health?: "ok" | "web-outdated" | "server-outdated" | "no-versions";
 }
 
 declare global {
