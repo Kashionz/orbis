@@ -8,7 +8,8 @@
 //! ```
 //!
 //! 流程：Dispatch → 自動以 allow_once 回覆權限請求（扮演測試者）→ 第一次 Review Gate 退回並送出
-//! `--followup` → 第二次核准 → push_branch → completed。Event 摘要寫到 `--summary`。
+//! `--followup` → 第二次核准 → push_branch → completed。Event 摘要寫到 `--summary`；`--summary-json`
+//! 另外寫一份結構化的結果（煙霧測試腳本 `scripts/smoke-agents.ps1` 用），Run 沒有 completed 時以非 0 結束。
 //!
 //! Agent 呼叫 Orbis MCP 的 `delegate` 時，也扮演 Server 建立 Child Run 派回同一台 Runner；
 //! `wait_run`、`get_run`、`list_runs`、`merge_child` 依 Child Run 的 Event 回覆，其他工具回錯誤。
@@ -62,6 +63,26 @@ struct Args {
     /// Event 摘要的輸出檔。
     #[arg(long, default_value = "dev-dispatch-summary.md")]
     summary: PathBuf,
+    /// 結構化結果（JSON）的輸出檔：outcome、push 的 commit、最後的錯誤、耗時。
+    #[arg(long)]
+    summary_json: Option<PathBuf>,
+    /// 整個流程的時間上限（秒），超過就結束並記為 timeout。
+    #[arg(long, default_value_t = 1800)]
+    timeout_secs: u64,
+}
+
+/// `--summary-json` 的內容。
+#[derive(Debug, serde::Serialize)]
+struct Outcome {
+    agent: String,
+    run_id: String,
+    /// completed、failed、canceled、push_failed、timeout、disconnected。
+    outcome: String,
+    pushed_branch: Option<String>,
+    pushed_commit: Option<String>,
+    last_error: Option<String>,
+    duration_secs: u64,
+    events: usize,
 }
 
 /// 一個 Child Run 的狀態（扮演 Server 回覆 `wait_run` 等工具）。
@@ -178,15 +199,44 @@ async fn main() -> anyhow::Result<()> {
             action,
         })
     };
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(1800);
+    let started = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(args.timeout_secs);
+    let mut outcome = Outcome {
+        agent: args.agent.clone(),
+        run_id: run_id.clone(),
+        outcome: "disconnected".into(),
+        pushed_branch: None,
+        pushed_commit: None,
+        last_error: None,
+        duration_secs: 0,
+        events: 0,
+    };
     loop {
-        let frame = tokio::time::timeout_at(deadline, recv(&mut ws)).await??;
+        let frame = match tokio::time::timeout_at(deadline, recv(&mut ws)).await {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(e)) => {
+                outcome.last_error = Some(format!("{e:#}"));
+                summary.push(format!("  → 連線中斷：{e:#}"));
+                break;
+            }
+            Err(_) => {
+                outcome.outcome = "timeout".into();
+                summary.push(format!("  → 超過 {} 秒沒有結束，逾時", args.timeout_secs));
+                break;
+            }
+        };
         let ty = frame["type"].as_str().unwrap_or_default().to_owned();
         match ty.as_str() {
             "heartbeat" => continue,
             "event" => {
                 let from = frame["run_id"].as_str().unwrap_or_default().to_owned();
                 let primary = from == run_id;
+                if primary {
+                    outcome.events += 1;
+                    if frame["kind"] == "error" {
+                        outcome.last_error = frame["message"].as_str().map(|m| short(m, 500));
+                    }
+                }
                 let line = format!(
                     "{}{}",
                     if primary { "" } else { "  [child] " },
@@ -288,6 +338,12 @@ async fn main() -> anyhow::Result<()> {
                             Some("completed" | "failed" | "canceled")
                         ) =>
                     {
+                        outcome.outcome = frame["status"].as_str().unwrap_or_default().into();
+                        if let Some(message) = frame["message"].as_str()
+                            && frame["status"] != "completed"
+                        {
+                            outcome.last_error = Some(short(message, 500));
+                        }
                         break;
                     }
                     _ => {}
@@ -432,8 +488,14 @@ async fn main() -> anyhow::Result<()> {
                 );
                 eprintln!("{line}");
                 summary.push(line);
+                if let Some(sha) = frame["commit_sha"].as_str() {
+                    outcome.pushed_commit = Some(sha.to_owned());
+                    outcome.pushed_branch = frame["branch"].as_str().map(str::to_owned);
+                }
                 // push 失敗時 Run 會一直等下一個 push_branch：結束，讓測試者看摘要。
                 if reviews >= 2 && frame["outcome"] == "rejected" {
+                    outcome.outcome = "push_failed".into();
+                    outcome.last_error = frame["message"].as_str().map(|m| short(m, 500));
                     summary.push("  → push_branch 失敗，結束".into());
                     break;
                 }
@@ -445,8 +507,24 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+    outcome.duration_secs = started.elapsed().as_secs();
     std::fs::write(&args.summary, summary.join("\n") + "\n")?;
     eprintln!("Event 摘要寫到 {}", args.summary.display());
+    if let Some(path) = &args.summary_json {
+        std::fs::write(path, serde_json::to_string_pretty(&outcome)?)?;
+        eprintln!("結構化結果寫到 {}", path.display());
+    }
+    if outcome.outcome != "completed" {
+        anyhow::bail!(
+            "Run 以 {} 結束{}",
+            outcome.outcome,
+            outcome
+                .last_error
+                .as_deref()
+                .map(|e| format!("：{e}"))
+                .unwrap_or_default()
+        );
+    }
     Ok(())
 }
 

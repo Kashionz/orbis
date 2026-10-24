@@ -253,7 +253,12 @@ fn push_external_commit(env: &Env, branch_name: &str, file: &str, content: &str)
     support::git(work, &["fetch", "origin", branch_name]);
     support::git(
         work,
-        &["checkout", "-B", branch_name, &format!("origin/{branch_name}")],
+        &[
+            "checkout",
+            "-B",
+            branch_name,
+            &format!("origin/{branch_name}"),
+        ],
     );
     std::fs::write(work.join(file), content).unwrap();
     support::git(work, &["add", "-A"]);
@@ -294,7 +299,10 @@ async fn 沿用_worktree_時先_fast_forward_到遠端分支() {
     );
     wait_status(&mut conn, "r2", "awaiting_gate").await;
     let pushed = approve_and_push(&mut conn, "r2").await;
-    assert_eq!(env.remote.branch_head(&branch_name).as_deref(), Some(pushed.as_str()));
+    assert_eq!(
+        env.remote.branch_head(&branch_name).as_deref(),
+        Some(pushed.as_str())
+    );
     let show = |path: &str| support::git(&env.remote.bare, &["show", &format!("{pushed}:{path}")]);
     assert_eq!(show("fl.txt").trim(), "v2");
     assert_eq!(show("external.txt").trim(), "由人直接 push");
@@ -347,9 +355,9 @@ async fn 本機與遠端分岔時在_prompt_說明_不自動合併() {
     let RunControlOutcome::Rejected { reason, message } = parsed.outcome else {
         panic!("Agent 沒有整合時 push 應該失敗：{result}");
     };
-    assert_eq!(reason, orbis_protocol::control::RunControlRejectReason::Failed);
-    assert!(
-        message.contains("有人直接 push 到 PR 分支"),
-        "{message}"
+    assert_eq!(
+        reason,
+        orbis_protocol::control::RunControlRejectReason::Failed
     );
+    assert!(message.contains("有人直接 push 到 PR 分支"), "{message}");
 }

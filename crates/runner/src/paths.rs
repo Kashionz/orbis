@@ -297,7 +297,7 @@ mod tests {
         assert!(is_wsl_unc(Path::new(r"\\WSL.localhost\Ubuntu\home")));
         assert!(is_wsl_unc(Path::new("//wsl$/Ubuntu/home")));
         assert!(!is_wsl_unc(Path::new(r"\\server\share")));
-        assert!(!is_wsl_unc(Path::new(r"C:\ob")));
+        assert!(!is_wsl_unc(Path::new(r"D:\code\web")));
     }
 
     #[test]

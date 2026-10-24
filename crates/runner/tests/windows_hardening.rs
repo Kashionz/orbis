@@ -96,7 +96,10 @@ async fn 路徑含中文與空白時可以跑完整個_run() {
         })
         .await;
     assert_eq!(setup["content"][0]["exit_code"], 0, "{setup}");
-    assert!(worktree.join("setup-ran.txt").is_file(), "setup 在中文路徑的 Worktree 中執行");
+    assert!(
+        worktree.join("setup-ran.txt").is_file(),
+        "setup 在中文路徑的 Worktree 中執行"
+    );
     conn.wait_status("awaiting_gate").await;
     assert_eq!(
         std::fs::read_to_string(worktree.join("中文檔案.txt"))
@@ -142,17 +145,27 @@ async fn 超過_260_字元的路徑可以建立_寫檔與刪除() {
         .unwrap_or_else(|e| panic!("{:?}：{}", e.code, e.message));
     let file = wt.path.join(&long_path);
     assert!(file.to_string_lossy().len() > 260, "{}", file.display());
-    assert!(file.is_file(), "長路徑的檔案要 checkout 出來：{}", file.display());
+    assert!(
+        file.is_file(),
+        "長路徑的檔案要 checkout 出來：{}",
+        file.display()
+    );
     // Agent 在同一層寫檔（Fake Agent 用 std 寫入，和這裡相同）。
     let sibling = file.with_file_name("agent.txt");
     std::fs::write(&sibling, "由 Agent 寫入").unwrap();
     // 測試自己呼叫的 git 也要開 longpaths（Runner 的 Git 一律會加）。
     let lp = ["-c", "core.longpaths=true"];
     git(&wt.path, &[lp[0], lp[1], "add", "-A"]);
-    git(&wt.path, &[lp[0], lp[1], "commit", "-m", "長路徑中的新檔案"]);
+    git(
+        &wt.path,
+        &[lp[0], lp[1], "commit", "-m", "長路徑中的新檔案"],
+    );
     let agent_file = long_path.replace("file.txt", "agent.txt");
     assert_eq!(
-        git(&wt.path, &[lp[0], lp[1], "show", &format!("HEAD:{agent_file}")]),
+        git(
+            &wt.path,
+            &[lp[0], lp[1], "show", &format!("HEAD:{agent_file}")]
+        ),
         "由 Agent 寫入"
     );
     // 刪除含長路徑的 Worktree。
@@ -171,7 +184,12 @@ async fn 檔案被鎖住時刪除會重試() {
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
     let wt = manager
-        .create(&request(&remote, "ORB-15", 1, Some(branch("lock").as_str())))
+        .create(&request(
+            &remote,
+            "ORB-15",
+            1,
+            Some(branch("lock").as_str()),
+        ))
         .await
         .unwrap();
     // 不共用 delete：刪除會以 os error 32（被另一個程序使用）失敗，直到關閉 handle。
@@ -204,10 +222,7 @@ async fn 檔案被鎖住時刪除會重試() {
 async fn 拒絕_wsl_檔案系統中的_repo_與_worktree_根目錄() {
     let remote = Remote::new(&[("README.md", "a\n")]);
     let wsl_repo = r"\\wsl$\Ubuntu\home\me\web";
-    let home = TestHome::new(&format!(
-        "[repos.web]\npath = {}\n",
-        toml_string(wsl_repo)
-    ));
+    let home = TestHome::new(&format!("[repos.web]\npath = {}\n", toml_string(wsl_repo)));
     let manager = WorktreeManager::new(home.home.clone());
     let err = manager
         .create(&request(&remote, "ORB-16", 1, Some(branch("w").as_str())))

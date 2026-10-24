@@ -301,7 +301,13 @@ fn port_range_exhausted_message(low: u16, high: u16) -> String {
         let overlapping: Vec<String> = windows_excluded_port_ranges()
             .into_iter()
             .filter(|(a, b)| *b >= low && *a <= high)
-            .map(|(a, b)| if a == b { a.to_string() } else { format!("{a}–{b}") })
+            .map(|(a, b)| {
+                if a == b {
+                    a.to_string()
+                } else {
+                    format!("{a}–{b}")
+                }
+            })
             .collect();
         if !overlapping.is_empty() {
             message.push_str(&format!(
@@ -325,7 +331,9 @@ pub fn windows_excluded_port_ranges() -> Vec<(u16, u16)> {
         .args(["int", "ipv4", "show", "excludedportrange", "protocol=tcp"])
         .output();
     match output {
-        Ok(o) if o.status.success() => parse_excluded_port_ranges(&String::from_utf8_lossy(&o.stdout)),
+        Ok(o) if o.status.success() => {
+            parse_excluded_port_ranges(&String::from_utf8_lossy(&o.stdout))
+        }
         _ => Vec::new(),
     }
 }

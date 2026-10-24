@@ -593,7 +593,12 @@ impl Watchdog {
     }
 
     /// 每次心跳 tick 呼叫；`last_inbound` 是最後收到 Server 訊息的時間。
-    pub fn on_tick(&mut self, now: Instant, now_wall: SystemTime, last_inbound: Instant) -> Verdict {
+    pub fn on_tick(
+        &mut self,
+        now: Instant,
+        now_wall: SystemTime,
+        last_inbound: Instant,
+    ) -> Verdict {
         let silent = now.saturating_duration_since(last_inbound);
         if silent > self.silence_limit() {
             return Verdict::Dead(format!(
@@ -660,13 +665,21 @@ mod tests {
         // 45 秒內有收到訊息：正常。
         let t = start + Duration::from_secs(30);
         assert_eq!(
-            dog.on_tick(t, wall + Duration::from_secs(30), start + Duration::from_secs(20)),
+            dog.on_tick(
+                t,
+                wall + Duration::from_secs(30),
+                start + Duration::from_secs(20)
+            ),
             Verdict::Healthy
         );
         // 超過 45 秒沒有任何訊息：斷線。
         let t = start + Duration::from_secs(80);
         assert!(matches!(
-            dog.on_tick(t, wall + Duration::from_secs(80), start + Duration::from_secs(20)),
+            dog.on_tick(
+                t,
+                wall + Duration::from_secs(80),
+                start + Duration::from_secs(20)
+            ),
             Verdict::Dead(_)
         ));
         // 心跳間隔很短時，上限不低於 10 秒。
@@ -706,7 +719,11 @@ mod tests {
             Verdict::Probe
         );
         assert_eq!(
-            dog.on_tick(t2, wall + Duration::from_secs(3615), t1 + Duration::from_secs(1)),
+            dog.on_tick(
+                t2,
+                wall + Duration::from_secs(3615),
+                t1 + Duration::from_secs(1)
+            ),
             Verdict::Healthy
         );
         // 系統時間倒退也算跳躍。

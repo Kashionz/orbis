@@ -3,7 +3,7 @@
 //! - Windows：預設 `cmd`；腳本以 `#!` 開頭時依 shebang 選：含 `pwsh`／`powershell` 用 PowerShell，
 //!   其他（bash、sh）用 Git Bash。
 //! - macOS／Linux：預設 `sh`；shebang 含 `pwsh`／`powershell` 而且找得到 pwsh 時用 PowerShell。
-//! - Orbis 注入的環境變數（`ORBIS_PORT` 等）在腳本中可以用 `$NAME`、`${NAME}`、`%NAME%`、`$env:NAME`
+//! - 產品注入的環境變數（`<前綴>PORT` 等）在腳本中可以用 `$NAME`、`${NAME}`、`%NAME%`、`$env:NAME`
 //!   任何一種寫法；交給 shell 前，Runner 把它們改寫成該 shell 原生的寫法（只改這幾個變數，其他的
 //!   `$` 與 `%` 不碰），同一份設定檔在三種 shell 都能用。
 
@@ -69,14 +69,19 @@ impl Shell {
             // 不載入 profile、不互動；Windows PowerShell 5.1 預設的執行原則會擋 -Command 以外的腳本，
             // 這裡只用 -Command。
             Self::PowerShell(pwsh) => ProcessSpec::new(pwsh)
-                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"])
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                ])
                 .args(["-Command", script]),
             Self::Sh => ProcessSpec::new("sh").args(["-c", script]),
         }
     }
 
     /// 把腳本中引用 `names` 這些變數的 `$NAME`、`${NAME}`、`%NAME%`、`$env:NAME` 改寫成這個 shell
-    /// 原生的寫法。只改寫 `names` 中的變數，而且名稱後面不能接著其他識別字元（`$ORBIS_PORT_X` 不算）。
+    /// 原生的寫法。只改寫 `names` 中的變數，而且名稱後面不能接著其他識別字元（`$<前綴>PORT_X` 不算）。
     pub fn rewrite_vars<'a>(
         &self,
         script: &str,
@@ -187,6 +192,7 @@ fn git_bash_near(git: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orbis_protocol::names::{ENV_PORT, ENV_TASK_KEY, ENV_WORKTREE_PATH};
 
     #[test]
     fn 非_windows_一律用_sh() {
@@ -218,22 +224,29 @@ mod tests {
         }
     }
 
-    const NAMES: [&str; 2] = ["ORBIS_PORT", "ORBIS_WORKTREE_PATH"];
+    const NAMES: [&str; 2] = [ENV_PORT, ENV_WORKTREE_PATH];
 
     #[test]
     fn 三種寫法都改成_shell_原生的寫法_只改_orbis_的變數() {
-        let script = "cd $ORBIS_WORKTREE_PATH && dev --port ${ORBIS_PORT} -h %ORBIS_PORT% -e $env:ORBIS_PORT $HOME %PATH% $ORBIS_PORT_X $env:OTHER";
+        let (p, w) = (ENV_PORT, ENV_WORKTREE_PATH);
+        // 四種寫法混用，加上不該被改的：其他變數、名稱後面接著識別字元的。
+        let script = format!(
+            "cd ${w} && dev --port ${{{p}}} -h %{p}% -e $env:{p} $HOME %PATH% ${p}_X $env:OTHER"
+        );
+        let tail = format!("$HOME %PATH% ${p}_X $env:OTHER");
         assert_eq!(
-            Shell::Cmd.rewrite_vars(script, NAMES),
-            "cd %ORBIS_WORKTREE_PATH% && dev --port %ORBIS_PORT% -h %ORBIS_PORT% -e %ORBIS_PORT% $HOME %PATH% $ORBIS_PORT_X $env:OTHER"
+            Shell::Cmd.rewrite_vars(&script, NAMES),
+            format!("cd %{w}% && dev --port %{p}% -h %{p}% -e %{p}% {tail}")
         );
         assert_eq!(
-            Shell::Sh.rewrite_vars(script, NAMES),
-            "cd ${ORBIS_WORKTREE_PATH} && dev --port ${ORBIS_PORT} -h ${ORBIS_PORT} -e ${ORBIS_PORT} $HOME %PATH% $ORBIS_PORT_X $env:OTHER"
+            Shell::Sh.rewrite_vars(&script, NAMES),
+            format!("cd ${{{w}}} && dev --port ${{{p}}} -h ${{{p}}} -e ${{{p}}} {tail}")
         );
         assert_eq!(
-            Shell::PowerShell(PathBuf::from("pwsh")).rewrite_vars(script, NAMES),
-            "cd ${env:ORBIS_WORKTREE_PATH} && dev --port ${env:ORBIS_PORT} -h ${env:ORBIS_PORT} -e ${env:ORBIS_PORT} $HOME %PATH% $ORBIS_PORT_X $env:OTHER"
+            Shell::PowerShell(PathBuf::from("pwsh")).rewrite_vars(&script, NAMES),
+            format!(
+                "cd ${{env:{w}}} && dev --port ${{env:{p}}} -h ${{env:{p}}} -e ${{env:{p}}} {tail}"
+            )
         );
         // 沒有變數引用時原樣。
         assert_eq!(Shell::Cmd.rewrite_vars("echo 100% $", NAMES), "echo 100% $");
@@ -242,18 +255,19 @@ mod tests {
     /// 同一段腳本在平台預設的 shell、PowerShell、Git Bash（Windows）中都讀得到 Orbis 注入的變數。
     #[tokio::test]
     async fn 三種_shell_都能讀到_orbis_注入的變數() {
+        let (p, k) = (ENV_PORT, ENV_TASK_KEY);
         let env = vec![
-            ("ORBIS_PORT".to_owned(), "41234".to_owned()),
-            ("ORBIS_TASK_KEY".to_owned(), "ORB-7".to_owned()),
+            (p.to_owned(), "41234".to_owned()),
+            (k.to_owned(), "ORB-7".to_owned()),
         ];
-        let mut scripts = vec!["echo port=$ORBIS_PORT key=%ORBIS_TASK_KEY%".to_owned()];
+        let mut scripts = vec![format!("echo port=${p} key=%{k}%")];
         if powershell().is_some() {
-            scripts.push("#!pwsh\nWrite-Output \"port=$ORBIS_PORT key=${ORBIS_TASK_KEY}\"".into());
+            scripts.push(format!("#!pwsh\nWrite-Output \"port=${p} key=${{{k}}}\""));
         }
         if cfg!(windows) && git_bash().is_some() {
-            scripts.push(
-                "#!/usr/bin/env bash\necho \"port=%ORBIS_PORT% key=$env:ORBIS_TASK_KEY\"".into(),
-            );
+            scripts.push(format!(
+                "#!/usr/bin/env bash\necho \"port=%{p}% key=$env:{k}\""
+            ));
         }
         for script in scripts {
             let output = process::run(&Shell::script(&script, env.clone()))

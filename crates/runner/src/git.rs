@@ -204,8 +204,12 @@ mod tests {
 
     #[test]
     fn 辨識_windows_路徑() {
-        assert!(is_windows_path(r"C:\Program Files\Git\mingw64\libexec\git-core"));
-        assert!(is_windows_path("C:/Program Files/Git/mingw64/libexec/git-core"));
+        assert!(is_windows_path(
+            r"C:\Program Files\Git\mingw64\libexec\git-core"
+        ));
+        assert!(is_windows_path(
+            "C:/Program Files/Git/mingw64/libexec/git-core"
+        ));
         assert!(is_windows_path(r"\\?\D:\x"));
         assert!(!is_windows_path("/usr/lib/git-core"));
         assert!(!is_windows_path("/mnt/c/Program Files/Git"));
@@ -224,7 +228,10 @@ mod tests {
             .await
             .unwrap_err();
         let text = err.to_string();
-        assert!(text.contains("WSL") && text.contains("/usr/lib/git-core"), "{text}");
+        assert!(
+            text.contains("WSL") && text.contains("/usr/lib/git-core"),
+            "{text}"
+        );
         assert!(err.downcast_ref::<NotNativeGit>().is_some());
     }
 
