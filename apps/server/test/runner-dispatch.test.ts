@@ -178,9 +178,9 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
     });
 
     it("沒有 Credential 的 Agent，credential 是 null（不是空字串）", async () => {
-      await h.pairRunner(team.members.member, "local", [{ id: "gemini", credential: null }]);
+      await h.pairRunner(team.members.member, "local", [{ id: "antigravity", credential: null }]);
       const list = expectContract(z.array(Runner), (await as("member").get("/api/runners")).body);
-      expect(list[0]?.agents).toMatchObject([{ agent: "gemini", credential: null }]);
+      expect(list[0]?.agents).toMatchObject([{ agent: "antigravity", credential: null }]);
     });
 
     it("Member 只看得到 Team Runner 與自己的 Local Runner；Admin 看得到全部", async () => {
@@ -461,7 +461,7 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
         { id: "codex", available: false },
       ]);
       // 別人的 Local Runner 不算在「我的電腦」。
-      await h.pairRunner(team.members.admin, "local", [{ id: "gemini" }]);
+      await h.pairRunner(team.members.admin, "local", [{ id: "antigravity" }]);
       const first = await h.pairRunner(team.members.admin, "team", [
         { id: "claude-code", models: ["sonnet"] },
       ]);

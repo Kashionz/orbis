@@ -6,8 +6,8 @@ mod support;
 
 use std::path::Path;
 
-use orbis_fake_agent::agent::SESSION_MODE_PREFIX;
-use orbis_runner::agent::{CLAUDE_CODE, CODEX, GEMINI, GROK};
+use orbis_fake_agent::agent::{AUTHENTICATED_FILE, SESSION_MODE_PREFIX};
+use orbis_runner::agent::{ANTIGRAVITY, CLAUDE_CODE, CODEX, GROK};
 use serde_json::Value;
 use support::flow::Env;
 use support::server::fake_agent_toml;
@@ -102,14 +102,111 @@ async fn codex_切到_read_only_模式() {
     assert_eq!(meta, Value::Null);
 }
 
-/// Gemini CLI 與 Grok Build：沒有 session mode 的修補，照樣能完成一個 Task。
+/// Antigravity：使用者設定可能預設 yolo（全部自動核准），切回逐項詢問的 default 模式。
 #[tokio::test(flavor = "multi_thread")]
-async fn gemini_與_grok_可以完成一個_task() {
-    for id in [GEMINI, GROK] {
-        let (mode, meta) = run_profile(id, &[]).await;
-        assert_eq!(mode, "none", "{id}");
-        assert_eq!(meta, Value::Null, "{id}");
-    }
+async fn antigravity_切回會詢問的模式() {
+    let (mode, meta) = run_profile(
+        ANTIGRAVITY,
+        &[
+            "--modes",
+            "default,auto_edit,yolo",
+            "--initial-mode",
+            "yolo",
+        ],
+    )
+    .await;
+    assert_eq!(mode, "default");
+    assert_eq!(meta, Value::Null);
+}
+
+/// Grok Build：沒有 session mode 的修補，照樣能完成一個 Task。
+#[tokio::test(flavor = "multi_thread")]
+async fn grok_可以完成一個_task() {
+    let (mode, meta) = run_profile(GROK, &[]).await;
+    assert_eq!(mode, "none");
+    assert_eq!(meta, Value::Null);
+}
+
+/// Antigravity 還沒有登入（session/new 回 auth_required）：Run 以 agent_start_failed 結束，
+/// 訊息告訴人要執行的登入指令。
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_未登入時提示登入指令() {
+    let extra = ["--auth-methods", "oauth-personal,gemini-api-key"];
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        builtin_as_fake(ANTIGRAVITY, wt, &extra)
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", ANTIGRAVITY, "做事").await;
+    let error = conn.wait_event("error").await;
+    assert_eq!(error["code"], "agent_start_failed", "{error}");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("-runner login antigravity"),
+        "{error}"
+    );
+    conn.wait_status("failed").await;
+}
+
+/// 執行 `orbis-runner --home <env 的 home> <args>`。
+fn run_cli(env: &Env, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_orbis-runner"))
+        .arg("--home")
+        .arg(env.home())
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// `login` 子指令：啟動 Agent 並以預設的認證方式呼叫 `authenticate`；Agent 自己保存登入狀態，
+/// 之後的 Run 不再要求登入。
+#[tokio::test(flavor = "multi_thread")]
+async fn login_子指令以預設的認證方式登入後可以派工() {
+    let state = support::temp_dir("agy state");
+    let state_dir = state.path().to_string_lossy().into_owned();
+    let extra = [
+        "--auth-methods",
+        "oauth-personal,gemini-api-key",
+        "--state-dir",
+        state_dir.as_str(),
+    ];
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        builtin_as_fake(ANTIGRAVITY, wt, &extra)
+    })
+    .await;
+    let output = run_cli(&env, &["login", ANTIGRAVITY]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(state.path().join(AUTHENTICATED_FILE)).unwrap(),
+        "oauth-personal"
+    );
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", ANTIGRAVITY, "做事").await;
+    conn.wait_status("awaiting_gate").await;
+}
+
+/// `login` 子指令：Agent 不支援指定的認證方式時失敗；登入由自己的 CLI 處理的 Agent 不接受。
+#[tokio::test(flavor = "multi_thread")]
+async fn login_子指令拒絕不支援的認證方式與自己處理登入的_agent() {
+    let extra = ["--auth-methods", "oauth-personal"];
+    let env = Env::new(&[("README.md", "a\n")], |wt| {
+        builtin_as_fake(ANTIGRAVITY, wt, &extra)
+    })
+    .await;
+    let unsupported = run_cli(&env, &["login", ANTIGRAVITY, "--method", "gemini-api-key"]);
+    assert!(!unsupported.status.success());
+    let stderr = String::from_utf8_lossy(&unsupported.stderr);
+    assert!(stderr.contains("oauth-personal"), "{stderr}");
+    let codex = run_cli(&env, &["login", CODEX]);
+    assert!(!codex.status.success());
+    let stderr = String::from_utf8_lossy(&codex.stderr);
+    assert!(stderr.contains("自己的 CLI"), "{stderr}");
 }
 
 /// issue #18：AgentAvailability 回報從 `initialize` 得到的實際能力旗標（啟動時在背景探測）。
@@ -155,7 +252,7 @@ async fn agent_availability_回報_initialize_的能力旗標() {
         env!("CARGO_PKG_VERSION"),
         "版本來自 initialize：{fake}"
     );
-    for id in [CLAUDE_CODE, CODEX, GEMINI, GROK] {
+    for id in [ANTIGRAVITY, CLAUDE_CODE, CODEX, GROK] {
         assert!(
             availability["agents"]
                 .as_array()
@@ -192,22 +289,22 @@ async fn 沒有需要的_session_mode_時拒絕啟動() {
     conn.wait_status("failed").await;
 }
 
-/// Gemini CLI 在受保護的 `.gemini/` 目錄中新增檔案（不經過權限請求）：session 中途中止並問人。
+/// Antigravity 在受保護的 `.agents/` 目錄中新增 skill（不經過權限請求）：session 中途中止並問人。
 #[tokio::test(flavor = "multi_thread")]
-async fn gemini_在受保護的目錄新增設定時中途問人() {
+async fn antigravity_在受保護的目錄新增_skill_時中途問人() {
     let mut env = Env::new(&[("README.md", "a\n")], |wt| {
-        builtin_with_script(GEMINI, wt, "gemini-settings.yaml", &[])
+        builtin_with_script(ANTIGRAVITY, wt, "antigravity-settings.yaml", &[])
     })
     .await;
     let _runner = env.spawn();
-    let mut conn = env.dispatch("r1", GEMINI, "做事").await;
+    let mut conn = env.dispatch("r1", ANTIGRAVITY, "做事").await;
     let request = conn.wait_event("permission_request").await;
     assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
     assert!(
         request["title"]
             .as_str()
             .unwrap()
-            .contains(".gemini/policies/allow.toml"),
+            .contains(".agents/skills/deploy/SKILL.md"),
         "{request}"
     );
     support::flow::answer(&mut conn, "c1", &request, "allow_once").await;

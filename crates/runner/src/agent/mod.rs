@@ -4,6 +4,7 @@
 //! 啟動方式（含 Windows shim）、能力旗標、已知問題的修補、Permission Policy 的落差。
 
 pub mod acp;
+pub mod download;
 pub mod install;
 
 use std::collections::BTreeMap;
@@ -14,6 +15,7 @@ use agent_client_protocol::schema::v1::{
 };
 use orbis_protocol::availability::{AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS};
 
+use self::download::ArchiveBuild;
 use crate::home::{AgentSettings, Settings};
 use crate::paths;
 use crate::policy::PermissionSubject;
@@ -40,13 +42,59 @@ const CODEX_ACP_ENTRY: &str = "dist/index.js";
 /// `@openai/codex` 需要的最低 Node 主版本。
 const CODEX_ACP_MIN_NODE: u32 = 20;
 
-/// 內建 Gemini CLI profile 的 id。
-pub const GEMINI: &str = "gemini";
-/// Gemini CLI 本身就支援 ACP（`--acp`），由 Runner 代管安裝精確版本。
-pub const GEMINI_PACKAGE: &str = "@google/gemini-cli";
-pub const GEMINI_VERSION: &str = "0.65.0";
-const GEMINI_ENTRY: &str = "bundle/gemini.js";
-const GEMINI_MIN_NODE: u32 = 20;
+/// 內建 Antigravity profile 的 id。
+pub const ANTIGRAVITY: &str = "antigravity";
+/// Google 官方的 Antigravity ACP server（`agy_acp_server`）。只在 ACP Registry 以 binary 發佈，
+/// Runner 下載鎖定的版本並比對 sha256（ADR-0002）；不使用第三方轉接程式。
+pub const ANTIGRAVITY_ACP_VERSION: &str = "1.4.3";
+const ANTIGRAVITY_ACP_NAME: &str = "agy-acp-server";
+/// 各平台的發佈版本（取自 ACP Registry 的 `antigravity-acp/agent.json`，升級時一起更新）。
+const ANTIGRAVITY_ACP_BUILDS: &[ArchiveBuild] = &[
+    ArchiveBuild {
+        target: "windows-x86_64",
+        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.3-windows-x86_64.zip",
+        sha256: "54c2e16378d9a4952e1da70e355f3c33c4f284308d6de48ab3e6e34a127bd325",
+        command: "agy_acp_server.exe",
+        args: &[],
+    },
+    ArchiveBuild {
+        target: "windows-aarch64",
+        url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.4.3-windows-arm64.zip",
+        sha256: "fcd46431ad33d3b510ce0b98fe7b43d095bd8b3f1c363ee2d57faa7ee981c7bb",
+        command: "agy_acp_server.exe",
+        args: &[],
+    },
+    ArchiveBuild {
+        target: "darwin-aarch64",
+        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.3-darwin-arm64.zip",
+        sha256: "c57db0a9b8b712daa9c3c17cdb990a61842ea569f279e8bd79d7aa85a303b20b",
+        command: "agy_acp_server.par",
+        args: &[],
+    },
+    ArchiveBuild {
+        target: "darwin-x86_64",
+        url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.3-darwin-x86_64.zip",
+        sha256: "9392dbbdad7f0663dbfb5a0bf641297b0cf80d2ee9cd2d49a616bbbc7378731d",
+        command: "agy_acp_server.par",
+        args: &[],
+    },
+    ArchiveBuild {
+        target: "linux-x86_64",
+        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.3-linux-x86_64.zip",
+        sha256: "0634ce5306ba92c932945455e7a83fda78e2d99c33fa8aa6ee0566206a382714",
+        command: "agy_acp_server.par",
+        args: &["--uid="],
+    },
+    ArchiveBuild {
+        target: "linux-aarch64",
+        url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.4.3-linux-arm64.zip",
+        sha256: "05c153443b0b1175151c760eeddea538950bc9843e317d54786a1f03670182bc",
+        command: "agy_acp_server.par",
+        args: &["--uid="],
+    },
+];
+/// `login` 子指令預設的認證方式（Google 帳號，由 agy_acp_server 自己開瀏覽器登入）。
+pub const ANTIGRAVITY_AUTH_METHOD: &str = "oauth-personal";
 
 /// 內建 Grok Build profile 的 id。
 pub const GROK: &str = "grok";
@@ -75,6 +123,76 @@ pub enum Launch {
         /// 套件內附、由套件再啟動的原生執行檔。
         native: Option<NativeBinary>,
     },
+    /// Runner 代管下載的 zip 封裝（[`download`]），直接啟動其中的執行檔。
+    ManagedArchive {
+        /// 安裝目錄的名稱（後面接 `@<版本>`）。
+        name: &'static str,
+        version: &'static str,
+        builds: &'static [ArchiveBuild],
+    },
+}
+
+impl Launch {
+    /// 確保 Runner 代管的 adapter 已安裝（第一次派工時安裝）；其他啟動方式不做任何事。
+    pub async fn ensure_installed(&self, agents_dir: &Path) -> anyhow::Result<()> {
+        match self {
+            Launch::Command { .. } => {}
+            Launch::ManagedNpm {
+                package,
+                version,
+                entry,
+                ..
+            } => {
+                install::ensure_installed(agents_dir, package, version, entry).await?;
+            }
+            Launch::ManagedArchive {
+                name,
+                version,
+                builds,
+            } => {
+                let build = archive_build(name, builds)?;
+                download::ensure_installed(agents_dir, name, version, build).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Runner 代管的 adapter 是否已經安裝；使用者自己安裝的指令一律是 `true`。
+    pub fn installed(&self, agents_dir: &Path) -> bool {
+        match self {
+            Launch::Command { .. } => true,
+            Launch::ManagedNpm {
+                package,
+                version,
+                entry,
+                ..
+            } => install::entry_path(agents_dir, package, version, entry).is_file(),
+            Launch::ManagedArchive {
+                name,
+                version,
+                builds,
+            } => download::build_for(builds)
+                .is_some_and(|b| download::command_path(agents_dir, name, version, b).is_file()),
+        }
+    }
+}
+
+/// 這台電腦的發佈版本；沒有時回傳錯誤。
+fn archive_build<'a>(name: &str, builds: &'a [ArchiveBuild]) -> anyhow::Result<&'a ArchiveBuild> {
+    download::build_for(builds).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{name} 沒有這個平台（{}）的發佈版本",
+            download::current_target().unwrap_or_else(|| std::env::consts::OS.to_owned())
+        )
+    })
+}
+
+/// 由 Runner 代為登入的指令（`login` 子指令），放在錯誤訊息與文件中。
+pub fn login_command(agent: &str) -> String {
+    format!(
+        "{}-runner login {agent}",
+        orbis_protocol::names::PRODUCT_SLUG
+    )
 }
 
 /// npm 套件內附的原生執行檔（例如 Claude Agent SDK 的 `claude.exe`）。
@@ -159,6 +277,9 @@ pub struct AgentProfile {
     /// 測過的最低版本（使用者自己安裝的 CLI）。偵測到更舊的版本時回報無法使用；
     /// runner.toml 覆寫啟動指令時不檢查。
     pub min_version: Option<&'static str>,
+    /// 由 Runner 代為登入時預設的 ACP 認證方式（[`login_command`]）。`None` 表示 Agent 的登入
+    /// 由它自己的 CLI 處理。
+    pub auth_method: Option<&'static str>,
 }
 
 /// Claude Code 在 Run 中載入的設定來源（claude-agent-acp 的 `_meta.claudeCode.options.settingSources`，
@@ -229,6 +350,7 @@ impl AgentProfile {
             credential: format!("{CLAUDE_CODE}-local"),
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: None,
+            auth_method: None,
         }
     }
 
@@ -267,42 +389,46 @@ impl AgentProfile {
             credential: format!("{CODEX}-local"),
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: None,
+            auth_method: None,
         }
     }
 
-    /// 內建的 Gemini CLI profile（原生 ACP：`gemini --acp`）。
+    /// 內建的 Antigravity profile（Google 官方的 `agy_acp_server`，取代已停止個人方案的 Gemini CLI）。
     ///
-    /// - 以 `default` 審核模式啟動（每個工具都先問），不使用 `--yolo`／`auto_edit`。
-    /// - 登入沿用使用者自己的 `~/.gemini`。
-    pub fn gemini() -> Self {
+    /// - Runner 下載鎖定版本的官方 binary，比對 sha256 後直接啟動。
+    /// - 建立 session 後切到 `default` 模式（逐項詢問），不使用 `auto_edit`／`yolo`。
+    /// - 不沿用 agy CLI 的登入：認證由 agy_acp_server 自己保存在 `~/.gemini/antigravity-acp/`，
+    ///   第一次要執行 [`login_command`]。
+    pub fn antigravity() -> Self {
         Self {
-            id: GEMINI.into(),
-            launch: Launch::ManagedNpm {
-                package: GEMINI_PACKAGE,
-                version: GEMINI_VERSION,
-                entry: GEMINI_ENTRY,
-                args: &["--acp", "--approval-mode", "default"],
-                env: &[],
-                min_node: GEMINI_MIN_NODE,
-                native: None,
+            id: ANTIGRAVITY.into(),
+            launch: Launch::ManagedArchive {
+                name: ANTIGRAVITY_ACP_NAME,
+                version: ANTIGRAVITY_ACP_VERSION,
+                builds: ANTIGRAVITY_ACP_BUILDS,
             },
-            session_mode: None,
+            session_mode: Some("default"),
             session_meta: None,
-            // Gemini CLI 的 plan 審核模式只能在啟動參數指定，ACP 中無法切換，Planning 改用 prompt。
+            // 沒有 plan 模式，Planning 改用只產出 plan 的 prompt。
             plan_mode: None,
-            protected_paths: vec![".gemini/".into()],
+            // `.agents/` 的 skills、rules、workflows 會改變 Agent 的行為；Repo 的 `.gemini/`
+            // 是否仍會讀取待實機確認，先一起保護。
+            protected_paths: vec![".agents/".into(), ".gemini/".into()],
             permission_gaps: vec![
-                "Gemini 自己的設定（~/.gemini/settings.json、Repo 的 .gemini/settings.json）中允許的工具不會詢問 Runner".into(),
-                "Gemini 直接執行的唯讀工具（讀檔、搜尋）不會詢問 Runner".into(),
+                "Antigravity 自己的設定（~/.gemini/antigravity-acp/settings.json）中允許的工具不會詢問 Runner".into(),
             ],
             known_issues: vec![
-                "路徑檢查區分大小寫：Runner 傳給 Agent 的 Worktree 路徑一律是正規化後、與磁碟一致的大小寫".into(),
-                "需要先在本機執行 gemini 完成登入".into(),
+                format!(
+                    "需要先在本機執行 {} 登入（不沿用 agy CLI 的登入）",
+                    login_command(ANTIGRAVITY)
+                ),
+                "沒有宣告 stdio MCP：Orbis MCP（delegate 等工具）可能無法使用".into(),
             ],
             reports_usage: true,
-            credential: format!("{GEMINI}-local"),
+            credential: format!("{ANTIGRAVITY}-local"),
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: None,
+            auth_method: Some(ANTIGRAVITY_AUTH_METHOD),
         }
     }
 
@@ -333,6 +459,7 @@ impl AgentProfile {
             credential: format!("{GROK}-local"),
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: Some(GROK_MIN_VERSION),
+            auth_method: None,
         }
     }
 
@@ -357,6 +484,7 @@ impl AgentProfile {
                 .max_concurrent_runs
                 .unwrap_or(DEFAULT_MAX_CONCURRENT_RUNS),
             min_version: None,
+            auth_method: None,
         }
     }
 
@@ -411,6 +539,17 @@ impl AgentProfile {
                     spec = spec.env(env, file);
                 }
                 Ok(spec)
+            }
+            Launch::ManagedArchive {
+                name,
+                version,
+                builds,
+            } => {
+                let build = archive_build(name, builds)?;
+                Ok(
+                    ProcessSpec::new(download::command_path(agents_dir, name, version, build))
+                        .args(build.args.iter()),
+                )
             }
         }
     }
@@ -516,7 +655,7 @@ impl Profiles {
         for builtin in [
             claude,
             AgentProfile::codex(),
-            AgentProfile::gemini(),
+            AgentProfile::antigravity(),
             AgentProfile::grok(),
         ] {
             profiles.insert(builtin.id.clone(), builtin);
@@ -682,6 +821,23 @@ pub async fn detect(profile: &AgentProfile) -> Detected {
                 available: false,
                 version: None,
                 unavailable_reason: Some(format!("未安裝：找不到 Node（需要 {min_node} 以上）")),
+            },
+        },
+        // 第一次派工時下載；這裡只看這個平台有沒有發佈版本。
+        Launch::ManagedArchive {
+            name,
+            version,
+            builds,
+        } => match archive_build(name, builds) {
+            Ok(_) => Detected {
+                available: true,
+                version: Some((*version).to_owned()),
+                unavailable_reason: None,
+            },
+            Err(e) => Detected {
+                available: false,
+                version: None,
+                unavailable_reason: Some(e.to_string()),
             },
         },
     }
@@ -910,7 +1066,8 @@ mod tests {
         assert!(with_user.permission_gaps[0].contains("~/.claude/settings.json"));
     }
 
-    /// issue #31：Codex、Gemini CLI 由 Runner 代管安裝精確版本；Grok Build 檢查最低版本。
+    /// issue #31：Codex 由 Runner 代管安裝精確版本；Antigravity 下載鎖定版本的官方 binary
+    /// 並比對 sha256；Grok Build 檢查最低版本。
     #[test]
     fn 內建的_agent_profile_與版本鎖定() {
         let exact = |v: &str| v.chars().all(|c| c.is_ascii_digit() || c == '.');
@@ -929,16 +1086,38 @@ mod tests {
         assert!(env.contains(&("INITIAL_AGENT_MODE", "read-only")));
         assert_eq!(codex.session_mode, Some("read-only"));
 
-        let gemini = AgentProfile::gemini();
-        let spec = gemini.launch_spec(Path::new("/agents")).unwrap();
-        assert_eq!(spec.program, PathBuf::from("node"));
-        let args: Vec<String> = spec
-            .args
-            .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(args[0].contains(GEMINI_VERSION), "{args:?}");
-        assert_eq!(&args[1..], ["--acp", "--approval-mode", "default"]);
+        let antigravity = AgentProfile::antigravity();
+        let Launch::ManagedArchive {
+            version, builds, ..
+        } = &antigravity.launch
+        else {
+            panic!("Antigravity 由 Runner 代管下載");
+        };
+        assert!(exact(version), "{version}");
+        for target in [
+            "windows-x86_64",
+            "windows-aarch64",
+            "darwin-x86_64",
+            "darwin-aarch64",
+            "linux-x86_64",
+            "linux-aarch64",
+        ] {
+            let build = builds.iter().find(|b| b.target == target).unwrap();
+            assert!(build.url.starts_with("https://dl.google.com/"), "{build:?}");
+            assert!(build.url.contains(version), "網址要是鎖定的版本：{build:?}");
+            assert_eq!(build.sha256.len(), 64, "{build:?}");
+        }
+        assert_eq!(antigravity.session_mode, Some("default"));
+        assert_eq!(antigravity.auth_method, Some(ANTIGRAVITY_AUTH_METHOD));
+        let spec = antigravity.launch_spec(Path::new("/agents")).unwrap();
+        let program = spec.program.to_string_lossy().replace('\\', "/");
+        assert!(
+            program.starts_with(&format!(
+                "/agents/{ANTIGRAVITY_ACP_NAME}@{version}/agy_acp_server"
+            )),
+            "{program}"
+        );
+        assert!(login_command(ANTIGRAVITY).ends_with("-runner login antigravity"));
 
         let grok = AgentProfile::grok();
         assert!(matches!(&grok.launch, Launch::Command { command, args, .. }
@@ -947,7 +1126,7 @@ mod tests {
 
         let profiles = Profiles::from_settings(&Settings::default());
         let ids: Vec<&str> = profiles.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, [CLAUDE_CODE, CODEX, GEMINI, GROK]);
+        assert_eq!(ids, [ANTIGRAVITY, CLAUDE_CODE, CODEX, GROK]);
         for profile in profiles.iter() {
             assert!(
                 !profile.permission_gaps.is_empty(),

@@ -11,3 +11,5 @@
 
 - Claude 與 Codex 依賴第三方 adapter（`claude-agent-acp`、`codex-acp`），它們更新頻繁、常有 regression，所以版本要鎖定。
 - Runner 對內使用自己的正規化 Event 模型，ACP 的型別不外流到 Server。
+
+- 2026-10-24 註記：Gemini CLI 的個人方案已在 2026-06-18 停止服務，內建 Agent 改由 Antigravity（Google 官方的 `agy_acp_server`）取代，見 ARCHITECTURE §7。

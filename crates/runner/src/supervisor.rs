@@ -240,14 +240,7 @@ impl Supervisor {
     /// adapter 跳過（第一次派工時才安裝，之後由 Run 更新）。回傳 `Err` 表示 Agent 無法啟動。
     async fn probe(&self, profile: &agent::AgentProfile) -> Result<(), String> {
         let agents_dir = self.home.agents_dir();
-        if let agent::Launch::ManagedNpm {
-            package,
-            version,
-            entry,
-            ..
-        } = &profile.launch
-            && !agent::install::entry_path(&agents_dir, package, version, entry).is_file()
-        {
+        if !profile.launch.installed(&agents_dir) {
             return Ok(());
         }
         let spec = profile

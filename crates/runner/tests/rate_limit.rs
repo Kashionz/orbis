@@ -73,8 +73,8 @@ async fn claude_code_的_rate_limit_事件_暫停後在同一個_session_繼續(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn gemini_格式的_rate_limit_暫停後在同一個_session_繼續() {
-    let limited = rate_limited_then_resumed("rate-limit-gemini.yaml").await;
+async fn antigravity_格式的_rate_limit_暫停後在同一個_session_繼續() {
+    let limited = rate_limited_then_resumed("rate-limit-antigravity.yaml").await;
     assert!(
         limited["message"]
             .as_str()

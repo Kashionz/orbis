@@ -247,7 +247,7 @@ allow_commands = ["pnpm *", "git status", "git diff *"]
 
 [delegation]
 enabled = true
-allowed_agents = ["claude-code", "codex", "gemini", "grok"]
+allowed_agents = ["claude-code", "codex", "antigravity", "grok"]
 "#;
 
     #[test]

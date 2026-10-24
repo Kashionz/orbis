@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::Implementation;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, LoadSessionRequest,
-    McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
+    AuthenticateRequest, CancelNotification, ContentBlock, InitializeRequest, InitializeResponse,
+    LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
     RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest, SessionId,
     SessionModeId, SessionModeState, SessionNotification, SessionUpdate, SetSessionModeRequest,
     StopReason,
@@ -30,6 +30,21 @@ use crate::process::{self, Pipes, ProcessSpec, ProcessTree};
 
 /// 保留 Agent stderr 的最後幾行。
 const STDERR_TAIL_LINES: usize = 40;
+
+/// Agent 回報需要登入（ACP auth_required）時給人的說明。
+fn login_hint(profile: &AgentProfile) -> String {
+    match profile.auth_method {
+        Some(_) => format!(
+            "{} 需要先登入：請在 Runner 的電腦上執行 {}",
+            profile.id,
+            super::login_command(&profile.id)
+        ),
+        None => format!(
+            "{} 需要先登入：請在 Runner 的電腦上用它自己的 CLI 登入",
+            profile.id
+        ),
+    }
+}
 
 /// Agent 送給 Runner 的訊息。
 #[derive(Debug)]
@@ -101,9 +116,61 @@ impl AcpSession {
     ) -> Result<Self, AgentError> {
         let mut session = Self::connect(profile, spec, cwd, notices).await?;
         if let Err(error) = session.handshake(profile, cwd, resume, mcp_servers).await {
+            let error = match error {
+                AgentError::Acp(e) if e.code == acp::ErrorCode::AuthRequired => {
+                    AgentError::Start(anyhow::anyhow!(login_hint(profile)))
+                }
+                other => other,
+            };
             return Err(session.fail(error).await);
         }
         Ok(session)
+    }
+
+    /// 由 Runner 代為登入（`login` 子指令）：`initialize` 後以 `method` 呼叫 `authenticate`，
+    /// 等 Agent 完成登入（例如它自己開瀏覽器）就結束。認證由 Agent 自己保存，Runner 不讀也不存。
+    pub async fn login(
+        profile: &AgentProfile,
+        spec: ProcessSpec,
+        cwd: &Path,
+        method: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(), AgentError> {
+        let (notices, _ignored) = mpsc::unbounded_channel();
+        let mut session = Self::connect(profile, spec, cwd, notices).await?;
+        let result = async {
+            let init = session.initialize(profile).await?;
+            let methods: Vec<String> = init
+                .auth_methods
+                .iter()
+                .map(|m| m.id().0.to_string())
+                .collect();
+            if !methods.iter().any(|m| m == method) {
+                return Err(AgentError::Start(anyhow::anyhow!(
+                    "Agent 不支援認證方式「{method}」，可以用的有：{}",
+                    methods.join("、")
+                )));
+            }
+            let request = session
+                .cx
+                .send_request(AuthenticateRequest::new(method.to_owned()))
+                .block_task();
+            match tokio::time::timeout(timeout, request).await {
+                Ok(response) => response.map(|_| ()).map_err(AgentError::Acp),
+                Err(_) => Err(AgentError::Start(anyhow::anyhow!(
+                    "等了 {} 秒還沒有完成登入",
+                    timeout.as_secs()
+                ))),
+            }
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                session.shutdown().await;
+                Ok(())
+            }
+            Err(error) => Err(session.fail(error).await),
+        }
     }
 
     /// 只啟動 Agent 並跑一次 `initialize`（不建立 session）就結束，取得實際的能力旗標與版本

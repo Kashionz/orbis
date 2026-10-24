@@ -714,7 +714,7 @@ export class MockBackend {
             permissionGaps: [],
           },
           {
-            id: "gemini-cli",
+            id: "antigravity",
             version: "0.9.0",
             available: true,
             unavailableReason: null,
@@ -2538,7 +2538,7 @@ export class MockBackend {
     const api = child("run-child-api", parent, "branch", "codex", "running");
     child("run-child-api-review", api, "consult", "claude-code", "completed");
     child("run-child-docs", parent, "consult", "claude-code", "completed");
-    const asking = child("run-child-ask", parent, "consult", "gemini-cli", "running");
+    const asking = child("run-child-ask", parent, "consult", "antigravity", "running");
     const task = this.task(parent.taskId);
     this.state.needsYou.push({
       id: this.newId("needs-you"),

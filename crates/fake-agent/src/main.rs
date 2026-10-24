@@ -38,6 +38,11 @@ struct Cli {
     /// 宣告 prompt 可以帶圖片。
     #[arg(long)]
     image: bool,
+
+    /// 宣告的認證方式（逗號分隔）。指定時要先 `authenticate`，`session/new` 才會成功；
+    /// 有 `--state-dir` 時登入狀態保存在那裡。
+    #[arg(long, value_delimiter = ',')]
+    auth_methods: Vec<String>,
 }
 
 #[tokio::main]
@@ -62,6 +67,7 @@ async fn main() -> ExitCode {
         modes: cli.modes,
         initial_mode: cli.initial_mode,
         image: cli.image,
+        auth_methods: cli.auth_methods,
     };
     match agent::serve_stdio_with(script, options).await {
         Ok(()) => ExitCode::SUCCESS,

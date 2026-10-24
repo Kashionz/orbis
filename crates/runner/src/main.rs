@@ -40,7 +40,7 @@ struct Cli {
 
     /// 本機目錄（設定檔 runner.toml 與狀態目錄），預設是家目錄下的設定目錄。
     /// 未指定時讀取環境變數 <前綴>HOME。環境變數 <前綴>RUNNER_STATE_DIR 只覆寫狀態目錄。
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", global = true)]
     home: Option<PathBuf>,
 
     /// 由 Desktop 代管：stdout 輸出 JSON 狀態、從 stdin 讀指令，stdin 關閉時結束。
@@ -50,6 +50,22 @@ struct Cli {
     /// 以 stdio 提供 Orbis MCP server（Runner 注入到 Agent 的 session，ARCHITECTURE §9）。
     #[arg(long, hide = true)]
     mcp_bridge: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    /// 登入需要由 Runner 代為登入的 Agent（例如 antigravity）。Agent 自己開瀏覽器並保存認證，
+    /// Runner 不讀也不存認證內容。
+    Login {
+        /// Agent Profile 的 id。
+        agent: String,
+        /// ACP 的認證方式，預設是 Agent Profile 指定的方式。
+        #[arg(long)]
+        method: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -76,6 +92,18 @@ async fn main() -> std::process::ExitCode {
         };
     }
     init_tracing();
+    if let Some(Command::Login { agent, method }) = &cli.command {
+        return match login(cli.home.clone(), agent, method.as_deref()).await {
+            Ok(()) => {
+                println!("{agent} 已登入");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                error!("{e:#}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     let code = match run(cli).await {
         Ok(()) => ExitCode::Normal,
         Err(e) => {
@@ -103,17 +131,28 @@ fn exit_code(e: &anyhow::Error) -> ExitCode {
     ExitCode::Error
 }
 
-async fn run(cli: Cli) -> anyhow::Result<()> {
-    let env_path = |name: &str| {
-        std::env::var_os(name)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    let home_dir = cli.home.or_else(|| env_path(names::ENV_HOME));
-    let home = Arc::new(RunnerHome::open_with(
-        home_dir,
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// 開啟 Runner 的本機目錄（`--home`、環境變數 `<前綴>HOME`、預設位置）。
+fn open_home(home: Option<PathBuf>) -> anyhow::Result<RunnerHome> {
+    RunnerHome::open_with(
+        home.or_else(|| env_path(names::ENV_HOME)),
         env_path(names::ENV_RUNNER_STATE_DIR),
-    )?);
+    )
+}
+
+async fn login(home: Option<PathBuf>, agent: &str, method: Option<&str>) -> anyhow::Result<()> {
+    let home = open_home(home)?;
+    info!(agent, "啟動 Agent 並開始登入，請在開啟的瀏覽器中完成");
+    orbis_runner::login::login(&home, agent, method, orbis_runner::login::LOGIN_TIMEOUT).await
+}
+
+async fn run(cli: Cli) -> anyhow::Result<()> {
+    let home = Arc::new(open_home(cli.home)?);
     info!(
         home = %home.root().display(),
         state_dir = %home.state_dir().display(),

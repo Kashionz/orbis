@@ -6,7 +6,7 @@
 //! |---|---|
 //! | Claude Code | `usage_update` 的 `_meta["_claude/rateLimit"]`：`status` 為 `rejected`，`resetsAt` 是 epoch 秒；回合本身可能照常結束 |
 //! | Codex | 回合以 JSON-RPC 錯誤結束，`data.codexErrorInfo` 是 `usageLimitExceeded` 或 `rateLimitExceeded`，訊息是「try again in …」 |
-//! | Gemini CLI | 錯誤訊息含 `RESOURCE_EXHAUSTED`、quota、429，常附「Please retry in 12.3s」 |
+//! | Antigravity | 錯誤訊息含 `RESOURCE_EXHAUSTED`、quota、429，常附「Please retry in 12.3s」（沿用 Gemini API 的格式，待實機確認） |
 //! | Grok Build、其他 | 錯誤訊息含 rate limit、429、too many requests |
 //!
 //! 某個 Run 撞到 rate limit 時，同一組 Credential 到恢復時間之前不接受新的 Dispatch（[`RateLimits`]）。
@@ -282,13 +282,13 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(codex_object.resets_at, None);
-        // Gemini CLI
-        let gemini = from_error(&error(
+        // Antigravity（Google 的 Gemini API 格式）
+        let antigravity = from_error(&error(
             "[API Error: RESOURCE_EXHAUSTED: Quota exceeded for metric. Please retry in 12.5s.]",
             serde_json::Value::Null,
         ))
         .unwrap();
-        assert!((12..=13).contains(&secs_from_now(&gemini)));
+        assert!((12..=13).contains(&secs_from_now(&antigravity)));
         // Claude Code 的訊息
         let claude = from_error(&error(
             "Claude AI usage limit reached|1700000000",

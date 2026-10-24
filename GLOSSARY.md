@@ -109,7 +109,7 @@ _Avoid_: Workspace、Sandbox、Checkout
 ### Agent
 
 **Agent**：
-透過 ACP 驅動的 coding agent CLI，例如 Claude Code、Codex、Gemini CLI、Grok Build。
+透過 ACP 驅動的 coding agent CLI，例如 Claude Code、Codex、Antigravity、Grok Build。
 _Avoid_: Model、Bot、Assistant
 
 **Agent Profile**：

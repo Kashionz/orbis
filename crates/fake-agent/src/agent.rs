@@ -1,5 +1,6 @@
 //! ACP v1 agent 本體：依劇本回應 `initialize`、`session/new`、`session/prompt`、`session/cancel`，
 //! 以及指定 session 保存目錄（[`Options::state_dir`]）時的 `session/load`、`session/resume`。
+//! 指定認證方式（[`Options::auth_methods`]）時，`authenticate` 之前的 `session/new` 回 auth_required。
 //!
 //! - 每個 session 各自從劇本的第一個回合開始，每次 `session/prompt` 消耗一個回合。
 //! - 有保存目錄時，每個 session 的回合進度寫在 `<目錄>/<session id>.json`；程序結束後，
@@ -10,15 +11,16 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, Content, ContentBlock, ContentChunk, Cost, Diff,
-    Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
-    McpServer, NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, Plan,
-    PlanEntry, PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse,
+    CancelNotification, Content, ContentBlock, ContentChunk, Cost, Diff, Implementation,
+    InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpServer,
+    NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, Plan, PlanEntry,
+    PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
     RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
     SessionId, SessionMode, SessionModeState, SessionNotification, SessionResumeCapabilities,
     SessionUpdate, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCall,
@@ -78,7 +80,14 @@ pub struct Options {
     pub initial_mode: Option<String>,
     /// 宣告 prompt 可以帶圖片（`promptCapabilities.image`）。
     pub image: bool,
+    /// 宣告的認證方式（`authMethods` 的 id）。非空時要先以其中一個 `authenticate`，否則
+    /// `session/new` 回 auth_required；有保存目錄時登入狀態寫在 [`AUTHENTICATED_FILE`]，
+    /// 之後的 Fake Agent 程序沿用（模擬 Agent 自己保存的認證）。
+    pub auth_methods: Vec<String>,
 }
+
+/// 有保存目錄時，記錄已經登入的檔案名稱。
+pub const AUTHENTICATED_FILE: &str = "authenticated";
 
 /// `echo_session_mode` 回報的前綴。
 pub const SESSION_MODE_PREFIX: &str = "mode: ";
@@ -102,6 +111,15 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
                 let agent = agent.clone();
                 async move |request: InitializeRequest, responder, _cx| {
                     responder.respond(agent.initialize(&request))
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |request: AuthenticateRequest, responder, _cx| {
+                    responder.respond_with_result(agent.authenticate(&request))
                 }
             },
             acp::on_receive_request!(),
@@ -200,6 +218,8 @@ struct FakeAgent {
     options: Options,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     next_session: AtomicU64,
+    /// 這個程序中是否已經 `authenticate`。
+    authenticated: AtomicBool,
 }
 
 /// 保存在 session 保存目錄中的進度。
@@ -248,6 +268,7 @@ impl FakeAgent {
             options,
             sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(1),
+            authenticated: AtomicBool::new(false),
         }
     }
 
@@ -265,13 +286,57 @@ impl FakeAgent {
                     .prompt_capabilities(PromptCapabilities::new().image(self.options.image))
                     .session_capabilities(sessions),
             )
+            .auth_methods(
+                self.options
+                    .auth_methods
+                    .iter()
+                    .map(|id| AuthMethod::Agent(AuthMethodAgent::new(id.clone(), id.clone())))
+                    .collect(),
+            )
             .agent_info(Implementation::new(
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
             ))
     }
 
+    /// `authenticate`：只接受宣告的認證方式；有保存目錄時寫下登入狀態。
+    fn authenticate(
+        &self,
+        request: &AuthenticateRequest,
+    ) -> Result<AuthenticateResponse, acp::Error> {
+        let method = request.method_id.0.as_ref();
+        if !self.options.auth_methods.iter().any(|m| m == method) {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown auth method", "methodId": method })));
+        }
+        if let Some(dir) = &self.options.state_dir {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
+            std::fs::write(dir.join(AUTHENTICATED_FILE), method)
+                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
+        }
+        self.authenticated.store(true, Ordering::Relaxed);
+        Ok(AuthenticateResponse::new())
+    }
+
+    /// 有宣告認證方式、卻還沒有登入時回 auth_required。
+    fn require_auth(&self) -> Result<(), acp::Error> {
+        let saved = self
+            .options
+            .state_dir
+            .as_ref()
+            .is_some_and(|d| d.join(AUTHENTICATED_FILE).is_file());
+        if self.options.auth_methods.is_empty()
+            || saved
+            || self.authenticated.load(Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        Err(acp::Error::auth_required())
+    }
+
     fn new_session(&self, request: NewSessionRequest) -> Result<NewSessionResponse, acp::Error> {
+        self.require_auth()?;
         if !request.cwd.is_absolute() {
             return Err(acp::Error::invalid_params()
                 .data(json!({ "reason": "cwd must be an absolute path", "cwd": request.cwd })));
@@ -354,6 +419,7 @@ impl FakeAgent {
         meta: Option<serde_json::Map<String, serde_json::Value>>,
         resume: bool,
     ) -> Result<(), acp::Error> {
+        self.require_auth()?;
         let supported = self.options.state_dir.is_some() && (!resume || self.options.resume);
         let Some(dir) = self.options.state_dir.as_ref().filter(|_| supported) else {
             return Err(acp::Error::method_not_found());

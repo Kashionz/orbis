@@ -13,7 +13,7 @@ use super::{BridgeRequest, BridgeResponse, REPORT_VERDICT, env_endpoint, env_jud
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DelegateArgs {
-    /// Agent profile id, for example `claude-code`, `codex`, `gemini`, `grok`.
+    /// Agent profile id, for example `claude-code`, `codex`, `antigravity`, `grok`.
     pub agent: String,
     /// The task for the child run.
     pub prompt: String,

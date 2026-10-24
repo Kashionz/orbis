@@ -16,7 +16,7 @@ test.describe("派工對話框", () => {
     await expect(dialog).toContainText("無法使用：未安裝");
 
     // 有 Permission Policy 無法攔截的操作時顯示警告
-    await dialog.getByRole("radio", { name: /^gemini-cli/ }).check();
+    await dialog.getByRole("radio", { name: /^antigravity/ }).check();
     await expect(dialog.getByRole("note")).toContainText("MCP server 的工具呼叫不會送出權限請求");
 
     await dialog.getByRole("radio", { name: /^claude-code/ }).check();

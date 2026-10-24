@@ -22,10 +22,10 @@
       "credential": "claude-subscription"
     },
     {
-      "id": "gemini",
+      "id": "antigravity",
       "version": null,
       "available": false,
-      "unavailable_reason": "未安裝 gemini CLI",
+      "unavailable_reason": "未安裝 antigravity",
       "capabilities": [],
       "models": [],
       "permission_gaps": [],

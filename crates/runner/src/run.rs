@@ -808,17 +808,11 @@ impl Run {
         let profile = self.profile.clone();
         let (tx, rx) = mpsc::unbounded_channel();
         let start = async move {
-            if let crate::agent::Launch::ManagedNpm {
-                package,
-                version,
-                entry,
-                ..
-            } = &profile.launch
-            {
-                crate::agent::install::ensure_installed(&agents_dir, package, version, entry)
-                    .await
-                    .map_err(AgentError::Start)?;
-            }
+            profile
+                .launch
+                .ensure_installed(&agents_dir)
+                .await
+                .map_err(AgentError::Start)?;
             let spec = profile
                 .launch_spec(&agents_dir)
                 .map_err(AgentError::Start)?
@@ -2689,31 +2683,31 @@ mod tests {
         std::os::unix::fs::symlink(target, link).unwrap();
     }
 
-    /// 受保護目錄中的連結（例如 `.gemini/extensions` 換成指向別處的 junction）也算一個項目，
+    /// 受保護目錄中的連結（例如 `.agents/skills` 換成指向別處的 junction）也算一個項目，
     /// 而且不跟著讀；還原時只移除連結本身。
     #[test]
     fn 受保護目錄中的連結算作變更() {
         let dir = tempfile::tempdir().unwrap();
         let wt = dir.path().join("wt");
         let elsewhere = dir.path().join("elsewhere");
-        std::fs::create_dir_all(wt.join(".gemini")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
         std::fs::create_dir_all(&elsewhere).unwrap();
-        std::fs::write(wt.join(".gemini/settings.json"), "{}").unwrap();
-        link_dir(&elsewhere, &wt.join(".gemini").join("extensions"));
-        let mut files = files_under(&wt, ".gemini");
+        std::fs::write(wt.join(".agents/settings.json"), "{}").unwrap();
+        link_dir(&elsewhere, &wt.join(".agents").join("extensions"));
+        let mut files = files_under(&wt, ".agents");
         files.sort();
-        assert_eq!(files, [".gemini/extensions", ".gemini/settings.json"]);
+        assert_eq!(files, [".agents/extensions", ".agents/settings.json"]);
         assert_eq!(
-            read_protected(&wt, ".gemini/extensions"),
+            read_protected(&wt, ".agents/extensions"),
             Some(Protected::Link),
             "不跟著連結讀"
         );
         assert_eq!(
-            read_protected(&wt, ".gemini/settings.json"),
+            read_protected(&wt, ".agents/settings.json"),
             Some(Protected::File(b"{}".to_vec()))
         );
-        restore_protected_file(&wt, ".gemini/extensions", None).unwrap();
-        assert!(std::fs::symlink_metadata(wt.join(".gemini/extensions")).is_err());
+        restore_protected_file(&wt, ".agents/extensions", None).unwrap();
+        assert!(std::fs::symlink_metadata(wt.join(".agents/extensions")).is_err());
         assert!(elsewhere.exists(), "只移除連結本身");
     }
 

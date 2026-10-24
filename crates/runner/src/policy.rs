@@ -56,7 +56,7 @@ pub struct PolicyContext<'a> {
     /// Repo 的主分支名稱，例如 `main`。
     pub default_branch: &'a str,
     /// Agent 自己的設定（相對於 Worktree，`/` 分隔），例如 `.claude/settings.json`；
-    /// 以 `/` 結尾的是整個目錄，例如 `.gemini/`。寫入它們可能讓 Agent 之後繞過
+    /// 以 `/` 結尾的是整個目錄，例如 `.agents/`。寫入它們可能讓 Agent 之後繞過
     /// Permission Policy，`auto` 下一律問人。
     pub protected_paths: &'a [String],
 }
@@ -1224,12 +1224,12 @@ mod tests {
         assert!(glob_match("cargo * --quiet", "cargo test -p x --quiet"));
     }
 
-    /// 以 `/` 結尾的受保護項目代表整個目錄（例如 Gemini 的 `.gemini/`）。
+    /// 以 `/` 結尾的受保護項目代表整個目錄（例如 Antigravity 的 `.agents/`）。
     #[test]
     fn 受保護的目錄() {
         let wt = worktree();
         let allow = allow();
-        let protected = [".gemini/".to_owned(), ".mcp.json".to_owned()];
+        let protected = [".agents/".to_owned(), ".mcp.json".to_owned()];
         let ctx = PolicyContext {
             policy: PermissionPolicy::Auto,
             worktree: &wt,
@@ -1241,20 +1241,20 @@ mod tests {
             paths: vec![wt.join(rel)],
         };
         for rel in [
-            ".gemini/settings.json",
-            ".gemini/policies/allow.toml",
+            ".agents/settings.json",
+            ".agents/policies/allow.toml",
             ".mcp.json",
         ] {
             assert_eq!(kind(&decide(&write(rel), &ctx)), "ask", "{rel}");
         }
-        assert_eq!(kind(&decide(&write("src/gemini.rs"), &ctx)), "allow");
+        assert_eq!(kind(&decide(&write("src/agents.rs"), &ctx)), "allow");
         assert_eq!(
-            protected_targets(&write(".gemini/policies/allow.toml"), &ctx),
-            [".gemini/policies/allow.toml"]
+            protected_targets(&write(".agents/policies/allow.toml"), &ctx),
+            [".agents/policies/allow.toml"]
         );
-        assert_eq!(kind(&decide(&cmd("pnpm exec ls .gemini"), &ctx)), "ask");
-        assert!(protected_match(".gemini/", ".gemini"));
-        assert!(!protected_match(".gemini/", ".gemini-backup/x"));
+        assert_eq!(kind(&decide(&cmd("pnpm exec ls .agents"), &ctx)), "ask");
+        assert!(protected_match(".agents/", ".agents"));
+        assert!(!protected_match(".agents/", ".agents-backup/x"));
     }
 
     /// 經由 Worktree 內的連結寫進受保護的目錄，也要問人。
@@ -1262,10 +1262,10 @@ mod tests {
     fn 經由連結寫進受保護的目錄也要問人() {
         let dir = tempfile::tempdir().unwrap();
         let wt = dir.path().join("wt");
-        std::fs::create_dir_all(wt.join(".gemini")).unwrap();
-        link_dir(&wt.join(".gemini"), &wt.join("cfg"));
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+        link_dir(&wt.join(".agents"), &wt.join("cfg"));
         let allow = allow();
-        let protected = [".gemini/".to_owned()];
+        let protected = [".agents/".to_owned()];
         let ctx = PolicyContext {
             policy: PermissionPolicy::Auto,
             worktree: &wt,

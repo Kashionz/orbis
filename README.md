@@ -1,6 +1,6 @@
 # Orbis
 
-給 2–10 人小團隊用的專案管理加 Agent Workspace。在 Orbis 中把 Task（Spec 加上 Acceptance Criterion）派給 Claude Code、Codex、Gemini CLI 或 Grok Build，Agent 在隔離的 git worktree 中執行。之後經過自動驗收、人工 review、開 PR，merge 後 Task 自動完成。Windows 是一等公民。
+給 2–10 人小團隊用的專案管理加 Agent Workspace。在 Orbis 中把 Task（Spec 加上 Acceptance Criterion）派給 Claude Code、Codex、Antigravity 或 Grok Build，Agent 在隔離的 git worktree 中執行。之後經過自動驗收、人工 review、開 PR，merge 後 Task 自動完成。Windows 是一等公民。
 
 > 目前狀態：Phase 1 開發中（M0：monorepo 與共用契約）。
 

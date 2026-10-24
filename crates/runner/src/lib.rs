@@ -10,6 +10,7 @@ pub mod diff;
 pub mod git;
 pub mod home;
 pub mod judge;
+pub mod login;
 pub mod normalize;
 pub mod orbis_mcp;
 pub mod outbox;

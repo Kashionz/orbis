@@ -201,7 +201,7 @@ describe.skipIf(dbSkipReason !== null)("Child Run（MCP 工具）", () => {
     });
 
     it("父 Run 的 Runner 沒有這個 Agent、Project 不允許這個 Agent 或關閉 Delegation 時拒絕", async () => {
-      expect((await delegate({ agent: "gemini" })).result).toMatchObject({
+      expect((await delegate({ agent: "antigravity" })).result).toMatchObject({
         code: "agent_unavailable",
       });
       await database.db
