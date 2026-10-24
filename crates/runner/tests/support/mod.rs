@@ -54,7 +54,12 @@ pub struct Remote {
 impl Remote {
     /// 建立 remote，`main` 上有 `files` 這些檔案。
     pub fn new(files: &[(&str, &str)]) -> Self {
-        let dir = temp_dir("orbis remote");
+        Self::new_in("orbis remote", files)
+    }
+
+    /// 同 [`new`](Self::new)，暫存目錄用指定的前綴（例如含中文的路徑）。
+    pub fn new_in(prefix: &str, files: &[(&str, &str)]) -> Self {
+        let dir = temp_dir(prefix);
         let bare = dir.path().join("origin.git");
         let work = dir.path().join("seed");
         std::fs::create_dir_all(&bare).unwrap();
@@ -115,7 +120,12 @@ pub struct TestHome {
 
 impl TestHome {
     pub fn new(extra_settings: &str) -> Self {
-        let dir = temp_dir("orbis home");
+        Self::new_in("orbis home", extra_settings)
+    }
+
+    /// 同 [`new`](Self::new)，暫存目錄用指定的前綴（例如含中文的路徑）。
+    pub fn new_in(prefix: &str, extra_settings: &str) -> Self {
+        let dir = temp_dir(prefix);
         let root = dir.path().join("orbis");
         std::fs::create_dir_all(&root).unwrap();
         let wt_root = dir.path().join("wt");

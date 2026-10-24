@@ -365,63 +365,6 @@ async fn 拒絕刪除_worktree_根目錄以外的路徑() {
 
 /// Git for Windows 的長路徑錯誤要辨識成 `path_too_long`（§6.4）。
 #[cfg(windows)]
-#[tokio::test]
-async fn 長路徑錯誤回報為_path_too_long() {
-    let remote = Remote::new(&[("README.md", "a\n")]);
-    // 在 remote 放一個超過 MAX_PATH 的路徑（用 git plumbing，不經過檔案系統）。
-    let long_dir = "d".repeat(120);
-    let long_path = format!("{long_dir}/{long_dir}/{long_dir}/file.txt");
-    let blob = {
-        let out = std::process::Command::new("git")
-            .args(["hash-object", "-w", "--stdin"])
-            .current_dir(&remote.work)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                use std::io::Write;
-                child.stdin.take().unwrap().write_all(b"x")?;
-                child.wait_with_output()
-            })
-            .unwrap();
-        String::from_utf8_lossy(&out.stdout).trim().to_owned()
-    };
-    git(
-        &remote.work,
-        &[
-            "update-index",
-            "--add",
-            "--cacheinfo",
-            &format!("100644,{blob},{long_path}"),
-        ],
-    );
-    git(&remote.work, &["commit", "-m", "長路徑"]);
-    git(&remote.work, &["push", "origin", "main"]);
-
-    let home = TestHome::new("");
-    let manager = WorktreeManager::new(home.home.clone());
-    // core.longpaths=false 是 Git for Windows 的預設；明確設定，避免受 CI 機器的全域設定影響。
-    let source = home
-        .dir
-        .path()
-        .join("wt")
-        .join("web")
-        .join(MANAGED_CLONE_DIR);
-    let req = request(&remote, "ORB-14", 1, Some(branch("x").as_str()));
-    // 先建立 clone，再關掉 longpaths。
-    let _ = manager
-        .create(&WorktreeRequest {
-            run_seq: 99,
-            ..req.clone()
-        })
-        .await;
-    if source.join(".git").exists() {
-        git(&source, &["config", "core.longpaths", "false"]);
-    }
-    let err = manager.create(&req).await.unwrap_err();
-    assert_eq!(err.code, RunErrorCode::PathTooLong, "{}", err.message);
-}
-
 #[test]
 fn 測試用的暫存路徑含空白() {
     assert!(

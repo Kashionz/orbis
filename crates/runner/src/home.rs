@@ -165,7 +165,7 @@ impl RunnerHome {
         let (low, high) = self.settings.port_range.unwrap_or(DEFAULT_PORT_RANGE);
         let port = (low..=high)
             .find(|port| !taken.contains(port) && port_is_free(*port))
-            .with_context(|| format!("port 範圍 {low}–{high} 已經用完"))?;
+            .with_context(|| port_range_exhausted_message(low, high))?;
         ports.insert(key, port);
         self.write_json(PORTS_FILE, &ports, false)?;
         Ok(port)
@@ -291,6 +291,58 @@ fn port_is_free(port: u16) -> bool {
         Ok(_) => true,
         Err(e) => !matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::PermissionDenied),
     }
+}
+
+/// port 範圍用完時的訊息：Windows 上列出和範圍重疊的保留範圍（Hyper-V、WSL 等保留的 port，
+/// `netsh int ipv4 show excludedportrange protocol=tcp`），並提示改 `port_range`。
+fn port_range_exhausted_message(low: u16, high: u16) -> String {
+    let mut message = format!("port 範圍 {low}–{high} 已經用完");
+    if cfg!(windows) {
+        let overlapping: Vec<String> = windows_excluded_port_ranges()
+            .into_iter()
+            .filter(|(a, b)| *b >= low && *a <= high)
+            .map(|(a, b)| if a == b { a.to_string() } else { format!("{a}–{b}") })
+            .collect();
+        if !overlapping.is_empty() {
+            message.push_str(&format!(
+                "；其中 {} 被 Windows 保留（Hyper-V／WSL 等，見 netsh int ipv4 show excludedportrange protocol=tcp）",
+                overlapping.join("、")
+            ));
+        }
+    }
+    message.push_str(&format!(
+        "。可以在 {RUNNER_CONFIG_FILE} 設定 port_range 改用其他範圍"
+    ));
+    message
+}
+
+/// Windows 保留（不能 bind）的 TCP port 範圍；非 Windows 或查不到時為空。
+pub fn windows_excluded_port_ranges() -> Vec<(u16, u16)> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let output = std::process::Command::new("netsh")
+        .args(["int", "ipv4", "show", "excludedportrange", "protocol=tcp"])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => parse_excluded_port_ranges(&String::from_utf8_lossy(&o.stdout)),
+        _ => Vec::new(),
+    }
+}
+
+/// 解析 `netsh int ipv4 show excludedportrange` 的輸出：每一行兩個整數（開始、結束），後面可能有 `*`。
+/// 標題列與分隔線沒有兩個整數，自然略過，不依賴語言。
+fn parse_excluded_port_ranges(text: &str) -> Vec<(u16, u16)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut nums = line
+                .split_whitespace()
+                .take_while(|w| w.chars().all(|c| c.is_ascii_digit()));
+            let a = nums.next()?.parse::<u16>().ok()?;
+            let b = nums.next()?.parse::<u16>().ok()?;
+            (a <= b).then_some((a, b))
+        })
+        .collect()
 }
 
 /// 先寫到暫存檔再改名，避免寫到一半當掉留下壞掉的檔案。`private` 時 Unix 上權限設為 0600。
@@ -518,6 +570,34 @@ mod tests {
         let home = RunnerHome::open(Some(root)).unwrap();
         let allocated = home.allocate_port(Path::new("/wt/a")).unwrap();
         assert_ne!(allocated, port);
+    }
+
+    #[test]
+    fn 解析_netsh_的保留範圍() {
+        let text = "\n通訊協定 tcp 連接埠排除範圍\n\n開始連接埠    結束連接埠\n----------    ----------\n      5357        5357\n     50000       50059     *\n     50375       50474\n\n* - 管理的連接埠排除。\n";
+        assert_eq!(
+            parse_excluded_port_ranges(text),
+            [(5357, 5357), (50000, 50059), (50375, 50474)]
+        );
+        let english = "Protocol tcp Port Exclusion Ranges\n\nStart Port    End Port\n----------    --------\n      1024        1123\n";
+        assert_eq!(parse_excluded_port_ranges(english), [(1024, 1123)]);
+        assert!(parse_excluded_port_ranges("").is_empty());
+    }
+
+    /// Windows 保留的 port（Hyper-V／WSL）bind 會得到 PermissionDenied，要當成被占用跳過。
+    #[cfg(windows)]
+    #[test]
+    fn windows_保留的_port_視為被占用() {
+        let ranges = windows_excluded_port_ranges();
+        let Some((start, _)) = ranges.first() else {
+            eprintln!("這台機器沒有保留的 port 範圍，略過");
+            return;
+        };
+        assert!(!port_is_free(*start), "保留的 port {start} 不可以當成空閒");
+        // 範圍用完的訊息列出重疊的保留範圍。
+        let message = port_range_exhausted_message(*start, *start);
+        assert!(message.contains("被 Windows 保留"), "{message}");
+        assert!(message.contains("port_range"), "{message}");
     }
 
     #[test]

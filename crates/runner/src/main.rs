@@ -152,6 +152,8 @@ async fn login(home: Option<PathBuf>, agent: &str, method: Option<&str>) -> anyh
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
+    // Windows 上 PATH 的 git 必須是 Git for Windows（不是 WSL 的 git），否則所有 Worktree 操作都會失敗。
+    orbis_runner::git::check_native_git().await?;
     let home = Arc::new(open_home(cli.home)?);
     info!(
         home = %home.root().display(),

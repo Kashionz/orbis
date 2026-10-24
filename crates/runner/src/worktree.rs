@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use orbis_protocol::dispatch::DispatchRepo;
 use orbis_protocol::event::RunErrorCode;
@@ -270,6 +271,12 @@ impl WorktreeManager {
             .repo_checkout(&repo.clone_url, &repo.name)
         {
             let path = paths::normalize(path);
+            if paths::is_wsl_unc(&path) {
+                return Err(WorktreeError::worktree(wsl_unc_message(
+                    &format!("runner.toml 中 {} 對應的 checkout", repo.name),
+                    &path,
+                )));
+            }
             if !path.join(".git").exists() {
                 return Err(WorktreeError::worktree(format!(
                     "runner.toml 中 {} 對應的 {} 不是 git checkout",
@@ -321,6 +328,12 @@ impl WorktreeManager {
             None => self.path_for(&req.repo.name, &req.task_key, req.run_seq)?,
         };
         validate_request(req).await?;
+        if paths::is_wsl_unc(&path) {
+            return Err(WorktreeError::worktree(wsl_unc_message(
+                "Worktree 根目錄",
+                &path,
+            )));
+        }
         if paths::running_in_wsl() && paths::is_wsl_windows_mount(&path) {
             return Err(WorktreeError::worktree(format!(
                 "git 跑在 WSL 中時 Worktree 不可以放在 Windows 磁碟上：{}",
@@ -594,9 +607,7 @@ impl WorktreeManager {
         }
 
         let source = Git::new(&wt.root_checkout);
-        source
-            .run(["worktree", "remove", "--force", &path.to_string_lossy()])
-            .await?;
+        remove_worktree_dir(&source, &path).await?;
         let mut branch_kept = false;
         if let Some(branch) = &wt.branch {
             let unmerged = source
@@ -616,6 +627,73 @@ impl WorktreeManager {
             .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
         Ok(Removal { branch_kept })
     }
+}
+
+/// 刪除 Worktree 目錄時每次失敗後等待的時間（合計約 8 秒）：防毒軟體或索引服務掃描時會短暫鎖住
+/// 剛寫入的檔案，Windows 上刪除會以「被另一個程序使用」或「拒絕存取」失敗。
+pub const REMOVE_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(200),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+/// 前幾次用 `git worktree remove`，之後改用直接刪目錄（git 刪一半失敗後目錄已經不是完整的 Worktree）。
+const GIT_REMOVE_ATTEMPTS: usize = 2;
+
+/// 刪除 Worktree 目錄並從 git 的 Worktree 清單移除，被鎖住時重試（[`REMOVE_RETRY_DELAYS`]）。
+async fn remove_worktree_dir(source: &Git, path: &Path) -> Result<(), WorktreeError> {
+    let path_arg = path.to_string_lossy().into_owned();
+    let mut last_error = String::new();
+    for attempt in 0..=REMOVE_RETRY_DELAYS.len() {
+        let result = if attempt < GIT_REMOVE_ATTEMPTS {
+            source
+                .run(["worktree", "remove", "--force", &path_arg])
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        } else {
+            match std::fs::remove_dir_all(path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(format!("刪除 {} 失敗：{e}", path.display())),
+            }
+        };
+        match result {
+            Ok(()) if !path.exists() => {
+                // 直接刪目錄之後要讓 git 忘掉這個 Worktree；git 自己刪成功時 prune 也無害。
+                source.run(["worktree", "prune"]).await?;
+                if attempt > 0 {
+                    tracing::info!(path = %path.display(), attempt, "Worktree 重試後刪除成功");
+                }
+                return Ok(());
+            }
+            Ok(()) => last_error = "指令成功但目錄還在".into(),
+            Err(e) => last_error = e,
+        }
+        if let Some(delay) = REMOVE_RETRY_DELAYS.get(attempt) {
+            tracing::warn!(
+                path = %path.display(),
+                attempt,
+                error = %last_error,
+                "刪除 Worktree 失敗，稍後重試（檔案可能被防毒軟體或索引服務鎖住）"
+            );
+            tokio::time::sleep(*delay).await;
+        }
+    }
+    Err(WorktreeError::worktree(format!(
+        "刪除 {} 失敗（已重試 {} 次，檔案可能被防毒軟體、索引服務或開著的程式鎖住）：{last_error}",
+        path.display(),
+        REMOVE_RETRY_DELAYS.len()
+    )))
+}
+
+/// Repo 或 Worktree 放在 WSL 檔案系統時的錯誤訊息（§6.4）。
+fn wsl_unc_message(what: &str, path: &Path) -> String {
+    format!(
+        "{what} {} 在 WSL 的檔案系統中（\\\\wsl$），Windows 上的 Runner 不支援：請把 Repo clone 到 Windows 磁碟（例如 D:\\code），或改在 WSL 中執行 Runner",
+        path.display()
+    )
 }
 
 /// 刪除的結果。
