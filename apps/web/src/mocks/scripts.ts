@@ -178,6 +178,25 @@ export function m1FirstTurn(branch: string): ScriptStep[] {
   ];
 }
 
+/** 實機中 Codex 把模型錯誤當成一般回覆、以 end_turn 結束回合時的回覆（#73）。 */
+export const MODEL_ERROR_REPLY =
+  "The 'gpt-x' model is not supported when using Codex with a ChatGPT account.";
+
+/** 沒有修改任何檔案就結束回合（Agent 把模型錯誤當成回覆，#73）：review diff 為空。 */
+export function emptyDiffTurn(branch: string): ScriptStep[] {
+  return [
+    event({
+      kind: "worktree_ready",
+      worktree_path: "C:/wt/demo/empty",
+      branch,
+      base_commit: BASE_COMMIT,
+    }),
+    event({ kind: "status_changed", status: "running", gate: null, message: null }),
+    say(MODEL_ERROR_REPLY),
+    event({ kind: "status_changed", status: "awaiting_gate", gate: "review", message: null }),
+  ];
+}
+
 /** Review Gate 退回後的第二回合：依留言修改 README.md。 */
 export function m1RevisionTurn(): ScriptStep[] {
   return [

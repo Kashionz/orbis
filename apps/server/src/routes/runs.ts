@@ -8,7 +8,7 @@ import {
   type RunEvent,
   VerificationDecisionInput,
 } from "@orbis/api-contract";
-import type { RunDiff } from "@orbis/protocol";
+import type { RunDiff, TextBody } from "@orbis/protocol";
 import { and, asc, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -40,6 +40,7 @@ import type { AppEnv } from "../http/session";
 import { summarizeDispatchTarget } from "../runner/dispatch-options";
 import { branchName, runSequence } from "../runner/dispatcher";
 import { RUN_DIFF_EVENT_KIND } from "../runs/event-ingest";
+import { FINAL_MESSAGE_EVENT_KIND } from "../runs/gates";
 import type { Services } from "../services";
 
 const ListEventsQuery = z.object({
@@ -214,6 +215,8 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
     const row = await s.eventStore.latestOfKind(scope.run.id, RUN_DIFF_EVENT_KIND);
     if (!row) throw notFound("review diff");
     const diff = row.payload as RunDiff;
+    // Agent 結束回合時先送 final_message 再送 run_diff：取這份 diff 之前最新的一則。
+    const final = await s.eventStore.latestOfKind(scope.run.id, FINAL_MESSAGE_EVENT_KIND, row.seq);
     return c.json({
       runId: row.runId,
       seq: row.seq,
@@ -226,6 +229,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
         old: file.old,
         new: file.new,
       })),
+      finalMessage: final ? (final.payload as { text: TextBody }).text : null,
     } satisfies ReviewDiff);
   });
 

@@ -48,6 +48,10 @@ _Avoid_: AC、Definition of done、Checklist item
 Task 生命週期中需要人核准才能前進的關卡：Plan Gate（核准 plan）與 Review Gate（核准 diff）。
 _Avoid_: Approval step、Checkpoint
 
+**結束（沒有變更）**：
+Review Gate 的 diff 為空時取代核准的決定：Task 轉 Done，不 push、不開 PR，Run 結束。只回答問題的 Task，或 Agent 沒有做事時都會遇到；後者應該退回。
+_Avoid_: 略過、Skip、空核准
+
 **Verification**：
 Task 進入 Review Gate 前，自動檢查非 `manual` 的 Acceptance Criterion 的階段。
 _Avoid_: QA、Validation

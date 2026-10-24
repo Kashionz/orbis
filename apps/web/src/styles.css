@@ -1238,6 +1238,35 @@ textarea {
   font-size: 1rem;
 }
 
+.review-empty {
+  margin: 0.5rem 1rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.review-empty h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.review-empty h3 {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.875rem;
+}
+
+.final-message {
+  margin: 0;
+  padding: 0.5rem;
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: Canvas;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .preview-draft-shot {
   max-width: 16rem;
   max-height: 10rem;

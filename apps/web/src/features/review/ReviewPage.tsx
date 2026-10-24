@@ -43,7 +43,10 @@ import { loadDraft, type ReviewDraft, saveDraft, sortComments } from "./review-d
 
 type Side = ReviewCommentInput["side"];
 
-/** Diff review（交付 6）：依檔案切換的 Monaco diff、行內留言、退回並附上留言、核准。 */
+/**
+ * Diff review（交付 6）：依檔案切換的 Monaco diff、行內留言、退回並附上留言、核准。
+ * diff 為空時沒有東西可以 push：不能核准，改為「結束（沒有變更）」或退回，並顯示 Agent 最後的回覆（#73）。
+ */
 export function ReviewPage({ runId }: { runId: string }) {
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: diff } = useSuspenseQuery(reviewDiffQuery(runId));
@@ -59,8 +62,18 @@ export function ReviewPage({ runId }: { runId: string }) {
   const previous = gates.filter(
     (g) => g.runId === run.id && g.kind === "review" && g.decision === "rejected",
   );
+  // 以「結束（沒有變更）」結束的 Review Gate
+  const finished = gates.some((g) => g.runId === run.id && g.finishedWithoutChanges);
   return (
-    <Review run={run} diff={diff} task={task} project={project} gate={gate} previous={previous} />
+    <Review
+      run={run}
+      diff={diff}
+      task={task}
+      project={project}
+      gate={gate}
+      previous={previous}
+      finished={finished}
+    />
   );
 }
 
@@ -88,6 +101,7 @@ function Review({
   project,
   gate,
   previous,
+  finished,
 }: {
   run: Run;
   diff: ReviewDiff;
@@ -95,6 +109,7 @@ function Review({
   project: Project;
   gate: Gate | null;
   previous: readonly Gate[];
+  finished: boolean;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -112,6 +127,8 @@ function Review({
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const file = diff.files.find((f) => f.path === selectedPath) ?? null;
   const awaitingReview = gate !== null;
+  // 沒有任何檔案變更：核准改為結束（沒有變更），Server 也以同一份 diff 判斷
+  const empty = diff.files.length === 0;
   const canReject = awaitingReview && permissions.can("gate.reject");
   const canApprove = awaitingReview && permissions.can("gate.approve");
   const canComment = canReject;
@@ -137,12 +154,12 @@ function Review({
   }
 
   const decision = useMutation({
-    mutationFn: async (action: "approve" | "reject") => {
+    mutationFn: async (action: "approve" | "finish_without_changes" | "reject") => {
       if (!gate) throw new Error("這個 Run 目前沒有在等待 Review Gate");
       await decideGate(
         gate.id,
-        action === "approve"
-          ? { action: "approve" }
+        action !== "reject"
+          ? { action }
           : {
               action: "reject",
               comment: draft.summary.trim() === "" ? null : draft.summary.trim(),
@@ -210,9 +227,15 @@ function Review({
           </div>
         </div>
       </header>
-      {!awaitingReview && (
-        <p className="notice-inline">這個 Run 目前沒有在等待 Review Gate，只能檢視。</p>
-      )}
+      {!awaitingReview &&
+        (finished ? (
+          <p className="notice-inline">
+            這個 Review Gate 已結束（沒有變更），Task 已轉為 Done，沒有 push 也沒有開 PR。
+          </p>
+        ) : (
+          <p className="notice-inline">這個 Run 目前沒有在等待 Review Gate，只能檢視。</p>
+        ))}
+      {empty && <EmptyDiff awaitingReview={awaitingReview} finalMessage={diff.finalMessage} />}
 
       <div className="review-layout">
         <nav className="file-list" aria-label="變更的檔案">
@@ -374,14 +397,15 @@ function Review({
                 type="button"
                 className="primary"
                 disabled={decision.isPending || unchecked.length > 0}
-                onClick={() => decision.mutate("approve")}
+                onClick={() => decision.mutate(empty ? "finish_without_changes" : "approve")}
               >
-                核准並開 PR
+                {empty ? "結束（沒有變更）" : "核准並開 PR"}
               </button>
             )}
             {canApprove && unchecked.length > 0 && (
               <span className="hint" role="note">
-                還有 {unchecked.length} 條 manual 條件沒有打勾，全部打勾後才能核准
+                還有 {unchecked.length} 條 manual 條件沒有打勾，全部打勾後才能
+                {empty ? "結束" : "核准"}
               </span>
             )}
             {permissions.can("run.control") && (
@@ -421,6 +445,44 @@ function FileButton({
         {commentCount > 0 && <span className="count-badge">{commentCount}</span>}
       </button>
     </li>
+  );
+}
+
+/**
+ * diff 為空時的說明與 Agent 最後的回覆（`final_message`）。人靠這段回覆判斷 Agent 是做完了、本來就不需要
+ * 改檔（例如只回答問題），還是出了錯（例如模型錯誤被當成回覆），再決定結束（沒有變更）或退回。
+ */
+function EmptyDiff({
+  awaitingReview,
+  finalMessage,
+}: {
+  awaitingReview: boolean;
+  finalMessage: TextBody | null;
+}) {
+  const reply = useTextBody(finalMessage);
+  return (
+    <section className="review-empty" aria-labelledby="empty-diff-heading">
+      <h2 id="empty-diff-heading">這一版沒有任何檔案變更</h2>
+      {awaitingReview && (
+        <p className="hint" role="note">
+          沒有東西可以 push，所以不能核准並開 PR。Task
+          本來就不需要改檔（例如只是回答問題）時，選「結束（沒有變更）」，Task 會轉為 Done，不開
+          PR；Agent 是因為錯誤而沒有做事時，看下方 Agent 的最後回覆，再退回或中止 Run。
+        </p>
+      )}
+      <h3>Agent 的最後回覆</h3>
+      {reply.error ? (
+        <ErrorText error={reply.error} />
+      ) : reply.text === null ? (
+        <p className="hint">正在讀取…</p>
+      ) : reply.text.trim() === "" ? (
+        <p className="empty">Agent 沒有留下回覆</p>
+      ) : (
+        <pre className="final-message" data-testid="final-message">
+          {reply.text}
+        </pre>
+      )}
+    </section>
   );
 }
 

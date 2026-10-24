@@ -7,6 +7,8 @@
 // - Review Gate：核准（manual 條件要全部打勾；Task → PR Open，送 gate_result 與 push_branch；push 完成後
 //   由 D 軌開 PR）、退回（行內留言與 Preview 留言存進 review_comments 並打包成同一個 prompt，Task →
 //   Running，同一個 session 繼續）、中止（cancel，Task → Ready）。
+// - Review Gate 的 diff 為空時沒有東西可以 push：不能核准，改為結束（沒有變更）（manual 條件同樣要全部
+//   打勾；Task → Done，關閉原因 completed；送 cancel 結束 Run，不 push、不開 PR），或退回、中止。
 
 import {
   AnswerChildQuestionInput,
@@ -19,7 +21,13 @@ import {
   type PreviewCommentInput,
   type ReviewCommentInput,
 } from "@orbis/api-contract";
-import type { BlobRef, ContentBlock, PermissionPurpose, RunControlAction } from "@orbis/protocol";
+import type {
+  BlobRef,
+  ContentBlock,
+  PermissionPurpose,
+  RunControlAction,
+  RunDiff,
+} from "@orbis/protocol";
 import { and, asc, count, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { z } from "zod";
@@ -39,6 +47,7 @@ import {
   needsYouItems,
   projects,
   reviewComments,
+  runEvents,
   runners,
   runs,
   tasks,
@@ -48,6 +57,7 @@ import { toAcceptanceCriterion, toGates, toNeedsYou } from "../http/dto";
 import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
 import { type PreviewDomain, runIdFromHost } from "../preview/domain";
+import { type GateSubject, RUN_DIFF_EVENT_KIND } from "../runs/gates";
 import type { Services } from "../services";
 import { answerQuestion, questionKey } from "../tools/delegation-tools";
 
@@ -223,7 +233,9 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     if (!gate) throw notFound("Gate");
     const scope = await loadTaskScope(db, actor, gate.taskId);
     const input = await readJson(c, GateDecisionInput);
-    if (input.action === "approve") {
+    // 結束（沒有變更）等於核准這一版（Task 轉 Done），權限與核准相同。
+    const approving = input.action === "approve" || input.action === "finish_without_changes";
+    if (approving) {
       // 「不能核准自己的 Task」同時比對目前的與 Gate 建立時的指派對象，所有種類的 Gate 都適用。
       requireProjectCapability(actor, scope, "approve_gate", gate.assigneeMemberIdAtCreation);
     } else if (input.action === "reject") {
@@ -231,6 +243,9 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     } else requireProjectCapability(actor, scope, "edit_task");
     if (!gate.runId) throw conflict("這個 Gate 沒有對應的 Run");
     const runId = gate.runId;
+    if (gate.kind === "plan" && input.action === "finish_without_changes") {
+      throw new ApiError(422, "invalid_input", "只有 Review Gate 可以結束（沒有變更）");
+    }
     if (gate.kind === "plan" && input.action === "reject") {
       if (input.reviewComments.length > 0 || input.previewComments.length > 0) {
         throw new ApiError(422, "invalid_input", "Plan Gate 退回時只接受整體說明");
@@ -244,7 +259,15 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     const updated = await inTransaction(db, async (uow) => {
       const { tx } = uow;
       const now = s.clock.now();
-      if (gate.kind === "review" && input.action === "approve") {
+      if (gate.kind === "review" && approving) {
+        // diff 為空時沒有東西可以 push：只能結束（沒有變更）；diff 不為空時只能核准（ARCHITECTURE §10）。
+        const empty = await reviewDiffIsEmpty(tx, runId, gate.subject as GateSubject | null);
+        if (empty && input.action === "approve") {
+          throw conflict("diff 是空的，沒有變更可以 push；請改為結束（沒有變更）或退回");
+        }
+        if (!empty && input.action === "finish_without_changes") {
+          throw conflict("diff 不是空的，不能結束（沒有變更）；請核准、退回或中止");
+        }
         // 所有 manual 條件都打勾後才能核准 Review Gate（ARCHITECTURE §5.1）。
         const [unchecked] = await tx
           .select({ n: count() })
@@ -277,7 +300,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
       const [decided] = await tx
         .update(gates)
         .set({
-          decision: input.action === "approve" ? "approved" : "rejected",
+          decision: approving ? "approved" : "rejected",
           decidedAt: now,
           decidedByMemberId: actor.memberId,
           comment:
@@ -287,7 +310,10 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
                 ? "中止 Run"
                 : null,
           ...(input.action === "abort" && {
-            subject: { ...((gate.subject ?? {}) as Record<string, unknown>), aborted: true },
+            subject: { ...((gate.subject ?? {}) as GateSubject), aborted: true },
+          }),
+          ...(input.action === "finish_without_changes" && {
+            subject: { ...((gate.subject ?? {}) as GateSubject), noChanges: true },
           }),
         })
         .where(and(eq(gates.id, gate.id), isNull(gates.decision)))
@@ -354,6 +380,13 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
           await send({ action: "gate_result", gate: "review", decision: "approved" });
           await send({ action: "push_branch" });
         }
+      } else if (input.action === "finish_without_changes") {
+        // Task 先轉 Done，Run 之後回報 canceled 時就不會把 Task 送回 Ready。Worktree 照常保留。
+        await s.lifecycle.transition(uow, gate.taskId, "done", "gate", {
+          ...actedBy,
+          doneReason: "completed",
+        });
+        await send({ action: "cancel" });
       } else if (input.action === "reject") {
         const planGate = gate.kind === "plan";
         await s.lifecycle.transition(
@@ -464,6 +497,32 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
   });
 
   return app;
+}
+
+/**
+ * Review Gate 送審的那份 `run_diff`（Gate 建立時記下的 seq）是否沒有任何檔案變更。Runner 的 diff 是
+ * base_commit 到 Worktree（含未 commit 的變更），已排除只在本機使用的檔案，和 push 的範圍相同。
+ * Gate 沒有記下 diff 時視為不是空的（維持核准）。
+ */
+async function reviewDiffIsEmpty(
+  tx: Executor,
+  runId: string,
+  subject: GateSubject | null,
+): Promise<boolean> {
+  const seq = subject?.reviewDiffSeq;
+  if (seq === null || seq === undefined) return false;
+  const [row] = await tx
+    .select({ payload: runEvents.payload })
+    .from(runEvents)
+    .where(
+      and(
+        eq(runEvents.runId, runId),
+        eq(runEvents.seq, seq),
+        eq(runEvents.kind, RUN_DIFF_EVENT_KIND),
+      ),
+    );
+  if (!row) return false;
+  return (row.payload as RunDiff).files.length === 0;
 }
 
 type PreviewCommentParsed = z.output<typeof PreviewCommentInput>;
