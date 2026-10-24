@@ -407,8 +407,9 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本：--runner-config-o
     expect(toml).toContain(
       `[repos.${JSON.stringify(cloneUrl)}]\npath = ${JSON.stringify(ready.checkoutPath)}`,
     );
+    // Fake Agent 以 --state-dir 啟動（session 保存在 runnerHome 底下），Feedback Loop 的修正 Run 才能接回劇本。
     expect(toml).toMatch(
-      /\[agents\.claude-code\]\ncommand = ".*fake-agent.*"\nargs = \["--script", ".*m1\.yaml"\]/,
+      /\[agents\.claude-code\]\ncommand = ".*fake-agent.*"\nargs = \["--script", ".*m1\.yaml", "--state-dir", ".*agent-sessions.*claude-code"\]/,
     );
 
     // 沒有啟動 Runner：stack 沒有子程序，Server 上也沒有 Runner。
