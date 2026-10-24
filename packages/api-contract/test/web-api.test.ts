@@ -259,6 +259,7 @@ describe("Gate 與 Review", () => {
         previewComments: [],
         planSeq: null,
         reviewDiffSeq: 30,
+        finishedWithoutChanges: false,
         createdAt: NOW,
       }).success,
     ).toBe(true);
@@ -286,8 +287,10 @@ describe("Gate 與 Review", () => {
         },
         { path: "logo.png", oldPath: null, change: "added", binary: true, old: null, new: null },
       ],
+      finalMessage: { type: "inline", text: "完成" },
     };
     expect(ReviewDiff.safeParse(diff).success).toBe(true);
+    expect(ReviewDiff.safeParse({ ...diff, files: [], finalMessage: null }).success).toBe(true);
     expect(
       ReviewDiff.safeParse({ ...diff, files: [{ ...diff.files[1], change: "copied" }] }).success,
     ).toBe(false);

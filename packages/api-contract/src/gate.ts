@@ -84,6 +84,11 @@ export const Gate = z.object({
   planSeq: z.number().int().positive().nullable(),
   /** Review Gate 送審的 `run_diff` Event 的 seq；Plan Gate 為 null。 */
   reviewDiffSeq: z.number().int().positive().nullable(),
+  /**
+   * Review Gate 以「結束（沒有變更）」結束：diff 為空，Task 轉 Done，不 push、不開 PR。
+   * 這時 `decision` 為 `approved`。
+   */
+  finishedWithoutChanges: z.boolean(),
   createdAt: Timestamp,
 });
 export type Gate = z.infer<typeof Gate>;
@@ -94,6 +99,9 @@ export type Gate = z.infer<typeof Gate>;
  * - `reject`：退回，附上整體說明、行內留言或 Preview 留言（至少一項），打包成 prompt 送回 Agent。
  *   Plan Gate 只接受整體說明，帶留言時 Server 回 422。
  * - `abort`：中止 Run，Task 回到 Ready。
+ * - `finish_without_changes`：結束（沒有變更）。只用在 diff 為空的 Review Gate（這時不能 `approve`，
+ *   因為沒有東西可以 push）：Task 轉 Done（關閉原因 `completed`），不 push、不開 PR，Run 結束。
+ *   權限與 manual 條件的要求都和核准相同。
  */
 export const GateDecisionInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve") }).strict(),
@@ -113,5 +121,6 @@ export const GateDecisionInput = z.discriminatedUnion("action", [
       { error: "退回時至少要有一則說明、行內留言或 Preview 留言" },
     ),
   z.object({ action: z.literal("abort") }).strict(),
+  z.object({ action: z.literal("finish_without_changes") }).strict(),
 ]);
 export type GateDecisionInput = z.input<typeof GateDecisionInput>;

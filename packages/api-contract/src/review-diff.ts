@@ -48,5 +48,10 @@ export const ReviewDiff = z.object({
   seq: z.number().int().positive(),
   baseCommit: z.string().min(1),
   files: z.array(ReviewDiffFile),
+  /**
+   * 這份 diff 之前 Agent 最後的回覆（協定的 `final_message`）；沒有時為 null。diff 為空時，人在
+   * Review Gate 上靠它判斷 Agent 是做完了不需要改檔，還是出了錯（例如模型錯誤被當成回覆）。
+   */
+  finalMessage: TextBody.nullable(),
 });
 export type ReviewDiff = z.infer<typeof ReviewDiff>;

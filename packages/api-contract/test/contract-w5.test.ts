@@ -168,6 +168,13 @@ describe("Review Gate 的 Preview 留言", () => {
     expectInvalid(GateDecisionInput, { action: "reject", previewComments: [] });
   });
 
+  it("Review Gate 的 diff 為空時以 finish_without_changes 結束，不帶其他欄位", () => {
+    expect(GateDecisionInput.parse({ action: "finish_without_changes" })).toEqual({
+      action: "finish_without_changes",
+    });
+    expectInvalid(GateDecisionInput, { action: "finish_without_changes", comment: "x" });
+  });
+
   it("Gate 分別帶行內留言與 Preview 留言", () => {
     const gate = {
       id: ID,
@@ -194,6 +201,7 @@ describe("Review Gate 的 Preview 留言", () => {
       ],
       planSeq: null,
       reviewDiffSeq: 30,
+      finishedWithoutChanges: false,
       createdAt: NOW,
     };
     expectValid(Gate, gate);
