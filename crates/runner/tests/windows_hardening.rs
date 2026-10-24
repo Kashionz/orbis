@@ -4,7 +4,6 @@
 mod support;
 
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use orbis_protocol::control::{RunControlAction, RunControlOutcome};
 use orbis_protocol::enums::{GateDecision, GateKind};
@@ -178,6 +177,7 @@ async fn 超過_260_字元的路徑可以建立_寫檔與刪除() {
 #[tokio::test]
 async fn 檔案被鎖住時刪除會重試() {
     use std::os::windows::fs::OpenOptionsExt;
+    use std::time::{Duration, Instant};
     const FILE_SHARE_READ: u32 = 0x1;
 
     let remote = Remote::new(&[("README.md", "a\n")]);
