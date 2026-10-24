@@ -8,7 +8,7 @@
     "src",
     "e2e",
     "scripts",
-    "electron-builder.config.ts",
+    "electron-builder.ts",
     "playwright.config.ts",
     "playwright.system.config.ts",
     "vitest.config.ts"

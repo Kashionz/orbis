@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 把 Runner 執行檔放到 electron-builder 的 extraResources 來源目錄 build/runner/<os>-<arch>/
-// （electron-builder.config.ts 以 ${os}-${arch} 選目錄，打包到 resources/bin/）。
+// （electron-builder.ts 以 ${os}-${arch} 選目錄，打包到 resources/bin/）。
 //
 // 用法：node scripts/stage-runner.mjs [--arch x64|arm64] [--target <Rust target triple>] [--skip-build]
 // - 不指定 --target 時用 host 的 toolchain 建置（cargo build --release）。
