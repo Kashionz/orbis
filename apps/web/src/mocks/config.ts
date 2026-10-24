@@ -37,6 +37,11 @@ export interface MockConfig {
   repoMismatch?: string[];
   /** 每個 Run 的前幾輪 Verification 中，command 類型的條件失敗；預設 0（全部通過）。 */
   verificationFailures?: number;
+  /**
+   * 另外建立一個等待 Review Gate、但 diff 為空的 Run：Agent 沒有修改任何檔案，最後的回覆是模型錯誤
+   * （#73）。
+   */
+  emptyDiff?: boolean;
   /** 在等待 Review Gate 的 Run（ORB-4）底下建立 Child Run 樹與一個向人提問的 Child Run。 */
   childRuns?: boolean;
   /** Run 的 Preview 已就緒；省略時所有 Run 都是「沒有設定」。 */

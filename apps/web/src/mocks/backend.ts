@@ -79,6 +79,7 @@ import {
   BASE_COMMIT,
   BASE_FILES,
   configTrustTurn,
+  emptyDiffTurn,
   generateLargeRun,
   implementTurn,
   m1FirstTurn,
@@ -266,13 +267,16 @@ export class MockBackend {
       if (!step) continue;
       changed = true;
       if (step.type === "event") {
-        // 進入 Review Gate 前，Runner 送出完整 diff（協定的 run_diff）
+        // 進入 Review Gate 前，Runner 先送 Agent 最後的回覆，再送完整 diff（協定的 run_diff）
         const enteringReview =
           step.event.kind === "status_changed" &&
           step.event.status === "awaiting_gate" &&
           step.event.gate === "review";
         const diff: EventKind[] = enteringReview
-          ? [{ kind: "run_diff", ...this.computeDiff(runId) }]
+          ? [
+              { kind: "final_message", text: { type: "inline", text: this.turnText(runId) } },
+              { kind: "run_diff", ...this.computeDiff(runId) },
+            ]
           : [];
         this.append(runId, [...diff, step.event]);
       } else {
@@ -538,6 +542,25 @@ export class MockBackend {
       };
     }
 
+    // 等待 Review Gate、diff 為空的 Run（只在指定時建立，避免影響其他測試的項目數）
+    if (this.config.emptyDiff) {
+      const empty = seedTask("回答：登入頁需要修改嗎？", "ready");
+      const emptyRun = this.dispatch(
+        empty.id,
+        {
+          agent: "codex",
+          model: null,
+          runnerKind: "local",
+          permissionPolicy: "auto",
+        },
+        true,
+      );
+      this.state.simulations[emptyRun.id] = {
+        queue: emptyDiffTurn(`feature/${empty.key.toLowerCase()}`),
+        waiting: null,
+      };
+    }
+
     this.settle();
     for (const run of this.state.runs) run.createdAt = SEED_TIME;
 
@@ -747,13 +770,29 @@ export class MockBackend {
     };
   }
 
+  /** 這個回合 Agent 說的話（最後一次進入 running 之後的 message_chunk），即協定的 final_message。 */
+  private turnText(runId: string): string {
+    const events = this.state.events[runId] ?? [];
+    const start = events.findLastIndex(
+      (e) => e.event.kind === "status_changed" && e.event.status === "running",
+    );
+    return events
+      .slice(start + 1)
+      .map(({ event }) =>
+        event.kind === "message_chunk" && event.content.type === "text" ? event.content.text : "",
+      )
+      .join("");
+  }
+
   /** 最新一份 review diff（最後一筆 run_diff Event），還沒有時 404。 */
   reviewDiff(runId: string): ReviewDiff {
-    const latest = this.events(runId).findLast((e) => e.event.kind === "run_diff");
+    const events = this.events(runId);
+    const latest = events.findLast((e) => e.event.kind === "run_diff");
     const diff = latest?.event;
     if (latest === undefined || diff?.kind !== "run_diff") {
       throw new MockError(404, "not_found", "找不到 review diff");
     }
+    const final = events.findLast((e) => e.event.kind === "final_message" && e.seq < latest.seq);
     return {
       runId,
       seq: latest.seq,
@@ -766,7 +805,14 @@ export class MockBackend {
         old: file.old,
         new: file.new,
       })),
+      finalMessage: final?.event.kind === "final_message" ? final.event.text : null,
     };
+  }
+
+  /** Review Gate 送審的那份 diff 是否沒有任何檔案變更（Server 的同名判斷）。 */
+  private reviewDiffIsEmpty(gate: Gate): boolean {
+    const row = this.events(gate.runId ?? "").find((e) => e.seq === gate.reviewDiffSeq);
+    return row?.event.kind === "run_diff" && row.event.files.length === 0;
   }
 
   /** base_commit 與 Worktree 目前內容的 diff（Runner 的 run_diff）：重播 Run 中已完成的編輯。 */
@@ -1196,8 +1242,13 @@ export class MockBackend {
     if (!gate) throw new MockError(404, "not_found", "找不到這個 Gate");
     if (gate.decision !== null) throw new MockError(409, "conflict", "這個 Gate 已經有決定了");
     const task = this.task(gate.taskId);
-    if (input.action === "approve" && !this.mayApprove(task)) {
+    // 結束（沒有變更）等於核准這一版，權限與 manual 條件的要求都和核准相同
+    const approving = input.action === "approve" || input.action === "finish_without_changes";
+    if (approving && !this.mayApprove(task)) {
       throw new MockError(403, "forbidden", "這個 Project 不允許核准指派給自己的 Task");
+    }
+    if (gate.kind === "plan" && input.action === "finish_without_changes") {
+      throw new MockError(422, "invalid_input", "只有 Review Gate 可以結束（沒有變更）");
     }
     if (
       gate.kind === "plan" &&
@@ -1206,7 +1257,14 @@ export class MockBackend {
     ) {
       throw new MockError(422, "invalid_input", "Plan Gate 只接受整體說明");
     }
-    if (gate.kind === "review" && input.action === "approve") {
+    if (gate.kind === "review" && approving) {
+      const empty = this.reviewDiffIsEmpty(gate);
+      if (empty && input.action === "approve") {
+        throw new MockError(409, "conflict", "diff 是空的，沒有變更可以 push");
+      }
+      if (!empty && input.action === "finish_without_changes") {
+        throw new MockError(409, "conflict", "diff 不是空的，不能結束（沒有變更）");
+      }
       const unchecked = this.acceptanceCriteria(task.id).filter(
         (c) => c.kind === "manual" && c.result !== "passed",
       );
@@ -1222,7 +1280,8 @@ export class MockBackend {
     this.state.reviews[runId] = [...(this.state.reviews[runId] ?? []), input];
     const time = now();
     Object.assign(gate, {
-      decision: input.action === "approve" ? "approved" : "rejected",
+      decision: approving ? "approved" : "rejected",
+      finishedWithoutChanges: input.action === "finish_without_changes",
       decidedByMemberId: ME_ID,
       decidedAt: time,
       comment: input.action === "reject" ? (input.comment ?? null) : null,
@@ -1274,7 +1333,10 @@ export class MockBackend {
       this.state.simulations[runId] = {
         queue: approved
           ? [prompt("plan_gate", "plan 已核准，開始實作。"), ...implementTurn(branch)]
-          : [prompt("plan_gate", input.comment ?? ""), ...planRevisionTurn()],
+          : [
+              prompt("plan_gate", input.action === "reject" ? (input.comment ?? "") : ""),
+              ...planRevisionTurn(),
+            ],
         waiting: null,
       };
       task.status = approved ? "running" : "planning";
@@ -1294,6 +1356,11 @@ export class MockBackend {
         { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
       ]);
       task.status = "pr_open";
+    } else if (input.action === "finish_without_changes") {
+      // 不 push、不開 PR：Run 以 cancel 結束，Task 轉 Done（關閉原因 completed）
+      this.cancelRun(runId);
+      task.status = "done";
+      task.doneReason = "completed";
     } else {
       this.cancelRun(runId);
     }
@@ -2416,6 +2483,7 @@ export class MockBackend {
       previewComments: [],
       planSeq,
       reviewDiffSeq,
+      finishedWithoutChanges: false,
       createdAt: now(),
     });
     this.notify(
