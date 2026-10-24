@@ -104,6 +104,23 @@ jobs:
         if: github.event_name != 'push'
         run: pnpm --filter @orbis/desktop exec electron-builder ${{ matrix.builder_args }} --publish never
 
+      # 打包後的 App 裡要有 Runner（resources/bin/）與 electron-updater 的設定（app-update.yml）
+      - name: 確認 Runner 與更新設定都在 App 裡
+        run: |
+          check() {
+            if ls "$@" >/dev/null 2>&1; then ls -la "$@"; else echo "::error::找不到 $*"; exit 1; fi
+          }
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            check apps/desktop/release/win-unpacked/resources/bin/*runner*.exe
+            check apps/desktop/release/win-unpacked/resources/app-update.yml
+          else
+            for arch in arm64 x64; do
+              check apps/desktop/release/mac-$arch/*.app/Contents/Resources/bin/*runner*
+              check apps/desktop/release/mac-$arch/*.app/Contents/Resources/app-update.yml
+            done
+          fi
+          cat apps/desktop/release/*.yml
+
       # Runner 的單獨執行檔也附在 Release 上（Team Runner、手動安裝用）
       - name: 整理 Runner 的單獨執行檔
         run: |
