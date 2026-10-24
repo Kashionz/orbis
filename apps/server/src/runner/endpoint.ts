@@ -232,10 +232,7 @@ class RunnerConnection implements RunnerLink {
     }
     // 先只看版本：不同版本的 Hello 形狀可能不同，不能先用目前的 schema 驗證。
     if (frame.protocol_version !== PROTOCOL_VERSION) {
-      this.reject(
-        "version_mismatch",
-        `Runner 協定版本 ${String(frame.protocol_version)} 與 Server 的 ${PROTOCOL_VERSION} 不相容，請更新 Runner`,
-      );
+      this.reject("version_mismatch", versionMismatchMessage(frame.protocol_version));
       return;
     }
     const parsed = HelloFrame.safeParse(frame);
@@ -375,4 +372,18 @@ function rawToString(data: RawData): string {
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
   if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
   return data.toString("utf8");
+}
+
+/**
+ * 協定版本不相容時的說明，指出要更新哪一邊（ARCHITECTURE §16「版本相容」）：Runner 的版本比 Server 舊
+ * 就更新 Runner（Desktop 代管的 Runner 隨 Desktop 更新），比 Server 新就更新 Server。
+ * 版本不是數字（更舊、形狀不同的 Hello）時當成 Runner 過舊。
+ */
+export function versionMismatchMessage(runnerProtocolVersion: unknown): string {
+  const runnerVersion = typeof runnerProtocolVersion === "number" ? runnerProtocolVersion : null;
+  const hint =
+    runnerVersion !== null && runnerVersion > PROTOCOL_VERSION
+      ? "請更新 Server"
+      : "請更新 Runner（由 Desktop 代管的 Runner 請更新 Desktop）";
+  return `Runner 協定版本 ${String(runnerProtocolVersion)} 與 Server 的 ${PROTOCOL_VERSION} 不相容，${hint}`;
 }

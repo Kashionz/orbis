@@ -1,6 +1,7 @@
 // HTTP API（Hono）。Runner 與 Web 的 WebSocket 端點不經過 Hono，見 runner/endpoint.ts、web/ws.ts。
 
-import { API_ROUTES, type HealthResponse } from "@orbis/api-contract";
+import { API_ROUTES, API_VERSION, type HealthResponse } from "@orbis/api-contract";
+import { PROTOCOL_VERSION } from "@orbis/protocol";
 import { Hono } from "hono";
 import type { GitHubOAuth } from "./auth/github-oauth";
 import { endSession } from "./auth/session-cleanup";
@@ -25,6 +26,7 @@ import { createRunRoutes } from "./routes/runs";
 import { createTaskRoutes } from "./routes/tasks";
 import { createTeamRoutes } from "./routes/team";
 import { createServices, type Services } from "./services";
+import { SERVER_VERSION } from "./version";
 
 export interface AppDeps {
   config: Pick<Config, "publicUrl" | "bootstrapOwnerGithubUserId"> &
@@ -52,10 +54,12 @@ export function createApp(deps: AppDeps): Hono {
     ]),
   );
 
+  // 版本給 Web 與 Desktop 比對（ARCHITECTURE §16「版本相容」）
   app.get(API_ROUTES.health, (c) =>
     c.json({
       ok: true,
       apiOrigin: deps.config.apiOrigin ?? new URL(c.req.url).origin,
+      versions: { server: SERVER_VERSION, api: API_VERSION, protocol: PROTOCOL_VERSION },
     } satisfies HealthResponse),
   );
 

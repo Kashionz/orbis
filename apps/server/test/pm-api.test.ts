@@ -3,6 +3,7 @@
 
 import {
   AcceptanceCriterion,
+  API_VERSION,
   ApiError,
   HealthResponse,
   Member,
@@ -12,10 +13,12 @@ import {
   Task,
   Team,
 } from "@orbis/api-contract";
+import { PROTOCOL_VERSION } from "@orbis/protocol";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { repos, sessions } from "../src/db/schema";
+import { SERVER_VERSION } from "../src/version";
 import {
   client,
   createTestContext,
@@ -82,12 +85,13 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
   }
 
   describe("health", () => {
-    it("不需要登入，回報 Server 設定的公開網址", async () => {
+    it("不需要登入，回報 Server 設定的公開網址與各項版本", async () => {
       const res = await client(ctx.app, null).get("/api/health");
       expect(res.status).toBe(200);
       expect(expectContract(HealthResponse, res.body)).toEqual({
         ok: true,
         apiOrigin: "http://localhost:4000",
+        versions: { server: SERVER_VERSION, api: API_VERSION, protocol: PROTOCOL_VERSION },
       });
     });
   });
