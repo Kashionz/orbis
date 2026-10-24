@@ -304,7 +304,8 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
     .toContain(`${shareOrigin}/（#app）（截圖 1）：標題要更大`);
   const reported = await agentText();
   expect(reported).toContain("在 Preview 上的留言：");
-  expect(reported).toMatch(/image:image\/png:[A-Za-z0-9+/=]{100,}/);
+  // 截圖：Agent 宣告支援圖片時以 ACP image 區塊送出；Fake Agent 沒有宣告，Runner 改送說明文字（A2 的設計）
+  expect(reported).toMatch(/image:image\/png:[A-Za-z0-9+/=]{100,}|\[圖片 [^\]]*image\/png[^\]]*\]/);
   // 第二回合結束，再次進入 Review Gate
   await expect(page.getByTestId("run-status")).toHaveText("等待 Gate", { timeout: 60_000 });
   recordProcesses();
