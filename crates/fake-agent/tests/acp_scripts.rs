@@ -21,9 +21,10 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 11] = [
+const COVERED_SCRIPTS: [&str; 12] = [
     "cancel.yaml",
     "diff.yaml",
+    "empty-diff.yaml",
     "error.yaml",
     "m1.yaml",
     "mcp.yaml",
@@ -578,6 +579,28 @@ async fn 錯誤劇本_回_json_rpc_錯誤後以_refusal_結束() {
 
     assert_eq!(second.stop_reason(), StopReason::Refusal);
     assert_eq!(second.described(), ["message 我不能這樣做。"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_diff_劇本_回覆模型錯誤後以_end_turn_結束且不改檔() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let prompted = with_agent(
+        "empty-diff.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            Ok(conn.prompt(&session, "修改登入頁").await)
+        },
+    )
+    .await;
+
+    assert_eq!(prompted.stop_reason(), StopReason::EndTurn);
+    assert_eq!(
+        prompted.described(),
+        ["message The 'gpt-x' model is not supported when using Codex with a ChatGPT account."]
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
