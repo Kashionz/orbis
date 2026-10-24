@@ -32,12 +32,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # Linux 目前不在 CI 驗證（先以 Windows 與 macOS 為主），程式中的 Linux 路徑保留。
+        os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
-      # 完整系統 e2e（Web／Desktop 的 M1）：PR 上只在 Linux 跑，push 到 main 與手動執行時三平台都跑。
-      SYSTEM_E2E: ${{ github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest' }}
+      # 完整系統 e2e（Web／Desktop 的 M1）：PR 上只在 Windows（主要平台）跑，push 到 main 與手動執行時兩個平台都跑。
+      SYSTEM_E2E: ${{ github.event_name != 'pull_request' || matrix.os == 'windows-latest' }}
     defaults:
       run:
         shell: bash
@@ -64,11 +65,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # DB 測試與完整系統 e2e 用的原生 Postgres（macOS 與 Windows 的 runner 不能跑 Linux container，
-      # Linux 也不再從 Docker Hub 拉映像）。以 TEST_DATABASE_URL 傳給測試與 e2e:stack，
+      # DB 測試與完整系統 e2e 用的原生 Postgres（macOS 與 Windows 的 runner 不能跑 Linux container）。以 TEST_DATABASE_URL 傳給測試與 e2e:stack，
       # 它們各自在上面建立獨立的 database，用完刪除。
-      # 固定在 master 的 commit：v8 的 Linux 安裝用 apt-key，ubuntu-latest（26.04）已經沒有這個指令，
-      # master 已改用 /etc/apt/keyrings，但還沒有發新版
+      # 固定在 master 的 commit（v8 的 Linux 安裝用已移除的 apt-key；之後把 Linux 加回 CI 時仍需要）
       - name: Install Postgres
         id: postgres
         uses: ikalnytskyi/action-setup-postgres@0f1fdf59c857aabfa61ab1a2619e9af34de678d3
@@ -98,7 +97,7 @@ jobs:
       - name: Drizzle schema 與 migration 一致性檢查
         run: pnpm --filter @orbis/server db:check
 
-      # DB 測試三平台都跑，接上面安裝的原生 Postgres（沒有設定時才用 Testcontainers）。
+      # DB 測試兩個平台都跑，接上面安裝的原生 Postgres（沒有設定時才用 Testcontainers）。
       - name: pnpm test
         env:
           ORBIS_TEST_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
@@ -108,12 +107,7 @@ jobs:
         run: node --test scripts/*.test.mjs
 
       - name: Install Playwright browser
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            pnpm --filter @orbis/web exec playwright install --with-deps chromium
-          else
-            pnpm --filter @orbis/web exec playwright install chromium
-          fi
+        run: pnpm --filter @orbis/web exec playwright install chromium
 
       - name: Playwright（Web）
         run: pnpm --filter @orbis/web test:e2e
@@ -129,28 +123,17 @@ jobs:
           pnpm --filter @orbis/web test:e2e:system
 
       # Desktop 的 e2e 以 Playwright 的 Electron 模式跑，sidecar 用真實的 Runner（test:e2e 會先 cargo build）。
-      # Linux runner 沒有顯示器，用 xvfb 提供虛擬的 X server。
       - name: Playwright（Desktop）
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run --auto-servernum pnpm --filter @orbis/desktop test:e2e
-          else
-            pnpm --filter @orbis/desktop test:e2e
-          fi
+        run: pnpm --filter @orbis/desktop test:e2e
 
       # Electron 版的 M1 路徑：stack 不啟動 Runner，由 Desktop 的 sidecar 自己 Pairing，走到 merge 後 Task 轉 Done。
-      # 看板要 1280×720 的 viewport，Linux 的虛擬螢幕要夠大。
       - name: Playwright（Desktop 完整系統 M1）
         if: env.SYSTEM_E2E == 'true'
         env:
           ORBIS_TEST_DATABASE_URL: ${{ steps.postgres.outputs.connection-uri }}
         run: |
           cargo build -p orbis-runner -p orbis-fake-agent
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" pnpm --filter @orbis/desktop test:e2e:system
-          else
-            pnpm --filter @orbis/desktop test:e2e:system
-          fi
+          pnpm --filter @orbis/desktop test:e2e:system
 
       - name: Upload Playwright report
         if: failure()

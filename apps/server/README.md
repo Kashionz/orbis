@@ -11,7 +11,7 @@ pnpm --filter @orbis/server test   # DB 測試的 Postgres：見下方「測試�
 
 DB 測試與 `e2e:stack` 一律在「測試用的 Postgres」上建立自己的 database（`test_<亂數>`、`e2e_<亂數>`），用完刪除，**不使用開發 DB**（`ORBIS_DATABASE_URL`）。
 
-- 有設定 `ORBIS_TEST_DATABASE_URL`（admin 連線，需要 CREATEDB 權限）時用那個 Postgres，不需要 Docker。CI 在三平台都把安裝的原生 Postgres 傳進來。
+- 有設定 `ORBIS_TEST_DATABASE_URL`（admin 連線，需要 CREATEDB 權限）時用那個 Postgres，不需要 Docker。CI 在 Windows、macOS 都把安裝的原生 Postgres 傳進來。
 - 沒有設定時以 Testcontainers 啟動 Postgres 17（需要 Docker）。CI 上沒有設定、又不是 Linux 時，DB 測試明確略過並印出原因。
 - `ORBIS_TEST_DATABASE_URL` 與 `ORBIS_DATABASE_URL` 指向同一個 database 時直接失敗。
 
@@ -39,7 +39,7 @@ pnpm --filter @orbis/server e2e:stack
 
 - **Postgres**：見「測試用的 Postgres」。有設定 `ORBIS_TEST_DATABASE_URL` 時在那個 Postgres 上建立 `e2e_<亂數>` database，結束時刪除；沒有設定時以 Testcontainers 啟動 Postgres 17（需要 Docker）。啟動後都會先跑 migration。
   - 腳本不讀 `ORBIS_DATABASE_URL`，`e2e:stack` 也不載入 repo 根目錄的 `.env`，所以不會寫進開發 DB。
-  - 有設定時完全不會載入 Testcontainers，所以在沒有 Docker 的 macOS、Windows 上，接原生 Postgres 也能用（CI 在三平台都這樣跑）。
+  - 有設定時完全不會載入 Testcontainers，所以在沒有 Docker 的 macOS、Windows 上，接原生 Postgres 也能用（CI 在 Windows、macOS 都這樣跑）。
 - **Server**：在同一個程序內啟動。
   - port 取自 `ORBIS_SERVER_PORT`，預設 4000，所以 Web 的 Vite proxy 不用改。
   - Web 的 origin 取自 `ORBIS_PUBLIC_URL`，預設 `http://localhost:5173`；`/api/ws` 會檢查請求的 Origin。

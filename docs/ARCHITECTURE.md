@@ -10,7 +10,7 @@
 - **核心迴圈**：Task（Spec 與 Acceptance Criterion）→ 派給 Agent，在隔離的 Worktree 中執行 → Verification → Review Gate → PR → merge 後 Task 自動轉為 Done。
 - **差異化**（市場缺口，參考 Conductor、Superconductor、AQ、Nimbalyst、Nuphos、Orca）：
   1. PM 與 Agent 真正串成完整的 Task 生命週期，而不只是「從 issue 啟動 agent」。
-  2. Windows 是一等公民（三平台都支援，Windows 是主要測試平台）。
+  2. Windows 是一等公民（Windows 是主要測試平台）。目前以 Windows 與 macOS 為主：兩者都在 CI 驗證；Linux 的程式路徑保留，但暫時不在 CI 驗證。
   3. Review 體驗：diff 行內留言回給 Agent、在 Preview 上留言回給 Agent、PR 的 Feedback Loop。
   4. 多 Agent 協作：一個 Agent 可以把工作分派給其他 Agent（Delegation）；best-of-N 留到 Phase 2。
 
@@ -661,10 +661,10 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 ## 17. 測試策略
 
 - **Fake Agent**（`crates/fake-agent`）：依 YAML 劇本送出訊息、tool call、diff、權限請求、plan、錯誤、rate limit。**所有整合測試都用它**，不呼叫真實模型。
-- **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS、Linux 三平台都跑。
-- **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在三平台安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
+- **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS 都跑（Linux 暫時不在 CI 驗證）。
+- **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在 Windows、macOS 安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
-- **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上三平台都跑；完整系統的 M1 e2e 在 PR 上只跑 Linux，push 到 `main` 時三平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
+- **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上 Windows、macOS 都跑；完整系統的 M1 e2e 在 PR 上只跑 Windows，push 到 `main` 時兩個平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
 - **真實 Agent 煙霧測試**：Claude Code、Codex、Gemini、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
 
 ---

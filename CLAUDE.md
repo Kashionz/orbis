@@ -22,7 +22,7 @@
 
 ## 完成的定義
 
-- Windows、macOS、Linux 三平台的 CI 全部通過。
+- Windows、macOS 兩個平台的 CI 全部通過（Linux 目前不在 CI 驗證，但程式中的 Linux 路徑要保留）。
 - 新的行為都有測試：Runner 用真實 git 加上 Fake Agent，Server 用 Testcontainers 的 Postgres，UI 用 Playwright。
 - 改到 ARCHITECTURE 描述的行為時，同一個 PR 內要一併更新 ARCHITECTURE。
 - 出現新名詞時，同一個 PR 內要一併更新 GLOSSARY。
