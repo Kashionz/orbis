@@ -192,7 +192,7 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   expect((await d.hooks((h) => h.sidecar())).status?.active_runs).toBe(1);
 
   // ---- 回覆權限請求
-  await request.getByRole("button", { name: "Allow", exact: true }).click();
+  await request.getByRole("button", { name: "允許這次", exact: true }).click();
   await expect(timeline.locator('.event-permission[data-resolved="true"]')).toHaveCount(1);
   await expect(timeline).toContainText("已新增 m1.txt。");
 

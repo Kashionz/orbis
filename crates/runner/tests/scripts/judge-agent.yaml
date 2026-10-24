@@ -1,0 +1,21 @@
+# Verification 的判定用 Child Run（agent 類型）：ac-1 通過、ac-2 失敗；回報沒有指派的條件會被拒絕。
+description: 判定 agent 類型的條件
+turns:
+  - expect_prompt_contains: report_verdict
+    steps:
+      - mcp_call:
+          id: verdict-ac-1
+          server: orbis
+          tool: report_verdict
+          arguments: { criterion_id: ac-1, outcome: passed, summary: verify.txt 存在 }
+      - mcp_call:
+          id: verdict-ac-2
+          server: orbis
+          tool: report_verdict
+          arguments: { criterion_id: ac-2, outcome: failed, summary: README 沒有說明 }
+      - mcp_call:
+          id: verdict-other
+          server: orbis
+          tool: report_verdict
+          arguments: { criterion_id: ac-9, outcome: passed, summary: 不是指派的條件 }
+      - stop: end_turn

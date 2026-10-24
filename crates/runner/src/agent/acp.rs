@@ -13,9 +13,10 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::Implementation;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, InitializeRequest, InitializeResponse, NewSessionRequest,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SessionId, SessionModeId, SessionNotification, SessionUpdate, SetSessionModeRequest,
+    AuthenticateRequest, CancelNotification, ContentBlock, InitializeRequest, InitializeResponse,
+    LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest, SessionId,
+    SessionModeId, SessionModeState, SessionNotification, SessionUpdate, SetSessionModeRequest,
     StopReason,
 };
 use agent_client_protocol::{self as acp, Agent, ByteStreams, ConnectionTo};
@@ -29,6 +30,21 @@ use crate::process::{self, Pipes, ProcessSpec, ProcessTree};
 
 /// 保留 Agent stderr 的最後幾行。
 const STDERR_TAIL_LINES: usize = 40;
+
+/// Agent 回報需要登入（ACP auth_required）時給人的說明。
+fn login_hint(profile: &AgentProfile) -> String {
+    match profile.auth_method {
+        Some(_) => format!(
+            "{} 需要先登入：請在 Runner 的電腦上執行 {}",
+            profile.id,
+            super::login_command(&profile.id)
+        ),
+        None => format!(
+            "{} 需要先登入：請在 Runner 的電腦上用它自己的 CLI 登入",
+            profile.id
+        ),
+    }
+}
 
 /// Agent 送給 Runner 的訊息。
 #[derive(Debug)]
@@ -48,6 +64,17 @@ pub enum AgentError {
     Start(anyhow::Error),
     #[error("Agent 回報錯誤：{0}")]
     Acp(acp::Error),
+    /// Agent 回報需要登入（ACP auth_required）；內容是給人的說明。
+    #[error("{0}")]
+    AuthRequired(String),
+}
+
+/// [`AcpSession::probe`] 的結果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Probe {
+    pub capabilities: Vec<AgentCapability>,
+    /// `initialize` 回報的 Agent 名稱與版本。
+    pub agent_info: Option<(String, String)>,
 }
 
 /// 一個 Agent 程序與它的 ACP session。
@@ -56,6 +83,10 @@ pub struct AcpSession {
     session_id: SessionId,
     capabilities: Vec<AgentCapability>,
     agent_info: Option<Implementation>,
+    /// 是否接續了之前的 session（`session/resume` 或 `session/load`），而不是開新的。
+    resumed: bool,
+    /// 套用修補後的 session mode（見 [`Self::mode`]）。
+    mode: Option<String>,
     tree: ProcessTree,
     shutdown: Option<oneshot::Sender<()>>,
     driver: tokio::task::JoinHandle<()>,
@@ -74,7 +105,113 @@ impl std::fmt::Debug for AcpSession {
 
 impl AcpSession {
     /// 啟動 Agent、完成 `initialize` 與 `session/new`，並套用 profile 的修補。
+    ///
+    /// `resume` 指定之前的 session ID 時，Agent 支援就以 `session/resume`（不重播對話）或
+    /// `session/load`（會重播對話，重播的 update 照樣送進 `notices`，由呼叫端丟棄）接續；
+    /// 都不支援時開新的 session，[`Self::resumed`] 為 `false`。
     pub async fn start(
+        profile: &AgentProfile,
+        spec: ProcessSpec,
+        cwd: &Path,
+        notices: mpsc::UnboundedSender<AgentNotice>,
+        resume: Option<&str>,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<Self, AgentError> {
+        let mut session = Self::connect(profile, spec, cwd, notices).await?;
+        if let Err(error) = session.handshake(profile, cwd, resume, mcp_servers).await {
+            let error = match error {
+                AgentError::Acp(e) if e.code == acp::ErrorCode::AuthRequired => {
+                    AgentError::AuthRequired(login_hint(profile))
+                }
+                other => other,
+            };
+            return Err(session.fail(error).await);
+        }
+        Ok(session)
+    }
+
+    /// 由 Runner 代為登入（`login` 子指令）：`initialize` 後以 `method` 呼叫 `authenticate`，
+    /// 等 Agent 完成登入（例如它自己開瀏覽器）就結束。認證由 Agent 自己保存，Runner 不讀也不存。
+    pub async fn login(
+        profile: &AgentProfile,
+        spec: ProcessSpec,
+        cwd: &Path,
+        method: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(), AgentError> {
+        let (notices, _ignored) = mpsc::unbounded_channel();
+        let mut session = Self::connect(profile, spec, cwd, notices).await?;
+        let result = async {
+            let init = session.initialize(profile).await?;
+            let methods: Vec<String> = init
+                .auth_methods
+                .iter()
+                .map(|m| m.id().0.to_string())
+                .collect();
+            if !methods.iter().any(|m| m == method) {
+                return Err(AgentError::Start(anyhow::anyhow!(
+                    "Agent 不支援認證方式「{method}」，可以用的有：{}",
+                    methods.join("、")
+                )));
+            }
+            let request = session
+                .cx
+                .send_request(AuthenticateRequest::new(method.to_owned()))
+                .block_task();
+            match tokio::time::timeout(timeout, request).await {
+                Ok(response) => response.map(|_| ()).map_err(AgentError::Acp),
+                Err(_) => Err(AgentError::Start(anyhow::anyhow!(
+                    "等了 {} 秒還沒有完成登入",
+                    timeout.as_secs()
+                ))),
+            }
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                session.shutdown().await;
+                Ok(())
+            }
+            Err(error) => Err(session.fail(error).await),
+        }
+    }
+
+    /// 只啟動 Agent 並跑一次 `initialize`（不建立 session）就結束，取得實際的能力旗標與版本
+    /// （issue #18）。Runner 啟動時用來回報 AgentAvailability。
+    pub async fn probe(
+        profile: &AgentProfile,
+        spec: ProcessSpec,
+        cwd: &Path,
+    ) -> Result<Probe, AgentError> {
+        let (notices, _ignored) = mpsc::unbounded_channel();
+        let mut session = Self::connect(profile, spec, cwd, notices).await?;
+        match session.initialize(profile).await {
+            Ok(_) => {
+                let probe = Probe {
+                    capabilities: session.capabilities.clone(),
+                    agent_info: session.agent_info(),
+                };
+                session.shutdown().await;
+                Ok(probe)
+            }
+            Err(error) => Err(session.fail(error).await),
+        }
+    }
+
+    /// 交握失敗：結束程序樹，錯誤訊息附上 Agent stderr 的最後幾行。
+    async fn fail(self, error: AgentError) -> AgentError {
+        let tail = self.stderr_tail();
+        self.shutdown().await;
+        match error {
+            AgentError::Acp(e) if !tail.is_empty() => {
+                AgentError::Start(anyhow::anyhow!("{e}\nAgent stderr：\n{tail}"))
+            }
+            other => other,
+        }
+    }
+
+    /// 啟動 Agent 程序並建立 ACP 連線（還沒有 `initialize`）。
+    async fn connect(
         profile: &AgentProfile,
         spec: ProcessSpec,
         cwd: &Path,
@@ -149,7 +286,7 @@ impl AcpSession {
             let _ = closed_tx.send(true);
         });
 
-        let mut session = Self {
+        Ok(Self {
             cx: match ready_rx.await {
                 Ok(cx) => cx,
                 Err(_) => {
@@ -161,26 +298,21 @@ impl AcpSession {
             session_id: SessionId::new(""),
             capabilities: Vec::new(),
             agent_info: None,
+            resumed: false,
+            mode: None,
             tree,
             shutdown: Some(shutdown_tx),
             driver,
             closed,
             stderr_tail,
-        };
-        if let Err(error) = session.handshake(profile, cwd).await {
-            let tail = session.stderr_tail();
-            session.shutdown().await;
-            return Err(match error {
-                AgentError::Acp(e) if !tail.is_empty() => {
-                    AgentError::Start(anyhow::anyhow!("{e}\nAgent stderr：\n{tail}"))
-                }
-                other => other,
-            });
-        }
-        Ok(session)
+        })
     }
 
-    async fn handshake(&mut self, profile: &AgentProfile, cwd: &Path) -> Result<(), AgentError> {
+    /// `initialize`：記下能力旗標與 Agent 的名稱、版本。
+    async fn initialize(
+        &mut self,
+        profile: &AgentProfile,
+    ) -> Result<InitializeResponse, AgentError> {
         let init: InitializeResponse = self
             .cx
             .send_request(InitializeRequest::new(ProtocolVersion::V1).client_info(
@@ -191,42 +323,145 @@ impl AcpSession {
             .map_err(AgentError::Acp)?;
         self.capabilities = profile.capabilities(&init);
         self.agent_info = init.agent_info.clone();
+        Ok(init)
+    }
 
-        let new_session = self
-            .cx
-            .send_request(NewSessionRequest::new(cwd))
+    async fn handshake(
+        &mut self,
+        profile: &AgentProfile,
+        cwd: &Path,
+        resume: Option<&str>,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<(), AgentError> {
+        let init = self.initialize(profile).await?;
+        let caps = &init.agent_capabilities;
+        let modes = match resume {
+            Some(id) if caps.session_capabilities.resume.is_some() => {
+                let response = self
+                    .cx
+                    .send_request(
+                        ResumeSessionRequest::new(id.to_owned(), cwd)
+                            .mcp_servers(mcp_servers)
+                            .meta(profile.session_meta.clone()),
+                    )
+                    .block_task()
+                    .await
+                    .map_err(AgentError::Acp)?;
+                self.session_id = SessionId::new(id.to_owned());
+                self.resumed = true;
+                response.modes
+            }
+            Some(id) if caps.load_session => {
+                let response = self
+                    .cx
+                    .send_request(
+                        LoadSessionRequest::new(id.to_owned(), cwd)
+                            .mcp_servers(mcp_servers)
+                            .meta(profile.session_meta.clone()),
+                    )
+                    .block_task()
+                    .await
+                    .map_err(AgentError::Acp)?;
+                self.session_id = SessionId::new(id.to_owned());
+                self.resumed = true;
+                response.modes
+            }
+            _ => {
+                let response = self
+                    .cx
+                    .send_request(
+                        NewSessionRequest::new(cwd)
+                            .mcp_servers(mcp_servers)
+                            .meta(profile.session_meta.clone()),
+                    )
+                    .block_task()
+                    .await
+                    .map_err(AgentError::Acp)?;
+                self.session_id = response.session_id.clone();
+                response.modes
+            }
+        };
+        self.apply_session_mode(profile, modes.as_ref()).await
+    }
+
+    /// 修補：切到會詢問權限的模式（使用者設定可能預設 bypass）。
+    async fn apply_session_mode(
+        &mut self,
+        profile: &AgentProfile,
+        modes: Option<&SessionModeState>,
+    ) -> Result<(), AgentError> {
+        self.mode = modes.map(|m| m.current_mode_id.0.to_string());
+        let Some(wanted) = profile.session_mode else {
+            return Ok(());
+        };
+        let Some(modes) = modes else {
+            // 沒有 ACP session mode 的 Agent 沒有可以切換的模式（adapter 版本鎖定，模式的變化
+            // 由版本更新時的實機測試確認）。
+            tracing::warn!(agent = %profile.id, wanted, "Agent 沒有回報 session mode");
+            return Ok(());
+        };
+        if modes.current_mode_id.0.as_ref() == wanted {
+            return Ok(());
+        }
+        // fail closed：有模式清單卻沒有需要的模式時不啟動（可能停在會自動核准的模式）。
+        if !modes
+            .available_modes
+            .iter()
+            .any(|m| m.id.0.as_ref() == wanted)
+        {
+            return Err(AgentError::Start(anyhow::anyhow!(
+                "Agent 沒有提供 session mode「{wanted}」（目前是「{}」），Permission Policy 需要這個模式才能啟動",
+                modes.current_mode_id.0
+            )));
+        }
+        tracing::info!(
+            from = %modes.current_mode_id.0,
+            to = wanted,
+            "切換 session mode"
+        );
+        self.cx
+            .send_request(SetSessionModeRequest::new(
+                self.session_id.clone(),
+                SessionModeId::new(wanted),
+            ))
             .block_task()
             .await
             .map_err(AgentError::Acp)?;
-        self.session_id = new_session.session_id.clone();
-
-        // 修補：切到會詢問權限的模式（使用者設定可能預設 bypass）。
-        if let (Some(wanted), Some(modes)) = (profile.session_mode, new_session.modes.as_ref())
-            && modes.current_mode_id.0.as_ref() != wanted
-            && modes
-                .available_modes
-                .iter()
-                .any(|m| m.id.0.as_ref() == wanted)
-        {
-            tracing::info!(
-                from = %modes.current_mode_id.0,
-                to = wanted,
-                "切換 session mode"
-            );
-            self.cx
-                .send_request(SetSessionModeRequest::new(
-                    self.session_id.clone(),
-                    SessionModeId::new(wanted),
-                ))
-                .block_task()
-                .await
-                .map_err(AgentError::Acp)?;
-        }
+        self.mode = Some(wanted.to_owned());
         Ok(())
+    }
+
+    /// 建立（或接續）session 並套用修補後的 session mode；Agent 沒有回報 mode 時為 `None`。
+    /// Planning 核准後切回這個模式。
+    pub fn mode(&self) -> Option<&str> {
+        self.mode.as_deref()
     }
 
     pub fn capabilities(&self) -> &[AgentCapability] {
         &self.capabilities
+    }
+
+    /// 切換 session mode（Planning 的 plan 模式與之後的執行模式）。
+    pub async fn set_mode(&self, mode: &str) -> Result<(), AgentError> {
+        self.cx
+            .send_request(SetSessionModeRequest::new(
+                self.session_id.clone(),
+                SessionModeId::new(mode),
+            ))
+            .block_task()
+            .await
+            .map(|_| ())
+            .map_err(AgentError::Acp)
+    }
+
+    /// ACP session ID（Feedback Loop 與重新啟動 Agent 時用來接續）。
+    pub fn session_id(&self) -> &str {
+        &self.session_id.0
+    }
+
+    /// 是否接續了之前的 session。
+    pub fn resumed(&self) -> bool {
+        self.resumed
     }
 
     /// `initialize` 回報的 Agent 名稱與版本。

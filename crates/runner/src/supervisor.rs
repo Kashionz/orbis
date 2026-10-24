@@ -19,7 +19,8 @@ use orbis_protocol::frame::RunnerToServer;
 use orbis_protocol::ids::RunId;
 use tokio::sync::{mpsc, watch};
 
-use crate::agent::{self, Profiles};
+use crate::agent::acp::AcpSession;
+use crate::agent::{self, Learned, LearnedAgents, Profiles};
 use crate::connection::now;
 use crate::home::RunnerHome;
 use crate::outbox::Outbox;
@@ -35,6 +36,8 @@ pub struct Snapshot {
 }
 
 pub struct Supervisor {
+    /// 自己（父 Run 結束時中止 Child Run 的背景工作用）。
+    me: std::sync::Weak<Supervisor>,
     home: Arc<RunnerHome>,
     worktrees: Arc<WorktreeManager>,
     outbox: Arc<Outbox>,
@@ -45,7 +48,22 @@ pub struct Supervisor {
     paused: watch::Sender<bool>,
     snapshot: watch::Sender<Snapshot>,
     detected: tokio::sync::Mutex<Option<Vec<(String, agent::Detected)>>>,
+    /// 從 `initialize` 得知的能力旗標與版本（issue #18）。
+    learned: Arc<LearnedAgents>,
+    /// AgentAvailability 的內容改變了（並行數、能力旗標），連線要重送一次完整清單。
+    availability_changed: Arc<tokio::sync::Notify>,
+    /// 各組 Credential 的 rate limit（issue #33）。
+    rate_limits: Arc<crate::rate_limit::RateLimits>,
+    /// 從 Server 下載 blob（prompt 中的圖片）。
+    blobs: Arc<crate::blobs::BlobFetcher>,
+    /// Orbis MCP 的工具呼叫（ARCHITECTURE §9）。
+    mcp: Arc<crate::orbis_mcp::hub::McpHub>,
+    /// 已經開始探測 Agent 的能力旗標（第一次連上 Server 後才開始）。
+    probing: std::sync::atomic::AtomicBool,
 }
+
+/// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -59,7 +77,9 @@ impl Supervisor {
         let outbox = Arc::new(Outbox::open(home.spool_dir())?);
         let (frames, frames_rx) = mpsc::unbounded_channel();
         let profiles = Profiles::from_settings(home.settings());
-        let supervisor = Arc::new(Self {
+        let mcp = crate::orbis_mcp::hub::McpHub::start(frames.clone(), outbox.clone())?;
+        let supervisor = Arc::new_cyclic(|me| Self {
+            me: me.clone(),
             worktrees: Arc::new(WorktreeManager::new(home.clone())),
             home,
             outbox,
@@ -73,6 +93,12 @@ impl Supervisor {
                 claiming_paused: false,
             }),
             detected: tokio::sync::Mutex::new(None),
+            learned: Arc::new(LearnedAgents::default()),
+            availability_changed: Arc::new(tokio::sync::Notify::new()),
+            rate_limits: Arc::new(crate::rate_limit::RateLimits::default()),
+            blobs: Arc::new(crate::blobs::BlobFetcher::default()),
+            mcp,
+            probing: std::sync::atomic::AtomicBool::new(false),
         });
         supervisor.recover();
         Ok((supervisor, frames_rx))
@@ -89,6 +115,16 @@ impl Supervisor {
     /// 正在執行的 Preview（Preview 的 relay 使用）。
     pub fn previews(&self) -> &Arc<PreviewRegistry> {
         &self.previews
+    }
+
+    /// Orbis MCP 的 hub（連線收到 `tool_result` 時交給它）。
+    pub fn mcp(&self) -> &Arc<crate::orbis_mcp::hub::McpHub> {
+        &self.mcp
+    }
+
+    /// 下載 blob 用的 client（連線交握後設定 Server 網址與 Runner token）。
+    pub fn blobs(&self) -> &Arc<crate::blobs::BlobFetcher> {
+        &self.blobs
     }
 
     /// 上次 Runner 結束時還在進行的 Run：Agent 已經不在了，補上失敗的 Event 讓 Server 知道。
@@ -175,6 +211,74 @@ impl Supervisor {
         list
     }
 
+    /// 探測每個偵測為可用的 Agent；無法啟動的改成無法使用。完成後通知重送 AgentAvailability。
+    async fn probe_all(&self) {
+        let detected = self.detected().await;
+        let mut failed = Vec::new();
+        for profile in self.profiles.iter() {
+            let available = detected
+                .iter()
+                .any(|(id, d)| id == &profile.id && d.available);
+            if available && let Err(reason) = self.probe(profile).await {
+                tracing::warn!(agent = %profile.id, %reason, "Agent 無法啟動");
+                failed.push((profile.id.clone(), reason));
+            }
+        }
+        if !failed.is_empty() {
+            let mut cache = self.detected.lock().await;
+            for (id, d) in cache.iter_mut().flatten() {
+                if let Some((_, reason)) = failed.iter().find(|(f, _)| f == id) {
+                    d.available = false;
+                    d.unavailable_reason = Some(reason.clone());
+                }
+            }
+        }
+        self.availability_changed.notify_one();
+    }
+
+    /// 啟動 Agent 跑一次 `initialize`，記下實際的能力旗標（issue #18）。Runner 代管、還沒安裝的
+    /// adapter 跳過（第一次派工時才安裝，之後由 Run 更新）。回傳 `Err` 表示 Agent 無法啟動。
+    async fn probe(&self, profile: &agent::AgentProfile) -> Result<(), String> {
+        let agents_dir = self.home.agents_dir();
+        if !profile.launch.installed(&agents_dir) {
+            return Ok(());
+        }
+        let spec = profile
+            .launch_spec(&agents_dir)
+            .map_err(|e| format!("無法啟動：{e:#}"))?
+            .unattended_git();
+        // 在 Runner 狀態目錄下一個全新的空目錄中探測：共用的暫存目錄可能有別人放的設定檔
+        // （Agent 會讀 cwd 的專案設定）。
+        let cwd = self.home.state_dir().join("probe").join(&profile.id);
+        let _ = std::fs::remove_dir_all(&cwd);
+        std::fs::create_dir_all(&cwd).map_err(|e| format!("無法建立 {}：{e}", cwd.display()))?;
+        let result =
+            tokio::time::timeout(PROBE_TIMEOUT, AcpSession::probe(profile, spec, &cwd)).await;
+        let _ = std::fs::remove_dir_all(&cwd);
+        match result {
+            Ok(Ok(probe)) => {
+                self.learned.record(
+                    &profile.id,
+                    Learned {
+                        capabilities: probe.capabilities,
+                        version: probe.agent_info.map(|(_, version)| version),
+                    },
+                );
+                Ok(())
+            }
+            Ok(Err(error)) => Err(format!("無法啟動：{error}")),
+            Err(_) => {
+                tracing::warn!(agent = %profile.id, "探測 Agent 逾時，能力旗標要等第一次派工後才知道");
+                Ok(())
+            }
+        }
+    }
+
+    /// 等到 AgentAvailability 的內容改變（連線收到後重送一次完整清單）。
+    pub async fn availability_changed(&self) {
+        self.availability_changed.notified().await;
+    }
+
     /// 這台 Runner 能跑的 Agent 與各 Credential 的並行狀況。
     pub async fn availability(&self) -> AgentAvailability {
         let detected = self.detected().await;
@@ -195,14 +299,30 @@ impl Supervisor {
                 .map_or((false, None, Some("尚未偵測".into())), |d| {
                     (d.available, d.version.clone(), d.unavailable_reason.clone())
                 });
+            let learned = self.learned.get(&profile.id).unwrap_or_default();
+            // 需要由 Runner 代為登入的 Agent：登入之前無法使用。
+            let (available, reason) = match crate::login::unavailable_reason(&self.home, profile) {
+                Some(login) if available => (false, Some(login)),
+                _ => (available, reason),
+            };
+            // 同一組 Credential 撞到 rate limit：到恢復時間之前不接受這個 Agent 的 Dispatch。
+            let (available, reason) = match self.rate_limits.active(&profile.credential) {
+                Some(until) if available => (
+                    false,
+                    Some(format!(
+                        "額度用完，預計 {} 恢復",
+                        crate::rate_limit::display_time(until)
+                    )),
+                ),
+                _ => (available, reason),
+            };
             agents.push(AgentInfo {
                 id: profile.id.clone(),
-                version,
+                version: version.or(learned.version),
                 available,
                 unavailable_reason: reason,
-                // 能力旗標要等 `initialize` 才知道；Agent 啟動後以 Run 的 log 記錄。
-                // TODO(A2, #18)：啟動時先跑一次 initialize，回報實際的能力旗標。
-                capabilities: Vec::new(),
+                // 啟動時探測的結果；還沒探測過（代管的 adapter 尚未安裝）時，第一次派工後更新。
+                capabilities: learned.capabilities,
                 models: Vec::new(),
                 permission_gaps: profile.permission_gaps.clone(),
                 credential: Some(profile.credential.clone()),
@@ -253,8 +373,23 @@ impl Supervisor {
                         outbox: self.outbox.clone(),
                         frames: self.frames.clone(),
                         previews: self.previews.clone(),
+                        learned: self.learned.clone(),
+                        availability_changed: self.availability_changed.clone(),
+                        rate_limits: self.rate_limits.clone(),
+                        blobs: self.blobs.clone(),
+                        mcp: self.mcp.clone(),
                     },
                 );
+                // 父 Run 結束（中止、失敗、完成或 Runner 不再執行它）時，連同 Child Run 一起中止（§9）。
+                let mut status = handle.status.clone();
+                let me = self.me.clone();
+                let ended = handle.run_id.clone();
+                tokio::spawn(async move {
+                    let _ = status.wait_for(|s| s.is_terminal()).await;
+                    if let Some(supervisor) = me.upgrade() {
+                        supervisor.cancel_children(&ended);
+                    }
+                });
                 lock(&self.runs).insert(handle.run_id.clone(), handle);
                 self.publish_snapshot();
                 accept
@@ -287,11 +422,33 @@ impl Supervisor {
                 "這台 Runner 已暫停領取新的 Run".into(),
             ));
         }
-        if offer.delegation.is_some() {
-            return Err((
-                DispatchRejectReason::Unsupported,
-                "Delegation（Child Run）尚未支援".into(),
-            ));
+        if let Some(delegation) = &offer.delegation {
+            use crate::orbis_mcp::hub::{MAX_CHILDREN, MAX_DEPTH};
+            if delegation.depth.unwrap_or(1) > MAX_DEPTH {
+                return Err((
+                    DispatchRejectReason::Unsupported,
+                    format!("Delegation 最多 {MAX_DEPTH} 層"),
+                ));
+            }
+            if self.mcp.caller(&delegation.parent_run_id).is_none() {
+                return Err((
+                    DispatchRejectReason::Unsupported,
+                    format!(
+                        "父 Run {} 不在這台 Runner 上執行（Child Run 一律在父 Run 的 Runner 上執行）",
+                        delegation.parent_run_id
+                    ),
+                ));
+            }
+            let children = lock(&self.runs)
+                .values()
+                .filter(|h| h.is_active() && h.parent.as_ref() == Some(&delegation.parent_run_id))
+                .count();
+            if children >= MAX_CHILDREN {
+                return Err((
+                    DispatchRejectReason::Unsupported,
+                    format!("每個 Run 同時最多 {MAX_CHILDREN} 個 Child Run"),
+                ));
+            }
         }
         let Some(profile) = self.profiles.get(&offer.agent).cloned() else {
             return Err((
@@ -312,6 +469,22 @@ impl Supervisor {
                 ),
             ));
         }
+        if let Some(reason) = crate::login::unavailable_reason(&self.home, &profile) {
+            return Err((
+                DispatchRejectReason::AgentUnavailable,
+                format!("Agent {} 無法使用：{reason}", profile.id),
+            ));
+        }
+        if let Some(until) = self.rate_limits.active(&profile.credential) {
+            return Err((
+                DispatchRejectReason::RateLimited,
+                format!(
+                    "Credential {} 的額度用完，預計 {} 恢復",
+                    profile.credential,
+                    crate::rate_limit::display_time(until)
+                ),
+            ));
+        }
         let active = lock(&self.runs)
             .values()
             .filter(|h| h.is_active() && h.credential == profile.credential)
@@ -328,6 +501,27 @@ impl Supervisor {
         Ok(profile)
     }
 
+    /// 中止 `parent` 還在進行中的 Child Run（以 Runner 內部的 RunControl，不回 `run_control_result`）。
+    fn cancel_children(&self, parent: &RunId) {
+        for handle in lock(&self.runs).values() {
+            if handle.parent.as_ref() != Some(parent) || !handle.is_active() {
+                continue;
+            }
+            tracing::info!(run_id = %handle.run_id, parent = %parent, "父 Run 已結束，中止 Child Run");
+            let _ = handle.tx.send(RunInput::Control(RunControl {
+                control_id: format!(
+                    "{}parent-ended-{}",
+                    run::INTERNAL_CONTROL_PREFIX,
+                    uuid::Uuid::now_v7()
+                )
+                .into(),
+                run_id: handle.run_id.clone(),
+                dispatch_id: handle.dispatch_id.clone(),
+                action: orbis_protocol::control::RunControlAction::Cancel,
+            }));
+        }
+    }
+
     /// 把 RunControl 交給對應的 Run；沒有這個 Run 或 Dispatch 不符時直接拒絕。
     pub fn handle_control(&self, control: RunControl) {
         let runs = lock(&self.runs);
@@ -341,6 +535,82 @@ impl Supervisor {
                     outcome: RunControlOutcome::Rejected { reason, message },
                 }));
         };
+        // 封存（§6.2）在 Run 結束後才做，Run 可能已經不在記憶體中：依本機的 Worktree 紀錄處理。
+        if matches!(control.action, RunControlAction::Archive) {
+            if let Some(handle) = runs.get(&control.run_id) {
+                if handle.dispatch_id != control.dispatch_id {
+                    return reject(
+                        RunControlRejectReason::StaleDispatch,
+                        format!(
+                            "Dispatch {} 不是這個 Run 目前的 Dispatch",
+                            control.dispatch_id
+                        ),
+                    );
+                }
+                if handle.is_active() {
+                    return reject(
+                        RunControlRejectReason::InvalidState,
+                        "Run 還在執行，先取消再封存".into(),
+                    );
+                }
+            } else if self
+                .home
+                .run_worktree(control.run_id.as_str())
+                .is_some_and(|r| r.dispatch_id != control.dispatch_id.as_str())
+            {
+                return reject(
+                    RunControlRejectReason::StaleDispatch,
+                    format!(
+                        "Dispatch {} 不是這個 Run 最後的 Dispatch",
+                        control.dispatch_id
+                    ),
+                );
+            }
+            // 執行中的 Run 正在用的 Worktree（例如 Feedback Loop 的新 Run 沿用的）不能刪。
+            let active: Vec<(String, std::path::PathBuf)> = runs
+                .values()
+                .filter(|h| h.is_active())
+                .filter_map(|h| {
+                    let record = self.home.run_worktree(h.run_id.as_str())?;
+                    Some((h.run_id.to_string(), record.path))
+                })
+                .collect();
+            drop(runs);
+            let (home, worktrees, frames) = (
+                self.home.clone(),
+                self.worktrees.clone(),
+                self.frames.clone(),
+            );
+            tokio::spawn(async move {
+                let in_use = |path: &std::path::Path| {
+                    active
+                        .iter()
+                        .find(|(_, p)| crate::paths::same_path(p, path))
+                        .map(|(id, _)| id.clone())
+                };
+                let outcome = match crate::archive::archive(
+                    &home,
+                    &worktrees,
+                    control.run_id.as_str(),
+                    in_use,
+                )
+                .await
+                {
+                    Ok(()) => RunControlOutcome::Applied,
+                    Err(e) => RunControlOutcome::Rejected {
+                        reason: e.reason,
+                        message: e.message,
+                    },
+                };
+                let _ = frames.send(RunnerToServer::RunControlResult(RunControlResult {
+                    control_id: control.control_id,
+                    run_id: control.run_id,
+                    dispatch_id: control.dispatch_id,
+                    outcome,
+                }));
+            });
+            return;
+        }
         let Some(handle) = runs.get(&control.run_id) else {
             return reject(
                 RunControlRejectReason::UnknownRun,
@@ -384,7 +654,16 @@ impl Supervisor {
 
     /// 新的連線完成交握：依 `resume` 補送 Event；Server 已不認得的 Run 一律中止（不再送 Event）。
     pub fn on_connected(&self, resume: &[orbis_protocol::connection::RunResume]) {
+        // 第一次被 Server 接受後，在背景探測各 Agent 的能力旗標：不拖慢第一次的 AgentAvailability
+        // （每個 Agent 最多等 PROBE_TIMEOUT），探測完再重送一次。連線被拒絕的 Runner 會馬上結束，
+        // 不啟動任何 Agent 程序（結束時還沒放進 Job Object 的子程序會留下來）。
+        if !self.probing.swap(true, std::sync::atomic::Ordering::SeqCst)
+            && let Some(me) = self.me.upgrade()
+        {
+            tokio::spawn(async move { me.probe_all().await });
+        }
         let orphaned = self.outbox.begin_connection(resume);
+        self.mcp.resend_pending();
         let mut runs = lock(&self.runs);
         for run_id in orphaned {
             if let Some(handle) = runs.remove(&run_id) {

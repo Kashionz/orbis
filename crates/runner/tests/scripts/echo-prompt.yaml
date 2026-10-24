@@ -1,0 +1,6 @@
+# 回報收到的 prompt（確認 Runner 把 prompt 中的圖片以 ACP 圖片或說明文字送給 Agent）。
+description: 回報收到的 prompt
+turns:
+  - steps:
+      - echo_prompt
+      - stop: end_turn

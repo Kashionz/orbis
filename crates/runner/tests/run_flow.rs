@@ -12,93 +12,14 @@ use orbis_protocol::control::RunControlAction;
 use orbis_protocol::enums::{GateDecision, GateKind, PermissionPolicy};
 use orbis_protocol::event::ContentBlock;
 use serde_json::Value;
+use support::flow::{
+    Env, agent_state_args, answer, approve_config, claude_code_as_fake, claude_code_as_fake_with,
+};
 use support::server::{
     FakeServer, RunnerOptions, RunnerSide, fake_agent_toml, offer, parse_result, process_alive,
     result_outcome, send_offer, spawn_runner, write_runner_toml,
 };
 use support::{Remote, branch, cfg, git, runner_script, script, temp_dir, toml_string};
-
-/// 一次測試的環境：remote、Runner 本機目錄、Server。
-struct Env {
-    dir: tempfile::TempDir,
-    remote: Remote,
-    server: FakeServer,
-}
-
-impl Env {
-    async fn new(files: &[(&str, &str)], runner_toml: impl Fn(&Path) -> String) -> Self {
-        let dir = temp_dir("orbis run");
-        let remote = Remote::new(files);
-        write_runner_toml(
-            &dir.path().join("home"),
-            &runner_toml(&dir.path().join("wt")),
-        );
-        Self {
-            dir,
-            remote,
-            server: FakeServer::start().await,
-        }
-    }
-
-    fn home(&self) -> std::path::PathBuf {
-        self.dir.path().join("home")
-    }
-
-    fn spawn(&self) -> support::server::RunnerProcess {
-        spawn_runner(RunnerOptions::new(&self.server.base_url(), &self.home()))
-    }
-
-    /// 連上、完成交握並送出 Dispatch，等到 Runner 接受。
-    async fn dispatch(&mut self, run_id: &str, agent: &str, prompt: &str) -> RunnerSide {
-        let mut conn = self.server.accept().await;
-        conn.handshake(Vec::new(), Some("rt_test")).await;
-        self.offer(&mut conn, run_id, agent, prompt, 1).await;
-        conn
-    }
-
-    async fn offer(
-        &self,
-        conn: &mut RunnerSide,
-        run_id: &str,
-        agent: &str,
-        prompt: &str,
-        run_seq: u32,
-    ) {
-        let mut o = offer(
-            run_id,
-            &format!("d-{run_id}"),
-            self.remote.dispatch_repo("web"),
-            agent,
-            prompt,
-        );
-        o.run_seq = run_seq;
-        conn.send(&send_offer(o)).await;
-        let reply = conn
-            .wait_for("dispatch 回覆", |v| {
-                v["type"] == "dispatch_accept" || v["type"] == "dispatch_reject"
-            })
-            .await;
-        assert_eq!(reply["type"], "dispatch_accept", "{reply}");
-    }
-}
-
-/// 回覆設定檔的信任核准（allow_once）。
-async fn approve_config(conn: &mut RunnerSide, run_id: &str) {
-    let request = conn.wait_event("permission_request").await;
-    assert_eq!(request["purpose"], "config_trust", "{request}");
-    let result = conn
-        .control(
-            run_id,
-            &format!("d-{run_id}"),
-            "trust",
-            RunControlAction::PermissionResponse {
-                request_id: request["request_id"].as_str().unwrap().into(),
-                option_id: "allow_once".into(),
-            },
-        )
-        .await;
-    assert_eq!(result_outcome(&result), "applied");
-}
 
 fn text(body: &Value) -> String {
     body["text"]
@@ -579,88 +500,196 @@ async fn allow_commands_中的指令自動允許() {
     assert_eq!(subject, "feat: 測試 Task（ORB-1）");
 }
 
-/// Agent 修改自己的設定檔：寫入時問人；之後啟動回合前和 base commit 比對，有差異先問人。
+/// Agent 修改自己的設定檔（issue #52）：經權限請求寫入時問人，人允許的寫入視為已接受；
+/// 不經過權限請求的寫入在 session 中途就被發現 → 中止回合並問人，選「還原」後檔案還原、
+/// 重新啟動 Agent（讓它重新讀取設定）並以 `session/resume` 接續同一個 session。
 #[tokio::test(flavor = "multi_thread")]
-async fn agent_設定檔的防護() {
-    // 用內建 claude-code profile 的修補與受保護路徑，但啟動指令換成 Fake Agent。
+async fn agent_設定檔在_session_中途被改時中止回合並問人_還原後繼續() {
+    restore_settings_flow(false).await;
+}
+
+/// 同上，但 Agent 只支援 `session/load`：load 重播的對話不會再以 Event 送出。
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_設定檔還原後以_session_load_接續_重播的對話不重送() {
+    let conn = restore_settings_flow(true).await;
+    let replayed = conn.events.iter().any(|e| {
+        e["kind"] == "message_chunk"
+            && e["content"]["text"] == orbis_fake_agent::agent::LOADED_SESSION_TEXT
+    });
+    assert!(!replayed, "session/load 重播的對話不可以再送成 Event");
+}
+
+async fn restore_settings_flow(load_only: bool) -> RunnerSide {
     let mut env = Env::new(&[("README.md", "a\n")], |wt| {
-        format!(
-            "worktree_root = {}\n[agents.claude-code]\ncommand = {}\nargs = [\"--script\", {}]\n",
-            toml_string(&wt.to_string_lossy()),
-            toml_string(&support::fake_agent_bin().to_string_lossy()),
-            toml_string(&runner_script("agent-settings.yaml").to_string_lossy()),
+        claude_code_as_fake_with(
+            wt,
+            &runner_script("agent-settings.yaml"),
+            &agent_state_args(wt, load_only),
         )
     })
     .await;
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let worktree = std::path::PathBuf::from(
+        conn.wait_event("worktree_ready").await["worktree_path"]
+            .as_str()
+            .unwrap(),
+    );
     // 寫入 .claude/settings.json：Worktree 內的寫入在 auto 下本來自動允許，Agent 設定檔例外。
     let request = conn.wait_event("permission_request").await;
     assert_eq!(request["purpose"], "tool");
     assert_eq!(request["tool_call_id"], "write-settings");
-    conn.control(
-        "r1",
-        "d-r1",
-        "c1",
-        RunControlAction::PermissionResponse {
-            request_id: request["request_id"].as_str().unwrap().into(),
-            option_id: "allow_once".into(),
-        },
-    )
-    .await;
-    conn.wait_status("awaiting_gate").await;
-    conn.control(
-        "r1",
-        "d-r1",
-        "c2",
-        RunControlAction::GateResult {
-            gate: GateKind::Review,
-            decision: GateDecision::Rejected,
-        },
-    )
-    .await;
-    conn.control(
-        "r1",
-        "d-r1",
-        "c3",
-        RunControlAction::Prompt {
-            prompt: vec![ContentBlock::Text {
-                text: "繼續".into(),
-            }],
-            source: None,
-        },
-    )
-    .await;
-    // 第二回合開始前：設定檔和 base commit 不同 → 先問人。
+    answer(&mut conn, "c1", &request, "allow_once").await;
+
+    // Agent 直接寫入 settings.local.json：回合被中止，問人。
     let request = conn.wait_event("permission_request").await;
     assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
     let title = request["title"].as_str().unwrap();
+    assert!(title.contains(".claude/settings.local.json"), "{title}");
     assert!(
-        title.contains(".claude/settings.json") && title.contains(".claude/settings.local.json"),
-        "{title}"
+        !title.contains(".claude/settings.json"),
+        "人允許的寫入不再問：{title}"
     );
-    let running_before_answer = conn
-        .events
+    let options: Vec<&str> = request["options"]
+        .as_array()
+        .unwrap()
         .iter()
-        .rev()
-        .take_while(|e| e["kind"] != "permission_request")
-        .any(|e| e["kind"] == "status_changed" && e["status"] == "running");
-    assert!(!running_before_answer, "允許前不可以開始回合");
-    conn.control(
-        "r1",
-        "d-r1",
-        "c4",
-        RunControlAction::PermissionResponse {
-            request_id: request["request_id"].as_str().unwrap().into(),
-            option_id: "allow_once".into(),
-        },
-    )
-    .await;
+        .map(|o| o["option_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(options, ["allow_once", "reject_once"]);
+    answer(&mut conn, "c2", &request, "reject_once").await;
+
     conn.wait_for("第二回合", |v| {
         v["kind"] == "message_chunk" && v["content"]["text"] == "第二回合完成。"
     })
     .await;
+    let diff = conn.wait_event("run_diff").await;
     conn.wait_status("awaiting_gate").await;
+    assert!(
+        !worktree
+            .join(".claude")
+            .join("settings.local.json")
+            .exists(),
+        "選「還原」後 base commit 沒有的設定檔要刪除"
+    );
+    assert!(worktree.join(".claude").join("settings.json").is_file());
+    let paths: Vec<&str> = diff["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, [".claude/settings.json"], "{diff}");
+    conn
+}
+
+/// session 中途被改，人選「接受」：保留變更並繼續，之後的回合不再為同一份內容問人。
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_設定檔在_session_中途被改_接受後不再重複問() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        claude_code_as_fake(wt, &runner_script("agent-settings.yaml"))
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let worktree = std::path::PathBuf::from(
+        conn.wait_event("worktree_ready").await["worktree_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let request = conn.wait_event("permission_request").await;
+    answer(&mut conn, "c1", &request, "allow_once").await;
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
+    answer(&mut conn, "c2", &request, "allow_once").await;
+    conn.wait_status("awaiting_gate").await;
+    assert!(
+        worktree
+            .join(".claude")
+            .join("settings.local.json")
+            .is_file()
+    );
+    let asked_again = conn
+        .events
+        .iter()
+        .filter(|e| e["kind"] == "permission_request")
+        .count();
+    assert_eq!(asked_again, 2, "接受之後不再問");
+}
+
+/// 啟動 session 前：Worktree 中 Agent 的設定檔和 base commit 不同（這裡是 setup 寫入的），
+/// 先問人，允許後才開始回合。
+#[tokio::test(flavor = "multi_thread")]
+async fn 啟動_session_前設定檔和_base_commit_不同時先問人() {
+    let config = "[worktree]\nsetup = \"mkdir .claude && cd .claude && echo {} > settings.json\"\n";
+    let mut env = Env::new(&[("README.md", "a\n"), (cfg().as_str(), config)], |wt| {
+        claude_code_as_fake(wt, &runner_script("simple.yaml"))
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    approve_config(&mut conn, "r1").await;
+    let request = conn.wait_event("permission_request").await;
+    assert_eq!(request["purpose"], "agent_settings_changed", "{request}");
+    assert!(
+        request["title"]
+            .as_str()
+            .unwrap()
+            .contains(".claude/settings.json"),
+        "{request}"
+    );
+    let running_before_answer = conn
+        .events
+        .iter()
+        .any(|e| e["kind"] == "status_changed" && e["status"] == "running");
+    assert!(!running_before_answer, "允許前不可以開始回合");
+    answer(&mut conn, "c1", &request, "allow_once").await;
+    conn.wait_status("running").await;
+    conn.wait_status("awaiting_gate").await;
+}
+
+/// 取出第一則訊息片段並解析成 JSON（`echo_session_meta` 回報的 `_meta`）。
+async fn session_meta(conn: &mut RunnerSide) -> Value {
+    let chunk = conn.wait_event("message_chunk").await;
+    serde_json::from_str(chunk["content"]["text"].as_str().unwrap()).unwrap()
+}
+
+/// issue #55：Claude Code 在 Run 中預設不載入使用者全域的設定（plugin、MCP、allow 規則），
+/// 只載入 Repo 的 project／local 設定。
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_預設不載入使用者全域設定() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        claude_code_as_fake(wt, &runner_script("session-meta.yaml"))
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let meta = session_meta(&mut conn).await;
+    assert_eq!(
+        meta["claudeCode"]["options"]["settingSources"],
+        serde_json::json!(["project", "local"]),
+        "{meta}"
+    );
+}
+
+/// runner.toml 的 `user_settings = true`：照 Claude Code 的預設載入使用者全域設定。
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_code_設定_user_settings_時載入使用者全域設定() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        format!(
+            "{}user_settings = true\n",
+            claude_code_as_fake(wt, &runner_script("session-meta.yaml"))
+        )
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "claude-code", "做事").await;
+    let meta = session_meta(&mut conn).await;
+    assert_eq!(
+        meta,
+        Value::Null,
+        "不傳 settingSources，沿用 Claude Code 的預設"
+    );
 }
 
 /// rate limit：回報 rate_limited 並暫停，額度恢復後在同一個 session 繼續。

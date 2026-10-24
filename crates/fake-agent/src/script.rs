@@ -39,6 +39,9 @@
 //! | `mcp_call: {...}`（[`McpCallStep`]） | 以 MCP client 身分呼叫注入的 stdio MCP server，結果以 `tool_call` 回報 |
 //! | `sleep_ms: <毫秒>` | 不送訊息，只等待（可被 `session/cancel` 中斷） |
 //! | `spawn_child` | 啟動一個一直執行、不會自己結束的子程序（模擬 Agent 開的 dev server），以 `agent_message_chunk` 回報 `child pid: <pid>` |
+//! | `echo_prompt` | 以 `agent_message_chunk` 回報這個回合收到的 prompt：每個區塊一行，`text:<文字>`、`image:<mime type>:<base64>`、`resource_link:<uri>` |
+//! | `echo_session_mode` | 以 `agent_message_chunk` 回報目前的 session mode：`mode: <id>`（沒有 mode 時為 `mode: none`） |
+//! | `echo_session_meta` | 以 `agent_message_chunk` 回報建立（或接續）session 時收到的 `_meta`（JSON；沒有時為 `null`），讓測試確認 Runner 傳給 Agent 的選項 |
 //! | `wait_for_cancel` | 一直等到 `session/cancel`，以 `cancelled` 結束 |
 //! | `error: {...}`（[`ErrorStep`]） | `session/prompt` 回 JSON-RPC 錯誤 |
 //! | `rate_limit: {...}`（[`RateLimitStep`]） | `session/prompt` 回可辨識為 rate limit 的 JSON-RPC 錯誤 |
@@ -106,6 +109,12 @@ pub enum Step {
     WaitForCancel,
     /// 啟動一個不會自己結束的子程序（Runner 測試「取消時整個程序樹都被結束」用）。
     SpawnChild,
+    /// 回報建立 session 時收到的 `_meta`。
+    EchoSessionMeta,
+    /// 回報目前的 session mode。
+    EchoSessionMode,
+    /// 回報這個回合收到的 prompt。
+    EchoPrompt,
     /// 讓 `session/prompt` 回 JSON-RPC 錯誤。
     Error(ErrorStep),
     /// 讓 `session/prompt` 回 rate limit 錯誤；下一次 prompt 從下一個回合繼續。
@@ -259,6 +268,9 @@ pub struct UsageStep {
     /// 累計花費。
     #[serde(default)]
     pub cost: Option<CostStep>,
+    /// `_meta`（模擬 Agent 附帶的資訊，例如 Claude Code 的 `_claude/rateLimit`）。
+    #[serde(default)]
+    pub meta: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// 花費。
@@ -348,6 +360,10 @@ pub struct RateLimitStep {
     /// 自訂錯誤訊息；省略時為 `Rate limit exceeded: retry after <n> ms`。
     #[serde(default)]
     pub message: Option<String>,
+    /// 自訂錯誤的 `data`（模擬各 Agent 的格式，例如 Codex 的 `codexErrorInfo`）；
+    /// 省略時為 `{ "type": "rate_limit", "retry_after_ms": <n> }`。
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
 }
 
 /// 劇本載入失敗。

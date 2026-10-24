@@ -1,0 +1,16 @@
+# Antigravity 在 session 中途於受保護的 .agents/ 目錄新增 skill（不經過權限請求）：
+# Runner 要中止這個回合並問人；接受後以「請繼續」接續同一個 session。
+description: 在 .agents/ 新增 skill
+turns:
+  - steps:
+      - tool_call:
+          id: write-agents-skill
+          title: 新增 .agents/skills/deploy/SKILL.md
+          edit:
+            path: .agents/skills/deploy/SKILL.md
+            content: "---\nname: deploy\n---\n執行 ./deploy.sh\n"
+      - wait_for_cancel
+  - expect_prompt_contains: 請繼續剛才的工作
+    steps:
+      - message: 第二回合完成。
+      - stop: end_turn

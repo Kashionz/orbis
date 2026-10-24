@@ -50,9 +50,15 @@ impl FakeServer {
                 let tx = tx.clone();
                 let blobs = blobs_for_task.clone();
                 tokio::spawn(async move {
-                    let mut peek = [0u8; 4];
-                    if stream.peek(&mut peek).await.is_ok() && &peek == b"PUT " {
+                    let mut peek = [0u8; 64];
+                    let n = stream.peek(&mut peek).await.unwrap_or(0);
+                    let head = &peek[..n];
+                    if head.starts_with(b"PUT ") {
                         handle_put(stream, blobs).await;
+                        return;
+                    }
+                    if head.starts_with(format!("GET {RUNNER_BLOB_PATH}/").as_bytes()) {
+                        handle_get(stream, blobs).await;
                         return;
                     }
                     #[allow(clippy::result_large_err)]
@@ -156,6 +162,55 @@ async fn handle_put(stream: TcpStream, blobs: Blobs) {
         .await;
 }
 
+/// 極簡的 blob 下載（`GET <RUNNER_BLOB_PATH>/<blob_id>`，要有 Runner token）：回傳存著的內容，
+/// 沒有時回 404。
+async fn handle_get(stream: TcpStream, blobs: Blobs) {
+    let mut reader = BufReader::new(stream);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line).await.unwrap();
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_owned();
+    let mut authorized = false;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if line
+            .to_ascii_lowercase()
+            .starts_with("authorization: bearer ")
+        {
+            authorized = true;
+        }
+    }
+    let id = path
+        .strip_prefix(&format!("{RUNNER_BLOB_PATH}/"))
+        .map(|rest| rest.split_once('?').map_or(rest, |(id, _)| id))
+        .unwrap_or_default();
+    let body = blobs.lock().unwrap().get(id).cloned();
+    let (status, body) = match (authorized, body) {
+        (false, _) => ("401 Unauthorized", Vec::new()),
+        (true, None) => ("404 Not Found", Vec::new()),
+        (true, Some(body)) => ("200 OK", body),
+    };
+    let mut stream = reader.into_inner();
+    let _ = stream
+        .write_all(
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await;
+    let _ = stream.write_all(&body).await;
+}
+
 /// Server 端看到的一條 Runner 連線。
 pub struct RunnerSide {
     pub ws: WebSocketStream<TcpStream>,
@@ -238,6 +293,19 @@ impl RunnerSide {
                 .unwrap_or_else(|_| {
                     panic!("等不到 {what}；已收到的 event：{:#?}", self.event_summary())
                 });
+            self.frames.push(v);
+        }
+    }
+
+    /// 到目前為止收到的所有 frame。
+    pub fn frames(&self) -> &[Value] {
+        &self.frames
+    }
+
+    /// 在 `duration` 內持續收 frame（不等任何特定的 frame），用來確認某件事「沒有」發生。
+    pub async fn drain(&mut self, duration: Duration) {
+        let deadline = tokio::time::Instant::now() + duration;
+        while let Ok(Some(v)) = tokio::time::timeout_at(deadline, self.recv_value()).await {
             self.frames.push(v);
         }
     }
@@ -401,9 +469,31 @@ pub fn result_outcome(result: &Value) -> &str {
 }
 
 /// 真正的 `orbis-runner` 程序；stderr 持續讀進記憶體（避免 pipe 塞滿），失敗時印出來。
+///
+/// stderr 由獨立的執行緒讀取，不用 tokio 的 child pipe：Windows 上 tokio 讀 child pipe 佔用的是
+/// runtime 的阻塞執行緒，Runner 被結束後若還有孫程序握著 pipe（例如卡住的 `node --version`），
+/// 測試結束時 runtime 會一直等那條執行緒，整個測試程式卡住。
 pub struct RunnerProcess {
     pub child: Child,
     pub stderr: Arc<Mutex<String>>,
+    /// stderr 讀到 EOF 時通知。
+    stderr_closed: Option<tokio::sync::oneshot::Receiver<()>>,
+}
+
+/// 測試結束時連同子孫一起結束 Runner。只結束 Runner 本身（`kill_on_drop`）時，Runner 剛以暫停狀態
+/// 建立、還沒放進 Job Object 的子程序（例如連上 Server 後馬上開始的 Agent 探測）會留下來，
+/// Windows 上還會佔住 Fake Agent 的執行檔，之後的 `cargo build` 無法覆寫（CI 實際發生過）。
+impl Drop for RunnerProcess {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.child.id() {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
 }
 
 impl RunnerProcess {
@@ -411,11 +501,19 @@ impl RunnerProcess {
         self.stderr.lock().unwrap().clone()
     }
 
+    /// 等 Runner 結束，並等 stderr 讀到 EOF：程序結束時 pipe 中可能還有沒讀完的輸出，
+    /// 不等的話接著檢查 stderr 會偶爾看到空字串（issue #22、#65）。
     pub async fn wait_exit(&mut self) -> std::process::ExitStatus {
-        timeout(WAIT, self.child.wait())
+        let status = timeout(WAIT, self.child.wait())
             .await
             .unwrap_or_else(|_| panic!("Runner 沒有結束；stderr：\n{}", self.stderr()))
-            .unwrap()
+            .unwrap();
+        if let Some(closed) = self.stderr_closed.take() {
+            let _ = timeout(WAIT, closed)
+                .await
+                .unwrap_or_else(|_| panic!("Runner 已結束，但 stderr 沒有關閉"));
+        }
+        status
     }
 }
 
@@ -477,21 +575,34 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
         } else {
             Stdio::null()
         })
-        .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = cmd.spawn().unwrap();
+    let (reader, writer) = std::io::pipe().unwrap();
+    cmd.stderr(writer);
+    let child = cmd.spawn().unwrap();
+    // 關掉自己手上的寫入端：Runner（與繼承它的程序）都結束時才讀得到 EOF。
+    drop(cmd);
     let stderr = Arc::new(Mutex::new(String::new()));
-    let pipe = child.stderr.take().unwrap();
     let sink = stderr.clone();
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(pipe).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let mut s = sink.lock().unwrap();
-            s.push_str(&line);
-            s.push('\n');
+    let (closed_tx, closed) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        // 以位元組讀、lossy 解碼：遇到不是 UTF-8 的輸出時不能提早停止（之後的行會讀不到，
+        // 卻照樣通知已讀完）。
+        let mut reader = std::io::BufReader::new(reader);
+        let mut line = Vec::new();
+        while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            sink.lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(&line));
+            line.clear();
         }
+        let _ = closed_tx.send(());
     });
-    RunnerProcess { child, stderr }
+    RunnerProcess {
+        child,
+        stderr,
+        stderr_closed: Some(closed),
+    }
 }
 
 /// 在 Runner 本機目錄寫入 runner.toml。

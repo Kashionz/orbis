@@ -9,7 +9,11 @@
 //!
 //! 流程：Dispatch → 自動以 allow_once 回覆權限請求（扮演測試者）→ 第一次 Review Gate 退回並送出
 //! `--followup` → 第二次核准 → push_branch → completed。Event 摘要寫到 `--summary`。
+//!
+//! Agent 呼叫 Orbis MCP 的 `delegate` 時，也扮演 Server 建立 Child Run 派回同一台 Runner；
+//! `wait_run`、`get_run`、`list_runs`、`merge_child` 依 Child Run 的 Event 回覆，其他工具回錯誤。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -18,10 +22,15 @@ use futures_util::{SinkExt, StreamExt};
 use orbis_protocol::PROTOCOL_VERSION;
 use orbis_protocol::connection::HelloAck;
 use orbis_protocol::control::{RunControl, RunControlAction};
-use orbis_protocol::dispatch::{DispatchOffer, DispatchRepo, DispatchTask};
-use orbis_protocol::enums::{GateDecision, GateKind, PermissionPolicy};
+use orbis_protocol::dispatch::{DispatchDelegation, DispatchOffer, DispatchRepo, DispatchTask};
+use orbis_protocol::enums::{
+    DelegationMode, GateDecision, GateKind, PermissionPolicy, RunOrigin, RunStatus,
+};
 use orbis_protocol::event::{ContentBlock, EventAck};
 use orbis_protocol::frame::ServerToRunner;
+use orbis_protocol::tool::{
+    ChildRunSummary, OrbisToolErrorCode, OrbisToolOutput, OrbisToolResult, ToolResultFrame,
+};
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -55,6 +64,35 @@ struct Args {
     summary: PathBuf,
 }
 
+/// 一個 Child Run 的狀態（扮演 Server 回覆 `wait_run` 等工具）。
+struct Child {
+    dispatch_id: String,
+    agent: String,
+    model: Option<String>,
+    mode: DelegationMode,
+    branch: Option<String>,
+    status: RunStatus,
+    final_message: Option<String>,
+    /// 等它終止的 `wait_run`：(call_id, 呼叫的 Run)。
+    waiting: Vec<(String, String)>,
+}
+
+impl Child {
+    fn summary(&self, run_id: &str) -> ChildRunSummary {
+        ChildRunSummary {
+            run_id: run_id.into(),
+            agent: self.agent.clone(),
+            model: self.model.clone(),
+            mode: self.mode,
+            status: self.status,
+            branch: self.branch.clone(),
+            final_message: self.final_message.clone(),
+            pending_question: None,
+            usage: None,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -83,9 +121,14 @@ async fn main() -> anyhow::Result<()> {
     let run_id = format!("dev-{}", std::process::id());
     let dispatch_id = format!("{run_id}-d1");
     let default_branch = "main".to_owned();
-    send!(ServerToRunner::DispatchOffer(Box::new(DispatchOffer {
-        dispatch_id: dispatch_id.as_str().into(),
-        run_id: run_id.as_str().into(),
+    let branch = format!(
+        "{}{}-hello",
+        orbis_protocol::names::BRANCH_PREFIX,
+        args.task_key
+    );
+    let offer = |run_id: &str, dispatch_id: &str, agent: &str, prompt: &str| DispatchOffer {
+        dispatch_id: dispatch_id.into(),
+        run_id: run_id.into(),
         expires_at: "2999-01-01T00:00:00.000Z".into(),
         task: DispatchTask {
             task_id: "dev-task".into(),
@@ -99,16 +142,12 @@ async fn main() -> anyhow::Result<()> {
             default_branch: default_branch.clone(),
             base_ref: format!("origin/{default_branch}"),
         },
-        branch: Some(format!(
-            "{}{}-hello",
-            orbis_protocol::names::BRANCH_PREFIX,
-            args.task_key
-        )),
-        agent: args.agent.clone(),
+        branch: Some(branch.clone()),
+        agent: agent.to_owned(),
         model: None,
         permission_policy: PermissionPolicy::Auto,
         prompt: vec![ContentBlock::Text {
-            text: args.prompt.clone(),
+            text: prompt.to_owned(),
         }],
         plan_gate: false,
         delegation: None,
@@ -119,16 +158,23 @@ async fn main() -> anyhow::Result<()> {
         consult_of_run_id: None,
         continuation: None,
         prompt_source: None,
-    })));
+    };
+    send!(ServerToRunner::DispatchOffer(Box::new(offer(
+        &run_id,
+        &dispatch_id,
+        &args.agent,
+        &args.prompt
+    ))));
 
+    let mut children: HashMap<String, Child> = HashMap::new();
     let mut reviews = 0;
     let mut controls = 0;
-    let mut next_control = |action: RunControlAction| {
+    let mut next_control = |run: &str, dispatch: &str, action: RunControlAction| {
         controls += 1;
         ServerToRunner::RunControl(RunControl {
             control_id: format!("c{controls}").into(),
-            run_id: run_id.as_str().into(),
-            dispatch_id: dispatch_id.as_str().into(),
+            run_id: run.into(),
+            dispatch_id: dispatch.into(),
             action,
         })
     };
@@ -139,13 +185,27 @@ async fn main() -> anyhow::Result<()> {
         match ty.as_str() {
             "heartbeat" => continue,
             "event" => {
-                let line = describe(&frame);
+                let from = frame["run_id"].as_str().unwrap_or_default().to_owned();
+                let primary = from == run_id;
+                let line = format!(
+                    "{}{}",
+                    if primary { "" } else { "  [child] " },
+                    describe(&frame)
+                );
                 eprintln!("{line}");
                 summary.push(line);
                 send!(ServerToRunner::EventAck(EventAck {
-                    run_id: run_id.as_str().into(),
+                    run_id: from.as_str().into(),
                     seq: frame["seq"].as_u64().unwrap_or(0),
                 }));
+                let from_dispatch = if primary {
+                    dispatch_id.clone()
+                } else {
+                    children
+                        .get(&from)
+                        .map(|c| c.dispatch_id.clone())
+                        .unwrap_or_default()
+                };
                 match frame["kind"].as_str() {
                     Some("permission_request") => {
                         let request_id = frame["request_id"].as_str().unwrap_or_default();
@@ -156,32 +216,70 @@ async fn main() -> anyhow::Result<()> {
                             .unwrap_or("allow_once")
                             .to_owned();
                         summary.push(format!("  → 測試者回覆 {option}"));
-                        send!(next_control(RunControlAction::PermissionResponse {
-                            request_id: request_id.into(),
-                            option_id: option,
-                        }));
+                        send!(next_control(
+                            &from,
+                            &from_dispatch,
+                            RunControlAction::PermissionResponse {
+                                request_id: request_id.into(),
+                                option_id: option,
+                            }
+                        ));
+                    }
+                    Some("final_message") if !primary => {
+                        if let Some(child) = children.get_mut(&from) {
+                            child.final_message = frame["text"]["text"].as_str().map(str::to_owned);
+                        }
+                    }
+                    Some("status_changed") if !primary => {
+                        let status: Option<RunStatus> =
+                            serde_json::from_value(frame["status"].clone()).ok();
+                        if let (Some(child), Some(status)) = (children.get_mut(&from), status) {
+                            child.status = status;
+                            if status.is_terminal() {
+                                let output = OrbisToolOutput::WaitRun(child.summary(&from));
+                                for (call_id, caller) in std::mem::take(&mut child.waiting) {
+                                    send!(tool_result(&call_id, &caller, ok(output.clone())));
+                                }
+                            }
+                        }
                     }
                     Some("status_changed") if frame["status"] == "awaiting_gate" => {
                         reviews += 1;
                         if reviews == 1 {
                             summary.push(format!("  → Review Gate 退回：{}", args.followup));
-                            send!(next_control(RunControlAction::GateResult {
-                                gate: GateKind::Review,
-                                decision: GateDecision::Rejected,
-                            }));
-                            send!(next_control(RunControlAction::Prompt {
-                                prompt: vec![ContentBlock::Text {
-                                    text: args.followup.clone(),
-                                }],
-                                source: None,
-                            }));
+                            send!(next_control(
+                                &run_id,
+                                &dispatch_id,
+                                RunControlAction::GateResult {
+                                    gate: GateKind::Review,
+                                    decision: GateDecision::Rejected,
+                                }
+                            ));
+                            send!(next_control(
+                                &run_id,
+                                &dispatch_id,
+                                RunControlAction::Prompt {
+                                    prompt: vec![ContentBlock::Text {
+                                        text: args.followup.clone(),
+                                    }],
+                                    source: None,
+                                }
+                            ));
                         } else {
                             summary.push("  → Review Gate 核准、push_branch".into());
-                            send!(next_control(RunControlAction::GateResult {
-                                gate: GateKind::Review,
-                                decision: GateDecision::Approved,
-                            }));
-                            send!(next_control(RunControlAction::PushBranch));
+                            send!(next_control(
+                                &run_id,
+                                &dispatch_id,
+                                RunControlAction::GateResult {
+                                    gate: GateKind::Review,
+                                    decision: GateDecision::Approved,
+                                }
+                            ));
+                            send!(next_control(
+                                &run_id,
+                                &dispatch_id,
+                                RunControlAction::PushBranch
+                            ));
                         }
                     }
                     Some("status_changed")
@@ -193,6 +291,127 @@ async fn main() -> anyhow::Result<()> {
                         break;
                     }
                     _ => {}
+                }
+            }
+            "tool_call" => {
+                let call_id = frame["call_id"].as_str().unwrap_or_default().to_owned();
+                let caller = frame["run_id"].as_str().unwrap_or_default().to_owned();
+                let call = &frame["call"];
+                let tool = call["tool"].as_str().unwrap_or_default();
+                let line = format!("tool_call {tool}：{}", short(&call.to_string(), 300));
+                eprintln!("{line}");
+                summary.push(line);
+                match tool {
+                    "delegate" => {
+                        let mode: DelegationMode = serde_json::from_value(call["mode"].clone())
+                            .unwrap_or(DelegationMode::Consult);
+                        let child_id = format!("{caller}-c{}", children.len() + 1);
+                        let child_dispatch = format!("{child_id}-d1");
+                        let agent = call["agent"].as_str().unwrap_or_default().to_owned();
+                        let mut o = offer(
+                            &child_id,
+                            &child_dispatch,
+                            &agent,
+                            call["prompt"].as_str().unwrap_or_default(),
+                        );
+                        o.run_seq = 10 + children.len() as u32;
+                        o.model = call["model"].as_str().map(str::to_owned);
+                        o.origin = Some(RunOrigin::Delegation);
+                        o.branch = match mode {
+                            DelegationMode::Consult => None,
+                            DelegationMode::Branch => {
+                                Some(format!("{branch}--c{}", children.len() + 1))
+                            }
+                        };
+                        o.delegation = Some(DispatchDelegation {
+                            parent_run_id: caller.as_str().into(),
+                            mode,
+                            depth: Some(1),
+                            child_seq: Some(children.len() as u32 + 1),
+                        });
+                        let child_branch = o.branch.clone();
+                        children.insert(
+                            child_id.clone(),
+                            Child {
+                                dispatch_id: child_dispatch,
+                                agent,
+                                model: o.model.clone(),
+                                mode,
+                                branch: child_branch.clone(),
+                                status: RunStatus::Queued,
+                                final_message: None,
+                                waiting: Vec::new(),
+                            },
+                        );
+                        summary.push(format!("  → 建立 Child Run {child_id}（{mode:?}）"));
+                        send!(tool_result(
+                            &call_id,
+                            &caller,
+                            ok(OrbisToolOutput::Delegate {
+                                child_run_id: child_id.as_str().into(),
+                                branch: child_branch,
+                            })
+                        ));
+                        send!(ServerToRunner::DispatchOffer(Box::new(o)));
+                    }
+                    "wait_run" | "get_run" | "merge_child" => {
+                        let target = call["run_id"].as_str().unwrap_or_default();
+                        match children.get_mut(target) {
+                            None => send!(tool_result(
+                                &call_id,
+                                &caller,
+                                error(OrbisToolErrorCode::NotFound, "沒有這個 Child Run")
+                            )),
+                            Some(child) => match tool {
+                                "wait_run" if !child.status.is_terminal() => {
+                                    child.waiting.push((call_id, caller));
+                                }
+                                "merge_child" => send!(tool_result(
+                                    &call_id,
+                                    &caller,
+                                    match &child.branch {
+                                        Some(branch) => ok(OrbisToolOutput::MergeChild {
+                                            branch: branch.clone(),
+                                            head_commit: None,
+                                        }),
+                                        None => error(
+                                            OrbisToolErrorCode::InvalidState,
+                                            "consult 模式沒有分支"
+                                        ),
+                                    }
+                                )),
+                                "wait_run" => send!(tool_result(
+                                    &call_id,
+                                    &caller,
+                                    ok(OrbisToolOutput::WaitRun(child.summary(target)))
+                                )),
+                                _ => send!(tool_result(
+                                    &call_id,
+                                    &caller,
+                                    ok(OrbisToolOutput::GetRun(child.summary(target)))
+                                )),
+                            },
+                        }
+                    }
+                    "list_runs" => {
+                        let runs = children
+                            .iter()
+                            .map(|(id, child)| child.summary(id))
+                            .collect();
+                        send!(tool_result(
+                            &call_id,
+                            &caller,
+                            ok(OrbisToolOutput::ListRuns { runs })
+                        ));
+                    }
+                    _ => send!(tool_result(
+                        &call_id,
+                        &caller,
+                        error(
+                            OrbisToolErrorCode::InvalidState,
+                            "dev_dispatch 不支援這個工具"
+                        )
+                    )),
                 }
             }
             "run_control_result" => {
@@ -213,6 +432,11 @@ async fn main() -> anyhow::Result<()> {
                 );
                 eprintln!("{line}");
                 summary.push(line);
+                // push 失敗時 Run 會一直等下一個 push_branch：結束，讓測試者看摘要。
+                if reviews >= 2 && frame["outcome"] == "rejected" {
+                    summary.push("  → push_branch 失敗，結束".into());
+                    break;
+                }
             }
             other => {
                 let line = format!("{other}：{}", short(&frame.to_string(), 300));
@@ -224,6 +448,27 @@ async fn main() -> anyhow::Result<()> {
     std::fs::write(&args.summary, summary.join("\n") + "\n")?;
     eprintln!("Event 摘要寫到 {}", args.summary.display());
     Ok(())
+}
+
+fn ok(output: OrbisToolOutput) -> OrbisToolResult {
+    OrbisToolResult::Ok {
+        output: Box::new(output),
+    }
+}
+
+fn error(code: OrbisToolErrorCode, message: &str) -> OrbisToolResult {
+    OrbisToolResult::Error {
+        code,
+        message: message.to_owned(),
+    }
+}
+
+fn tool_result(call_id: &str, run_id: &str, result: OrbisToolResult) -> ServerToRunner {
+    ServerToRunner::ToolResult(ToolResultFrame {
+        call_id: call_id.into(),
+        run_id: run_id.into(),
+        result,
+    })
 }
 
 async fn recv(
@@ -306,6 +551,7 @@ fn describe(e: &Value) -> String {
             e["code"],
             short(e["message"].as_str().unwrap_or_default(), 300)
         ),
+        "final_message" => short(e["text"]["text"].as_str().unwrap_or_default(), 200),
         _ => short(&e.to_string(), 160),
     };
     format!("{seq:>4} {kind} {detail}")

@@ -171,6 +171,7 @@ pub fn script(name: &str) -> PathBuf {
         .join(name)
 }
 
+pub mod flow;
 pub mod server;
 
 /// Runner 整合測試自己的劇本（`tests/scripts/`）。

@@ -1,0 +1,19 @@
+# Claude Code 的額度用完：以 usage_update 的 _meta["_claude/rateLimit"]（status: rejected）回報，
+# 回合本身照常結束。恢復時間已經過了（固定的 epoch），Runner 最少等一秒後在同一個 session 繼續。
+description: Claude Code 格式的 rate limit
+turns:
+  - steps:
+      - usage:
+          used: 1000
+          size: 200000
+          meta:
+            _claude/rateLimit:
+              status: rejected
+              resetsAt: 1700000000
+              rateLimitType: five_hour
+      - message: "Claude AI usage limit reached|1700000000"
+      - stop: end_turn
+  - expect_prompt_contains: 額度已恢復
+    steps:
+      - message: 額度恢復後繼續完成。
+      - stop: end_turn

@@ -1,0 +1,14 @@
+# Plan Gate 退回：依退回的意見在同一個 session 重新產出 plan，第二次才核准。
+description: Plan Gate 退回後重新產出 plan
+turns:
+  - steps:
+      - message: "# 計畫 v1"
+      - stop: end_turn
+  - expect_prompt_contains: 請補上測試
+    steps:
+      - message: "# 計畫 v2（含測試）"
+      - stop: end_turn
+  - expect_prompt_contains: Plan 已核准
+    steps:
+      - message: 開始實作。
+      - stop: end_turn

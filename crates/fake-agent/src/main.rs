@@ -17,6 +17,32 @@ struct Cli {
     /// 不講 ACP，只是一直執行到被結束（劇本的 `spawn_child` 步驟用來模擬背景程序）。
     #[arg(long, hide = true)]
     hold: bool,
+
+    /// session 保存目錄：指定時支援 `session/load`（與 `session/resume`），
+    /// 讓另一個 Fake Agent 程序從同一個 session 的下一個回合接續。
+    #[arg(long, value_name = "DIR")]
+    state_dir: Option<PathBuf>,
+
+    /// 有保存目錄時不宣告 `session/resume`，只支援 `session/load`。
+    #[arg(long)]
+    no_resume: bool,
+
+    /// 提供的 session mode（逗號分隔），例如 `default,plan`。
+    #[arg(long, value_delimiter = ',')]
+    modes: Vec<String>,
+
+    /// 新 session 一開始的 mode，預設是 `--modes` 的第一個。
+    #[arg(long)]
+    initial_mode: Option<String>,
+
+    /// 宣告 prompt 可以帶圖片。
+    #[arg(long)]
+    image: bool,
+
+    /// 宣告的認證方式（逗號分隔）。指定時要先 `authenticate`，`session/new` 才會成功；
+    /// 有 `--state-dir` 時登入狀態保存在那裡。
+    #[arg(long, value_delimiter = ',')]
+    auth_methods: Vec<String>,
 }
 
 #[tokio::main]
@@ -35,7 +61,15 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match agent::serve_stdio(script).await {
+    let options = agent::Options {
+        state_dir: cli.state_dir,
+        resume: !cli.no_resume,
+        modes: cli.modes,
+        initial_mode: cli.initial_mode,
+        image: cli.image,
+        auth_methods: cli.auth_methods,
+    };
+    match agent::serve_stdio_with(script, options).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("ACP 連線錯誤：{error:?}");

@@ -30,7 +30,7 @@
    │ Electron│     │ Member 自己的電腦│ │ 共用 Credential   │
    └─────────┘     └────────┬────────┘ └────┬─────────────┘
                             │ ACP over stdio │
-                   Claude Code / Codex / Gemini CLI / Grok Build
+                   Claude Code / Codex / Antigravity / Grok Build
 ```
 
 - **Runner 對稱架構**（[ADR-0001](adr/0001-symmetric-runner-reverse-connection.md)）：Local Runner 與 Team Runner 是**同一個執行檔**，差別只在部署位置與 Pairing 對象。
@@ -120,6 +120,9 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 
 - **流程**：主 Run 的 Agent 結束回合（`awaiting_gate`，review）後，沒有 `command`、`agent`、`browser` 類型的條件時直接進入 Review Gate；有的話 Server 送 RunControl `verify`，列出這一輪要檢查的條件。
   - Runner 回報 `verifying`，逐條執行。`command` 在 Worktree 執行；`agent`、`browser` 以 Orbis MCP 的 `delegate`（`purpose = verification`）請 Server 建立 `consult` Child Run 判定，`browser` 另外注入 Playwright MCP。
+  - **`command` 的指令信任**：Task 上的指令 Member 就能改，卻在派工者的 Runner 執行。所以 Runner 先比對 Repo 設定檔（base commit）的 `[verify].commands` 與 `allow_commands`：在清單內直接執行；不在清單內照 Permission Policy 問人（`manual`、`auto` 都要問，`yolo` 自動允許），同一個 Run 中同一個指令只問一次。條件沒有指定指令時執行 `[verify].commands` 本身，不需要問。
+  - **判定用的 Child Run**：`agent` 與 `browser` 類型各由一個 Child Run 一起判定（Agent 是 `verify` 指定的 judge，沒有指定時與被驗證的 Run 相同）。它以 Orbis MCP 的 `report_verdict` 逐條回報，只接受指派給它的條件；Child Run 結束時沒有回報的條件記為 `error`。
+  - **`browser` 的瀏覽器**：Runner 管理的 Playwright MCP（`@playwright/mcp`，鎖定版本，第一次使用時安裝；`runner.toml` 的 `[browser_judge]` 可以換成別的指令）以 headless、isolated 啟動，`--allowed-origins` 只允許這個 Run 的 Preview（這只是盡力過濾，不處理 redirect，不是安全邊界）。判定用的 Child Run 在目前頁面上操作、讀取與截圖的工具自動允許，`browser_navigate` 只在網址的 origin 就是 Preview 時自動允許；執行任意程式碼（`browser_evaluate`、`browser_run_code`）、上傳本機檔案、開新分頁、安裝瀏覽器等其他工具照 Permission Policy 問人。截圖存成 blob，作為每條 `browser` 條件的證據。Preview 沒有在執行時記為 `error`。
   - 每條條件一筆 `verification_result` Event（`passed`、`failed`，或無法判定的 `error`，附證據），全部結束送 `verification_completed`，再回到 `awaiting_gate`（review）。
   - 結果與證據存在 `verifications` 與 `verification_results`，最新一次也寫回 Acceptance Criterion。
 - **失敗重試**：Verification 失敗時，Server 自動把失敗原因以 `prompt` 送回原 Run 重試，第一輪之後**預設最多重試 3 次**（Project 可以設定，所以最多 4 輪），超過就停在 Verifying，加入 Needs You 並通知。`error`（無法判定）視為失敗。人可以選擇：
@@ -241,6 +244,10 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 拒絕刪除家目錄或 Worktree 根目錄以外的路徑。
   - `archive` hook 失敗時擋下刪除。
   - 父 Run 被中止或封存時，連同 Child Run 一起處理。
+- **封存**（RunControl `archive`）：Server 在 Run 結束後送出，這時 Run 已不在 Runner 的記憶體中，Runner 依本機記下的 Worktree 紀錄（路徑、Repo、分支、base commit、讀設定檔的 commit）重建資訊後刪除。
+  - Run 還在執行時拒絕（`invalid_state`），要先取消；還有執行中的 Run 沿用同一個 Worktree（Feedback Loop）時也拒絕。
+  - `archive` hook 只用紀錄中那個 commit 的設定檔，而且只在這份設定檔已「永遠允許」時執行：Run 期間的「允許這次」已經失效，Run 結束後也沒有人可以問。沒有核准時回 `rejected`（`failed`），Worktree 不刪。沒有 hook 時直接刪。
+  - `branch` 模式的 Child Run 一起刪；`consult` 模式的 Child Run 沒有自己的 Worktree。Worktree 已經不在時視為完成，重送的 `archive` 不會失敗。
 - **設定的信任核准**：
   - `.orbis/config.toml` 中的腳本第一次執行前要人工核准；檔案內容（hash）改變後要重新核准。
   - 核准以權限請求的形式加入 Needs You，只有 Admin 以上能回覆（§12.2）。
@@ -268,7 +275,7 @@ allow_commands = ["pnpm *", "git status", "git diff *"]
 
 [delegation]
 enabled = true
-allowed_agents = ["claude-code", "codex", "gemini", "grok"]
+allowed_agents = ["claude-code", "codex", "antigravity", "grok"]
 
 [git]
 commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的變更時使用的訊息
@@ -308,18 +315,38 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 
 | Agent | 接入方式 | 備註 |
 |---|---|---|
-| Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | 版本鎖定（目前 0.94.0），由 Runner 以 npm 安裝在狀態目錄的 `agents/`，以 `node` 直接啟動；plan mode 與 bypassPermissions 有已知 bug，建立 session 後一律切回 `default` 模式 |
-| Codex | `codex-acp` adapter | `CODEX_PATH` 含空白時會失敗 |
-| Gemini CLI | 原生 `gemini --acp` | 路徑檢查區分大小寫 |
-| Grok Build | 原生 `grok agent stdio` | beta；需要 SuperGrok 系列訂閱 |
+| Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | 版本鎖定（目前 0.94.0），由 Runner 以 npm 安裝在狀態目錄的 `agents/`，以 `node` 直接啟動；plan mode 與 bypassPermissions 有已知 bug，建立 session 後一律切回 `default` 模式；預設不載入使用者全域設定（§8） |
+| Codex | `@agentclientprotocol/codex-acp` adapter（內附相容的 `@openai/codex`） | 版本鎖定（目前 2.2.2），由 Runner 代管安裝、以 `node` 啟動；session 一律用 `read-only` 模式（修改檔案與連網先問），Codex 在自己沙盒中執行的唯讀指令不經過 Runner；`CODEX_PATH` 含空白時會失敗，Runner 只在內附執行檔路徑過長時才設定；需要先 `codex login` |
+| Antigravity | Google 官方的 `agy_acp_server`（ACP Registry 的 `antigravity-acp`） | 只以 binary 發佈：Runner 從 `dl.google.com` 下載鎖定版本（目前 1.4.3）的 zip，比對寫死的 sha256（網路中斷時最多重試 3 次，sha256 不符不重試），解到狀態目錄的 `agents/` 後直接啟動；不使用第三方轉接程式。建立 session 後切到 `default` 模式（沒有就不啟動）；沒有 plan 模式。不沿用 agy CLI 的登入，第一次要執行 `orbis-runner login antigravity`（見下方）。取代 2026-06-18 停止個人方案的 Gemini CLI |
+| Grok Build | 原生 `grok agent stdio --no-leader` | 使用者自己安裝；偵測版本，低於測過的最低版本（目前 1.0.52）時回報無法使用；不共用 leader 程序；beta；需要 SuperGrok 系列訂閱 |
 
   registry 中其他支援 ACP 的 Agent 列為「實驗性」。
+- **實機驗證**（2026-10-24，Windows，使用者自己的帳號；`dev_dispatch` 扮演 Server，Task 是建立檔案 → Review Gate 退回一次 → 核准 → push）：
+  - Claude Code、Grok Build：完整通過。
+  - Codex：ACP 連線、session 建立與錯誤回報已確認。完整 Task 沒有跑完，原因是使用者的 `~/.codex/config.toml` 指定了 ChatGPT 帳號不支援的模型。
+  - Gemini CLI（已由 Antigravity 取代）：ACP 連線與錯誤回報已確認，沒有 API key 時以 `agent_start_failed` 讓 Run 轉為 `failed`。
+  - Delegation：Claude Code 經 Orbis MCP `delegate` 給 Codex（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。
+  - Antigravity（agy_acp_server 1.4.3）：完整通過。`orbis-runner login antigravity` 下載官方 binary、比對 sha256，經瀏覽器以 Google 帳號登入；Task 中 session mode 已是 `default`（不需要切換），執行指令（`git status`）會送權限請求、經過 Permission Policy。能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse。使用者的帳號被判定為 `free-tier`，Google 回了隱私聲明（資料處理條款依帳號方案而定）。
+  - Antigravity 的 Delegation：`initialize` 雖然沒有宣告 stdio MCP，Orbis MCP bridge（stdio）仍能注入；Antigravity 經 `delegate` 給 Claude Code（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。它的工具標題是 `<server>_<工具>`（例如 `orbis_delegate`），實機時沒有被認成產品自己的 MCP 工具而去問人；已補上這個格式（判定用瀏覽器工具的 `playwright_browser_<名稱>` 也一樣）。
+- **已知落差**：
+  - Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。改由 Server／UI 在 diff 為空時不做 push（[#73](https://github.com/Kashionz/orbis/issues/73)）。
+  - Antigravity 會載入使用者全域的 MCP server 設定（`~/.gemini/config/mcp_config.json`，實機確認），其中的工具不經過 Runner，列在它的 Permission Policy 落差中。
+  - Antigravity 的 rate limit 格式（目前沿用 Gemini API 的 `RESOURCE_EXHAUSTED`），以及是否仍讀取 Repo 的 `.gemini/`，還沒有在實機遇到，待確認。
+- **由 Runner 代為登入**：Agent Profile 指定了認證方式的 Agent（目前只有 Antigravity，預設 `oauth-personal`）用 `orbis-runner login <agent>` 登入。
+  - 這個子指令啟動 Agent、以指定的方式（`--method` 可以改）呼叫 `authenticate`，由 Agent 自己開瀏覽器並保存認證（Antigravity 存在 `~/.gemini/antigravity-acp/`），Runner 不讀也不存認證內容；10 分鐘內沒有完成就放棄。
+  - 登入成功後，Runner 在狀態目錄記一個只有時間的標記（`agents/<agent>.login`）。沒有標記時，AgentAvailability 回報這個 Agent 無法使用（原因是要執行的登入指令），派工也以 `agent_unavailable` 拒絕。否則沒登入的 Agent 會被當成可用，Web 的派工對話框可能預設選到它。在其他 ACP client（例如 Zed）登入過的人也要再執行一次。
+  - 之後 Run 遇到 ACP `auth_required`（例如認證過期）時，以 `agent_start_failed` 結束並提示登入指令，同時清掉標記，重送的 AgentAvailability 改成無法使用。
+  - 其他 Agent 用自己的 CLI 登入。
+- **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
+- **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Antigravity（`~/.gemini/antigravity-acp/settings.json`、`~/.gemini/config/mcp_config.json`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
   - Local Runner 只沿用各 CLI 自己的登入狀態，Orbis 不讀取、不保存。
   - Team Runner **共用一個 Claude 訂閱**，Credential 存放在 Runner 主機的 Docker secret 中。設定頁會顯示條款風險警告。
 - **並行與額度**：
   - 每組 Credential 的並行上限**預設 30**，超過的 Run 進佇列排隊。
-  - 偵測到 rate limit 時，該 Run 暫停，等額度恢復後再繼續。**不會自動改用其他 Agent。**
+  - 偵測到 rate limit 時，該 Run 暫停，等額度恢復後在同一個 session 繼續。**不會自動改用其他 Agent。**
+    - 恢復前，同一組 Credential 的新 Dispatch 一律以 `rate_limited` 拒絕（Server 本來就不會派，這是 Runner 端的保護），AgentAvailability 中使用這組 Credential 的 Agent 回報無法使用，原因寫上預計恢復的時間。
+    - 各 Agent 的格式：Claude Code 以 `usage_update` 的 `_meta["_claude/rateLimit"]`（`status` 為 `rejected`、`resetsAt`）回報，回合本身可能照常結束；Codex 的回合以錯誤結束，`codexErrorInfo` 是 `usageLimitExceeded`／`rateLimitExceeded`；Antigravity（沿用 Gemini API 的格式，待實機確認）與其他 Agent 從錯誤訊息辨識（`RESOURCE_EXHAUSTED`、quota、429、rate limit），恢復時間從「retry in …」之類的文字讀出。讀不出恢復時間時等 60 秒。
   - UI 顯示各組 Credential 的用量與排隊數。
   - Server 依 Credential 排隊：派工時選定 Credential（放在 `dispatch_offer`），佔用名額的是 `dispatched` 到 `awaiting_gate`、`rate_limited` 的 Run（含 Child Run）。有效上限＝Admin 在 Server 的覆寫 ?? Runner 回報。
   - 一組 Credential 回報 rate limit 後，到恢復時間之前不派新的 Run 給它；Agent 沒有提供恢復時間時暫停 5 分鐘。
@@ -337,6 +364,12 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
 | `auto`（預設） | 在 Worktree 內讀寫檔案、`allow_commands` 中的指令 | 白名單以外的指令、存取 Worktree 以外的路徑、`git push --force`、安裝全域套件 | 同上 |
 | `yolo` | 全部 | — | 寫入主分支 |
 
+- **指令的判斷**（`auto`）：
+  - 複合指令每一段都要符合規則；出現指令替換、變數展開、glob、子 shell 等字面分析無法掌握的語法時一律問人。
+  - 每個引數都當成可能的路徑檢查（含 `--key=值` 與短參數直接接值的 `-f<值>`），用會解開 symlink／junction 的方式判斷是否在 Worktree 內；Worktree 內指向外面的連結視為在外面。
+  - 會執行其他程式、寫檔或改寫 commit 的參數，即使符合 `allow_commands` 也一律問人，例如 `rg --pre`、`git grep -O`、`git diff/log/show --output`、`git -c`、`git commit -F/--template/--author/--amend`、`find -exec/-delete`、`pnpm exec/dlx`、`npx`、`xargs`。
+  - **`allow_commands` 不是沙箱**：允許 `pnpm test`、`cargo test` 這類指令，本來就會執行 Agent 寫的程式碼（測試、package.json 的 script、build script）。白名單只減少詢問，不能限制 Agent 能做的事。
+- **轉給人的選項**：選項名稱一律用 Orbis 的文字（依 kind）。Agent 自己的「永遠允許／永遠拒絕」會寫進 Agent 的設定檔、讓之後的請求不再經過 Runner，有對應的「這次」選項時不轉給人。
 - **問人時**：請求加入 Needs You，並發出桌面通知；等待期間 Run 暫停。
 - **誰的 Needs You 清單會出現**：
   - 權限請求依「誰有權回覆」即時決定（見下方「誰可以回覆」）。Team 內所有未回覆、而且本人有權回覆的請求，都會出現在本人的清單。
@@ -353,10 +386,14 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
   - 能派工的人都可以選 `manual` 或 `auto`，預設為 Project 的預設政策。
   - `yolo` 只能在「在我的電腦跑」時選，UI 會顯示警告。Team Runner 的 `yolo` 留到 Phase 2。
   - 修改 Project 的預設政策需要 Admin 以上（§12.2）。
+- **使用者全域的 Agent 設定**：Claude Code 在 Run 中預設只載入 Repo 的 project／local 設定，不載入使用者全域的 `~/.claude/settings.json`（Runner 在 `session/new` 傳 claude-agent-acp 的 `settingSources`）。使用者自己的 allow 規則、plugin 與它帶的 MCP、hooks 都不會出現在 Run 中；登入不受影響。需要時可以在 runner.toml 的 `[agents.claude-code]` 設 `user_settings = true` 打開，AgentAvailability 的落差說明會跟著改變。其他 Agent 的使用者全域設定見 §7 的 Agent Profile。
 - **已知落差**：Agent 自己的設定中允許的工具不會詢問 Runner，例如 Claude Code 的 `.claude/settings.json`。
   - Phase 1 接受這個落差。各 Agent Profile 在 AgentAvailability 中回報落差，派工對話框顯示警告。
-  - `auto` 下，寫入 `.claude/settings.json`、`.claude/settings.local.json` 一律問人。
-  - 每次啟動 session 前，Runner 比對 Worktree 中這兩個檔案與 base commit。有差異就停下來加入 Needs You，人允許後才啟動。
+  - 受保護的 Agent 設定由各 Agent Profile 列出：Claude Code 的 `.claude/settings.json`、`.claude/settings.local.json` 與 `.mcp.json`，Codex 的 `.codex/`、Antigravity 的 `.agents/` 與 `.gemini/`、Grok Build 的 `.grok/`（整個目錄）。這些位置不接受連結（symlink／junction）：Runner 不跟著連結讀，出現連結時只能還原或停止 Run。
+  - `auto` 下，寫入這些設定一律問人。
+  - 每次啟動 session 前，Runner 比對 Worktree 中這些設定與 base commit。有差異就停下來加入 Needs You，人允許後才啟動。
+  - Agent Profile 指定的 session mode（例如 Claude Code 的 `default`、Codex 的 `read-only`）不存在於 Agent 回報的模式清單時，Agent 不啟動（避免停在會自動核准的模式）。
+  - session 進行中，每個 tool call 結束與每個權限請求進來時也比對一次（經權限請求允許、明確寫入這些檔案的 tool call 除外）。發現 Agent 自己改了設定檔時，中止這個回合並問人：接受變更就繼續；選擇還原時，Runner 先結束 Agent 的程序樹、把檔案還原成已接受的內容，再重新啟動 Agent（Agent 可能已把新規則載入記憶體），以 `session/resume` 或 `session/load` 接續原本的 session，不支援時開新的 session 並附上原本的 prompt。
   - 完全攔截（由 Runner 代為執行檔案與指令操作）留到之後再做。
 
 ---
@@ -550,7 +587,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - 一般瀏覽器中不能選取元素，只能附整頁截圖：以 `getDisplayMedia` 擷取目前的分頁，再裁成 Preview 的範圍；不支援或使用者拒絕時，改成貼上或上傳圖片。
   - Preview 留言和 diff 行內留言一樣先存成草稿，Review Gate 退回時一起打包成 prompt 送回 Agent（§10），截圖以圖片附上。
   - 留言的權限和 Review Gate 退回相同；看 Preview 的權限是能查看該 Run。
-- **Agent 操作瀏覽器**：Runner 額外注入 Playwright MCP（headless），連到同一個 Preview，用來判定 `browser` 類型的 Acceptance Criterion。UI 顯示截圖與操作紀錄。即時觀看 Agent 的瀏覽器畫面留到 Phase 2。
+- **Agent 操作瀏覽器**：Runner 額外注入 Playwright MCP（headless，只允許連到這個 Preview，§5.1），連到同一個 Preview，用來判定 `browser` 類型的 Acceptance Criterion。UI 顯示截圖與操作紀錄。即時觀看 Agent 的瀏覽器畫面留到 Phase 2。
 
 ---
 
@@ -665,7 +702,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 - **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在 Windows、macOS 安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
 - **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上 Windows、macOS 都跑；完整系統的 M1 e2e 在 PR 上只跑 Windows，push 到 `main` 時兩個平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
-- **真實 Agent 煙霧測試**：Claude Code、Codex、Gemini、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
+- **真實 Agent 煙霧測試**：Claude Code、Codex、Antigravity、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
 
 ---
 

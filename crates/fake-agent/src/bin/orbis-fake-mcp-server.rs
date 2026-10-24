@@ -1,4 +1,4 @@
-//! `orbis-fake-mcp-server`：測試用的 stdio MCP server，提供 `echo` 與 `get_env` 工具。
+//! `orbis-fake-mcp-server`：測試用的 stdio MCP server（工具見 [`orbis_fake_agent::echo_server`]）。
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

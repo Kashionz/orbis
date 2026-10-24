@@ -1,0 +1,6 @@
+# 一直執行到被中止（Delegation 測試的父 Run 或 Child Run）。
+description: 等到被中止
+turns:
+  - steps:
+      - message: 工作中。
+      - wait_for_cancel

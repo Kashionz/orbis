@@ -15,7 +15,7 @@
 ## 交付項目（依優先順序）
 
 1. **Agent Profile**：
-   - Codex（`codex-acp`）、Gemini CLI（`gemini --acp`）、Grok Build（`grok agent stdio`），版本都要鎖定。
+   - Codex（`codex-acp`）、Antigravity（Google 官方的 `agy_acp_server`，取代 Gemini CLI）、Grok Build（`grok agent stdio`），版本都要鎖定。
    - 每個 profile 都寫清楚 Windows 上的啟動方式，以及已知的功能落差（ARCHITECTURE §7 的表格）。
    - Agent 不支援某項能力時，透過 `capabilities()` 回報，讓上層可以降級處理。
 2. **Planning**：以 plan 模式執行，收到 plan Event 後送出「等待 Plan Gate」，核准後切換成執行模式。如果某個 Agent 的 plan 模式不可靠，在 profile 中標註，並改用「只產出 plan、不修改檔案」的 prompt 作為後備。

@@ -1,0 +1,10 @@
+# 呼叫 delegate（深度已達上限的 Child Run 會被 Runner 在本機擋下）。
+description: 呼叫 delegate
+turns:
+  - steps:
+      - mcp_call:
+          id: delegate
+          server: orbis
+          tool: delegate
+          arguments: { agent: child, prompt: 再分一層, mode: consult }
+      - stop: end_turn

@@ -31,7 +31,7 @@ run_seq: number, repo: DispatchRepo,
  */
 branch: string | null, 
 /**
- * Agent Profile 的 id，例如 `claude-code`、`codex`、`gemini`、`grok`。
+ * Agent Profile 的 id，例如 `claude-code`、`codex`、`antigravity`、`grok`。
  */
 agent: string, 
 /**

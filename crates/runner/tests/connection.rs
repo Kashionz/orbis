@@ -79,8 +79,14 @@ async fn reports_availability_and_heartbeats_after_hello_ack() {
     let credentials = availability["credentials"].as_array().unwrap();
     assert!(credentials.iter().all(|c| c["max_concurrent_runs"] == 30));
 
-    for _ in 0..2 {
+    let mut heartbeats = 0;
+    while heartbeats < 2 {
         let hb = conn.recv().await;
+        // 背景探測完 Agent 的能力旗標後會再送一次 agent_availability（issue #18）。
+        if hb["type"] == "agent_availability" {
+            continue;
+        }
+        heartbeats += 1;
         assert_eq!(hb["type"], "heartbeat", "{hb}");
         assert!(hb["ts"].as_str().unwrap().ends_with('Z'));
         assert_eq!(hb["active_run_ids"], serde_json::json!([]));
@@ -228,11 +234,26 @@ async fn missing_server_names_the_environment_variable() {
     let mut runner = spawn_runner(opts);
     let status = runner.wait_exit().await;
     assert!(!status.success());
+    // 附上結束碼：Windows CI 曾偶發 stderr 是空的（例如程序在初始化 DLL 時就失敗）。
     assert!(
         runner.stderr().contains(&names::ENV_SERVER_URL.to_owned()),
-        "{}",
+        "結束碼 {status:?}；stderr：\n{}",
         runner.stderr()
     );
+}
+
+/// Pairing token 以 `-` 開頭時（base64url 可能如此），仍當成 `--pairing-token` 的值（issue #21）。
+#[tokio::test]
+async fn pairing_token_may_start_with_a_hyphen() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let base = server.base_url();
+    let mut opts = RunnerOptions::new(&base, home.path());
+    opts.pairing_token = Some("-uAbC_123");
+    let _runner = spawn_runner(opts);
+    let mut conn = server.accept().await;
+    let hello = conn.recv().await;
+    assert_eq!(hello["pairing"]["token"], "-uAbC_123");
 }
 
 /// 沒有參數時從環境變數讀取連線設定。

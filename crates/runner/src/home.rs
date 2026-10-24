@@ -180,6 +180,43 @@ impl RunnerHome {
         Ok(())
     }
 
+    /// 記下 Run 的 Worktree（Feedback Loop 的新 Run 沿用前一個 Run 的 Worktree，§5.2；Run 結束後
+    /// 封存時依此重建 Worktree 資訊，§6.2）。
+    pub fn record_run_worktree(
+        &self,
+        run_id: &str,
+        record: RunWorktreeRecord,
+    ) -> anyhow::Result<()> {
+        let _guard = lock(&self.lock);
+        // 讀不懂舊格式時重新開始（只影響沿用與封存，不影響執行中的 Run）。
+        let mut runs: BTreeMap<String, RunWorktreeRecord> =
+            self.read_json(RUN_WORKTREES_FILE).unwrap_or_default();
+        runs.insert(run_id.to_owned(), record);
+        self.write_json(RUN_WORKTREES_FILE, &runs, false)
+    }
+
+    /// 之前記下的 Run 的 Worktree。
+    pub fn run_worktree(&self, run_id: &str) -> Option<RunWorktreeRecord> {
+        self.run_worktrees().remove(run_id)
+    }
+
+    /// 所有記下的 Run 的 Worktree：Run ID → 紀錄。
+    pub fn run_worktrees(&self) -> BTreeMap<String, RunWorktreeRecord> {
+        let _guard = lock(&self.lock);
+        self.read_json(RUN_WORKTREES_FILE).unwrap_or_default()
+    }
+
+    /// 刪掉這些 Run 的 Worktree 紀錄（封存之後）。
+    pub fn forget_run_worktrees(&self, run_ids: &[String]) -> anyhow::Result<()> {
+        let _guard = lock(&self.lock);
+        let mut runs: BTreeMap<String, RunWorktreeRecord> =
+            self.read_json(RUN_WORKTREES_FILE).unwrap_or_default();
+        for id in run_ids {
+            runs.remove(id);
+        }
+        self.write_json(RUN_WORKTREES_FILE, &runs, false)
+    }
+
     /// 這個 Repo 的 config.toml 內容（hash）是否已被核准「永遠允許」。
     pub fn is_trusted(&self, repo_key: &str, hash: &str) -> anyhow::Result<bool> {
         let _guard = lock(&self.lock);
@@ -202,6 +239,27 @@ impl RunnerHome {
 
 const CREDENTIALS_FILE: &str = "credentials.json";
 const PORTS_FILE: &str = "ports.json";
+/// 一個 Run 的 Worktree 紀錄（狀態目錄的 `run-worktrees.json`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunWorktreeRecord {
+    pub dispatch_id: String,
+    pub path: PathBuf,
+    pub root_checkout: PathBuf,
+    pub clone_url: String,
+    pub branch: Option<String>,
+    pub base_commit: String,
+    pub base_ref: String,
+    pub default_branch: String,
+    /// 讀設定檔的 commit（封存時只用這份設定檔的 archive hook）。
+    pub config_commit: String,
+    pub port: u16,
+    pub task_key: String,
+    /// `branch` 模式 Child Run 的父 Run（父 Run 封存時一起處理）。
+    pub parent_run_id: Option<String>,
+}
+
+/// 每個 Run 的 Worktree 紀錄（狀態目錄中）。
+const RUN_WORKTREES_FILE: &str = "run-worktrees.json";
 const TRUST_FILE: &str = "trust.json";
 
 fn lock(mutex: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
@@ -288,6 +346,19 @@ pub struct Settings {
     pub repos: HashMap<String, RepoSettings>,
     #[serde(default)]
     pub agents: BTreeMap<String, AgentSettings>,
+    /// 判定 `browser` 類型條件時注入的瀏覽器 MCP server；沒有設定時用 Runner 管理的
+    /// Playwright MCP（鎖定版本，ARCHITECTURE §5.1）。
+    pub browser_judge: Option<BrowserJudgeSettings>,
+}
+
+/// 判定 `browser` 類型條件用的 MCP server 啟動設定。Runner 在 `args` 之後加上 Preview 的
+/// origin 與截圖目錄（`--allowed-origins`、`--output-dir` 等 Playwright MCP 的選項）。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserJudgeSettings {
+    pub command: PathBuf,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -308,6 +379,11 @@ pub struct AgentSettings {
     pub env: BTreeMap<String, String>,
     /// 每組 Credential 的並行上限，預設 30。
     pub max_concurrent_runs: Option<u32>,
+    /// 一般 ACP Agent 可靠的 plan 模式（session mode 的 id）；沒有時 Planning 改用只產出 plan 的 prompt。
+    pub plan_mode: Option<String>,
+    /// 只對內建的 Claude Code 有效：是否載入使用者全域的 Claude 設定（`~/.claude/settings.json`
+    /// 的 allow 規則、plugin、hooks 等）。預設 `false`：Run 中只載入 Repo 的設定（ARCHITECTURE §8）。
+    pub user_settings: Option<bool>,
 }
 
 impl Settings {

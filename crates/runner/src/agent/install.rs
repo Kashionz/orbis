@@ -60,9 +60,15 @@ pub async fn ensure_installed(
 
 /// `node --version` 的主版本；找不到 Node 時回傳 `None`。
 pub async fn node_major_version() -> Option<u32> {
-    let output = process::run(&ProcessSpec::new("node").arg("--version"))
-        .await
-        .ok()?;
+    // 逾時就放棄（future 被丟棄時整個程序樹一起結束）：實機上曾遇到 `node --version`
+    // 在負載下卡住，讓第一次的 AgentAvailability 一直送不出去。
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        process::run(&ProcessSpec::new("node").arg("--version")),
+    )
+    .await
+    .ok()?
+    .ok()?;
     parse_node_major(&output.stdout)
 }
 

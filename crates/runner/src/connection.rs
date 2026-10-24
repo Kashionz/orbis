@@ -239,6 +239,7 @@ async fn connect_once(
     let id = Some(ack.runner_id.to_string());
     state.send_replace((SidecarConnectionState::Connected, id.clone()));
     supervisor.on_connected(&ack.resume);
+    supervisor.blobs().set_access(&config.http_base, &token);
     let session = Session {
         conn,
         supervisor: supervisor.clone(),
@@ -450,6 +451,12 @@ impl Session {
                 }
                 Some(frame) = frames.recv() => self.conn.send(&frame).await?,
                 () = outbox.notified() => {}
+                () = self.supervisor.availability_changed() => {
+                    let availability = self.supervisor.availability().await;
+                    self.conn
+                        .send(&RunnerToServer::AgentAvailability(availability))
+                        .await?;
+                }
                 frame = self.conn.recv() => match frame? {
                     // Preview 的控制 frame 交給 relay，其他照常處理
                     Some(Inbound::Frame(frame)) => {
@@ -504,16 +511,14 @@ impl Session {
                 debug!(run_id = %ack.run_id, seq = ack.seq, "收到 event_ack");
                 self.supervisor.outbox().ack(&ack.run_id, ack.seq);
             }
+            // Orbis MCP 工具呼叫的結果（§9）。
+            ServerToRunner::ToolResult(result) => self.supervisor.mcp().resolve(result),
             // Preview 的 frame 在 run() 中已經交給 relay，不會到這裡
             ServerToRunner::PreviewOpen(_)
             | ServerToRunner::PreviewWindow(_)
             | ServerToRunner::PreviewEnd(_)
             | ServerToRunner::PreviewReset(_)
             | ServerToRunner::PreviewWsClose(_) => {}
-            // 協定版本 2 的 frame：Orbis MCP 工具呼叫由 A2 實作，在那之前略過。
-            ServerToRunner::ToolResult(_) => {
-                warn!(frame = frame.type_name(), "尚未支援的 frame，略過");
-            }
         }
         Ok(())
     }

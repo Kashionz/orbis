@@ -1,0 +1,11 @@
+# Child Run 以 ask_parent 提問並阻塞，收到回答後完成。
+description: ask_parent
+turns:
+  - steps:
+      - mcp_call:
+          id: ask
+          server: orbis
+          tool: ask_parent
+          arguments: { question: 要用哪個方案？ }
+      - message: 收到回答，繼續。
+      - stop: end_turn

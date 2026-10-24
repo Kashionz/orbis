@@ -19,7 +19,7 @@
    - PowerShell、cmd、Git Bash 三種 setup 腳本
    - 休眠與喚醒後 Runner 重新連線
    - 多個 Worktree 同時跑 dev server 時 port 不衝突
-3. **真實 Agent 煙霧測試**：一個可以手動觸發或每晚定時跑的 workflow，Claude Code、Codex、Gemini、Grok 各跑一個小 Task 並回報結果。
+3. **真實 Agent 煙霧測試**：一個可以手動觸發或每晚定時跑的 workflow，Claude Code、Codex、Antigravity、Grok 各跑一個小 Task 並回報結果。
 4. **部署**：
    - `deploy/docker-compose.yml`，包含 Postgres、Server、選用的 Team Runner。
    - Team Runner 的 Docker image，Credential 用 Docker secret 傳入。

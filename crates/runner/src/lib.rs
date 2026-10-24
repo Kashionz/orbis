@@ -2,17 +2,23 @@
 //! 讓整合測試可以直接使用。
 
 pub mod agent;
+pub mod archive;
+pub mod blobs;
 pub mod config;
 pub mod connection;
 pub mod diff;
 pub mod git;
 pub mod home;
+pub mod judge;
+pub mod login;
 pub mod normalize;
+pub mod orbis_mcp;
 pub mod outbox;
 pub mod paths;
 pub mod policy;
 pub mod preview;
 pub mod process;
+pub mod rate_limit;
 pub mod repo_config;
 pub mod run;
 pub mod secrets;

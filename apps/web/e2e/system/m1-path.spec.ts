@@ -65,7 +65,7 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   const request = timeline.locator('.event-permission[data-resolved="false"]');
   await expect(request).toContainText("新增 m1.txt");
   await expect(page.getByTestId("needs-you-count")).toBeVisible();
-  await request.getByRole("button", { name: "Allow", exact: true }).click();
+  await request.getByRole("button", { name: "允許這次", exact: true }).click();
   await expect(timeline.locator('.event-permission[data-resolved="true"]')).toHaveCount(1);
   await expect(timeline).toContainText("已新增 m1.txt。");
 

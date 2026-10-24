@@ -1,0 +1,12 @@
+# Antigravity 的額度用完（沿用 Gemini API 的格式，待實機確認）：錯誤訊息含 RESOURCE_EXHAUSTED 與「Please retry in 1.2s」，沒有結構化的 data。
+description: Antigravity 格式的 rate limit
+turns:
+  - steps:
+      - rate_limit:
+          retry_after_ms: 0
+          message: "[API Error: RESOURCE_EXHAUSTED: Quota exceeded for quota metric. Please retry in 1.2s.]"
+          data: {}
+  - expect_prompt_contains: 額度已恢復
+    steps:
+      - message: 額度恢復後繼續完成。
+      - stop: end_turn

@@ -1,0 +1,13 @@
+# Feedback Loop：接不回原本的 session 時，新 session 的第一個 prompt 附上 Task 與目前的變更。
+description: Feedback Loop 以新的 session 修正
+turns:
+  - expect_prompt_contains: 原本的 session 無法恢復
+    steps:
+      - tool_call:
+          id: fix-fl
+          title: 修改 fl.txt
+          edit:
+            path: fl.txt
+            old_text: v1
+            new_text: v2
+      - stop: end_turn

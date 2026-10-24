@@ -227,7 +227,9 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
         memberId: ready.memberId,
         online: true,
         acceptingDispatches: true,
-        agents: [expect.objectContaining({ agent: "claude-code", available: true })],
+        agents: expect.arrayContaining([
+          expect.objectContaining({ agent: "claude-code", available: true }),
+        ]),
       },
     ]);
   });

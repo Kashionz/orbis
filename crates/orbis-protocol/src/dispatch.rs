@@ -27,7 +27,7 @@ pub struct DispatchOffer {
     /// Run 使用的完整分支名稱，由 Server 產生（含分支前綴、Task 標題的 slug，
     /// Child Run 另加 `--c<n>`，§6.2）。`consult` 模式的 Child Run 沒有自己的分支，為 `null`。
     pub branch: Option<String>,
-    /// Agent Profile 的 id，例如 `claude-code`、`codex`、`gemini`、`grok`。
+    /// Agent Profile 的 id，例如 `claude-code`、`codex`、`antigravity`、`grok`。
     pub agent: String,
     /// 使用的 model；`null` 表示用 Agent 的預設值。
     pub model: Option<String>,

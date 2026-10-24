@@ -1,0 +1,21 @@
+# Feedback Loop：第一個 Run 新增 fl.txt；接續的 Run（同一個 session）依 PR 的留言修正。
+description: Feedback Loop 的原 Run 與接續的修正
+turns:
+  - steps:
+      - tool_call:
+          id: write-fl
+          title: 新增 fl.txt
+          edit:
+            path: fl.txt
+            content: "v1\n"
+      - stop: end_turn
+  - expect_prompt_contains: 請修正 review 留言
+    steps:
+      - tool_call:
+          id: fix-fl
+          title: 修改 fl.txt
+          edit:
+            path: fl.txt
+            old_text: v1
+            new_text: v2
+      - stop: end_turn

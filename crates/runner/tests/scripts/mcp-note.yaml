@@ -1,0 +1,10 @@
+# 呼叫 Runner 注入的 Orbis MCP server（update_task_note），結果以 tool_call 回報。
+description: 呼叫 Orbis MCP 工具
+turns:
+  - steps:
+      - mcp_call:
+          id: note
+          server: orbis
+          tool: update_task_note
+          arguments: { note: 完成第一步 }
+      - stop: end_turn

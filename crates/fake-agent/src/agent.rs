@@ -1,23 +1,31 @@
-//! ACP v1 agent 本體：依劇本回應 `initialize`、`session/new`、`session/prompt`、`session/cancel`。
+//! ACP v1 agent 本體：依劇本回應 `initialize`、`session/new`、`session/prompt`、`session/cancel`，
+//! 以及指定 session 保存目錄（[`Options::state_dir`]）時的 `session/load`、`session/resume`。
+//! 指定認證方式（[`Options::auth_methods`]）時，`authenticate` 之前的 `session/new` 回 auth_required。
 //!
 //! - 每個 session 各自從劇本的第一個回合開始，每次 `session/prompt` 消耗一個回合。
+//! - 有保存目錄時，每個 session 的回合進度寫在 `<目錄>/<session id>.json`；程序結束後，
+//!   另一個 Fake Agent 程序可以用 `session/load`／`session/resume` 從下一個回合接續。
 //! - `session/prompt` 在背景 task 中執行，dispatch loop 不會被卡住，所以執行期間仍能收到
 //!   `session/cancel` 與權限請求的回覆。
 //! - 同一個 session 同時只能有一個進行中的 prompt；重疊時回 `invalid_request`。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, Content, ContentBlock, ContentChunk, Cost, Diff,
-    Implementation, InitializeRequest, InitializeResponse, McpServer, NewSessionRequest,
-    NewSessionResponse, PermissionOption, PermissionOptionKind, Plan, PlanEntry, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, RequestPermissionRequest, SessionId,
-    SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallContent, ToolCallLocation,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
+    AgentCapabilities, AuthMethod, AuthMethodAgent, AuthenticateRequest, AuthenticateResponse,
+    CancelNotification, Content, ContentBlock, ContentChunk, Cost, Diff, Implementation,
+    InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse, McpServer,
+    NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, Plan, PlanEntry,
+    PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
+    SessionId, SessionMode, SessionModeState, SessionNotification, SessionResumeCapabilities,
+    SessionUpdate, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCall,
+    ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{self as acp, BoxFuture, Client, ConnectionTo, Responder};
 use serde_json::json;
@@ -59,9 +67,42 @@ fn spawn_child() -> std::io::Result<u32> {
     Ok(child.id())
 }
 
+/// 執行選項。
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// session 保存目錄。指定時宣告 `loadSession` 能力並支援 `session/load`。
+    pub state_dir: Option<PathBuf>,
+    /// 有保存目錄時是否也宣告並支援 `session/resume`。
+    pub resume: bool,
+    /// 提供的 session mode（`session/new` 回報、`session/set_mode` 可以切換）；空的表示不支援 mode。
+    pub modes: Vec<String>,
+    /// 新 session 一開始的 mode，預設是 `modes` 的第一個。
+    pub initial_mode: Option<String>,
+    /// 宣告 prompt 可以帶圖片（`promptCapabilities.image`）。
+    pub image: bool,
+    /// 宣告的認證方式（`authMethods` 的 id）。非空時要先以其中一個 `authenticate`，否則
+    /// `session/new` 回 auth_required；有保存目錄時登入狀態寫在 [`AUTHENTICATED_FILE`]，
+    /// 之後的 Fake Agent 程序沿用（模擬 Agent 自己保存的認證）。
+    pub auth_methods: Vec<String>,
+}
+
+/// 有保存目錄時，記錄已經登入的檔案名稱。
+pub const AUTHENTICATED_FILE: &str = "authenticated";
+
+/// `echo_session_mode` 回報的前綴。
+pub const SESSION_MODE_PREFIX: &str = "mode: ";
+
+/// `session/load` 恢復 session 後補送的訊息（ACP 規定 load 要重播對話；Fake Agent 只送這一則）。
+pub const LOADED_SESSION_TEXT: &str = "（已載入之前的 session）";
+
 /// 以 stdio 執行 Fake Agent，直到 stdin 關閉。
 pub async fn serve_stdio(script: Script) -> Result<(), acp::Error> {
-    let agent = Arc::new(FakeAgent::new(script));
+    serve_stdio_with(script, Options::default()).await
+}
+
+/// 以 stdio 執行 Fake Agent（指定選項），直到 stdin 關閉。
+pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), acp::Error> {
+    let agent = Arc::new(FakeAgent::new(script, options));
     let result = acp::Agent
         .builder()
         .name(env!("CARGO_PKG_NAME"))
@@ -77,8 +118,72 @@ pub async fn serve_stdio(script: Script) -> Result<(), acp::Error> {
         .on_receive_request(
             {
                 let agent = agent.clone();
+                async move |request: AuthenticateRequest, responder, _cx| {
+                    responder.respond_with_result(agent.authenticate(&request))
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
                 async move |request: NewSessionRequest, responder, _cx| {
                     responder.respond_with_result(agent.new_session(request))
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |request: LoadSessionRequest, responder, cx: ConnectionTo<Client>| {
+                    match agent.restore_session(
+                        &request.session_id,
+                        &request.cwd,
+                        request.mcp_servers,
+                        request.meta,
+                        false,
+                    ) {
+                        Ok(()) => {
+                            let _ = cx.send_notification(SessionNotification::new(
+                                request.session_id.clone(),
+                                SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                    ContentBlock::from(LOADED_SESSION_TEXT.to_owned()),
+                                )),
+                            ));
+                            responder.respond(LoadSessionResponse::new())
+                        }
+                        Err(error) => responder.respond_with_error(error),
+                    }
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |request: ResumeSessionRequest, responder, _cx| match agent
+                    .restore_session(
+                        &request.session_id,
+                        &request.cwd,
+                        request.mcp_servers,
+                        request.meta,
+                        true,
+                    ) {
+                    Ok(()) => responder.respond(ResumeSessionResponse::new()),
+                    Err(error) => responder.respond_with_error(error),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |request: SetSessionModeRequest, responder, _cx| match agent
+                    .set_mode(&request.session_id, &request.mode_id.0)
+                {
+                    Ok(()) => responder.respond(SetSessionModeResponse::new()),
+                    Err(error) => responder.respond_with_error(error),
                 }
             },
             acp::on_receive_request!(),
@@ -110,13 +215,29 @@ pub async fn serve_stdio(script: Script) -> Result<(), acp::Error> {
 
 struct FakeAgent {
     script: Arc<Script>,
+    options: Options,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     next_session: AtomicU64,
+    /// 這個程序中是否已經 `authenticate`。
+    authenticated: AtomicBool,
+}
+
+/// 保存在 session 保存目錄中的進度。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedSession {
+    cwd: PathBuf,
+    next_turn: usize,
 }
 
 struct Session {
     id: SessionId,
     cwd: PathBuf,
+    /// 回合進度的保存位置（有 session 保存目錄時）。
+    state_file: Option<PathBuf>,
+    /// 建立或接續 session 時收到的 `_meta`（`echo_session_meta` 步驟回報）。
+    meta: Option<serde_json::Map<String, serde_json::Value>>,
+    /// 目前的 session mode（`echo_session_mode` 步驟回報）。
+    mode: Mutex<Option<String>>,
     mcp_servers: Vec<McpServer>,
     slot: Mutex<TurnSlot>,
     runtime: tokio::sync::Mutex<SessionRuntime>,
@@ -141,40 +262,185 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl FakeAgent {
-    fn new(script: Script) -> Self {
+    fn new(script: Script, options: Options) -> Self {
         Self {
             script: Arc::new(script),
+            options,
             sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(1),
+            authenticated: AtomicBool::new(false),
         }
     }
 
     fn initialize(&self, _request: &InitializeRequest) -> InitializeResponse {
+        let persistent = self.options.state_dir.is_some();
+        let mut sessions = SessionCapabilities::new();
+        if persistent && self.options.resume {
+            sessions = sessions.resume(SessionResumeCapabilities::new());
+        }
         // 只支援 v1；client 要的版本不同時由 client 決定要不要繼續。
         InitializeResponse::new(ProtocolVersion::V1)
-            .agent_capabilities(AgentCapabilities::new())
+            .agent_capabilities(
+                AgentCapabilities::new()
+                    .load_session(persistent)
+                    .prompt_capabilities(PromptCapabilities::new().image(self.options.image))
+                    .session_capabilities(sessions),
+            )
+            .auth_methods(
+                self.options
+                    .auth_methods
+                    .iter()
+                    .map(|id| AuthMethod::Agent(AuthMethodAgent::new(id.clone(), id.clone())))
+                    .collect(),
+            )
             .agent_info(Implementation::new(
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
             ))
     }
 
+    /// `authenticate`：只接受宣告的認證方式；有保存目錄時寫下登入狀態。
+    fn authenticate(
+        &self,
+        request: &AuthenticateRequest,
+    ) -> Result<AuthenticateResponse, acp::Error> {
+        let method = request.method_id.0.as_ref();
+        if !self.options.auth_methods.iter().any(|m| m == method) {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown auth method", "methodId": method })));
+        }
+        if let Some(dir) = &self.options.state_dir {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
+            std::fs::write(dir.join(AUTHENTICATED_FILE), method)
+                .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
+        }
+        self.authenticated.store(true, Ordering::Relaxed);
+        Ok(AuthenticateResponse::new())
+    }
+
+    /// 有宣告認證方式、卻還沒有登入時回 auth_required。
+    fn require_auth(&self) -> Result<(), acp::Error> {
+        let saved = self
+            .options
+            .state_dir
+            .as_ref()
+            .is_some_and(|d| d.join(AUTHENTICATED_FILE).is_file());
+        if self.options.auth_methods.is_empty()
+            || saved
+            || self.authenticated.load(Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        Err(acp::Error::auth_required())
+    }
+
     fn new_session(&self, request: NewSessionRequest) -> Result<NewSessionResponse, acp::Error> {
+        self.require_auth()?;
         if !request.cwd.is_absolute() {
             return Err(acp::Error::invalid_params()
                 .data(json!({ "reason": "cwd must be an absolute path", "cwd": request.cwd })));
         }
         let number = self.next_session.fetch_add(1, Ordering::Relaxed);
-        let id = SessionId::new(format!("fake-session-{number}"));
+        // 有保存目錄時，ID 要跨程序不重複。
+        let id = SessionId::new(match self.options.state_dir {
+            Some(_) => format!("fake-session-{}-{number}", std::process::id()),
+            None => format!("fake-session-{number}"),
+        });
+        let session = self.insert_session(&id, &request.cwd, request.mcp_servers, 0, request.meta);
+        session.save()?;
+        let modes = (!self.options.modes.is_empty()).then(|| {
+            SessionModeState::new(
+                lock(&session.mode).clone().unwrap_or_default(),
+                self.options
+                    .modes
+                    .iter()
+                    .map(|m| SessionMode::new(m.clone(), m.clone()))
+                    .collect(),
+            )
+        });
+        Ok(NewSessionResponse::new(id).modes(modes))
+    }
+
+    /// `session/set_mode`：只接受 `modes` 中的 mode。
+    fn set_mode(&self, id: &SessionId, mode: &str) -> Result<(), acp::Error> {
+        let Some(session) = self.session(id) else {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown session", "session_id": id })));
+        };
+        if !self.options.modes.iter().any(|m| m == mode) {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown mode", "mode": mode })));
+        }
+        *lock(&session.mode) = Some(mode.to_owned());
+        Ok(())
+    }
+
+    fn insert_session(
+        &self,
+        id: &SessionId,
+        cwd: &std::path::Path,
+        mcp_servers: Vec<McpServer>,
+        next_turn: usize,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Arc<Session> {
         let session = Arc::new(Session {
             id: id.clone(),
-            cwd: paths::normalize(&request.cwd),
-            mcp_servers: request.mcp_servers,
-            slot: Mutex::new(TurnSlot::default()),
+            cwd: paths::normalize(cwd),
+            state_file: self
+                .options
+                .state_dir
+                .as_ref()
+                .map(|dir| dir.join(format!("{}.json", id.0))),
+            meta,
+            mode: Mutex::new(
+                self.options
+                    .initial_mode
+                    .clone()
+                    .or_else(|| self.options.modes.first().cloned()),
+            ),
+            mcp_servers,
+            slot: Mutex::new(TurnSlot {
+                next_turn,
+                cancel: None,
+            }),
             runtime: tokio::sync::Mutex::new(SessionRuntime::default()),
         });
-        lock(&self.sessions).insert(id.0.to_string(), session);
-        Ok(NewSessionResponse::new(id))
+        lock(&self.sessions).insert(id.0.to_string(), session.clone());
+        session
+    }
+
+    /// `session/load`、`session/resume`：從保存目錄讀出進度，從下一個回合接續。
+    fn restore_session(
+        &self,
+        id: &SessionId,
+        cwd: &std::path::Path,
+        mcp_servers: Vec<McpServer>,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
+        resume: bool,
+    ) -> Result<(), acp::Error> {
+        self.require_auth()?;
+        let supported = self.options.state_dir.is_some() && (!resume || self.options.resume);
+        let Some(dir) = self.options.state_dir.as_ref().filter(|_| supported) else {
+            return Err(acp::Error::method_not_found());
+        };
+        let file = dir.join(format!("{}.json", id.0));
+        let saved: SavedSession = std::fs::read(&file)
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .ok_or_else(|| {
+                acp::Error::invalid_params()
+                    .data(json!({ "reason": "unknown session", "session_id": id }))
+            })?;
+        if paths::normalize(cwd) != paths::normalize(&saved.cwd) {
+            return Err(acp::Error::invalid_params().data(json!({
+                "reason": "cwd does not match the saved session",
+                "cwd": cwd,
+                "saved": saved.cwd,
+            })));
+        }
+        self.insert_session(id, cwd, mcp_servers, saved.next_turn, meta);
+        Ok(())
     }
 
     fn session(&self, id: &SessionId) -> Option<Arc<Session>> {
@@ -238,7 +504,29 @@ impl Session {
         slot.next_turn += 1;
         let (sender, receiver) = watch::channel(false);
         slot.cancel = Some(sender);
+        drop(slot);
+        self.save()?;
         Ok((index, receiver))
+    }
+
+    /// 把回合進度寫進保存目錄（有指定時）。
+    fn save(&self) -> Result<(), acp::Error> {
+        let Some(file) = &self.state_file else {
+            return Ok(());
+        };
+        let saved = SavedSession {
+            cwd: self.cwd.clone(),
+            next_turn: lock(&self.slot).next_turn,
+        };
+        let write = || -> std::io::Result<()> {
+            if let Some(dir) = file.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(file, serde_json::to_vec(&saved)?)
+        };
+        write().map_err(|error| {
+            acp::Error::internal_error().data(json!({ "reason": error.to_string() }))
+        })
     }
 
     fn end_turn(&self) {
@@ -273,6 +561,7 @@ async fn run_turn(
     let mut runtime = session.runtime.lock().await;
     let mut runner = TurnRunner {
         cx,
+        prompt: &request.prompt,
         session,
         runtime: &mut runtime,
         cancel,
@@ -306,6 +595,8 @@ type StepResult = Result<Flow, acp::Error>;
 
 struct TurnRunner<'a> {
     cx: ConnectionTo<Client>,
+    /// 這個回合收到的 prompt（`echo_prompt` 步驟回報）。
+    prompt: &'a [ContentBlock],
     session: &'a Session,
     runtime: &'a mut SessionRuntime,
     cancel: watch::Receiver<bool>,
@@ -394,12 +685,14 @@ impl TurnRunner<'_> {
                 self.notify(SessionUpdate::Plan(Plan::new(entries)))?;
             }
             Step::Usage(usage) => {
-                let update = UsageUpdate::new(usage.used, usage.size).cost(
-                    usage
-                        .cost
-                        .as_ref()
-                        .map(|cost| Cost::new(cost.amount, cost.currency.clone())),
-                );
+                let update = UsageUpdate::new(usage.used, usage.size)
+                    .cost(
+                        usage
+                            .cost
+                            .as_ref()
+                            .map(|cost| Cost::new(cost.amount, cost.currency.clone())),
+                    )
+                    .meta(usage.meta.clone());
                 self.notify(SessionUpdate::UsageUpdate(update))?;
             }
             Step::McpCall(call) => return self.run_mcp_call(call).await,
@@ -408,6 +701,35 @@ impl TurnRunner<'_> {
                     () = tokio::time::sleep(std::time::Duration::from_millis(*ms)) => {}
                     () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
                 }
+            }
+            Step::EchoPrompt => {
+                let lines: Vec<String> = self
+                    .prompt
+                    .iter()
+                    .map(|block| match block {
+                        ContentBlock::Text(t) => format!("text:{}", t.text),
+                        ContentBlock::Image(i) => format!("image:{}:{}", i.mime_type, i.data),
+                        ContentBlock::ResourceLink(l) => format!("resource_link:{}", l.uri),
+                        _ => "other".to_owned(),
+                    })
+                    .collect();
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(lines.join("\n")),
+                )))?;
+            }
+            Step::EchoSessionMode => {
+                let mode = lock(&self.session.mode)
+                    .clone()
+                    .unwrap_or_else(|| "none".to_owned());
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(format!("{SESSION_MODE_PREFIX}{mode}")),
+                )))?;
+            }
+            Step::EchoSessionMeta => {
+                let meta = serde_json::to_string(&self.session.meta).unwrap_or_default();
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(meta),
+                )))?;
             }
             Step::SpawnChild => {
                 let pid = spawn_child().map_err(|error| {
@@ -433,10 +755,13 @@ impl TurnRunner<'_> {
                         rate_limit.retry_after_ms
                     )
                 });
-                return Err(acp::Error::new(rate_limit.code, message).data(json!({
-                    "type": RATE_LIMIT_ERROR_TYPE,
-                    "retry_after_ms": rate_limit.retry_after_ms,
-                })));
+                let data = rate_limit.data.clone().unwrap_or_else(|| {
+                    json!({
+                        "type": RATE_LIMIT_ERROR_TYPE,
+                        "retry_after_ms": rate_limit.retry_after_ms,
+                    })
+                });
+                return Err(acp::Error::new(rate_limit.code, message).data(data));
             }
             Step::Stop(reason) => return Ok(Flow::Stop(*reason)),
         }
