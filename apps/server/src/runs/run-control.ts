@@ -4,6 +4,8 @@
 //   commit 後才送出；Runner 回報 run_control_result 時記下 outcome。
 // - outcome 還是 null 的指令，在 Runner 重新連上時補送（Server 重新啟動後也一樣）。期間改派時，
 //   改用新的 Dispatch ID 送出並更新紀錄。
+// - `archive` 是例外（§6.2）：在 Run 結束後才送，對象是 Run 最後一個 completed 的 Dispatch 與它的 Runner，
+//   不會改派；Runner 離線時同樣留著等重新連線補送。
 
 import type {
   RunControl,
@@ -11,7 +13,7 @@ import type {
   RunControlResult,
   ServerToRunner,
 } from "@orbis/protocol";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
@@ -87,6 +89,55 @@ export class RunControlService {
     return control.controlId;
   }
 
+  /**
+   * Run 結束後對它最後的 Dispatch 下指令（目前只有 `archive`，§6.2）。Run 還在執行、或從來沒有被
+   * Runner 執行過時丟出 409。同一個 Run 已有同樣的指令還沒有結果時不重送，回傳原本的 control_id。
+   */
+  async sendAfterRunEnded(
+    executor: Executor,
+    runId: string,
+    action: Extract<RunControlAction, { action: "archive" }>,
+  ): Promise<string> {
+    const dispatch = await currentDispatch(executor, runId);
+    if (dispatch?.status !== "completed") {
+      throw conflict("Run 還沒有結束，或沒有執行過，無法封存");
+    }
+    const [pending] = await executor
+      .select({ controlId: runControls.controlId })
+      .from(runControls)
+      .where(
+        and(
+          eq(runControls.runId, runId),
+          eq(runControls.dispatchId, dispatch.id),
+          eq(runControls.action, action.action),
+          isNull(runControls.resolvedAt),
+        ),
+      );
+    if (pending) return pending.controlId;
+    const [control] = await executor
+      .insert(runControls)
+      .values({
+        controlId: uuidv7(),
+        runId,
+        dispatchId: dispatch.id,
+        action: action.action,
+        payload: action,
+        requestedByMemberId: null,
+        createdAt: this.clock.now(),
+      })
+      .returning();
+    if (!control) throw new Error("建立 RunControl 失敗");
+    await this.deliver(control, dispatch.runnerId);
+    return control.controlId;
+  }
+
+  /** Task 刪除時直接送出、沒有寫進 run_controls 的指令（ArchiveService）：收到結果時只記 log。 */
+  expectUnrecordedResult(controlId: string): void {
+    this.unrecorded.add(controlId);
+  }
+
+  private readonly unrecorded = new Set<string>();
+
   /** 還沒收到結果的指令（測試與除錯用）。 */
   pendingControls(): Promise<RunControlRow[]> {
     return this.db
@@ -129,6 +180,7 @@ export class RunControlService {
    * 指令記錄的 Dispatch 已被取代時，改成目前的 Dispatch。
    * `onlyRunId`：Runner 剛接受改派的 Dispatch 時，只補送這個 Run 中屬於舊 Dispatch 的指令
    * （連線沒有中斷，已用目前 Dispatch 送出的指令不必重送）。
+   * Run 結束後的 `archive` 也在這裡補送：它掛在已 completed 的 Dispatch 上，不改派。
    */
   async resend(runnerId: string, onlyRunId?: string): Promise<void> {
     const pending = await this.db
@@ -139,7 +191,14 @@ export class RunControlService {
         and(
           isNull(runControls.resolvedAt),
           eq(dispatches.runnerId, runnerId),
-          eq(dispatches.status, "accepted"),
+          or(
+            eq(dispatches.status, "accepted"),
+            and(
+              eq(dispatches.status, "completed"),
+              eq(runControls.action, "archive"),
+              eq(runControls.dispatchId, dispatches.id),
+            ),
+          ),
           onlyRunId ? eq(runControls.runId, onlyRunId) : undefined,
         ),
       )
@@ -190,6 +249,13 @@ export class RunControlService {
       )
       .returning();
     if (!control) {
+      if (this.unrecorded.delete(result.control_id)) {
+        this.logger.info(
+          { runnerId, runId: result.run_id, outcome: result.outcome },
+          "已刪除的 Task 的 Worktree 封存結果",
+        );
+        return;
+      }
       this.logger.warn(
         { runnerId, controlId: result.control_id },
         "收到不明、已處理過，或不屬於這台 Runner 目前 Dispatch 的 RunControl 結果，忽略",

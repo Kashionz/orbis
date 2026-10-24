@@ -1,0 +1,116 @@
+# Orbis 的正式部署（ARCHITECTURE §16）：Postgres、Server（API、Runner WebSocket、Web 的靜態檔），
+# 以及選用的 Team Runner（compose profile `team-runner`）。操作步驟見 docs/INSTALL.md。
+#
+#   cd deploy
+#   cp .env.example .env            # 填入 OAuth App、GitHub App、公開網址等設定
+#   docker compose up -d --build    # 只有 Postgres 與 Server
+#   docker compose --profile team-runner up -d --build   # 加上 Team Runner
+#
+# - 設定檔是 deploy/.env：compose 以它做變數代換，Server 容器也以 env_file 讀它。
+# - migration 在 Server 啟動時自動執行（apps/server/src/main.ts），不需要另外的一次性 service。
+# - Team Runner 的 Credential 以 Docker secret 傳入（deploy/secrets/，見該目錄的 README），不放在環境變數或 image 中。
+# - 這個檔案中的環境變數名稱必須和 apps/server/src/config.ts、crates/orbis-protocol/src/names.rs 一致。
+
+name: ${ORBIS_DEPLOY_PROJECT:-orbis}
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ORBIS_DB_USER:-orbis}
+      POSTGRES_PASSWORD: ${ORBIS_DB_PASSWORD:?請在 deploy/.env 設定 ORBIS_DB_PASSWORD}
+      POSTGRES_DB: ${ORBIS_DB_NAME:-orbis}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # 不對外開 port：只有同一個 compose 網路中的 Server 連得到。備份用 `docker compose exec postgres pg_dump`。
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORBIS_DB_USER:-orbis} -d ${ORBIS_DB_NAME:-orbis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  server:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    image: ${ORBIS_SERVER_IMAGE:-orbis-server:local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # 以下覆寫 .env 中同名的變數：容器內固定連 compose 網路中的 Postgres、固定的 port 與目錄。
+      ORBIS_DATABASE_URL: postgres://${ORBIS_DB_USER:-orbis}:${ORBIS_DB_PASSWORD}@postgres:5432/${ORBIS_DB_NAME:-orbis}
+      ORBIS_SERVER_PORT: "4000"
+      ORBIS_BLOB_DIR: /data/blobs
+      ORBIS_WEB_DIR: /app/apps/web/dist
+      # Web 與 API 在同一個 origin，Runner 連的網址就是 Web 的網址
+      ORBIS_API_ORIGIN: ${ORBIS_API_ORIGIN:-${ORBIS_PUBLIC_URL}}
+      NODE_ENV: production
+    ports:
+      # 預設只綁 127.0.0.1，由反向代理（Caddy、nginx 等）提供 HTTPS 與公開網址；要直接對外時改 ORBIS_DEPLOY_BIND=0.0.0.0
+      - "${ORBIS_DEPLOY_BIND:-127.0.0.1}:${ORBIS_DEPLOY_PORT:-4000}:4000"
+    volumes:
+      - blobs:/data/blobs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  team-runner:
+    profiles: ["team-runner"]
+    build:
+      context: ..
+      dockerfile: crates/runner/Dockerfile
+    image: ${ORBIS_RUNNER_IMAGE:-orbis-runner:local}
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      # 預設走 compose 網路直接連 Server；Server 在別台機器時改成它的公開網址
+      ORBIS_SERVER_URL: ${ORBIS_TEAM_RUNNER_SERVER_URL:-http://server:4000}
+      ORBIS_LOG: ${ORBIS_TEAM_RUNNER_LOG:-info}
+      # Runner 自動 commit 時的作者（沒有在 runner.toml 的 volume 中設定 git 時使用）
+      ORBIS_GIT_USER_NAME: ${ORBIS_TEAM_RUNNER_GIT_USER_NAME:-Orbis Team Runner}
+      ORBIS_GIT_USER_EMAIL: ${ORBIS_TEAM_RUNNER_GIT_USER_EMAIL:-orbis-team-runner@localhost}
+    command: ["--name", "${ORBIS_TEAM_RUNNER_NAME:-team-runner}"]
+    secrets:
+      - pairing_token
+      - github_token
+      - agent_credentials
+      - codex_auth_json
+    volumes:
+      # Runner 的本機目錄：Runner token、狀態、Worktree（~/.orbis/wt）
+      - runner-home:/home/orbis/.orbis
+      # 給人編輯的設定檔（Repo 對應、Agent 設定）；改完 `docker compose restart team-runner`
+      - ./team-runner/runner.toml:/home/orbis/.orbis/runner.toml:ro
+    # Worktree 中的 setup／verify 指令可能很吃資源；依主機調整
+    shm_size: 256m
+
+# 每個 secret 都是一個檔案，內容見 deploy/secrets/README.md。不用的留空檔即可（檔案必須存在）。
+secrets:
+  pairing_token:
+    file: ./secrets/pairing_token
+  github_token:
+    file: ./secrets/github_token
+  agent_credentials:
+    file: ./secrets/agent_credentials
+  codex_auth_json:
+    file: ./secrets/codex_auth_json
+
+volumes:
+  pgdata:
+  blobs:
+  runner-home:

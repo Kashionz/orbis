@@ -34,7 +34,7 @@ async function main(): Promise<void> {
     logger.warn("未設定開發用 Pairing token，Runner 無法完成 Pairing");
   }
 
-  const database = createDatabase(config.databaseUrl);
+  const database = createDatabase(config.databaseUrl, { logger });
   await runMigrations(database.db);
   logger.info("資料庫 migration 完成");
 

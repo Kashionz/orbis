@@ -12,6 +12,7 @@
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 完整設計（唯一依據） |
 | [docs/adr/](docs/adr/) | 重大決策與理由 |
 | [docs/PLAN.md](docs/PLAN.md) | Phase 1 分軌時程與里程碑 |
+| [docs/INSTALL.md](docs/INSTALL.md) | 用 Docker Compose 部署 Server 與 Team Runner、GitHub App 與 OAuth App、備份與升級 |
 | [docs/prompts/](docs/prompts/) | 各階段給 Claude Code 的開發 prompt |
 | [CLAUDE.md](CLAUDE.md) | 給 Agent 的開發規範 |
 

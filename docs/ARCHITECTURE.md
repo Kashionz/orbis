@@ -252,6 +252,8 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - `archive` hook 失敗時擋下刪除。
   - 父 Run 被中止或封存時，連同 Child Run 一起處理。
 - **封存**（RunControl `archive`）：Server 在 Run 結束後送出，這時 Run 已不在 Runner 的記憶體中，Runner 依本機記下的 Worktree 紀錄（路徑、Repo、分支、base commit、讀設定檔的 commit）重建資訊後刪除。
+  - **Server 送出的時機**：Task 轉 Done（PR merge、Issue 關閉）時，對該 Task 所有已 `completed` 的主 Run（人派工的 Run 與 Feedback Loop 接續的 Run，沿用同一個 Worktree）各送一次；Task 刪除時對在線上的 Runner 直接送一次（Run 隨 Task 刪除，不保留紀錄）。對象是 Run 最後一個 completed 的 Dispatch 與它的 Runner，不會改派；Runner 離線時留在 `run_controls`，重新連上後補送。
+  - **不封存**：失敗或中止的 Run（包括 Review Gate 結束（沒有變更）後以 `cancel` 結束的 Run），Worktree 與分支保留給人檢查；重新派工用新的 Worktree。UI 上手動封存與保留期限留到 Phase 2。
   - Run 還在執行時拒絕（`invalid_state`），要先取消；還有執行中的 Run 沿用同一個 Worktree（Feedback Loop）時也拒絕。
   - `archive` hook 只用紀錄中那個 commit 的設定檔，而且只在這份設定檔已「永遠允許」時執行：Run 期間的「允許這次」已經失效，Run 結束後也沒有人可以問。沒有核准時回 `rejected`（`failed`），Worktree 不刪。沒有 hook 時直接刪。
   - `branch` 模式的 Child Run 一起刪；`consult` 模式的 Child Run 沒有自己的 Worktree。Worktree 已經不在時視為完成，重送的 `archive` 不會失敗。
@@ -470,7 +472,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 - **GitHub App**：
   - 讀寫 Issues、接收 webhook（issues、pull_request、pull_request_review、check_suite、check_run）。
-  - Team Runner push 時使用 installation token。
+  - Team Runner push 時使用 installation token：**Phase 1 尚未實作**（`dispatch_offer` 沒有帶 token 的欄位）。Phase 1 的 Team Runner 以 Docker secret 給一個 GitHub token（fine-grained PAT 或機器帳號，只有 Contents 寫入權限），寫進容器 tmpfs 的 git credential store；installation token 的交換是 Phase 2 的項目。
 - **Local Runner push**：使用 Member 自己的 git 憑證。
 - **Issues 雙向同步**：
   - 同步欄位：title、body（對應 Task 描述）、state、assignee、labels。衝突時以最後寫入者為準。
@@ -640,7 +642,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 ## 16. 部署與發布
 
-- **Server**：用 Docker Compose（Postgres 加 Server）自架，Team Runner 也加在同一份 compose 檔中。託管部署的文件（Neon 搭配 Fly.io 或 Railway 等）留到 Phase 2。
+- **Server**：用 Docker Compose（Postgres 加 Server）自架，Team Runner 也加在同一份 compose 檔中（`deploy/docker-compose.yml`，操作見 [INSTALL.md](INSTALL.md)）。託管部署的文件（Neon 搭配 Fly.io 或 Railway 等）留到 Phase 2。
+  - **Web 由 Server 提供**：正式部署時 Server 以 `WEB_DIR` 設定提供 `vite build` 的輸出（目錄中的檔案照常回應，其他不是 `/api` 的路徑回 `index.html`），Web 與 API 在同一個 origin，`API_ORIGIN` 等於 `PUBLIC_URL`。開發時 Web 仍由 Vite 提供並 proxy `/api`。
+  - **image**：`apps/server/Dockerfile`（Node 24，以 tsx 執行 Server，同時建置 Web）與 `crates/runner/Dockerfile`（Rust 編譯 orbis-runner，執行層是 Node 24 加 git，讓 Runner 能安裝 ACP adapter）。Phase 1 在部署機自己 `docker compose build`；CI 只有 Windows 與 macOS runner，建不了 Linux image，發佈到 registry（GHCR）留到 Phase 2。
+  - **migration**：Server 啟動時執行（只有一個 Server 實例），不另開一次性 service。
+  - **Postgres 連線中斷**：`pg.Pool` 掛有 `error` listener，資料庫重新啟動或閒置連線被中斷時只記 log 並重新連線，Server 不會 crash。
+  - **設定**：`deploy/.env`（Postgres 密碼、公開網址、OAuth App、GitHub App）；compose 以它做變數代換，Server 容器以 `env_file` 讀它。
 - **Desktop**：
   - 用 electron-builder 打包，electron-updater 從 **public** GitHub Releases 自動更新（repo 維持 public）。push tag `v<版本>` 時由 workflow 在 Windows、macOS 建置並建立成 **draft** Release，人工 publish 後 Desktop 才會抓到；tag 必須和 `apps/desktop/package.json` 的版本一致。安裝與發布步驟見 [DESKTOP.md](DESKTOP.md)。
   - **Windows**：NSIS one-click、per-user 安裝。自動下載更新，下載完成後詢問「立即重新啟動並更新」或「稍後」；稍後就在結束 App 時安裝。安裝前先停止 Runner sidecar（還有 Run 在跑時再確認一次）。Phase 1 不做程式碼簽章，SmartScreen 會警告。
@@ -664,7 +671,10 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - Server 端也會撤銷：Pairing 時記下取得 Pairing token 的 session。登出或清除過期 session 時，Server 會撤銷由這個 session 配對的 Local Runner。所以 Desktop 當掉、或 session 自然過期時，Runner 也不會一直保持配對。
       - 撤銷時立刻斷線，Runner 上進行中的 Run 回到佇列；這個 session 取得、還沒使用的 Pairing token 也一併失效。
       - 過期的 session 每小時清除一次。
-- **Team Runner**：以 Docker image 發布。
+- **Team Runner**：以 Docker image 發布，在 compose 中是 profile `team-runner`。
+  - **Credential 一律以 Docker secret 傳入**（`deploy/secrets/`：Pairing token、GitHub token、Agent 的 Credential、Codex 的 auth.json），由容器的 entrypoint 讀進 Runner 程序的環境變數（Agent 子程序繼承）或 tmpfs，不放在環境變數設定、compose 檔或 image 中（ADR-0007）。
+  - Runner 的本機目錄（Runner token、Worktree）在 volume 中；`runner.toml` 以唯讀方式掛入。以非 root 使用者執行。
+  - Phase 1 不支援需要瀏覽器登入的 Antigravity 與要自行安裝 CLI 的 Grok Build。
 - **版本相容**：各元件不一定同時更新，不相容時 UI 明說要更新哪一個，不靜默失敗。
   - 三種版本號：Runner↔Server 的**協定版本**（`crates/orbis-protocol` 的 `PROTOCOL_VERSION`）、Server↔Web 與 Desktop↔Server 共用的 **API 版本**（`packages/api-contract` 的 `API_VERSION`，不相容的 REST／WebSocket 變更才遞增），以及各套件自己的版本字串（只供顯示）。Server 的 `GET /api/health` 回報 `versions { server, api, protocol }`；沒有這個欄位的 Server 比 Phase 1 發布更早，一律視為過舊。
   - **Runner↔Server**：Hello 的協定版本不同時 Server 回 `hello_rejected { reason: version_mismatch }`，訊息指出要更新哪一邊（Runner 較舊→更新 Runner，由 Desktop 代管時更新 Desktop；Runner 較新→更新 Server）。Runner 印出訊息後以結束碼 76 結束，不重試。

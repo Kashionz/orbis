@@ -1,6 +1,7 @@
 // Server 設定，全部從環境變數讀取。變數名稱一律用 envVar() 組出來。
 // 注意 NAMES.env.port 是注入 Worktree 的 Preview port，Server 不能用它，所以 Server 用 SERVER_PORT。
 
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { envVar } from "@orbis/api-contract";
 import { z } from "zod";
@@ -39,6 +40,11 @@ export interface Config {
    * `<run-id>.<Preview 網域>`。未設定時不提供 Preview 網址。
    */
   previewDomain: string | null;
+  /**
+   * Web 的靜態檔目錄（`vite build` 的輸出，ARCHITECTURE §16）。有設定時 Server 在同一個 origin 提供 Web：
+   * 目錄中的檔案照常回應，其他不是 `/api` 的路徑回 `index.html`（SPA）。未設定時只提供 API（開發時 Web 由 Vite 提供）。
+   */
+  webDir: string | null;
   logLevel: string;
   /** 以易讀格式輸出 log（開發用）。 */
   prettyLogs: boolean;
@@ -84,6 +90,7 @@ export const CONFIG_ENV = {
   runnerHeartbeatIntervalMs: envVar("RUNNER_HEARTBEAT_INTERVAL_MS"),
   blobDir: envVar("BLOB_DIR"),
   previewDomain: envVar("PREVIEW_DOMAIN"),
+  webDir: envVar("WEB_DIR"),
   logLevel: envVar("LOG_LEVEL"),
   logPretty: envVar("LOG_PRETTY"),
 } as const;
@@ -125,6 +132,7 @@ const EnvSchema = z.object({
     const problem = value === undefined ? null : previewDomainProblem(value);
     if (problem) ctx.addIssue({ code: "custom", message: problem });
   }),
+  webDir: optionalString,
   logLevel: optionalString.pipe(z.enum(LOG_LEVELS).default("info")),
   logPretty: optionalString.pipe(z.enum(["0", "1"]).optional()),
 } satisfies Record<EnvKey, z.ZodType>);
@@ -155,6 +163,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     runnerHeartbeatIntervalMs: e.runnerHeartbeatIntervalMs,
     blobDir: e.blobDir ?? DEFAULT_BLOB_DIR,
     previewDomain: e.previewDomain ?? null,
+    webDir: e.webDir ? path.resolve(e.webDir) : null,
     logLevel: e.logLevel,
     prettyLogs: e.logPretty === undefined ? env.NODE_ENV !== "production" : e.logPretty === "1",
   };

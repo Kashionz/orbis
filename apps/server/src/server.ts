@@ -25,7 +25,7 @@ export interface ServerDeps {
     | "devPairingToken"
     | "runnerHeartbeatIntervalMs"
   > &
-    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain">>;
+    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain" | "webDir">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
