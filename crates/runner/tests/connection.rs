@@ -234,9 +234,10 @@ async fn missing_server_names_the_environment_variable() {
     let mut runner = spawn_runner(opts);
     let status = runner.wait_exit().await;
     assert!(!status.success());
+    // 附上結束碼：Windows CI 曾偶發 stderr 是空的（例如程序在初始化 DLL 時就失敗）。
     assert!(
         runner.stderr().contains(&names::ENV_SERVER_URL.to_owned()),
-        "{}",
+        "結束碼 {status:?}；stderr：\n{}",
         runner.stderr()
     );
 }

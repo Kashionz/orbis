@@ -480,6 +480,22 @@ pub struct RunnerProcess {
     stderr_closed: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
+/// 測試結束時連同子孫一起結束 Runner。只結束 Runner 本身（`kill_on_drop`）時，Runner 剛以暫停狀態
+/// 建立、還沒放進 Job Object 的子程序（例如連上 Server 後馬上開始的 Agent 探測）會留下來，
+/// Windows 上還會佔住 Fake Agent 的執行檔，之後的 `cargo build` 無法覆寫（CI 實際發生過）。
+impl Drop for RunnerProcess {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.child.id() {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
 impl RunnerProcess {
     pub fn stderr(&self) -> String {
         self.stderr.lock().unwrap().clone()
@@ -570,11 +586,15 @@ pub fn spawn_runner(opts: RunnerOptions<'_>) -> RunnerProcess {
     let (closed_tx, closed) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         use std::io::BufRead;
-        for line in std::io::BufReader::new(reader).lines() {
-            let Ok(line) = line else { break };
-            let mut s = sink.lock().unwrap();
-            s.push_str(&line);
-            s.push('\n');
+        // 以位元組讀、lossy 解碼：遇到不是 UTF-8 的輸出時不能提早停止（之後的行會讀不到，
+        // 卻照樣通知已讀完）。
+        let mut reader = std::io::BufReader::new(reader);
+        let mut line = Vec::new();
+        while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            sink.lock()
+                .unwrap()
+                .push_str(&String::from_utf8_lossy(&line));
+            line.clear();
         }
         let _ = closed_tx.send(());
     });
