@@ -14,6 +14,9 @@ use sha2::{Digest, Sha256};
 const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 /// 連線逾時（下載本身不設上限，大檔案在慢速網路上需要時間）。
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// 網路中斷時最多下載幾次。
+const DOWNLOAD_ATTEMPTS: u32 = 3;
+const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// 一個平台的發佈版本。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,11 +127,33 @@ async fn install_into(
 }
 
 /// 下載到 `file`，同時計算 sha256；和 `expected` 不同時刪除檔案並回傳錯誤。
+/// 網路中斷時重試（實機上遇過 CDN 在傳輸中途重設連線）；sha256 不符不重試。
 async fn download(url: &str, file: &Path, expected: &str) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
         .context("無法建立 HTTP client")?;
+    let mut attempt = 1;
+    let actual = loop {
+        match download_once(&client, url, file).await {
+            Ok(actual) => break actual,
+            Err(error) if attempt < DOWNLOAD_ATTEMPTS => {
+                tracing::warn!(url, attempt, "下載失敗，稍後重試：{error:#}");
+                tokio::time::sleep(RETRY_DELAY).await;
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    if !actual.eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_file(file);
+        bail!("{url} 的 sha256 不符（預期 {expected}，實際 {actual}），不安裝");
+    }
+    Ok(())
+}
+
+/// 下載一次，回傳內容的 sha256（小寫十六進位）。
+async fn download_once(client: &reqwest::Client, url: &str, file: &Path) -> anyhow::Result<String> {
     let mut response = client
         .get(url)
         .send()
@@ -154,13 +179,7 @@ async fn download(url: &str, file: &Path, expected: &str) -> anyhow::Result<()> 
             .with_context(|| format!("無法寫入 {}", file.display()))?;
     }
     out.flush()?;
-    drop(out);
-    let actual = format!("{:x}", hasher.finalize());
-    if !actual.eq_ignore_ascii_case(expected) {
-        let _ = std::fs::remove_file(file);
-        bail!("{url} 的 sha256 不符（預期 {expected}，實際 {actual}），不安裝");
-    }
-    Ok(())
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// 解開 zip。`zip` 只寫入封裝內的相對路徑（`..` 與絕對路徑會被拒絕）。
@@ -215,13 +234,21 @@ mod tests {
 
     /// 以 HTTP 回應固定內容的本機 server，回傳網址與收到的請求數。
     async fn serve(body: Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        serve_flaky(body, 0).await
+    }
+
+    /// 同 [`serve`]，但前 `broken` 個請求只送一半的內容就關閉連線（模擬傳輸中途被重設）。
+    async fn serve_flaky(
+        body: Vec<u8>,
+        broken: usize,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/agy.zip", listener.local_addr().unwrap());
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = hits.clone();
         tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
-                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let mut request = [0u8; 4096];
                 let _ = socket.read(&mut request).await;
                 let header = format!(
@@ -229,11 +256,28 @@ mod tests {
                     body.len()
                 );
                 let _ = socket.write_all(header.as_bytes()).await;
-                let _ = socket.write_all(&body).await;
+                let sent = if n < broken {
+                    &body[..body.len() / 2]
+                } else {
+                    &body[..]
+                };
+                let _ = socket.write_all(sent).await;
                 let _ = socket.shutdown().await;
             }
         });
         (url, hits)
+    }
+
+    #[tokio::test]
+    async fn 傳輸中途中斷時重試() {
+        let zip = zip_with("bin/agent.exe", b"agent");
+        let (url, hits) = serve_flaky(zip.clone(), 1).await;
+        let build = build(url, sha256_hex(&zip));
+        let agents = tempfile::tempdir().unwrap();
+        ensure_installed(agents.path(), "agy", "1.0.0", &build)
+            .await
+            .unwrap();
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     fn build(url: String, sha256: String) -> ArchiveBuild {

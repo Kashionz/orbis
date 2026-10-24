@@ -317,7 +317,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 |---|---|---|
 | Claude Code | `@agentclientprotocol/claude-agent-acp` adapter | 版本鎖定（目前 0.94.0），由 Runner 以 npm 安裝在狀態目錄的 `agents/`，以 `node` 直接啟動；plan mode 與 bypassPermissions 有已知 bug，建立 session 後一律切回 `default` 模式；預設不載入使用者全域設定（§8） |
 | Codex | `@agentclientprotocol/codex-acp` adapter（內附相容的 `@openai/codex`） | 版本鎖定（目前 2.2.2），由 Runner 代管安裝、以 `node` 啟動；session 一律用 `read-only` 模式（修改檔案與連網先問），Codex 在自己沙盒中執行的唯讀指令不經過 Runner；`CODEX_PATH` 含空白時會失敗，Runner 只在內附執行檔路徑過長時才設定；需要先 `codex login` |
-| Antigravity | Google 官方的 `agy_acp_server`（ACP Registry 的 `antigravity-acp`） | 只以 binary 發佈：Runner 從 `dl.google.com` 下載鎖定版本（目前 1.4.3）的 zip，比對寫死的 sha256，解到狀態目錄的 `agents/` 後直接啟動；不使用第三方轉接程式。建立 session 後切到 `default` 模式（沒有就不啟動）；沒有 plan 模式。不沿用 agy CLI 的登入，第一次要執行 `orbis-runner login antigravity`（見下方）。取代 2026-06-18 停止個人方案的 Gemini CLI |
+| Antigravity | Google 官方的 `agy_acp_server`（ACP Registry 的 `antigravity-acp`） | 只以 binary 發佈：Runner 從 `dl.google.com` 下載鎖定版本（目前 1.4.3）的 zip，比對寫死的 sha256（網路中斷時最多重試 3 次，sha256 不符不重試），解到狀態目錄的 `agents/` 後直接啟動；不使用第三方轉接程式。建立 session 後切到 `default` 模式（沒有就不啟動）；沒有 plan 模式。不沿用 agy CLI 的登入，第一次要執行 `orbis-runner login antigravity`（見下方）。取代 2026-06-18 停止個人方案的 Gemini CLI |
 | Grok Build | 原生 `grok agent stdio --no-leader` | 使用者自己安裝；偵測版本，低於測過的最低版本（目前 1.0.52）時回報無法使用；不共用 leader 程序；beta；需要 SuperGrok 系列訂閱 |
 
   registry 中其他支援 ACP 的 Agent 列為「實驗性」。
@@ -326,7 +326,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - Codex：ACP 連線、session 建立與錯誤回報已確認。完整 Task 沒有跑完，原因是使用者的 `~/.codex/config.toml` 指定了 ChatGPT 帳號不支援的模型。
   - Gemini CLI（已由 Antigravity 取代）：ACP 連線與錯誤回報已確認，沒有 API key 時以 `agent_start_failed` 讓 Run 轉為 `failed`。
   - Delegation：Claude Code 經 Orbis MCP `delegate` 給 Codex（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。
-  - Antigravity：還沒有實機測試。只在 Windows 確認過官方 binary 的 sha256、Google LLC 簽章與 `initialize`（能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse）。
+  - Antigravity：還沒有實機測試（需要登入）。已在 Windows 以 `login --method <不存在的方式>` 確認 Runner 能下載官方 binary、比對 sha256、啟動並完成 `initialize`，以及 Google LLC 簽章（能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse）。
 - **已知落差**：
   - Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。改由 Server／UI 在 diff 為空時不做 push（[#73](https://github.com/Kashionz/orbis/issues/73)）。
   - Antigravity 的 `initialize` 沒有宣告 stdio MCP，Orbis MCP bridge（stdio）可能注入不了，這時不能 `delegate`、也不能當判定用的 Child Run。待實機確認；不支援時另開 Issue，讓 hub 提供本機 http 端點。
