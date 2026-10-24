@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envVar } from "@orbis/api-contract/names";
+import { type ProcessEntry, processTree } from "@orbis/server/e2e";
 
 const webDir = fileURLToPath(new URL("../..", import.meta.url));
 const serverDir = fileURLToPath(new URL("../../../server", import.meta.url));
@@ -59,46 +60,6 @@ function logTo(name: string): WriteStream {
   return createWriteStream(join(LOG_DIR, name));
 }
 
-/** 某個程序的所有子孫程序。 */
-export function descendants(rootPid: number): number[] {
-  const table =
-    process.platform === "win32"
-      ? execFileSync(
-          "powershell",
-          [
-            "-NoProfile",
-            "-Command",
-            'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
-          ],
-          { encoding: "utf8" },
-        )
-      : execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" });
-  const children = new Map<number, number[]>();
-  for (const line of table.split(/\r?\n/)) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-    if (!pid || ppid === undefined) continue;
-    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-  }
-  const found: number[] = [];
-  const queue = [rootPid];
-  while (queue.length > 0) {
-    for (const child of children.get(queue.shift() as number) ?? []) {
-      found.push(child);
-      queue.push(child);
-    }
-  }
-  return found;
-}
-
-export function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** 強制結束整個程序樹：Windows 用 `taskkill /T`，其他平台結束 process group。 */
 function killTree(child: ChildProcess): void {
   if (child.pid === undefined || child.exitCode !== null) return;
@@ -133,7 +94,7 @@ export interface StartedStack {
   /** 關閉 stdin 讓 stack 自己清理；逾時就強制結束。回傳結束碼。 */
   stop: () => Promise<number | null | "timeout">;
   /** stack 與它的子孫程序（關閉前記下，關閉後確認都已結束）。 */
-  processes: () => number[];
+  processes: () => ProcessEntry[];
 }
 
 export interface StackOptions {
@@ -193,7 +154,7 @@ export async function startStack(
 
   return {
     ready,
-    processes: () => (child.pid === undefined ? [] : [child.pid, ...descendants(child.pid)]),
+    processes: () => (child.pid === undefined ? [] : processTree(child.pid)),
     stop: async () => {
       // README：由程式管理時關閉 stdin，Windows 的 kill() 不會觸發清理
       child.stdin?.end();

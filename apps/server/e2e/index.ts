@@ -8,6 +8,16 @@ import { signWebhookBody } from "@orbis/github";
 import pg from "pg";
 import type { ReadyLine } from "./ready";
 
+export {
+  aliveIn,
+  aliveProcesses,
+  descendants,
+  descendantsIn,
+  type ProcessEntry,
+  parseProcessTable,
+  processTable,
+  processTree,
+} from "./process-tree";
 export { parseReadyLine, type ReadyLine } from "./ready";
 
 /**
