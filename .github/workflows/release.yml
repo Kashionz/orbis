@@ -114,9 +114,11 @@ jobs:
             check apps/desktop/release/win-unpacked/resources/bin/*runner*.exe
             check apps/desktop/release/win-unpacked/resources/app-update.yml
           else
-            for arch in arm64 x64; do
-              check apps/desktop/release/mac-$arch/*.app/Contents/Resources/bin/*runner*
-              check apps/desktop/release/mac-$arch/*.app/Contents/Resources/app-update.yml
+            # electron-builder 的輸出目錄：arm64 是 mac-arm64，x64 是 mac
+            for dir in mac-arm64 mac; do
+              check apps/desktop/release/$dir/*.app/Contents/Resources/bin/*runner*
+              file apps/desktop/release/$dir/*.app/Contents/Resources/bin/*runner*
+              check apps/desktop/release/$dir/*.app/Contents/Resources/app-update.yml
             done
           fi
           cat apps/desktop/release/*.yml
