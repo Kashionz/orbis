@@ -47,8 +47,8 @@ pwsh -NoProfile -File scripts\smoke-agents.ps1
 # 只跑其中幾個、縮短每個 Agent 的上限
 pwsh -NoProfile -File scripts\smoke-agents.ps1 -Agents claude-code,grok -TimeoutSec 900
 
-# 用預先建置好的執行檔（orbis-runner.exe、dev_dispatch.exe 在同一個目錄）
-pwsh -NoProfile -File scripts\smoke-agents.ps1 -BinDir C:\path\to\bin
+# 用預先建置好的執行檔（cargo 的 target\debug，或 orbis-runner.exe 與 dev_dispatch.exe 放在同一個目錄）
+pwsh -NoProfile -File scripts\smoke-agents.ps1 -BinDir target\debug
 
 # 開發者自測腳本流程：全部換成 Fake Agent，不呼叫真實模型
 pwsh -NoProfile -File scripts\smoke-agents.ps1 -FakeScript crates\runner\tests\scripts\review-loop.yaml -Followup "請改成第二版"
