@@ -105,6 +105,44 @@ pub struct Worktree {
     /// 設定檔中的腳本是否已核准（§6.2「設定的信任核准」）。沒有腳本，或這份內容已被
     /// 「永遠允許」時為 `true`；否則由 Run 取得人工核准後設為 `true`。未核准時不執行任何腳本。
     pub scripts_approved: bool,
+    /// 沿用 Worktree 時本機分支與 `origin/<branch>` 的對齊結果（§5.2）。新建的 Worktree 一律是
+    /// [`RemoteAlignment::UpToDate`]。
+    pub remote_alignment: RemoteAlignment,
+}
+
+/// 沿用 Worktree（Feedback Loop）時，本機分支和遠端分支的關係。有人直接 push 到 PR 分支時，
+/// 修正 Run 的 Agent 要看得到那些 commit，否則 `push_branch` 會因 non-fast-forward 失敗。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RemoteAlignment {
+    /// 遠端沒有這個分支、和本機相同，或本機領先遠端（push 時會 fast-forward）。
+    #[default]
+    UpToDate,
+    /// 遠端領先本機，已把本機分支 fast-forward 到遠端的 commit。
+    FastForwarded { from: String, to: String },
+    /// 兩邊都有對方沒有的 commit（或工作目錄有變更而無法 fast-forward）：不動本機，交給 Agent 整合。
+    Diverged {
+        remote_branch: String,
+        /// 本機沒有的遠端 commit 數。
+        behind: u64,
+        /// 遠端沒有的本機 commit 數。
+        ahead: u64,
+    },
+}
+
+impl RemoteAlignment {
+    /// 分岔時給 Agent 的說明，放進修正 Run 的第一個 prompt；其他情況為 `None`。
+    pub fn prompt_note(&self) -> Option<String> {
+        match self {
+            Self::Diverged {
+                remote_branch,
+                behind,
+                ahead,
+            } => Some(format!(
+                "（注意：遠端分支 {remote_branch} 有 {behind} 個本機沒有的 commit，而本機也有 {ahead} 個遠端沒有的 commit，兩邊已經分岔。請先整合遠端的變更（例如 `git merge {remote_branch}`，衝突請解決後 commit），再進行修改；否則 push 會因為 non-fast-forward 失敗。）"
+            )),
+            _ => None,
+        }
+    }
 }
 
 impl Worktree {
@@ -317,8 +355,12 @@ impl WorktreeManager {
         })?;
 
         let reuse = path.join(".git").exists();
+        let mut remote_alignment = RemoteAlignment::UpToDate;
         if reuse {
             tracing::info!(path = %path.display(), "Worktree 已存在，沿用");
+            if let Some(branch) = &req.branch {
+                remote_alignment = align_with_remote(&Git::new(&path), branch).await?;
+            }
         } else {
             git.run(["worktree", "prune"]).await?;
             if let Some(parent) = path.parent() {
@@ -380,6 +422,7 @@ impl WorktreeManager {
                 .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
         Ok(Worktree {
             scripts_approved,
+            remote_alignment,
             path,
             root_checkout: source,
             member_checkout,
@@ -584,6 +627,64 @@ impl WorktreeManager {
 pub struct Removal {
     /// 分支上有未合併的 commit，保留下來（UI 顯示為「保留的分支」）。
     pub branch_kept: bool,
+}
+
+/// 沿用的 Worktree 在 `git fetch` 之後把本機分支對齊 `origin/<branch>`（§5.2）：
+/// 遠端是本機的後代時 fast-forward；分岔時不動，回報給 Run 放進 prompt。
+async fn align_with_remote(git: &Git, branch: &str) -> Result<RemoteAlignment, WorktreeError> {
+    let remote_branch = format!("origin/{branch}");
+    let remote_ref = format!("refs/remotes/{remote_branch}");
+    if !git
+        .succeeds(["rev-parse", "--verify", "--quiet", &remote_ref])
+        .await
+    {
+        return Ok(RemoteAlignment::UpToDate);
+    }
+    let local = git.rev_parse_commit("HEAD").await?;
+    let remote = git.rev_parse_commit(&remote_ref).await?;
+    if local == remote {
+        return Ok(RemoteAlignment::UpToDate);
+    }
+    let counts = git
+        .run([
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{remote_ref}"),
+        ])
+        .await?;
+    let mut parts = counts
+        .split_whitespace()
+        .map(|n| n.parse::<u64>().unwrap_or(0));
+    let ahead = parts.next().unwrap_or(0);
+    let behind = parts.next().unwrap_or(0);
+    if behind == 0 {
+        // 本機領先：push 時會 fast-forward。
+        return Ok(RemoteAlignment::UpToDate);
+    }
+    let diverged = RemoteAlignment::Diverged {
+        remote_branch: remote_branch.clone(),
+        behind,
+        ahead,
+    };
+    if ahead > 0 {
+        tracing::warn!(branch, ahead, behind, "本機分支與遠端分岔，交給 Agent 整合");
+        return Ok(diverged);
+    }
+    // 遠端是本機的後代：fast-forward。工作目錄有會被覆寫的變更時 git 會拒絕，這時也交給 Agent。
+    match git.run(["merge", "--ff-only", &remote_ref]).await {
+        Ok(_) => {
+            tracing::info!(branch, from = %local, to = %remote, "本機分支已 fast-forward 到遠端");
+            Ok(RemoteAlignment::FastForwarded {
+                from: local,
+                to: remote,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(branch, error = %e, "無法 fast-forward 到遠端，交給 Agent 整合");
+            Ok(diverged)
+        }
+    }
 }
 
 /// 檢查 DispatchOffer 中會成為 git 參數的值，避免被當成選項（參數注入）。

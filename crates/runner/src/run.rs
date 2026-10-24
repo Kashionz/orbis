@@ -939,6 +939,14 @@ impl Run {
                 text: self.continuation_context().await,
             });
         }
+        // 沿用的 Worktree 和遠端分支分岔（有人直接 push 到 PR 分支）：說明給 Agent，由它整合（§5.2）。
+        if let Some(note) = self
+            .worktree
+            .as_ref()
+            .and_then(|wt| wt.remote_alignment.prompt_note())
+        {
+            blocks.push(ContentBlock::Text { text: note });
+        }
         if self.planning && self.profile.plan_mode.is_none() {
             blocks.push(ContentBlock::Text {
                 text: PLAN_ONLY_PROMPT.to_owned(),
@@ -2516,10 +2524,26 @@ impl Run {
         }
         git.run(["push", "origin", &format!("HEAD:refs/heads/{branch}")])
             .await
-            .map_err(fail)?;
+            .map_err(|e| {
+                let text = e.to_string();
+                if is_non_fast_forward(&text) {
+                    format!(
+                        "{text}
+遠端分支 {branch} 有本機沒有的 commit（有人直接 push 到 PR 分支）。請讓 Agent 先整合 origin/{branch}（例如 `git merge origin/{branch}`）再重新 push。"
+                    )
+                } else {
+                    text
+                }
+            })?;
         let sha = git.rev_parse_commit("HEAD").await.map_err(fail)?;
         Ok((branch, sha))
     }
+}
+
+/// git push 的輸出是否為 non-fast-forward 的拒絕。
+fn is_non_fast_forward(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("non-fast-forward") || lower.contains("fetch first")
 }
 
 /// 把 Worktree 中的一個設定檔還原成 `content`（`None` 表示刪除）。不跟著連結寫：
