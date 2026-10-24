@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, Diff, EnvVariable, InitializeRequest, McpServer,
-    McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus, PromptRequest,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    CancelNotification, ContentBlock, Diff, EnvVariable, ImageContent, InitializeRequest,
+    McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
+    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionId, SessionNotification, SessionUpdate, StopReason,
     ToolCallContent, ToolCallStatus, ToolCallUpdate,
 };
@@ -21,19 +21,24 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 12] = [
+const COVERED_SCRIPTS: [&str; 17] = [
     "cancel.yaml",
+    "deleg-child.yaml",
+    "deleg-parent.yaml",
     "diff.yaml",
     "empty-diff.yaml",
     "error.yaml",
+    "feedback.yaml",
     "m1.yaml",
     "mcp.yaml",
     "permission.yaml",
     "plan-verify.yaml",
     "plan.yaml",
+    "preview-comment.yaml",
     "rate-limit.yaml",
     "spawn-child.yaml",
     "two-turns.yaml",
+    "verify-fail.yaml",
 ];
 
 const FAKE_MCP_NAME: &str = "fake-mcp";
@@ -886,6 +891,193 @@ async fn plan_verify_劇本_plan_後寫入_fail_重試時改成_pass() {
     assert!(!plan_exists, "Planning 回合不寫檔");
     assert_eq!(after_approve, "fail\n");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "pass\n");
+}
+
+/// verify-fail：兩輪都寫 fail；附意見（含「請改成 pass」）再試時才改成 pass（91 I1 的 Verification 上限 e2e 用）。
+#[tokio::test(flavor = "multi_thread")]
+async fn verify_fail_劇本_兩輪都_fail_附意見後改成_pass() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let file = dir.path().join("verify.txt");
+    let check = file.clone();
+    let (after_first, after_retry) = with_agent(
+        "verify-fail.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let first = conn.prompt(&session, "請新增 verify.txt").await;
+            assert_eq!(first.stop_reason(), StopReason::EndTurn);
+            let after_first = std::fs::read_to_string(&check).unwrap();
+            let retry = conn.prompt(&session, "Verification 失敗").await;
+            assert_eq!(retry.stop_reason(), StopReason::EndTurn);
+            let after_retry = std::fs::read_to_string(&check).unwrap();
+            let advised = conn
+                .prompt(
+                    &session,
+                    "人的意見：請改成 pass。Verification 失敗的原因：exit code 1",
+                )
+                .await;
+            assert_eq!(advised.stop_reason(), StopReason::EndTurn);
+            Ok((after_first, after_retry))
+        },
+    )
+    .await;
+    assert_eq!(after_first, "fail\n");
+    assert_eq!(after_retry, "fail again\n");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "pass\n");
+}
+
+/// feedback：原 Run 寫 v1；review 留言的 prompt 改成 v2；CI 失敗的 prompt（含 check 名稱）改成 v3。
+#[tokio::test(flavor = "multi_thread")]
+async fn feedback_劇本_原_run_寫_v1_review_改_v2_ci_改_v3() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let file = dir.path().join("fl.txt");
+    let check = file.clone();
+    let (after_first, after_review) = with_agent(
+        "feedback.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let first = conn.prompt(&session, "請新增 fl.txt").await;
+            assert_eq!(first.stop_reason(), StopReason::EndTurn);
+            let after_first = std::fs::read_to_string(&check).unwrap();
+            let review = conn
+                .prompt(&session, "PR 上的 review 留言：請把 v1 改成 v2")
+                .await;
+            assert_eq!(review.stop_reason(), StopReason::EndTurn);
+            let after_review = std::fs::read_to_string(&check).unwrap();
+            let ci = conn
+                .prompt(&session, "CI 失敗：### `e2e-ci-test`（failure）")
+                .await;
+            assert_eq!(ci.stop_reason(), StopReason::EndTurn);
+            Ok((after_first, after_review))
+        },
+    )
+    .await;
+    assert_eq!(after_first, "v1\n");
+    assert_eq!(after_review, "v2\n");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "v3\n");
+}
+
+/// deleg-parent：呼叫 Orbis MCP 的 delegate 兩次與 list_runs，再寫 parent.txt。
+/// 這裡沒有注入 `orbis` server，三個 mcp_call 以 failed 結束，回合照常寫檔並結束。
+#[tokio::test(flavor = "multi_thread")]
+async fn deleg_parent_劇本_delegate_兩次後寫入_parent_txt() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let prompted = with_agent(
+        "deleg-parent.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            Ok(conn.prompt(&session, "請分派給 fake-child").await)
+        },
+    )
+    .await;
+    assert_eq!(prompted.stop_reason(), StopReason::EndTurn);
+    for id in ["delegate-consult", "delegate-branch", "list-runs"] {
+        assert_eq!(
+            prompted.final_update(id).fields.status,
+            Some(ToolCallStatus::Failed),
+            "{id} 沒有 orbis server 時應該失敗"
+        );
+    }
+    assert_eq!(
+        prompted.final_update("write-parent").fields.status,
+        Some(ToolCallStatus::Completed)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("parent.txt")).unwrap(),
+        "parent\n"
+    );
+    assert!(prompted.permissions.is_empty());
+}
+
+/// deleg-child：只回一句話就結束，不改檔（consult 模式在父 Run 的 Worktree 中執行）。
+#[tokio::test(flavor = "multi_thread")]
+async fn deleg_child_劇本_只回覆不改檔() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let prompted = with_agent(
+        "deleg-child.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            Ok(conn.prompt(&session, "請讀 README.md 並回覆重點").await)
+        },
+    )
+    .await;
+    assert_eq!(prompted.stop_reason(), StopReason::EndTurn);
+    assert_eq!(
+        prompted.described(),
+        ["message 我是 Child Run，已看完，重點是 README 只有標題。"]
+    );
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        0,
+        "不應該寫任何檔案"
+    );
+}
+
+/// preview-comment：第一回合改 index.html 的標題；第二回合把收到的 prompt（文字與圖片）原樣回報。
+#[tokio::test(flavor = "multi_thread")]
+async fn preview_comment_劇本_改標題後回報含圖片的_prompt() {
+    let dir = workdir();
+    let index = dir.path().join("index.html");
+    std::fs::write(&index, "<h1 id=\"app\">preview</h1>\n").unwrap();
+    let cwd = dir.path().to_owned();
+    let (first, second) = with_agent(
+        "preview-comment.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            let first = conn.prompt(&session, "請修改首頁標題").await;
+            // Review 退回的 prompt：文字（網址與 selector）加上截圖
+            let blocks = vec![
+                ContentBlock::from(
+                    "在 Preview 上的留言：\n- http://run.preview.localhost/（#app）（截圖 1）：標題要更大"
+                        .to_owned(),
+                ),
+                ContentBlock::Image(ImageContent::new(
+                    "iVBORw0KGgo=".to_owned(),
+                    "image/png".to_owned(),
+                )),
+            ];
+            let result = conn
+                .cx
+                .send_request(PromptRequest::new(session.clone(), blocks))
+                .block_task()
+                .await
+                .map(|response| response.stop_reason);
+            let recorded = conn.take_recorded();
+            let second = Prompted {
+                result,
+                updates: recorded.updates,
+                permissions: recorded.permissions,
+            };
+            Ok((first, second))
+        },
+    )
+    .await;
+    assert_eq!(first.stop_reason(), StopReason::EndTurn);
+    assert_eq!(
+        std::fs::read_to_string(&index).unwrap(),
+        "<h1 id=\"app\">preview v2</h1>\n"
+    );
+    assert_eq!(second.stop_reason(), StopReason::EndTurn);
+    let described = second.described();
+    assert_eq!(
+        described[0],
+        "message 收到 Review 退回，以下是我收到的 prompt。"
+    );
+    let echoed = &described[1];
+    assert!(echoed.contains("text:在 Preview 上的留言："), "{echoed}");
+    assert!(
+        echoed.contains("（#app）（截圖 1）：標題要更大"),
+        "{echoed}"
+    );
+    assert!(echoed.contains("image:image/png:iVBORw0KGgo="), "{echoed}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
