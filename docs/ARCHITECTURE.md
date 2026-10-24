@@ -210,7 +210,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - `--home` 或 `ORBIS_HOME` 覆寫整個目錄（測試用）；`ORBIS_RUNNER_STATE_DIR` 只覆寫狀態目錄（Desktop 代管的 Runner 用，不和手動啟動的 Runner 共用 Runner token）。
   - 已保存這個 Server 的 Runner token 時，Pairing token 會被忽略。
 - **重新連線**：斷線後以指數退避重新連線（1 秒到 60 秒，加上 ±20% jitter）。`hello_ack` 的 `resume` 沒有列出、但 Runner 還在執行的 Run，Runner 會中止並清除暫存。Runner 重新啟動時，暫存中沒有結束的 Run 補上 `agent_crashed` 與 `failed`。
-- **sidecar 的結束碼**：0＝正常結束；78＝Runner token 無效或已被撤銷，需要重新 Pairing（sidecar 模式下 Runner token 被撤銷時不改用 Pairing token）；76＝協定版本不相容，需要更新 Runner；其他非 0 視為當掉。
+- **sidecar 的結束碼**：0＝正常結束；78＝Runner token 無效或已被撤銷，需要重新 Pairing（sidecar 模式下 Runner token 被撤銷時不改用 Pairing token）；76＝協定版本不相容，需要更新 Runner 或 Server（`hello_rejected` 的訊息會說是哪一邊，見 §16「版本相容」）；其他非 0 視為當掉。
 - **Server 的實作參數**：
   - Pairing token 的有效期限：Local Runner 10 分鐘（Desktop 登入後立刻使用），Team Runner 24 小時。
   - `dispatch_offer` 30 秒內沒有回覆就過期，Run 回到佇列重新派工。
@@ -633,9 +633,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 - **Server**：用 Docker Compose（Postgres 加 Server）自架，Team Runner 也加在同一份 compose 檔中。託管部署的文件（Neon 搭配 Fly.io 或 Railway 等）留到 Phase 2。
 - **Desktop**：
-  - 用 electron-builder 打包，electron-updater 從 private GitHub Releases 自動更新。
-  - Phase 1 不做 Windows 程式碼簽章。
-  - Runner 執行檔隨 Electron 一起打包。
+  - 用 electron-builder 打包，electron-updater 從 **public** GitHub Releases 自動更新（repo 維持 public）。push tag `v<版本>` 時由 workflow 在 Windows、macOS 建置並建立成 **draft** Release，人工 publish 後 Desktop 才會抓到；tag 必須和 `apps/desktop/package.json` 的版本一致。安裝與發布步驟見 [DESKTOP.md](DESKTOP.md)。
+  - **Windows**：NSIS one-click、per-user 安裝。自動下載更新，下載完成後詢問「立即重新啟動並更新」或「稍後」；稍後就在結束 App 時安裝。安裝前先停止 Runner sidecar（還有 Run 在跑時再確認一次）。Phase 1 不做程式碼簽章，SmartScreen 會警告。
+  - **macOS**：出 dmg 與 zip（arm64、x64 各一組）。Phase 1 不簽章也不 notarize，所以**不自動更新**：偵測到新版時提示「開啟下載頁／略過這個版本／稍後」，由使用者手動下載覆蓋。略過的版本記在本機設定，自動檢查時不再提示。簽章與自動更新排在 Phase 2。
+  - **檢查時機**：App 啟動 30 秒後第一次，之後每 6 小時；系統匣與「檔案」選單可以手動檢查（手動檢查會回報已是最新或失敗）。同一個版本每次啟動只主動提示一次。只看已 publish 的 Release，不看 draft 與 pre-release。
+  - Runner 執行檔隨 Electron 一起打包（`resources/bin/`），也隨 App 一起更新；Release 另附 Runner 的單獨執行檔給 Team Runner 與手動執行使用。
+  - App 圖示排在 Phase 2，Phase 1 用 Electron 的預設圖示。
   - **Runner sidecar**：Electron 以子程序啟動 Runner，兩者以 stdio 溝通。協定定義在 `crates/orbis-protocol`。
     - Runner 的 stdout 每行一個 JSON 狀態，包括連線狀態、執行中的 Run、是否暫停領取。
     - stdin 每行一個 JSON 指令：暫停領取、恢復、關閉。
@@ -653,6 +656,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
       - 撤銷時立刻斷線，Runner 上進行中的 Run 回到佇列；這個 session 取得、還沒使用的 Pairing token 也一併失效。
       - 過期的 session 每小時清除一次。
 - **Team Runner**：以 Docker image 發布。
+- **版本相容**：各元件不一定同時更新，不相容時 UI 明說要更新哪一個，不靜默失敗。
+  - 三種版本號：Runner↔Server 的**協定版本**（`crates/orbis-protocol` 的 `PROTOCOL_VERSION`）、Server↔Web 與 Desktop↔Server 共用的 **API 版本**（`packages/api-contract` 的 `API_VERSION`，不相容的 REST／WebSocket 變更才遞增），以及各套件自己的版本字串（只供顯示）。Server 的 `GET /api/health` 回報 `versions { server, api, protocol }`；沒有這個欄位的 Server 比 Phase 1 發布更早，一律視為過舊。
+  - **Runner↔Server**：Hello 的協定版本不同時 Server 回 `hello_rejected { reason: version_mismatch }`，訊息指出要更新哪一邊（Runner 較舊→更新 Runner，由 Desktop 代管時更新 Desktop；Runner 較新→更新 Server）。Runner 印出訊息後以結束碼 76 結束，不重試。
+  - **Desktop↔Server**：Desktop 在啟動、換 Server、sidecar 以 76 結束時，以及每 6 小時，拿自己編譯進去的 API 版本與內建 Runner 的協定版本（和 Desktop 同一個 commit）比對 `/api/health`，算出「Desktop 版本過舊，請更新 Desktop」「Server 版本過舊，請更新 Server」或兩者都要更新。結果顯示在系統匣（圖示轉為警告色），同一個問題只用對話框提示一次；要更新 Desktop 時，Windows 的對話框直接檢查更新，macOS 開 Releases 頁。
+  - **Server↔Web**：Web 由 Server 提供，版本不同通常是瀏覽器快取了舊的 Web。Web 在載入、視窗取得焦點與每 10 分鐘比對 `/api/health`：Web 較舊時在頁面頂端提示「Web UI 有新版本，請重新整理」並附按鈕，Server 較舊時提示更新 Server。
+  - **Desktop↔Web**：Web 可能比 Desktop 新。bridge 的新功能一律是選填欄位，舊版 Desktop 沒有時 Web 退回瀏覽器版本的做法（例如 Preview），不另外比對版本。
 
 ### 16.1 Desktop 殼
 
@@ -687,11 +696,11 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
     - log 一律走 stderr，Desktop 寫到有大小上限、會輪替的 log 檔。
   - 當掉時以指數退避重啟（1 秒起、上限 60 秒，連續正常運作 60 秒後重置）。
   - 以「需要重新 Pairing」的結束碼結束時不重啟，而是重新取得 Pairing token。
-  - 以「協定版本不相容」的結束碼結束時也不重啟，系統匣與視窗提示「Runner 版本與 Server 不相容，請更新」。
+  - 以「協定版本不相容」的結束碼結束時也不重啟。Desktop 先向 `/api/health` 查版本，系統匣與視窗明說要更新 Desktop 還是 Server（§16「版本相容」）；查不到時才顯示籠統的「Runner 版本與 Server 不相容，請更新」。
   - **結束 App 時**：Desktop 送出 `shutdown` 並關閉 stdin，Runner 結束自己的 Run（§6.4）後退出。stdin EOF 也視為 shutdown，所以 Desktop 當掉時 Runner 也會自行結束。Runner 逾時沒有結束，Desktop 就強制結束整個程序樹：Windows 用 `taskkill /T`，macOS／Linux 用 process group。
 - **系統匣**：
   - 顯示 Runner 狀態（連線中、已連線與執行中的 Run 數、離線）與 Needs You 的數量。
-  - 提供「顯示視窗」「暫停領取新 Run」「開啟 Runner log」。暫停領取存在本機設定中，Runner 以 Heartbeat 告訴 Server 不要再派工。
+  - 提供「顯示視窗」「暫停領取新 Run」「檢查更新」「開啟 Runner log」。暫停領取存在本機設定中，Runner 以 Heartbeat 告訴 Server 不要再派工。更新的進度（下載中、已下載等結束時安裝、有新版本請手動下載）與版本不相容的提示也顯示在系統匣。
   - 關閉主視窗只是縮到系統匣，結束 App 要用系統匣或選單。
 - **桌面通知**：
   - 登入後每 5 秒輪詢 Needs You 清單。第一次輪詢只建立基準，之後新出現的項目各發一次原生通知。
@@ -710,6 +719,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 - **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS 都跑（Linux 暫時不在 CI 驗證）。
 - **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在 Windows、macOS 安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
+- **Desktop**：Playwright 的 Electron 模式接 fake Server；sidecar 用真實的 Runner，自動更新用本機的 fake feed 跑真實的 electron-updater（只下載與提示，不安裝）。打包只在 Release workflow 驗證（手動執行時只打包不發布）。
 - **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上 Windows、macOS 都跑；完整系統的 M1 e2e 在 PR 上只跑 Windows，push 到 `main` 時兩個平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
 - **真實 Agent 煙霧測試**：Claude Code、Codex、Antigravity、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
 
@@ -719,11 +729,11 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 
 | Phase 1（約 10 週） | Phase 2 | 不做 |
 |---|---|---|
-| §1–§17 全部，但不包含右邊兩欄 | Team Runner 的容器隔離與 `yolo`、best-of-N 的 UI、即時觀看 Agent 的瀏覽器畫面、託管部署的文件、email／Slack 通知、`ClaudeSdkAdapter`（需要時才做） | 手機 App、Linear／Jira／Azure DevOps、GitHub Projects、OS 層級沙盒、Windows 程式碼簽章、跨 Repo 的 Task、`shared` Delegation 模式、程式碼的共同編輯 |
+| §1–§17 全部，但不包含右邊兩欄 | Team Runner 的容器隔離與 `yolo`、best-of-N 的 UI、即時觀看 Agent 的瀏覽器畫面、託管部署的文件、macOS 程式碼簽章與自動更新、Desktop 的 App 圖示、email／Slack 通知、`ClaudeSdkAdapter`（需要時才做） | 手機 App、Linear／Jira／Azure DevOps、GitHub Projects、OS 層級沙盒、Windows 程式碼簽章、跨 Repo 的 Task、`shared` Delegation 模式、程式碼的共同編輯 |
 
 ---
 
 ## 19. 待決事項
 
-- **Repo 可見度**：目前假設是 private，尚未確認。
+- **Repo 可見度**：已決定維持 public（91 Integration Release），Desktop 從 public GitHub Releases 更新。
 - **共用訂閱的條款風險**：見 [ADR-0005](adr/0005-shared-subscription-on-team-runner.md)。
