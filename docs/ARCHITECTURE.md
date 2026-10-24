@@ -178,7 +178,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 - **派工規則**：
   - Run 選擇「在我的電腦跑」→ 只有派工者本人的 Local Runner 會領取（「我」是派工的人，不是 Task 的負責人）。
   - Run 選擇「Team Runner」→ 進入 Team 佇列。
-  - Local Runner 離線時，Run 停在佇列中，**不會自動轉給 Team Runner**。
+  - Local Runner 離線時，Run 停在佇列中，**不會自動轉給 Team Runner**。派工對話框在 Runner 離線時仍然可以派工：Agent 沿用那台 Runner 最後回報的可用性，對話框提示 Run 會排隊、Runner 上線後才開始。
   - **改派**也遵守上面的規則：Dispatch 逾時或 Runner 離線過久時，Run 回到佇列重新派工；「在我的電腦跑」的 Run 只會再派給派工者本人的 Local Runner。
   - Runner 在心跳中回報是否接受新的 Dispatch（Desktop 的「暫停領取」）。不接受時，Server 不派工給它。
   - 每次連線後，Server 收到第一個 Heartbeat 才知道 Runner 是否接受派工，所以在那之前不派工；`agent_availability` 只記錄，不觸發派工。
@@ -737,9 +737,10 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 - **Fake Agent**（`crates/fake-agent`）：依 YAML 劇本送出訊息、tool call、diff、權限請求、plan、錯誤、rate limit。**所有整合測試都用它**，不呼叫真實模型。
 - **Runner**：單元測試，加上使用真實 git worktree 與 Fake Agent 的整合測試。CI 在 Windows、macOS 都跑（Linux 暫時不在 CI 驗證）。
 - **Server**：用真實的 Postgres 測試，每個測試檔各自建立獨立的 database。CI 在 Windows、macOS 安裝原生 Postgres（`TEST_DATABASE_URL`），本機沒有設定時用 Testcontainers。測試與完整系統 e2e 都不使用開發 DB。
-- **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
+- **Web**：用 Playwright 跑端到端測試，分兩層：mock 層以 MSW 假後端涵蓋每個畫面與狀態；**完整系統**層接上真實的 Server、Postgres、Local Runner 與 Fake Agent（`e2e:stack`），涵蓋 M2 的完成條件：M1 路徑、Plan Gate、Verification 失敗重試與超過上限的決定、空 diff 的結束、Feedback Loop（review 與 CI，webhook 以錄製的 fixture 送出）、Delegation（consult 與 branch 的 Child Run）、共同編輯、通知中心。Desktop 的完整系統 e2e 以 Electron 走 M1 路徑、Preview 的轉送與 Preview 留言（選取元素到 Agent 收到 prompt）。
+  - `e2e:stack` 在 ready 之後接受 stdin 的 JSON 指令（例如把 PR head 的 CI 結果餵給程序內的 FakeGitHub），用法見 `apps/server/README.md`。
 - **Desktop**：Playwright 的 Electron 模式接 fake Server；sidecar 用真實的 Runner，自動更新用本機的 fake feed 跑真實的 electron-updater（只下載與提示，不安裝）。打包只在 Release workflow 驗證（手動執行時只打包不發布）。
-- **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上 Windows、macOS 都跑；完整系統的 M1 e2e 在 PR 上只跑 Windows，push 到 `main` 時兩個平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
+- **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上 Windows、macOS 都跑；完整系統的 e2e 在 PR 上只跑 Windows，push 到 `main` 時兩個平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
 - **真實 Agent 煙霧測試**：Claude Code、Codex、Antigravity、Grok 各跑一個小 Task；只在使用者自己的電腦上手動或以 Windows 工作排程器每晚跑（`scripts/smoke-agents.ps1`，用法與排程設定見 [SMOKE-TEST.md](SMOKE-TEST.md)），不放進 GitHub Actions，Agent 憑證不離開那台電腦。
 - **Windows 強化**（§6.4）的每一項都有自動測試：中文與空白路徑、長路徑、刪除重試、WSL 的拒絕、三種 shell 的腳本、連線看門狗、保留的 port（`crates/runner/tests/windows_hardening.rs`、`connection.rs`、`feedback_loop.rs` 與 `shell.rs`、`home.rs` 的單元測試）。
 
