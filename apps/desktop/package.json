@@ -14,23 +14,25 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "test:e2e": "node scripts/build.mjs --with-runner && playwright test",
-    "test:e2e:system": "node scripts/build.mjs && playwright test -c playwright.system.config.ts"
-  },
-  "dependencies": {
-    "@orbis/api-contract": "workspace:*",
-    "zod": "4.6.7"
+    "test:e2e:system": "node scripts/build.mjs && playwright test -c playwright.system.config.ts",
+    "stage-runner": "node scripts/stage-runner.mjs",
+    "dist": "node scripts/build.mjs && electron-builder --publish never"
   },
   "devDependencies": {
+    "@orbis/api-contract": "workspace:*",
     "@orbis/protocol": "workspace:*",
     "@orbis/server": "workspace:*",
     "@playwright/test": "1.64.1",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
     "electron": "44.9.3",
+    "electron-builder": "26.18.0",
+    "electron-updater": "6.8.11",
     "esbuild": "0.28.2",
     "typescript": "6.0.3",
     "vite": "8.3.5",
     "vitest": "5.0.5",
-    "ws": "8.22.0"
+    "ws": "8.22.0",
+    "zod": "4.6.7"
   }
 }

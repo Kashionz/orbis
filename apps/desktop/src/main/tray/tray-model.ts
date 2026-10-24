@@ -3,6 +3,8 @@
 import { NAMES } from "@orbis/api-contract/names";
 import type { SessionState } from "../session/session-controller";
 import type { SupervisorSnapshot } from "../sidecar/supervisor";
+import type { UpdateView } from "../update/controller";
+import type { CompatibilityVerdict } from "../version/compat";
 
 export type RunnerView =
   | { kind: "signed_out" }
@@ -50,7 +52,7 @@ export function deriveRunnerView(session: SessionState, sidecar: SupervisorSnaps
   }
 }
 
-/** Runner 版本不相容時，系統匣與視窗顯示的提示。 */
+/** Runner 版本不相容、而且還查不到是哪一邊過舊時的提示；查到時改用 compat 的訊息。 */
 export const VERSION_MISMATCH_MESSAGE = "Runner 版本與 Server 不相容，請更新";
 
 export function runnerStatusLabel(view: RunnerView): string {
@@ -93,6 +95,7 @@ export function trayTone(view: RunnerView): TrayTone {
 export type TrayMenuId =
   | "show-window"
   | "pause-claiming"
+  | "check-updates"
   | "open-runner-log"
   | "open-settings"
   | "quit";
@@ -115,21 +118,38 @@ export interface TrayInput {
   runner: RunnerView;
   needsYouCount: number;
   claimingPaused: boolean;
+  /** Desktop 與 Server 的版本相容判定（ARCHITECTURE §16）；還沒查過時為 null。 */
+  compat?: CompatibilityVerdict | null;
+  update?: UpdateView;
 }
 
+const NO_UPDATE: UpdateView = { label: null, action: { label: "檢查更新…", enabled: false } };
+
 export function buildTrayModel(input: TrayInput): TrayModel {
-  const statusLabel = runnerStatusLabel(input.runner);
+  const compat = input.compat && input.compat.kind !== "compatible" ? input.compat : null;
+  const update = input.update ?? NO_UPDATE;
+  // Runner 因版本不相容而停止時，查得到是哪一邊過舊就直接說
+  const statusLabel =
+    input.runner.kind === "version_mismatch" && compat
+      ? compat.message
+      : runnerStatusLabel(input.runner);
   const signedIn = input.runner.kind !== "signed_out" && input.runner.kind !== "no_team";
   const needsYou = input.needsYouCount > 0 ? `・Needs You ${input.needsYouCount} 項` : "";
   const paused = input.claimingPaused && signedIn ? "・已暫停領取" : "";
+  const compatNote = compat && statusLabel !== compat.message ? `・${compat.message}` : "";
+  const updateNote = update.label ? `・${update.label}` : "";
   return {
-    tooltip: `${NAMES.productName}：${statusLabel}${paused}${needsYou}`,
-    tone: trayTone(input.runner),
+    tooltip: `${NAMES.productName}：${statusLabel}${paused}${needsYou}${compatNote}${updateNote}`,
+    tone: compat ? "warn" : trayTone(input.runner),
     statusLabel,
     needsYouCount: input.needsYouCount,
     items: [
       { kind: "label", label: `Runner：${statusLabel}` },
       { kind: "label", label: `Needs You：${input.needsYouCount} 項` },
+      ...(compat && statusLabel !== compat.message
+        ? [{ kind: "label", label: `⚠ ${compat.message}` } as const]
+        : []),
+      ...(update.label ? [{ kind: "label", label: `更新：${update.label}` } as const] : []),
       { kind: "separator" },
       { kind: "action", id: "show-window", label: "顯示視窗", enabled: true },
       {
@@ -140,6 +160,12 @@ export function buildTrayModel(input: TrayInput): TrayModel {
         enabled: signedIn,
       },
       { kind: "separator" },
+      {
+        kind: "action",
+        id: "check-updates",
+        label: update.action.label,
+        enabled: update.action.enabled,
+      },
       { kind: "action", id: "open-runner-log", label: "開啟 Runner log", enabled: true },
       { kind: "action", id: "open-settings", label: "設定…", enabled: true },
       { kind: "separator" },

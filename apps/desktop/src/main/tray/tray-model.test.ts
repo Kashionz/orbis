@@ -2,6 +2,7 @@ import { NAMES } from "@orbis/api-contract/names";
 import { describe, expect, it } from "vitest";
 import type { SessionState } from "../session/session-controller";
 import type { SupervisorSnapshot } from "../sidecar/supervisor";
+import { checkCompatibility } from "../version/compat";
 import { buildTrayModel, deriveRunnerView, runnerStatusLabel } from "./tray-model";
 
 const session = (phase: SessionState["phase"], error: string | null = null): SessionState => ({
@@ -85,6 +86,77 @@ describe("buildTrayModel", () => {
     );
   });
 
+  it("查得到是哪一邊過舊時，Runner 的狀態與 tooltip 直接說要更新哪個元件", () => {
+    const local = { api: 1, protocol: 2 };
+    const desktopOld = checkCompatibility(local, { server: "0.2.0", api: 2, protocol: 2 });
+    const stopped = buildTrayModel({
+      runner: { kind: "version_mismatch" },
+      needsYouCount: 0,
+      claimingPaused: false,
+      compat: desktopOld,
+    });
+    expect(stopped.statusLabel).toBe("Desktop 版本過舊，請更新 Desktop");
+    expect(stopped.items).toContainEqual({
+      kind: "label",
+      label: "Runner：Desktop 版本過舊，請更新 Desktop",
+    });
+    // Runner 還在跑（只有 API 版本不同）時，另外加一行提示
+    const running = buildTrayModel({
+      runner: { kind: "connected", activeRuns: 0 },
+      needsYouCount: 0,
+      claimingPaused: false,
+      compat: checkCompatibility(local, { server: "0.0.1", api: 0, protocol: 2 }),
+    });
+    expect(running.statusLabel).toBe("已連線");
+    expect(running.tone).toBe("warn");
+    expect(running.tooltip).toContain("・Server 版本過舊，請更新 Server");
+    expect(running.items).toContainEqual({
+      kind: "label",
+      label: "⚠ Server 版本過舊，請更新 Server",
+    });
+    // 相容時沒有提示
+    const ok = buildTrayModel({
+      runner: { kind: "connected", activeRuns: 0 },
+      needsYouCount: 0,
+      claimingPaused: false,
+      compat: { kind: "compatible" },
+    });
+    expect(ok.tone).toBe("ok");
+    expect(ok.items.some((i) => i.kind === "label" && i.label.startsWith("⚠"))).toBe(false);
+  });
+
+  it("更新狀態顯示在系統匣，「檢查更新…」依狀態改變文字與可用性", () => {
+    const model = buildTrayModel({
+      runner: { kind: "connected", activeRuns: 0 },
+      needsYouCount: 0,
+      claimingPaused: false,
+      update: {
+        label: "更新 v0.2.0 已下載，結束 App 時安裝",
+        action: { label: "立即安裝更新 v0.2.0…", enabled: true },
+      },
+    });
+    expect(model.items).toContainEqual({
+      kind: "label",
+      label: "更新：更新 v0.2.0 已下載，結束 App 時安裝",
+    });
+    expect(model.items).toContainEqual({
+      kind: "action",
+      id: "check-updates",
+      label: "立即安裝更新 v0.2.0…",
+      enabled: true,
+    });
+    expect(model.tooltip).toContain("・更新 v0.2.0 已下載");
+    // 沒有更新來源時不能按
+    const none = buildTrayModel({
+      runner: { kind: "signed_out" },
+      needsYouCount: 0,
+      claimingPaused: false,
+    });
+    expect(none.items.find((i) => "id" in i && i.id === "check-updates")).toMatchObject({
+      enabled: false,
+    });
+  });
+
   it("tooltip 帶產品名稱、狀態與 Needs You 數量", () => {
     const model = buildTrayModel({
       runner: { kind: "connected", activeRuns: 1 },
@@ -122,6 +194,7 @@ describe("buildTrayModel", () => {
       "show-window",
       "pause-claiming",
       "separator",
+      "check-updates",
       "open-runner-log",
       "open-settings",
       "separator",

@@ -1,6 +1,6 @@
 // Server URL：使用者在第一次啟動時輸入的 Web UI origin。
 
-import { API_ROUTES, HealthResponse } from "@orbis/api-contract";
+import { API_ROUTES, HealthResponse, type ServerVersions } from "@orbis/api-contract";
 
 export type ServerUrlResult = { ok: true; url: string } | { ok: false; message: string };
 
@@ -38,6 +38,8 @@ export type HealthCheckResult =
        * http／https origin 時為 null，由呼叫端退回使用 Web UI 的 origin。
        */
       apiOrigin: string | null;
+      /** Server 回報的版本（ARCHITECTURE §16「版本相容」）；比 Phase 1 發布更早的 Server 沒有。 */
+      versions: ServerVersions | undefined;
     }
   | { ok: false; message: string };
 
@@ -58,11 +60,17 @@ export async function checkServerHealth(
     if (!response.ok) return { ok: false, message: `Server 回應 HTTP ${response.status}` };
     const body: unknown = await response.json().catch(() => null);
     const health = HealthResponse.safeParse(body);
-    if (health.success) return { ok: true, apiOrigin: parseApiOrigin(health.data.apiOrigin) };
+    if (health.success) {
+      return {
+        ok: true,
+        apiOrigin: parseApiOrigin(health.data.apiOrigin),
+        versions: health.data.versions,
+      };
+    }
     if ((body as { ok?: unknown } | null)?.ok !== true) {
       return { ok: false, message: "這個網址看起來不是 Server" };
     }
-    return { ok: true, apiOrigin: null };
+    return { ok: true, apiOrigin: null, versions: undefined };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `無法連線到 Server：${message}` };

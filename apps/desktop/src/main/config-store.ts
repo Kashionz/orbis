@@ -18,6 +18,8 @@ export interface DesktopConfig {
   claimingPaused: boolean;
   /** sidecar 最後一次回報的 Runner ID，登出時用來撤銷這台 Local Runner；從來沒有連上過時為 null。 */
   runnerId: string | null;
+  /** macOS 使用者在更新提示中選擇「略過這個版本」的版本；自動檢查到同一個版本時不再提示。 */
+  skippedUpdateVersion: string | null;
   editor: ToolChoice;
   terminal: ToolChoice;
 }
@@ -27,6 +29,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform): Des
     serverUrl: null,
     claimingPaused: false,
     runnerId: null,
+    skippedUpdateVersion: null,
     editor: defaultEditor(),
     terminal: defaultTerminal(platform),
   };
@@ -52,6 +55,7 @@ function configSchema(platform: NodeJS.Platform) {
     serverUrl: z.string().nullable().catch(null),
     claimingPaused: z.boolean().catch(false),
     runnerId: z.string().min(1).nullable().catch(null),
+    skippedUpdateVersion: z.string().min(1).nullable().catch(null),
     editor: toolChoice(EDITOR_PRESETS, defaults.editor),
     terminal: toolChoice(terminalPresets(platform), defaults.terminal),
   });
