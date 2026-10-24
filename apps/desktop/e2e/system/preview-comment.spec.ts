@@ -279,12 +279,17 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
   await form.getByRole("textbox", { name: "留言內容" }).fill("標題要更大");
   await form.getByRole("button", { name: "加入 Review 留言草稿" }).click();
   await expect(form).toBeHidden();
+  // 草稿（截圖已上傳成這個 Run 的 blob）列在 Preview 分頁，存在 sessionStorage，換頁不會遺失
+  const panelDrafts = page.getByRole("region", { name: "Preview 留言草稿" });
+  await expect(panelDrafts).toContainText("標題要更大");
+  await expect(panelDrafts.locator("code")).toHaveText("#app");
 
-  // ---- Review 頁：草稿在清單中，退回時一起送出（Server 檢查網址是這個 Run 的 Preview 網址）
+  // ---- Review 頁：草稿列在「Preview 留言」區塊，退回時一起送出（Server 檢查網址是這個 Run 的 Preview 網址）
   await page.getByRole("link", { name: "Diff review" }).click();
-  const drafts = page.getByRole("region", { name: "Preview 留言草稿" });
+  const drafts = page.getByRole("region", { name: /^Preview 留言（1）/ });
   await expect(drafts).toContainText("標題要更大");
   await expect(drafts.locator("code")).toHaveText("#app");
+  await expect(drafts).toContainText(`${shareOrigin}/`);
   await page.getByRole("button", { name: /退回並附上留言/ }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
 
