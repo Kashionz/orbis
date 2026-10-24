@@ -152,7 +152,8 @@ function ToolRow({ tool }: { tool: ToolCallItem }) {
   }
 
   const canExpand = diffContent !== undefined || terminal !== undefined || text !== undefined;
-  const failedCommand = terminal !== undefined && terminal.exit_code !== null && terminal.exit_code !== 0;
+  const failedCommand =
+    terminal !== undefined && terminal.exit_code !== null && terminal.exit_code !== 0;
   const defaultOpen =
     (bucket === "edit" && diff !== null) ||
     (bucket === "execute" && (tool.status !== "completed" || failedCommand));
@@ -271,7 +272,9 @@ function TerminalSnippet({ content }: { content: TerminalContent }) {
     content.output.type === "inline"
       ? (() => {
           const lines = content.output.text.split("\n");
-          return lines.slice(0, TERMINAL_LINES).join("\n") + (lines.length > TERMINAL_LINES ? "\n…" : "");
+          return (
+            lines.slice(0, TERMINAL_LINES).join("\n") + (lines.length > TERMINAL_LINES ? "\n…" : "")
+          );
         })()
       : null;
   return (
@@ -299,4 +302,3 @@ function TerminalSnippet({ content }: { content: TerminalContent }) {
     </div>
   );
 }
-

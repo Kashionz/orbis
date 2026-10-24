@@ -245,7 +245,8 @@ export default {
     dispatch: "派工",
     yoloWarning: "「全部允許」會在這台電腦上自動允許代理的所有操作（寫入主分支除外）",
     permissionGaps: "這個代理在權限策略下無法攔截的操作",
-    noRunner: "目前沒有可以派工的執行器。請先在桌面版完成本機執行器的配對，或請管理員設定團隊執行器。",
+    noRunner:
+      "目前沒有可以派工的執行器。請先在桌面版完成本機執行器的配對，或請管理員設定團隊執行器。",
     loadingAgents: "正在讀取可用的代理",
     runnerOffline: "離線",
     noPermission: "沒有派工的權限",

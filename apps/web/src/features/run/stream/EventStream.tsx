@@ -6,8 +6,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../../i18n";
-import { useStreamEnv } from "./stream-context";
-import type { StreamItem, StreamTail } from "./stream-model";
 import {
   ErrorRow,
   HeadRow,
@@ -25,6 +23,8 @@ import {
   ThoughtRow,
   VerificationRow,
 } from "./StreamRows";
+import { useStreamEnv } from "./stream-context";
+import type { StreamItem, StreamTail } from "./stream-model";
 import { ToolGroupView } from "./ToolGroupView";
 import "./stream.css";
 
@@ -128,9 +128,11 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];
     if (start > 0) list.push({ kind: "earlier", key: "earlier", hidden: start });
-    items.slice(start).forEach((item, index) =>
-      list.push({ kind: "item", key: item.key, item, first: start + index === 0 }),
-    );
+    items
+      .slice(start)
+      .forEach((item, index) =>
+        list.push({ kind: "item", key: item.key, item, first: start + index === 0 }),
+      );
     if (tail) list.push({ kind: "tail", key: "tail", tail });
     return list;
   }, [items, start, tail]);
@@ -268,12 +270,7 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
         </div>
       </div>
       {newCount > 0 && (
-        <button
-          type="button"
-          className="st-new"
-          data-dock={dockShown}
-          onClick={jumpToLatest}
-        >
+        <button type="button" className="st-new" data-dock={dockShown} onClick={jumpToLatest}>
           {t.workspace.stream.newEvents(newCount)}
         </button>
       )}

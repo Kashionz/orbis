@@ -380,9 +380,21 @@ export function withExtras(
     change,
   }));
   if (pr) {
-    extras.push({ kind: "pull_request", key: `pr-${pr.number}-open`, head: null, pr, merged: false });
+    extras.push({
+      kind: "pull_request",
+      key: `pr-${pr.number}-open`,
+      head: null,
+      pr,
+      merged: false,
+    });
     if (pr.state === "merged" && pr.mergedAt) {
-      extras.push({ kind: "pull_request", key: `pr-${pr.number}-merged`, head: null, pr, merged: true });
+      extras.push({
+        kind: "pull_request",
+        key: `pr-${pr.number}-merged`,
+        head: null,
+        pr,
+        merged: true,
+      });
     }
   }
   if (extras.length === 0) return [...stream];

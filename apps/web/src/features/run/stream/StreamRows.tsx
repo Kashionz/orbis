@@ -1,6 +1,7 @@
 // 事件串流中除了工具群組以外的各種項目。
 
 import type { GateKind, PermissionOption, RunStatus } from "@orbis/protocol";
+import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
   Brain,
@@ -22,15 +23,14 @@ import { AgentLogo } from "../../../components/AgentLogo";
 import { Avatar } from "../../../components/Avatar";
 import { StatusDot } from "../../../components/StatusDot";
 import { type Messages, useT } from "../../../i18n";
-import { modelDisplayName } from "../../agents/catalog";
-import { TONE_COLOR, runTone } from "../run-tone";
 import { formatTime } from "../../../lib/format";
-import { useQuery } from "@tanstack/react-query";
+import { modelDisplayName } from "../../agents/catalog";
+import { clockTime } from "../panel/terminal-blocks";
+import { runTone, TONE_COLOR } from "../run-tone";
 import { blocksText, MessageBody } from "./MessageBody";
 import { useStreamEnv } from "./stream-context";
 import { agentAt } from "./stream-env";
 import type { StreamHead, StreamItem, StreamTail } from "./stream-model";
-import { clockTime } from "../panel/terminal-blocks";
 import { duration, relativeTime } from "./time-format";
 
 type Of<K extends StreamItem["kind"]> = Extract<StreamItem, { kind: K }>;
@@ -40,7 +40,9 @@ const ICON = { size: 14, strokeWidth: 1.75, "aria-hidden": true } as const;
 /** Run 狀態的文字；等待 Gate 時說明是哪一個。 */
 export function runStatusLabel(t: Messages, status: RunStatus, gate: GateKind | null): string {
   if (status === "awaiting_gate" && gate) {
-    return gate === "plan" ? t.workspace.header.awaitingPlanGate : t.workspace.header.awaitingReviewGate;
+    return gate === "plan"
+      ? t.workspace.header.awaitingPlanGate
+      : t.workspace.header.awaitingReviewGate;
   }
   return t.labels.runStatus[status];
 }
@@ -396,11 +398,16 @@ export function PermissionRow({ item }: { item: Of<"permission"> }) {
           <span>
             {permission.resolved?.selectedOptionId === null
               ? w.requestCanceled
-              : w.resolved(selected ? optionLabel(selected) : (permission.resolved?.selectedOptionId ?? ""))}
+              : w.resolved(
+                  selected ? optionLabel(selected) : (permission.resolved?.selectedOptionId ?? ""),
+                )}
           </span>
           {responder && (
             <span className="st-perm-by">
-              <Avatar person={{ name: responder.githubLogin, avatarUrl: responder.avatarUrl }} size={18} />
+              <Avatar
+                person={{ name: responder.githubLogin, avatarUrl: responder.avatarUrl }}
+                size={18}
+              />
               <span>{responder.githubLogin}</span>
             </span>
           )}
@@ -464,7 +471,8 @@ export function RateLimitedRow({ item }: { item: Of<"rate_limited"> }) {
       <span style={{ color }}>{t.labels.runStatus.rate_limited}</span>
       <span className="st-status-msg">
         {item.item.message}
-        {item.item.resetsAt && ` ${t.workspace.stream.rateLimitResetsAt(formatTime(item.item.resetsAt))}`}
+        {item.item.resetsAt &&
+          ` ${t.workspace.stream.rateLimitResetsAt(formatTime(item.item.resetsAt))}`}
       </span>
       <span className="st-spacer" />
       <span className="st-mono-muted">{clockTime(item.item.ts)}</span>
@@ -483,7 +491,9 @@ function SystemLine({ icon, children }: { icon: ReactNode; children: ReactNode }
   );
 }
 
-const Code = ({ children }: { children: ReactNode }) => <code className="st-sys-code">{children}</code>;
+const Code = ({ children }: { children: ReactNode }) => (
+  <code className="st-sys-code">{children}</code>
+);
 
 export function SystemRow({ item }: { item: Of<"system"> }) {
   const t = useT();
@@ -521,7 +531,8 @@ export function SystemRow({ item }: { item: Of<"system"> }) {
     case "child_merged":
       return (
         <SystemLine icon={<GitMerge {...ICON} />}>
-          {event.outcome === "merged" ? w.childMerged : w.childConflict} <Code>{event.childRunId}</Code>
+          {event.outcome === "merged" ? w.childMerged : w.childConflict}{" "}
+          <Code>{event.childRunId}</Code>
           {event.commitSha && (
             <>
               {" "}
@@ -551,7 +562,9 @@ export function SwitchRow({ item }: { item: Of<"switch"> }) {
   const change = item.change;
   if (change.kind === "model") {
     return (
-      <SystemLine icon={change.agent ? <AgentLogo agent={change.agent} size={14} /> : <Bot {...ICON} />}>
+      <SystemLine
+        icon={change.agent ? <AgentLogo agent={change.agent} size={14} /> : <Bot {...ICON} />}
+      >
         {w.modelSwitched} <Code>{change.model ? modelDisplayName(change.model) : ""}</Code>
         {w.fromNextStep}
       </SystemLine>
@@ -567,7 +580,9 @@ export function SwitchRow({ item }: { item: Of<"switch"> }) {
   return (
     <SystemLine icon={<Shield {...ICON} />}>
       {w.policySet}{" "}
-      <Code>{change.permissionPolicy ? t.labels.permissionPolicy[change.permissionPolicy] : ""}</Code>
+      <Code>
+        {change.permissionPolicy ? t.labels.permissionPolicy[change.permissionPolicy] : ""}
+      </Code>
     </SystemLine>
   );
 }
