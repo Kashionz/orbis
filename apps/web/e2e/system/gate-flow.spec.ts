@@ -73,15 +73,17 @@ test.describe("Plan Gate 到核准（完整系統）", () => {
     await expect(plan.getByTestId("plan-body")).toContainText("新增 verify.txt");
 
     // 通知中心（§12.3）：Gate 等待核准的通知經由 /api/ws 即時送到，標頭顯示未讀數；
-    // 列表中點擊前往 Run 頁並標為已讀
+    // 列表中點擊前往通知指向的 Task 頁並標為已讀，再回到 Run 頁
+    const runUrl = page.url();
     await expect(page.getByTestId("notification-count")).toContainText("1");
     await page.getByRole("link", { name: /^通知/ }).click();
     await expect(page).toHaveURL(/\/notifications$/);
     const pending = page.locator(".notification", { hasText: `${task.key} 的 plan 等待核准` });
     await expect(pending).toHaveAttribute("data-read", "false");
     await pending.getByRole("button", { name: new RegExp(`${task.key} 的 plan 等待核准`) }).click();
-    await expect(page).toHaveURL(/\/runs\/[^/?]+/);
+    await expect(page).toHaveURL(new RegExp(`/tasks/${task.key}$`));
     await expect(page.getByTestId("notification-count")).toHaveCount(0);
+    await page.goto(runUrl);
     await expect(plan.getByTestId("plan-body")).toContainText("新增 verify.txt");
 
     await plan.getByRole("button", { name: "核准 plan" }).click();

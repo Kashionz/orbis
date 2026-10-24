@@ -123,7 +123,8 @@ test.describe("Delegation（完整系統）", () => {
       true,
     );
     const branchRun = childRuns.find((r) => r.delegationMode === "branch");
-    expect(branchRun?.branch).toBe(`${parent.branch}--c1`);
+    // 子分支是父分支加上 --c<n>，n 依 Child Run 的順序編號（consult 先開，branch 是第 2 個）
+    expect(branchRun?.branch).toBe(`${parent.branch}--c2`);
 
     // 父 Run 的 diff 只有它自己改的檔案
     await page.getByRole("link", { name: "開啟 Run 頁" }).first().click();
