@@ -92,6 +92,7 @@ M1 劇本在退回時要求 prompt 包含「改成第二版」，例如在 diff 
 | `--runner-bin <path>` | `ORBIS_E2E_RUNNER_BIN` | `target/debug/orbis-runner(.exe)` |
 | `--fake-agent-bin <path>` | `ORBIS_E2E_FAKE_AGENT_BIN` | `target/debug/orbis-fake-agent(.exe)` |
 | `--agent-script <path>` | `ORBIS_E2E_AGENT_SCRIPT` | `crates/fake-agent/scripts/m1.yaml` |
+| — | `ORBIS_E2E_CHILD_AGENT_SCRIPT` | 未設定時不註冊第二個 Agent `fake-child`（Delegation e2e：父 Run 以 `delegate` 派給它，用這份劇本） |
 | `--port <port>` | `ORBIS_SERVER_PORT` | `4000` |
 | `--runner-config-out <dir>` | — | 未指定時 stack 自己啟動 Runner |
 | — | `ORBIS_TEST_DATABASE_URL` | 未設定時用 Testcontainers |
@@ -119,6 +120,7 @@ M1 劇本在退回時要求 prompt 包含「改成第二版」，例如在 diff 
 | `projectId`、`projectKey` | Project 的 ID 與 Task Key 前綴（`SYS`） |
 | `repoId` | Project 中唯一的 Repo |
 | `runnerId`、`runnerPid` | 已上線的 Local Runner，與它的程序 ID；`--runner-config-out` 模式下是 `null` |
+| `childAgent` | 有設定 `ORBIS_E2E_CHILD_AGENT_SCRIPT` 時是第二個 Agent 的 id（`fake-child`），否則 `null` |
 | `runnerHome` | Runner 的本機目錄（`ORBIS_HOME`）。`--runner-config-out` 模式下是指定的目錄 |
 | `runnerConfigPath` | `<runnerHome>/runner.toml` |
 | `bareRepoPath` | 本機 bare repo。核准後 Runner 把分支 push 到這裡，可以用 `git -C <bareRepoPath> show <branch>:<path>` 確認結果 |
@@ -128,6 +130,24 @@ M1 劇本在退回時要求 prompt 包含「改成第二版」，例如在 diff 
 | `github.webhookSecret` | 這次執行隨機產生的 webhook secret（`X-Hub-Signature-256` 以它簽章） |
 | `github.repo` | 種子資料的 Repo 在 GitHub 上的 `owner`、`name`、`id` 與 `installationId` |
 | `tempDir` | 這次執行的暫存目錄，結束時刪除 |
+
+### stdin 指令
+
+ready 之後，stdin 是 pipe 時，stack 把 stdin 的每一行當成一個 JSON 指令（`apps/server/e2e/ready.ts` 的 `StackCommand`），
+處理完在 stdout 回一行 `StackReply`（`{"reply":"<id>","ok":true,"result":…}` 或 `{"reply":"<id>","ok":false,"error":"…"}`）。
+FakeGitHub 活在 stack 的程序中，e2e 要餵它資料只能經由這裡；`@orbis/server/e2e` 的 `StackCommander` 包好了送出與等回覆。
+
+| `command` | 參數 | 用途 |
+|---|---|---|
+| `seed_checks` | `sha`、`runs[]`（`id`、`name`、`conclusion`…）、選填 `suites[]` | 設定某個 commit 的 check suite 與 check run。Feedback Loop 的 CI 路徑：Server 收到 check webhook 後會向 FakeGitHub 查這個 commit，所以**送 webhook 之前**先餵 |
+| `set_github_role` | `user`（`id`、`login`、選填 `type`）、`role` | 設定某個 GitHub 帳號對種子 Repo 的角色（`admin`、`write`、`read`、`none`） |
+| `list_issue_comments` | `number` | 列出某個 Issue 或 PR 在 FakeGitHub 上的留言（例如 Feedback Loop 的紀錄留言） |
+
+```ts
+const commander = new StackCommander(child); // ready 行之後建立
+await commander.send({ command: "seed_checks", sha, runs: [{ id: 2, name: "test", conclusion: "failure" }] });
+const comments = await commander.send<{ body: string }[]>({ command: "list_issue_comments", number: 1 });
+```
 
 ### 結束
 
@@ -166,6 +186,23 @@ const { status, pullRequest } = await sendPullRequestMergedWebhook(ready, { bran
   - payload 以 D 軌從測試 repo 錄製的真實 `pull_request.closed` payload（`packages/github/test/fixtures/webhooks/pull_request.closed.json`）為底，只替換 PR、repo 與 installation 的欄位，`merged` 設為 true。
   - 以 `ready.github.webhookSecret` 簽章，`X-GitHub-Delivery` 每次隨機產生，然後送到 `ready.github.webhookUrl`。
 - 也匯出 `pullRequestMergedPayload(ready, pullRequest)`，可以只組 payload、自己送出。
+
+### Feedback Loop：review 與 CI 的 webhook
+
+```ts
+import { sendCheckFailedWebhooks, sendPullRequestReviewWebhook } from "@orbis/server/e2e";
+
+// 有寫入權限的人類送出 review（作者預設是種子資料的 Member）：有內容所以立刻觸發修正
+await sendPullRequestReviewWebhook(ready, { branch }, { body: "請把 v1 改成 v2" });
+// CI 失敗：先以 stdin 指令 seed_checks 餵 PR 目前 head 的 check，再送失敗的 check_run 與 check_suite completed
+await sendCheckFailedWebhooks(ready, { branch }, [{ id: 502, name: "test" }], { totalCheckRuns: 2 });
+```
+
+- 以 D 軌錄製的 `pull_request_review.submitted.commented`、`check_run.completed.failure`、`check_suite.completed.failure` 為底，
+  只替換 PR、repo、installation 與 sender 的欄位。也匯出 `pullRequestReviewPayload`、`checkRunFailurePayload`、
+  `checkSuiteFailurePayload` 與通用的 `postWebhook(ready, event, payload)`。
+- `findPullRequest(ready, target)` 從 stack 的資料庫取得 PR 的號碼、head sha 與網址；`memberGithubUser(ready)` 是種子 Member 的 GitHub 帳號。
+- Fake Agent 以 `--state-dir` 啟動，所以修正 Run 會以 `session/load` 接回前一個 Run 的劇本，從下一個回合接續。
 
 ### 確認沒有殘留的程序：`processTree` 與 `aliveProcesses`
 
