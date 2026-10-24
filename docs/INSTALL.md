@@ -177,6 +177,8 @@ touch pairing_token github_token agent_credentials codex_auth_json
 
 Antigravity 需要瀏覽器登入、Grok Build 需要自行安裝 CLI，Phase 1 的 Team Runner image 不支援這兩個 Agent。
 
+**安全注意**：容器內的 Agent 和 Runner 是同一個使用者，Agent 執行指令時讀得到這些 Credential（環境變數與 tmpfs 中的 git credential），和在開發者電腦上跑 Local Runner 的情況相同。所以 `github_token` 只給必要的 repo 與 Contents 權限並設定到期日，Agent 的 Credential 用可以隨時撤銷的 token，Team Runner 的 Permission Policy 不要用 `yolo`。由 Runner 以短效的 installation token 代為 push 是 Phase 2 的項目。
+
 ### 8.2 Pairing
 
 1. 以 Admin 以上登入 Web UI → 「管理」→ Runner → **產生 Team Runner 的 Pairing token**（24 小時內有效，只顯示一次）。
