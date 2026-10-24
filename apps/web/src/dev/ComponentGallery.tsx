@@ -1,8 +1,10 @@
 // 共用元件的展示頁（只在 mock 模式註冊於 /__dev/components）。e2e/ui-components.spec.ts 以這頁
 // 測試各元件的互動；不是產品功能，文字不走 i18n。
 
+import { useQuery } from "@tanstack/react-query";
 import { Monitor } from "lucide-react";
 import { useState } from "react";
+import { taskByKeyQuery } from "../api/resources";
 import { AgentLogo } from "../components/AgentLogo";
 import { Avatar, AvatarStack } from "../components/Avatar";
 import { Button, IconButton } from "../components/Button";
@@ -16,6 +18,7 @@ import { StatusDot } from "../components/StatusDot";
 import { Switch } from "../components/Switch";
 import { useToast } from "../components/Toast";
 import { Tooltip } from "../components/Tooltip";
+import { ShareCluster } from "../features/share/ShareCluster";
 import { parseNumberIn, persistentState, usePersistentState } from "../lib/storage";
 
 const galleryWidth = persistentState<number>("gallery-w", 240, parseNumberIn(160, 400));
@@ -224,6 +227,8 @@ export function ComponentGallery() {
         </Dialog>
       </section>
 
+      <GalleryShare />
+
       <section aria-label="bottom" style={{ marginTop: "auto", paddingTop: 400 }}>
         <Button ref={bottomMenu.anchorRef} {...bottomMenu.triggerProps}>
           底部的選單
@@ -236,5 +241,26 @@ export function ComponentGallery() {
         />
       </section>
     </main>
+  );
+}
+
+/** 分享區塊：ORB-4 預設有一位可操作的成員與一筆 Email 邀請（mocks/prototype-features.ts）。 */
+function GalleryShare() {
+  const { data: task } = useQuery(taskByKeyQuery("ORB-4"));
+  const [width, setWidth] = useState(900);
+  return (
+    <section aria-label="share" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+      <select
+        aria-label="標題列寬度"
+        value={width}
+        onChange={(event) => setWidth(Number(event.target.value))}
+      >
+        <option value={900}>900</option>
+        <option value={600}>600</option>
+        <option value={400}>400</option>
+      </select>
+      <span style={{ flex: 1 }} />
+      {task && <ShareCluster task={task} headerWidth={width} />}
+    </section>
   );
 }

@@ -5,7 +5,7 @@ import type { MeResponse, Runner } from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { LogOut, Monitor, Settings, Shield } from "lucide-react";
-import { useRef, useState } from "react";
+import { type RefObject, useRef, useState } from "react";
 import { runnersQuery } from "../../api/resources";
 import { Avatar } from "../../components/Avatar";
 import { ErrorText } from "../../components/ErrorText";
@@ -85,7 +85,7 @@ function ProfileMenu({
 }: {
   open: boolean;
   onClose: () => void;
-  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  anchorRef: RefObject<HTMLButtonElement | null>;
   me: MeResponse;
   runner: Runner | null;
 }) {

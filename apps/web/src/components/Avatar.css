@@ -24,6 +24,12 @@
   font-weight: 400;
 }
 
+.o-avatar[data-empty="filled"] {
+  background: var(--o22242a);
+  color: var(--o8b9098);
+  font-weight: 400;
+}
+
 .o-avatar[data-ring="true"] {
   box-shadow: 0 0 0 2px var(--ring-color, var(--o121316));
 }

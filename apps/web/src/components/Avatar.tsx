@@ -1,6 +1,6 @@
 // 成員頭像：有 GitHub 頭像時顯示圖片，否則顯示首字母，底色由名稱決定（三種 token 色輪替）。
 
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 import "./Avatar.css";
 
 const AVATAR_TONES = ["var(--o3a3e46)", "var(--o4a3e52)", "var(--o3b4d45)"] as const;
@@ -34,6 +34,8 @@ interface AvatarProps {
   selected?: boolean;
   /** 沒有人時顯示的內容（預設虛線空圈）。 */
   placeholder?: ReactNode;
+  /** 沒有人時用實心底（邀請成功卡的 Email 頭像），預設虛線。 */
+  filledPlaceholder?: boolean;
   className?: string;
   style?: CSSProperties;
 }
@@ -45,29 +47,44 @@ export function Avatar({
   ring = false,
   selected = false,
   placeholder,
+  filledPlaceholder = false,
   className,
   style,
 }: AvatarProps) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const fontSize = Math.max(9, Math.round(size * 0.42));
   const classes = ["o-avatar", className].filter(Boolean).join(" ");
   const box: CSSProperties = { width: size, height: size, fontSize, ...style };
   if (!person) {
     return (
-      <span className={classes} data-empty="true" style={box} aria-hidden="true">
+      <span
+        className={classes}
+        data-empty={filledPlaceholder ? "filled" : "true"}
+        style={box}
+        aria-hidden="true"
+      >
         {placeholder}
       </span>
     );
   }
+  // 頭像載入失敗（離線、GitHub 擋下）時改顯示首字母
+  const imageUrl = person.avatarUrl && person.avatarUrl !== failedUrl ? person.avatarUrl : null;
   return (
     <span
       className={classes}
       data-ring={ring}
       data-selected={selected}
-      style={{ ...box, background: person.avatarUrl ? undefined : avatarTone(person.name) }}
+      style={{ ...box, background: imageUrl ? undefined : avatarTone(person.name) }}
       aria-hidden="true"
     >
-      {person.avatarUrl ? (
-        <img src={person.avatarUrl} alt="" width={size} height={size} />
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          width={size}
+          height={size}
+          onError={() => setFailedUrl(imageUrl)}
+        />
       ) : (
         initialOf(person.name)
       )}

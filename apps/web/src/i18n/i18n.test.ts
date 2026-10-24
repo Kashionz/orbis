@@ -35,8 +35,9 @@ describe("i18n 字典", () => {
     expect(strings(en).filter((s) => s.includes("·"))).toEqual([]);
   });
 
-  it("zh-TW 的說明文字不用「你」", () => {
-    expect(strings(zhTW).filter((s) => s.includes("你"))).toEqual([]);
+  it("zh-TW 的說明文字不用「你」（成員列標示自己的「（你）」除外）", () => {
+    const { youSuffix: _, ...share } = zhTW.share;
+    expect(strings({ ...zhTW, share }).filter((s) => s.includes("你"))).toEqual([]);
   });
 
   it("函式項目產生的文字帶入參數", () => {

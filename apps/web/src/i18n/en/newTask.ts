@@ -1,3 +1,25 @@
 import type { Messages } from "../types";
 
-export default {} satisfies Messages["newTask"];
+export default {
+  title: "New task",
+  titlePlaceholder: "Task title",
+  descriptionPlaceholder: "Describe what to do",
+  repo: "Repo",
+  assignee: "Assignee",
+  dependsOn: "Depends on",
+  acceptanceCriteria: "Acceptance criteria",
+  criterionPlaceholder: "Criterion",
+  commandPlaceholder: "Command",
+  criterionKind: "Criterion type",
+  removeCriterion: "Remove",
+  addCriterion: "Add criterion",
+  ready: "Ready",
+  backlog: "Backlog",
+  missing: "Missing",
+  create: "Create",
+  createAndOpen: "Create and open",
+  created: (key: string) => `Created ${key}`,
+  noProject: "No projects yet",
+  noRepos: "This project has no repos yet",
+  projectSettings: "Project settings",
+} satisfies Messages["newTask"];

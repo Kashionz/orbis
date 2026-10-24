@@ -13,6 +13,8 @@ let listening = false;
 
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== "Escape" || event.defaultPrevented) return;
+  // 元件自己處理 Esc（例如有搜尋字時先清掉搜尋）時加 `data-own-escape`
+  if (event.target instanceof Element && event.target.closest("[data-own-escape]")) return;
   const top = stack[stack.length - 1];
   if (!top) return;
   event.preventDefault();
