@@ -424,10 +424,6 @@ impl AgentProfile {
                     "需要先在本機執行 {} 登入（不沿用 agy CLI 的登入）",
                     login_command(ANTIGRAVITY)
                 ),
-                format!(
-                    "沒有宣告 stdio MCP：{} MCP（delegate 等工具）可能無法使用",
-                    orbis_protocol::names::PRODUCT_NAME
-                ),
             ],
             reports_usage: true,
             credential: format!("{ANTIGRAVITY}-local"),

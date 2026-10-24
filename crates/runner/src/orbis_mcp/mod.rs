@@ -90,14 +90,16 @@ pub const TOOLS: &[&str] = &[
 ];
 
 /// 這個權限請求的標題是不是產品自己的某個 MCP 工具（不轉給人，由 Server 套用防護規則）。
-/// 只認完全相符的名稱（`<名稱>` 是 [`server_name`]）：Claude Code 的 `mcp__<名稱>__<工具>`，或常見的
-/// `<名稱>/<工具>`、`<名稱>.<工具>`、`<名稱>: <工具>`，工具名稱之後不能有其他內容。
+/// 只認完全相符的名稱（`<名稱>` 是 [`server_name`]）：Claude Code 的 `mcp__<名稱>__<工具>`、
+/// Antigravity 的 `<名稱>_<工具>`（實機確認），或常見的 `<名稱>/<工具>`、`<名稱>.<工具>`、
+/// `<名稱>: <工具>`，工具名稱之後不能有其他內容。
 pub fn is_orbis_tool(title: &str) -> bool {
     let name = server_name();
     let title = title.trim();
     TOOLS.iter().any(|tool| {
         [
             format!("mcp__{name}__{tool}"),
+            format!("{name}_{tool}"),
             format!("{name}/{tool}"),
             format!("{name}.{tool}"),
             format!("{name}: {tool}"),
@@ -117,6 +119,11 @@ mod tests {
         assert!(is_orbis_tool(&format!("mcp__{name}__delegate")));
         assert!(is_orbis_tool(&format!("{name}/wait_run")));
         assert!(is_orbis_tool(&format!("{name}: ask_parent")));
+        // Antigravity 的標題（實機）。
+        assert!(is_orbis_tool(&format!("{name}_delegate")));
+        assert!(is_orbis_tool(&format!("{name}_wait_run")));
+        assert!(!is_orbis_tool(&format!("{name}_delegate_all")));
+        assert!(!is_orbis_tool(&format!("other_{name}_delegate")));
         assert!(!is_orbis_tool("mcp__playwright__browser_navigate"));
         assert!(!is_orbis_tool(&format!("rm -rf {name}/x")));
         assert!(!is_orbis_tool(&format!("{name}/delegate; rm -rf /")));

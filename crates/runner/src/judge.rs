@@ -150,8 +150,8 @@ const AUTO_ALLOWED_BROWSER_TOOLS: &[&str] = &[
 
 /// 這個權限請求是不是注入的瀏覽器 MCP server 中、判定用的 Child Run 可以自動允許的工具：
 /// [`AUTO_ALLOWED_BROWSER_TOOLS`]，或網址的 origin 就是 Preview（`preview_url`）的 `browser_navigate`。
-/// 標題只認完全相符的形式：Claude Code 的 `mcp__playwright__browser_<名稱>`，或常見的
-/// `playwright/…`、`playwright.…`、`playwright: …`。
+/// 標題只認完全相符的形式：Claude Code 的 `mcp__playwright__browser_<名稱>`、Antigravity 的
+/// `playwright_browser_<名稱>`，或常見的 `playwright/…`、`playwright.…`、`playwright: …`。
 pub fn is_auto_allowed_browser_tool(
     title: &str,
     raw_input: Option<&serde_json::Value>,
@@ -160,6 +160,7 @@ pub fn is_auto_allowed_browser_tool(
     let title = title.trim();
     let tool = [
         format!("mcp__{BROWSER_SERVER}__"),
+        format!("{BROWSER_SERVER}_"),
         format!("{BROWSER_SERVER}/"),
         format!("{BROWSER_SERVER}."),
         format!("{BROWSER_SERVER}: "),
@@ -244,6 +245,8 @@ mod tests {
         assert!(allowed("mcp__playwright__browser_click"));
         assert!(allowed("playwright/browser_take_screenshot"));
         assert!(allowed("playwright: browser_snapshot"));
+        assert!(allowed("playwright_browser_click"));
+        assert!(!allowed("playwright_browser_evaluate"));
         assert!(!allowed("mcp__playwright__browser_"));
         assert!(!allowed("mcp__playwright__browser_click; rm -rf /"));
         assert!(!allowed("mcp__playwright__install"));

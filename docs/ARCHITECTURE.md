@@ -327,9 +327,9 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - Gemini CLI（已由 Antigravity 取代）：ACP 連線與錯誤回報已確認，沒有 API key 時以 `agent_start_failed` 讓 Run 轉為 `failed`。
   - Delegation：Claude Code 經 Orbis MCP `delegate` 給 Codex（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。
   - Antigravity（agy_acp_server 1.4.3）：完整通過。`orbis-runner login antigravity` 下載官方 binary、比對 sha256，經瀏覽器以 Google 帳號登入；Task 中 session mode 已是 `default`（不需要切換），執行指令（`git status`）會送權限請求、經過 Permission Policy。能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse。使用者的帳號被判定為 `free-tier`，Google 回了隱私聲明（資料處理條款依帳號方案而定）。
+  - Antigravity 的 Delegation：`initialize` 雖然沒有宣告 stdio MCP，Orbis MCP bridge（stdio）仍能注入；Antigravity 經 `delegate` 給 Claude Code（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。它的工具標題是 `<server>_<工具>`（例如 `orbis_delegate`），實機時沒有被認成產品自己的 MCP 工具而去問人；已補上這個格式（判定用瀏覽器工具的 `playwright_browser_<名稱>` 也一樣）。
 - **已知落差**：
   - Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。改由 Server／UI 在 diff 為空時不做 push（[#73](https://github.com/Kashionz/orbis/issues/73)）。
-  - Antigravity 的 `initialize` 沒有宣告 stdio MCP，Orbis MCP bridge（stdio）可能注入不了，這時不能 `delegate`、也不能當判定用的 Child Run。待實機確認；不支援時另開 Issue，讓 hub 提供本機 http 端點。
   - Antigravity 會載入使用者全域的 MCP server 設定（`~/.gemini/config/mcp_config.json`，實機確認），其中的工具不經過 Runner，列在它的 Permission Policy 落差中。
   - Antigravity 的 rate limit 格式（目前沿用 Gemini API 的 `RESOURCE_EXHAUSTED`），以及是否仍讀取 Repo 的 `.gemini/`，還沒有在實機遇到，待確認。
 - **由 Runner 代為登入**：Agent Profile 指定了認證方式的 Agent（目前只有 Antigravity，預設 `oauth-personal`）用 `orbis-runner login <agent>` 登入。
