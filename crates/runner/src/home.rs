@@ -217,8 +217,22 @@ pub struct StoredToken {
     pub token: String,
 }
 
+/// IPv4 與 IPv6 的 loopback 都要沒被占用：dev server 常綁 `localhost`（Linux 上 Node 先解析成 `::1`）
+/// 或不指定 host（`::`，雙堆疊）。只查 127.0.0.1 時，`::1` 上 client 連線（含 TIME_WAIT）用掉的
+/// port 會被當成空閒；Linux 的 ephemeral 範圍（32768–60999）又包含預設的 port 範圍。
+/// 不 bind 萬用位址，避免 Windows 防火牆跳出允許存取的對話框。
 fn port_is_free(port: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    use std::io::ErrorKind;
+    use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+
+    if TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_err() {
+        return false;
+    }
+    // 沒有 IPv6 時略過；Windows 的保留範圍回 PermissionDenied
+    match TcpListener::bind((Ipv6Addr::LOCALHOST, port)) {
+        Ok(_) => true,
+        Err(e) => !matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::PermissionDenied),
+    }
 }
 
 /// 先寫到暫存檔再改名，避免寫到一半當掉留下壞掉的檔案。`private` 時 Unix 上權限設為 0600。
@@ -394,6 +408,30 @@ mod tests {
             .unwrap();
         let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = busy.local_addr().unwrap().port();
+        let root = dir.path().join("h");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(RUNNER_CONFIG_FILE),
+            format!("port_range = [{port}, {}]\n", port.saturating_add(20)),
+        )
+        .unwrap();
+        let home = RunnerHome::open(Some(root)).unwrap();
+        let allocated = home.allocate_port(Path::new("/wt/a")).unwrap();
+        assert_ne!(allocated, port);
+    }
+
+    #[test]
+    fn 只在_ipv6_loopback_被占用的_port_也會跳過() {
+        // dev server 綁 `::1` 時會和這個 port 衝突，即使 127.0.0.1 可以 bind
+        let Ok(busy) = std::net::TcpListener::bind("[::1]:0") else {
+            eprintln!("沒有 IPv6 loopback，略過");
+            return;
+        };
+        let port = busy.local_addr().unwrap().port();
+        let dir = tempfile::Builder::new()
+            .prefix("orbis home ")
+            .tempdir()
+            .unwrap();
         let root = dir.path().join("h");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(

@@ -195,6 +195,20 @@ async fn reached_status(conn: &mut RunnerSide, status: &str) {
     }
 }
 
+/// 等 `preview_ready`；dev server 沒有就緒就停止時立刻失敗，並印出 `preview_stopped`（含輸出尾段）。
+async fn wait_preview_ready(conn: &mut RunnerSide) -> Value {
+    let event = conn
+        .wait_for("preview_ready", |v| {
+            v["type"] == "event" && (v["kind"] == "preview_ready" || v["kind"] == "preview_stopped")
+        })
+        .await;
+    assert_eq!(
+        event["kind"], "preview_ready",
+        "dev server 沒有就緒就停止：{event:#}"
+    );
+    event
+}
+
 async fn preview_info(ready: &Value) -> Value {
     let port = ready["port"].as_u64().unwrap();
     let text = get(&format!("http://localhost:{port}/info"))
@@ -224,7 +238,7 @@ async fn 依設定啟動_就緒後回報_取消後結束整個程序樹() {
     .await;
     let (_runner, mut conn) = env.dispatch().await;
 
-    let ready = conn.wait_event("preview_ready").await;
+    let ready = wait_preview_ready(&mut conn).await;
     let port = u16::try_from(ready["port"].as_u64().unwrap()).unwrap();
     assert_eq!(
         ready["url"],
@@ -275,7 +289,7 @@ async fn run_完成後結束_preview() {
     )
     .await;
     let (_runner, mut conn) = env.dispatch().await;
-    let ready = conn.wait_event("preview_ready").await;
+    let ready = wait_preview_ready(&mut conn).await;
     let info = preview_info(&ready).await;
     reached_status(&mut conn, "awaiting_gate").await;
 
@@ -347,7 +361,7 @@ async fn restart_preview_重新啟動_dev_server() {
         .find(|e| e["kind"] == "worktree_ready")
         .cloned()
         .unwrap();
-    let first = conn.wait_event("preview_ready").await;
+    let first = wait_preview_ready(&mut conn).await;
     assert_eq!(worktree["preview_port"], first["port"], "{worktree}");
     let before = preview_info(&first).await;
 
@@ -355,7 +369,7 @@ async fn restart_preview_重新啟動_dev_server() {
         .control("r1", "d-r1", "restart", RunControlAction::RestartPreview)
         .await;
     assert_eq!(result_outcome(&result), "applied", "{result}");
-    let second = conn.wait_event("preview_ready").await;
+    let second = wait_preview_ready(&mut conn).await;
     assert_eq!(second["port"], first["port"]);
     let after = preview_info(&second).await;
     assert_ne!(after["pid"], before["pid"], "重新啟動後是新的程序");

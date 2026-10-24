@@ -7,6 +7,8 @@
 // 4. 以 Preview 網址（Host header）經由 Server → Runner 通道存取 dev server：
 //    - 未登入的請求被拒絕（頁面導覽轉到 authorize，其他請求 401，WebSocket 401）。
 //    - 換票後 HTTP 正常、HMR 的 WebSocket 在修改檔案後收到更新、20 MiB 的檔案 SHA-256 一致。
+//      20 MiB 的檔案一開始就 commit 在 public 目錄：Vite 啟動時快取 public 的檔名，之後新增的檔案
+//      要等 watcher 通知才會加入（macOS 的 FSEvents 較慢），在那之前會落到 SPA fallback 回 index.html。
 // 結束時關閉 stack，確認自己啟動的程序樹都已結束。
 
 import { execFileSync } from "node:child_process";
@@ -29,6 +31,13 @@ test.describe.configure({ mode: "serial" });
 
 const BIG_SIZE = 20 * 1024 * 1024;
 const BIG_FILE = "big.bin";
+
+/** 20 MiB、內容有規律但不重複的檔案。 */
+function bigFile(): Buffer {
+  const big = Buffer.alloc(BIG_SIZE);
+  for (let i = 0; i < BIG_SIZE; i++) big[i] = (i * 31 + 7) % 251;
+  return big;
+}
 
 let stack: StartedStack | undefined;
 let ready: ReadyLine;
@@ -103,7 +112,7 @@ function previewSocket(path: string, cookie?: string): Promise<WebSocket | numbe
   });
 }
 
-/** 推到 stack 的 bare repo：一個最小的 Vite app，`[preview]` 以 node 啟動 Vite。 */
+/** 推到 stack 的 bare repo：一個最小的 Vite app 與 public 目錄中的大檔案，`[preview]` 以 node 啟動 Vite。 */
 function pushViteApp(): void {
   const vite = pathToFileURL(createRequire(import.meta.url).resolve("vite")).href;
   const work = mkdtempSync(join(tmpdir(), "preview-e2e-repo-"));
@@ -121,7 +130,7 @@ function pushViteApp(): void {
     });
   try {
     git("clone", ready.bareRepoPath, ".");
-    const files: Record<string, string> = {
+    const files: Record<string, string | Buffer> = {
       "index.html":
         '<!doctype html><html><body><h1 id="app">preview</h1><script type="module" src="/main.js"></script></body></html>\n',
       "main.js": 'document.getElementById("app").textContent = "hello from vite";\n',
@@ -139,6 +148,8 @@ function pushViteApp(): void {
       ].join("\n"),
       [`${NAMES.configDir}/${NAMES.configFile}`]:
         '[preview]\ncommand = "node preview.mjs"\nready_path = "/"\n',
+      ".gitattributes": "*.bin binary\n",
+      [`public/${BIG_FILE}`]: bigFile(),
     };
     for (const [path, content] of Object.entries(files)) {
       mkdirSync(dirname(join(work, path)), { recursive: true });
@@ -210,9 +221,9 @@ test("派工後 Runner 啟動 Vite，preview_ready 回報 port", async () => {
   runId = run.id;
   previewHost = `${runId}.preview.localhost:${serverPort}`;
 
-  // 核准設定檔的信任（Preview 指令）與 Agent 的寫檔權限，直到 Preview 就緒
+  // 核准設定檔的信任（Preview 指令）與 Agent 的寫檔權限，直到 Preview 就緒或停止
   const answered = new Set<string>();
-  const readyEvent = await waitUntil(
+  const previewEvent = await waitUntil(
     async () => {
       const list = await events();
       for (const event of list) {
@@ -226,13 +237,17 @@ test("派工後 Runner 啟動 Vite，preview_ready 回報 port", async () => {
         });
       }
       ledger.record(stack?.pid);
-      return list.find((e) => e.kind === "preview_ready") ?? null;
+      return list.find((e) => e.kind === "preview_ready" || e.kind === "preview_stopped") ?? null;
     },
     (event) => event !== null,
     "preview_ready",
     180_000,
   );
-  expect(readyEvent?.payload.url).toMatch(/^http:\/\/localhost:\d+\/$/);
+  if (previewEvent?.kind === "preview_stopped") {
+    const { reason, exit_code, output } = previewEvent.payload;
+    throw new Error(`dev server 沒有就緒就停止（${reason}，結束碼 ${exit_code}）：\n${output}`);
+  }
+  expect(previewEvent?.payload.url).toMatch(/^http:\/\/localhost:\d+\/$/);
   const worktree = (await events()).find((e) => e.kind === "worktree_ready");
   worktreePath = worktree?.payload.worktree_path as string;
   expect(worktreePath).toBeTruthy();
@@ -288,14 +303,10 @@ test("換票後經由 Runner 通道存取 Vite：HTTP、HMR 的 WebSocket、20 M
     .toEqual(expect.arrayContaining([expect.stringMatching(/^(update|full-reload)$/)]));
   socket.close();
 
-  // 大檔案：放進 Vite 的 public 目錄，經由通道下載後 SHA-256 一致
-  const big = Buffer.alloc(BIG_SIZE);
-  for (let i = 0; i < BIG_SIZE; i++) big[i] = (i * 31 + 7) % 251;
-  mkdirSync(join(worktreePath, "public"), { recursive: true });
-  writeFileSync(join(worktreePath, "public", BIG_FILE), big);
+  // 大檔案：Repo 的 public 目錄中的檔案，經由通道下載後 SHA-256 一致
   const download = await preview(`/${BIG_FILE}`, { cookie: previewCookie });
   expect(download.status).toBe(200);
   expect(download.body.byteLength).toBe(BIG_SIZE);
   const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-  expect(sha(download.body)).toBe(sha(big));
+  expect(sha(download.body)).toBe(sha(bigFile()));
 });
