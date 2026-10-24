@@ -145,6 +145,8 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       services.blobCleanup.stop();
       services.sessionCleanup.stop();
       await services.dispatcher.idle();
+      // 阻塞中的工具呼叫（wait_run、ask_parent）不再等待，否則要等到 Child Run 結束才關得掉。
+      services.watch.close();
       await services.tools.idle();
       await services.githubIdle();
       router.close();

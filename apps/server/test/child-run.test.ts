@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { NeedsYouListResponse } from "@orbis/api-contract";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { projects, runs } from "../src/db/schema";
+import { childQuestions, orbisToolCalls, projects, runs } from "../src/db/schema";
 import {
   checkDelegation,
   type DelegationCheckInput,
@@ -304,8 +304,16 @@ describe.skipIf(dbSkipReason !== null)("Child Run（MCP 工具）", () => {
     it("父 Agent 在 wait_run 看到問題，以 answer_child 回答", async () => {
       const child = await acceptChild(childId((await delegate()).result));
       const asking = tool({ tool: "ask_parent", question: "要用哪個版本？" }, child.as);
-      const waited = (await tool({ tool: "wait_run", run_id: child.as.runId, timeout_ms: 5000 }))
-        .result as { output: { pending_question: { question_id: string; question: string } } };
+      // 問題一出現 wait_run 就回傳；wait_run 的逾時短於等 tool_result 的逾時，失敗時看得到當下的狀態。
+      const waited = (
+        await parent.mine.toolCall(
+          parent.offer.dispatch_id,
+          parent.run.id,
+          { tool: "wait_run", run_id: child.as.runId, timeout_ms: 5000 },
+          undefined,
+          10_000,
+        )
+      ).result as { output: { pending_question: { question_id: string; question: string } } };
       expect(waited.output.pending_question.question).toBe("要用哪個版本？");
       const answered = await tool({
         tool: "answer_child",
@@ -315,6 +323,34 @@ describe.skipIf(dbSkipReason !== null)("Child Run（MCP 工具）", () => {
       });
       expect(answered.result).toMatchObject({ outcome: "ok", output: { tool: "answer_child" } });
       expect((await asking).result).toMatchObject({ output: { tool: "ask_parent", answer: "v2" } });
+    });
+
+    it("Server 關閉時，阻塞中的 ask_parent 不再等待，也不寫入與回覆結果（Runner 重新連線後重送）", async () => {
+      const child = await acceptChild(childId((await delegate()).result));
+      const callId = randomUUID();
+      parent.mine.send({
+        type: "tool_call",
+        call_id: callId,
+        run_id: child.as.runId,
+        dispatch_id: child.as.dispatchId,
+        call: { tool: "ask_parent", question: "還在嗎？" },
+      });
+      await waitUntil(
+        async () =>
+          (
+            await database.db
+              .select()
+              .from(childQuestions)
+              .where(eq(childQuestions.childRunId, child.as.runId))
+          ).length === 1,
+      );
+      await flow.close();
+      const [call] = await database.db
+        .select()
+        .from(orbisToolCalls)
+        .where(eq(orbisToolCalls.callId, callId));
+      expect(call?.result).toBeNull();
+      expect(parent.mine.pending("tool_result")).toEqual([]);
     });
 
     it("父 Run 的回合已經結束時，問題加入 Needs You，由人回答", async () => {

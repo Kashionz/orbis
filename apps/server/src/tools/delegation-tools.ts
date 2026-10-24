@@ -219,13 +219,19 @@ export function delegationToolHandlers(deps: DelegationToolDeps): ToolHandlers {
     wait_run: async (context, call) => {
       const deadline = Date.now() + Math.min(call.timeout_ms ?? WAIT_RUN_MAX_MS, WAIT_RUN_MAX_MS);
       for (;;) {
-        const child = await ownChild(context, call.run_id);
-        const summary = await childRunSummary(db, child);
-        const remaining = deadline - Date.now();
-        if (isTerminalRunStatus(child.status) || summary.pending_question || remaining <= 0) {
-          return { tool: "wait_run", ...summary };
+        // 先監看再讀：讀取之後才發生的變化（例如 Child Run 的 ask_parent）不會漏掉。
+        const change = watch.watch(call.run_id);
+        try {
+          const child = await ownChild(context, call.run_id);
+          const summary = await childRunSummary(db, child);
+          const remaining = deadline - Date.now();
+          if (isTerminalRunStatus(child.status) || summary.pending_question || remaining <= 0) {
+            return { tool: "wait_run", ...summary };
+          }
+          await change.wait(Math.min(remaining, RECHECK_MS));
+        } finally {
+          change.cancel();
         }
-        await watch.wait(child.id, Math.min(remaining, RECHECK_MS));
       }
     },
 
@@ -261,19 +267,24 @@ export function delegationToolHandlers(deps: DelegationToolDeps): ToolHandlers {
       });
       watch.changed(caller.id);
       for (;;) {
-        const [row] = await db
-          .select()
-          .from(childQuestions)
-          .where(eq(childQuestions.id, question.id));
-        if (row?.answer) return { tool: "ask_parent", answer: row.answer };
-        const [self] = await db
-          .select({ status: runs.status })
-          .from(runs)
-          .where(eq(runs.id, caller.id));
-        if (!self || isTerminalRunStatus(self.status)) {
-          throw new ToolError("invalid_state", "Run 已經結束");
+        const change = watch.watch(questionKey(question.id));
+        try {
+          const [row] = await db
+            .select()
+            .from(childQuestions)
+            .where(eq(childQuestions.id, question.id));
+          if (row?.answer) return { tool: "ask_parent", answer: row.answer };
+          const [self] = await db
+            .select({ status: runs.status })
+            .from(runs)
+            .where(eq(runs.id, caller.id));
+          if (!self || isTerminalRunStatus(self.status)) {
+            throw new ToolError("invalid_state", "Run 已經結束");
+          }
+          await change.wait(RECHECK_MS);
+        } finally {
+          change.cancel();
         }
-        await watch.wait(questionKey(question.id), RECHECK_MS);
       }
     },
 
