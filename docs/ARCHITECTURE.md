@@ -100,13 +100,18 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 | Verifying | Agent 回報完成 | Server 送 `verify` 給 Runner，自動檢查 `command`、`agent`、`browser` 類型的條件（§5.1） |
 | Review Gate | Verification 全數通過 | 人工 review diff；行內留言與 Preview 留言可以退回 Running（**同一個 Worktree、同一個 session**）；`manual` 條件全部打勾才能核准 |
 | PR Open | Review Gate 通過 | 自動 push 並開 PR |
-| Done | PR merge（webhook） | 自動轉換 |
+| Done | PR merge（webhook），或 Review Gate 結束（沒有變更） | 自動轉換 |
 
 - **手動轉換**：看板上只能把 Task 在 Backlog 與 Ready 之間移動。拖到 Running 欄會打開派工對話框，派工成功才轉換。其他轉換都由系統觸發：派工、Runner 的 Event、Gate 的決定、GitHub webhook。合法的轉換表定義在 `packages/api-contract`，Server 的狀態機與 Web 共用同一份。
 - **進入 Ready 的條件**：已指定 Repo、描述不為空或有連結的 Spec、至少一條 Acceptance Criterion。`depends_on` 中還有 Task 沒有 Done 時，不能派工。
 - **Run 失敗，或在 Review Gate 被中止**：Task 回到 Ready，可以重新派工。
 - **回合結束**：Agent 結束回合後，Runner 先送出 Run 的完整 diff（§10），再回報等待 Review Gate。Review Gate 期間 Run 不會結束，退回時在同一個 session 繼續。
 - **核准之後**：Task 立刻進入 PR Open。Runner 結束 Agent 程序、push 分支，**push 成功後 Run 才算 `completed`**。push 失敗時 Run 不會是 `completed`，並加入 Needs You。
+- **diff 為空時**（Review Gate 送審的那份 diff 沒有任何檔案變更）：沒有東西可以 push，不能核准，改為**結束（沒有變更）**，也可以退回或中止。
+  - Task 轉 Done，關閉原因是 `completed`（同步到 Issue 時一樣以 `completed` 關閉）；不 push、不開 PR。
+  - Server 送 RunControl `cancel` 結束 Run（`canceled`），Worktree 與分支和中止一樣保留。
+  - 權限與 `manual` 條件的要求都和核准相同。Gate 的決定記為核准，並標示為結束（沒有變更）。
+  - Runner 不猜 Agent 是否出錯：只回答問題、本來就不需要改檔的 Task 也走這條路；Agent 把錯誤當成回覆時（§7），人看 Review Gate 上 Agent 最後的回覆（`final_message`）再決定退回。
 - **GitHub 觸發的轉換**：見 §11。
 
 ### 5.1 Acceptance Criterion 類型
@@ -328,8 +333,10 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - Delegation：Claude Code 經 Orbis MCP `delegate` 給 Codex（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。
   - Antigravity（agy_acp_server 1.4.3）：完整通過。`orbis-runner login antigravity` 下載官方 binary、比對 sha256，經瀏覽器以 Google 帳號登入；Task 中 session mode 已是 `default`（不需要切換），執行指令（`git status`）會送權限請求、經過 Permission Policy。能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse。使用者的帳號被判定為 `free-tier`，Google 回了隱私聲明（資料處理條款依帳號方案而定）。
   - Antigravity 的 Delegation：`initialize` 雖然沒有宣告 stdio MCP，Orbis MCP bridge（stdio）仍能注入；Antigravity 經 `delegate` 給 Claude Code（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。它的工具標題是 `<server>_<工具>`（例如 `orbis_delegate`），實機時沒有被認成產品自己的 MCP 工具而去問人；已補上這個格式（判定用瀏覽器工具的 `playwright_browser_<名稱>` 也一樣）。
+- **Agent 把錯誤當成回覆**（已處理，[#73](https://github.com/Kashionz/orbis/issues/73)）：Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。實機中 Codex 會這樣。
+  - Runner 不猜錯誤，照常送出 diff（是空的）並進入 Review Gate。
+  - Review Gate 的 diff 為空時，Server／UI 不送 `push_branch`。人在 Gate 上看 Agent 最後的回覆，選結束（沒有變更）或退回（§5）。
 - **已知落差**：
-  - Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。改由 Server／UI 在 diff 為空時不做 push（[#73](https://github.com/Kashionz/orbis/issues/73)）。
   - Antigravity 會載入使用者全域的 MCP server 設定（`~/.gemini/config/mcp_config.json`，實機確認），其中的工具不經過 Runner，列在它的 Permission Policy 落差中。
   - Antigravity 的 rate limit 格式（目前沿用 Gemini API 的 `RESOURCE_EXHAUSTED`），以及是否仍讀取 Repo 的 `.gemini/`，還沒有在實機遇到，待確認。
 - **由 Runner 代為登入**：Agent Profile 指定了認證方式的 Agent（目前只有 Antigravity，預設 `oauth-personal`）用 `orbis-runner login <agent>` 登入。
@@ -438,6 +445,8 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 - **Diff review**：用 Monaco 顯示 diff，比較對象是 base_commit 與 Worktree 目前的狀態。行內留言可以打包送回 Agent，作為下一個 prompt。
 - **Review Gate 的動作**：核准（接著自動 push 並開 PR）、退回（附上留言，包括 diff 行內留言與 Preview 留言，§13）、中止 Run。
+  - diff 為空時沒有東西可以 push，核准改為**結束（沒有變更）**（§5）。
+  - Review 頁顯示說明與 Agent 最後的回覆（這份 diff 之前的 `final_message`），讓人判斷是本來就不需要改檔，還是 Agent 出了錯。
 - **Project 可以要求**「Member 不能核准自己的 Task」。「自己的 Task」指 Task 的指派對象，所有種類的 Gate 都適用。
 - **diff 的來源**：
   - Agent 結束回合、進入 Review Gate 之前，Runner 送出 Run 的完整 diff：從 base_commit 到 Worktree 目前的狀態，包含未 commit 的變更。
