@@ -223,10 +223,17 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         .from(runs)
         .where(and(eq(runs.taskId, scope.task.id), notInArray(runs.status, TERMINAL_RUN_STATUSES)));
       if ((active?.n ?? 0) > 0) throw conflict("Task 還有進行中的 Run，請先中止");
+      // Run 會跟著刪除，先記下要封存的 Worktree（§6.2），commit 後直接送給在線上的 Runner。
+      const archiveTargets = await s.archive.targetsForTask(uow.tx, scope.task.id);
       await uow.tx.delete(tasks).where(eq(tasks.id, scope.task.id));
-      uow.afterCommit(() =>
-        events.emit({ type: "task.deleted", taskId: scope.task.id, projectId: scope.project.id }),
-      );
+      uow.afterCommit(() => {
+        s.archive.sendWithoutRecord(archiveTargets);
+        return events.emit({
+          type: "task.deleted",
+          taskId: scope.task.id,
+          projectId: scope.project.id,
+        });
+      });
     });
     return c.body(null, 204);
   });

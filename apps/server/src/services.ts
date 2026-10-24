@@ -27,6 +27,7 @@ import { NotificationService } from "./notifications/service";
 import { createPreviewService, type PreviewService } from "./preview";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
+import { ArchiveService } from "./runs/archive";
 import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
 import { FeedbackRunService } from "./runs/feedback";
@@ -53,6 +54,8 @@ export interface Services {
   dispatcher: Dispatcher;
   ingest: EventIngest;
   runControls: RunControlService;
+  /** Task 轉 Done 或刪除時封存 Run 的 Worktree（RunControl `archive`，§6.2）。 */
+  archive: ArchiveService;
   blobStore: BlobStore;
   blobCleanup: BlobCleanup;
   sessionCleanup: SessionCleanup;
@@ -159,6 +162,7 @@ export function createServices(options: ServicesOptions): Services {
     github.pullRequestOpener,
     notify,
   );
+  const archive = new ArchiveService({ db, hub, logger, runControls, events });
   const verification = new VerificationService({ lifecycle, runControls, notify, clock, logger });
   const watch = new RunWatch();
   const mentions = new MentionService({ notify, dispatcher, logger });
@@ -192,6 +196,7 @@ export function createServices(options: ServicesOptions): Services {
       },
     }),
     runControls,
+    archive,
     verification,
     feedbackRuns,
     tools,
