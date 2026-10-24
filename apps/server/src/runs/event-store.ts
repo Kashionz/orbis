@@ -1,7 +1,7 @@
 // Event 的保存位置（ARCHITECTURE §14）。`(run_id, seq)` 是主鍵，重送的 Event 直接略過。
 // 另外記住每個 Run「連續保存到哪個 seq」，供 event_ack、hello_ack 的 resume 與改派時的 last_event_seq 使用。
 
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { runEvents } from "../db/schema";
 import type { Executor } from "../db/tx";
@@ -74,11 +74,17 @@ export class EventStore {
   }
 
   /** 最新一筆某種 kind 的 Event。 */
-  async latestOfKind(runId: string, kind: string) {
+  async latestOfKind(runId: string, kind: string, atOrBeforeSeq?: number) {
     const [row] = await this.db
       .select()
       .from(runEvents)
-      .where(and(eq(runEvents.runId, runId), eq(runEvents.kind, kind)))
+      .where(
+        and(
+          eq(runEvents.runId, runId),
+          eq(runEvents.kind, kind),
+          atOrBeforeSeq === undefined ? undefined : lte(runEvents.seq, atOrBeforeSeq),
+        ),
+      )
       .orderBy(sql`${runEvents.seq} desc`)
       .limit(1);
     return row ?? null;

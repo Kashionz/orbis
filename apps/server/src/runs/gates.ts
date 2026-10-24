@@ -32,6 +32,8 @@ export type GateRow = typeof gates.$inferSelect;
 export const PLAN_PROPOSED_EVENT_KIND = "plan_proposed" satisfies EventKindName;
 /** Review Gate 送審的 Event kind（協定的 `run_diff`）。 */
 export const RUN_DIFF_EVENT_KIND = "run_diff" satisfies EventKindName;
+/** Agent 結束回合時的最後回覆（協定的 `final_message`），在 `run_diff` 之前送出。 */
+export const FINAL_MESSAGE_EVENT_KIND = "final_message" satisfies EventKindName;
 
 /** gates.subject 的內容。 */
 export interface GateSubject {
@@ -41,6 +43,8 @@ export interface GateSubject {
   reviewDiffSeq?: number | null;
   /** 這個 Gate 是被中止的。 */
   aborted?: boolean;
+  /** Review Gate 的 diff 為空，以「結束（沒有變更）」結束（decision 為 approved）。 */
+  noChanges?: boolean;
 }
 
 /** Run 中某種 Event 最新一筆的 seq。 */

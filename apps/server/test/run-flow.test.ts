@@ -292,6 +292,8 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
             new: { type: "inline", text: "export const login = 1;\n" },
           },
         ],
+        // 這個 Run 沒有送 final_message
+        finalMessage: null,
       });
     });
 

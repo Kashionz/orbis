@@ -284,6 +284,7 @@ export function toGate(row: GateRow, comments: ReviewCommentRow[]): Gate {
       .map(toPreviewComment),
     planSeq: row.kind === "plan" ? (subject.planSeq ?? null) : null,
     reviewDiffSeq: row.kind === "review" ? (subject.reviewDiffSeq ?? null) : null,
+    finishedWithoutChanges: subject.noChanges === true,
     createdAt: iso(row.createdAt),
   };
 }

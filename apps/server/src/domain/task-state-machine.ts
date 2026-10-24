@@ -86,6 +86,12 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
   { from: "review_gate", to: "running", trigger: "gate", description: "Review Gate 退回" },
   { from: "review_gate", to: "pr_open", trigger: "gate", description: "Review Gate 核准" },
   {
+    from: "review_gate",
+    to: "done",
+    trigger: "gate",
+    description: "Review Gate 結束（沒有變更）：diff 為空，不 push、不開 PR",
+  },
+  {
     from: "pr_open",
     to: "review_gate",
     trigger: "pull_request",
