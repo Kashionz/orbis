@@ -125,6 +125,7 @@ async fn archive_one(
         run_id: run_id.into(),
         task_key: record.task_key.clone(),
         scripts_approved: trusted,
+        remote_alignment: Default::default(),
     };
     let removal = worktrees.remove(&wt).await.map_err(|e| failed(e.message))?;
     tracing::info!(

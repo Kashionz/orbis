@@ -164,6 +164,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Task note 連到修正的 Run 與 PR 上的紀錄留言。開不成 Run 時，PR 與 Task 上都說明原因。
 - **送回原 Run 的 session**：PR 開出後原 Run 已經 `completed`，所以每次修正都開一個**新的 Run**（`origin = feedback_loop`，以 `resumes_run_id` 連到前一個 Run）。
   - 派回前一個 Run 的 Runner，沿用同一個 Worktree 與分支。`dispatch_offer` 的 `continuation` 帶上前一個 Run 回報的 ACP session id（`agent_session` Event），Runner 以 `session/resume`（或 `session/load`）恢復；Agent 不支援或恢復失敗時開新的 session，並附上 Task 與目前 diff 的摘要。
+  - **對齊遠端分支**：沿用 Worktree 時，Runner 在 `git fetch` 之後比較本機分支與 `origin/<branch>`（有人可能直接 push 到 PR 分支）。遠端是本機的後代時 `git merge --ff-only` 把本機分支 fast-forward 到遠端；兩邊分岔（或工作目錄有變更而無法 fast-forward）時不動本機，在修正 Run 的第一個 prompt 中說明分岔的 commit 數並請 Agent 先整合（例如 `git merge origin/<branch>`）。Agent 沒有整合時 `push_branch` 會以 non-fast-forward 失敗，錯誤訊息附上同樣的提示。Runner 不會替人合併或解衝突。
   - 修正後經過 Verifying，通過就直接 push（不經過 Review Gate，PR 上的人類 review 就是 Gate），Task 回到 PR Open。
 
 ---
@@ -210,6 +211,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - `--home` 或 `ORBIS_HOME` 覆寫整個目錄（測試用）；`ORBIS_RUNNER_STATE_DIR` 只覆寫狀態目錄（Desktop 代管的 Runner 用，不和手動啟動的 Runner 共用 Runner token）。
   - 已保存這個 Server 的 Runner token 時，Pairing token 會被忽略。
 - **重新連線**：斷線後以指數退避重新連線（1 秒到 60 秒，加上 ±20% jitter）。`hello_ack` 的 `resume` 沒有列出、但 Runner 還在執行的 Run，Runner 會中止並清除暫存。Runner 重新啟動時，暫存中沒有結束的 Run 補上 `agent_crashed` 與 `failed`。
+  - **休眠與喚醒**：Runner 每次送 Heartbeat 時同時送 WebSocket Ping。超過 3 個心跳間隔（不低於 10 秒）沒有收到 Server 的任何訊息（含 Pong），或兩次 Heartbeat 之間系統時間跳了超過 2 個間隔（休眠喚醒、調時）而且接下來一個間隔內 Server 沒有回應 Ping，Runner 就自己關閉連線、依退避重連。喚醒後網路介面換了或 Server 早已因心跳逾時關閉時，半開的 TCP 連線送資料不會立刻失敗，單靠送 Heartbeat 失敗來發現要等很久。重連後 Outbox 補送沒有 ack 的 Event。
 - **sidecar 的結束碼**：0＝正常結束；78＝Runner token 無效或已被撤銷，需要重新 Pairing（sidecar 模式下 Runner token 被撤銷時不改用 Pairing token）；76＝協定版本不相容，需要更新 Runner 或 Server（`hello_rejected` 的訊息會說是哪一邊，見 §16「版本相容」）；其他非 0 視為當掉。
 - **Server 的實作參數**：
   - Pairing token 的有效期限：Local Runner 10 分鐘（Desktop 登入後立刻使用），Team Runner 24 小時。
@@ -289,9 +291,10 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 - **push 前的自動 commit**：Worktree 中還有未 commit 的變更時，Runner 在 push 前自動 commit。訊息格式可以用 `[git].commit_message` 設定，預設是 `<TASK-KEY>: <title>`。
 
 - **注入的環境變數**：`ORBIS_ROOT_PATH`、`ORBIS_WORKTREE_PATH`、`ORBIS_PORT`（每個 Worktree 分到不同 port）、`ORBIS_RUN_ID`、`ORBIS_TASK_KEY`。
-- **setup 腳本的執行方式**：
-  - Windows：預設用 `cmd`；腳本以 `#!` 開頭而且有 Git Bash 時，改用 Git Bash。
-  - macOS／Linux：用 `sh`。
+- **腳本的執行方式**（setup、archive、preview 相同）：
+  - Windows：預設用 `cmd`；腳本以 `#!` 開頭時依 shebang 選：含 `pwsh` 或 `powershell`（例如 `#!pwsh`、`#!/usr/bin/env pwsh`）用 PowerShell（`pwsh -NoProfile -NonInteractive -Command`，沒有 pwsh 時用 Windows PowerShell 5.1），其他（`bash`、`sh`）用 Git Bash。
+  - macOS／Linux：預設用 `sh`；shebang 含 `pwsh` 而且有安裝時用 pwsh。
+  - **注入的變數在三種 shell 都能用**：腳本中引用上面 5 個注入變數時，`$ORBIS_PORT`、`${ORBIS_PORT}`、`%ORBIS_PORT%`、`$env:ORBIS_PORT` 任何一種寫法都可以，Runner 在交給 shell 前把它們改寫成該 shell 原生的寫法（cmd 用 `%NAME%`、PowerShell 用 `${env:NAME}`、bash／sh 用 `${NAME}`）。只改寫這 5 個變數，其他 `$`、`%` 原樣交給 shell；所以同一份 `config.toml` 的 `pnpm dev --port $ORBIS_PORT` 在 Windows 的 cmd 也會展開。
 
 ### 6.4 程序與 Windows 規則
 
@@ -301,8 +304,14 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - 一律正規化：統一磁碟代號大小寫、處理 WSL 的 `/mnt/<drive>` 路徑。
   - spawn 的參數自行加引號，以處理含空白的路徑（例如 `Program Files`）。
   - 透過 `.cmd` shim 解析 npm 安裝的 CLI。
-- **長路徑**：Worktree 根目錄保持短路徑，並偵測 Git for Windows 的「path too long」錯誤，在 UI 上提示。
+- **長路徑**：Worktree 根目錄保持短路徑；Runner 執行 git 時一律加 `-c core.longpaths=true`，Repo 內超過 260 字元的路徑也能 checkout、diff 與刪除（Runner 自己的檔案操作用 Rust 標準函式庫，長路徑會自動用 `\\?\` 形式）。仍然遇到 Git for Windows 的「path too long」錯誤（例如 Agent 或 setup 用的其他工具）時，以 `path_too_long` 回報並在 UI 上提示。
   - 交給其他程式啟動的執行檔路徑超過 `MAX_PATH` 時，Runner 改用 `\\?\` 形式。例如狀態目錄很深時，Claude Code adapter 內附的 `claude.exe` 會透過 adapter 的 `CLAUDE_CODE_EXECUTABLE` 傳入。
+- **路徑含空白或非 ASCII 字元**（例如中文使用者名稱）：Runner home、狀態目錄、Worktree 根目錄、Repo 路徑、Agent 啟動指令都可以；整合測試的暫存目錄一律含空白，另有一組含中文的完整 Run 測試。
+- **刪除重試**：防毒軟體或索引服務掃描時會短暫鎖住剛寫入的檔案，刪除 Worktree 會以「被另一個程序使用」失敗。Runner 以退避重試（0.2、0.5、1、2、4 秒，合計約 8 秒）：前兩次 `git worktree remove --force`，之後直接刪目錄再 `git worktree prune`；仍失敗才回報錯誤並說明可能被鎖住。
+- **WSL**：
+  - Windows 上的 Runner 需要 Git for Windows。啟動時執行 `git --exec-path`，不是磁碟代號開頭（例如 WSL 的 git 或 `wsl git` 的包裝回 `/usr/lib/git-core`）就以明確的錯誤拒絕啟動。
+  - `runner.toml` 中對應的 checkout 或 Worktree 根目錄在 `\\wsl$\…`、`\\wsl.localhost\…` 時，建立 Worktree 以明確的錯誤拒絕：請把 Repo clone 到 Windows 磁碟，或改在 WSL 中執行 Runner（Linux 版，Worktree 放在 WSL 檔案系統內、不放 `/mnt/<drive>`）。Windows 這邊經由 9P 存取 WSL 檔案系統很慢，junction 與 `core.longpaths` 也不適用。
+- **port**：Preview 的 port 從 `runner.toml` 的 `port_range`（預設 41000–41999）中挑，分配時實際 bind IPv4 與 IPv6 的 loopback 確認沒被占用；Windows 保留的範圍（Hyper-V、WSL 等，`netsh int ipv4 show excludedportrange protocol=tcp`）bind 會被拒絕，所以會被跳過。範圍用完時的錯誤訊息列出和範圍重疊的保留範圍並提示改 `port_range`。預設範圍不和 Windows、macOS 的 ephemeral 範圍（49152–65535）重疊；Linux 的 ephemeral 範圍（32768–60999）包含它，Linux 上要改 `port_range`（Linux 不在 Phase 1 驗證）。
 - **無人值守**：關閉 git 的互動式憑證提示（`GIT_TERMINAL_PROMPT=0` 與 `GCM_INTERACTIVE=never`）。
 
 ---
@@ -721,7 +730,8 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
 - **Web**：用 Playwright 跑端到端測試，測試對象是接上 Fake Agent 的完整系統。
 - **Desktop**：Playwright 的 Electron 模式接 fake Server；sidecar 用真實的 Runner，自動更新用本機的 fake feed 跑真實的 electron-updater（只下載與提示，不安裝）。打包只在 Release workflow 驗證（手動執行時只打包不發布）。
 - **CI 的分層**：lint、typecheck、單元與整合測試、Playwright（Web、Desktop）在每個 PR 上 Windows、macOS 都跑；完整系統的 M1 e2e 在 PR 上只跑 Windows，push 到 `main` 時兩個平台都跑。只改文件（`docs/**`、`*.md`，ARCHITECTURE.md 除外）時不跑 CI。
-- **真實 Agent 煙霧測試**：Claude Code、Codex、Antigravity、Grok 各跑一個小 Task；只在手動觸發或每晚定時跑。
+- **真實 Agent 煙霧測試**：Claude Code、Codex、Antigravity、Grok 各跑一個小 Task；只在使用者自己的電腦上手動或以 Windows 工作排程器每晚跑（`scripts/smoke-agents.ps1`，用法與排程設定見 [SMOKE-TEST.md](SMOKE-TEST.md)），不放進 GitHub Actions，Agent 憑證不離開那台電腦。
+- **Windows 強化**（§6.4）的每一項都有自動測試：中文與空白路徑、長路徑、刪除重試、WSL 的拒絕、三種 shell 的腳本、連線看門狗、保留的 port（`crates/runner/tests/windows_hardening.rs`、`connection.rs`、`feedback_loop.rs` 與 `shell.rs`、`home.rs` 的單元測試）。
 
 ---
 

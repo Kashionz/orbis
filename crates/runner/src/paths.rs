@@ -168,6 +168,15 @@ pub fn running_in_wsl() -> bool {
             .is_ok_and(|v| v.to_ascii_lowercase().contains("microsoft"))
 }
 
+/// 是否為 Windows 這邊看到的 WSL 檔案系統（`\\wsl$\<distro>\…` 或 `\\wsl.localhost\<distro>\…`）。
+/// Windows 上的 Runner 不支援把 Repo 或 Worktree 放在這裡：git 經由 9P 檔案系統很慢，junction 與
+/// `core.longpaths` 都不適用，而且 WSL 中的 git 看到的是另一套路徑（§6.4）。
+pub fn is_wsl_unc(path: &Path) -> bool {
+    let text = path.to_string_lossy().replace('/', "\\");
+    let lower = text.to_ascii_lowercase();
+    lower.starts_with("\\\\wsl$\\") || lower.starts_with("\\\\wsl.localhost\\")
+}
+
 /// 是否為 WSL 掛載的 Windows 磁碟（`/mnt/<drive>/…`）。Worktree 不可以放在這裡（§6.2）。
 pub fn is_wsl_windows_mount(path: &Path) -> bool {
     wsl_mount_to_windows(&path.to_string_lossy()).is_some()
@@ -284,6 +293,11 @@ mod tests {
         assert_eq!(windows_to_wsl_mount("relative"), None);
         assert!(is_wsl_windows_mount(Path::new("/mnt/c/ob")));
         assert!(!is_wsl_windows_mount(Path::new("/home/me/wt")));
+        assert!(is_wsl_unc(Path::new(r"\\wsl$\Ubuntu\home\me\repo")));
+        assert!(is_wsl_unc(Path::new(r"\\WSL.localhost\Ubuntu\home")));
+        assert!(is_wsl_unc(Path::new("//wsl$/Ubuntu/home")));
+        assert!(!is_wsl_unc(Path::new(r"\\server\share")));
+        assert!(!is_wsl_unc(Path::new(r"D:\code\web")));
     }
 
     #[test]

@@ -1,0 +1,11 @@
+# Windows 強化測試：在 Worktree 中新增一個檔名含中文的檔案後完成。
+description: 新增中文檔名的檔案
+turns:
+  - steps:
+      - tool_call:
+          id: write-zh
+          title: 新增 中文檔案.txt
+          edit:
+            path: 中文檔案.txt
+            content: "路徑含中文也沒問題\n"
+      - stop: end_turn

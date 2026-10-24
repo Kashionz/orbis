@@ -246,3 +246,118 @@ async fn 沿用的_worktree_內容已改變時重新核准腳本且不重跑_set
         "沿用還在的 Worktree 時不重跑 setup"
     );
 }
+
+/// 在 remote 的 PR 分支上直接多一個 commit（有人沒經過 Orbis 就 push）。
+fn push_external_commit(env: &Env, branch_name: &str, file: &str, content: &str) -> String {
+    let work = &env.remote.work;
+    support::git(work, &["fetch", "origin", branch_name]);
+    support::git(
+        work,
+        &[
+            "checkout",
+            "-B",
+            branch_name,
+            &format!("origin/{branch_name}"),
+        ],
+    );
+    std::fs::write(work.join(file), content).unwrap();
+    support::git(work, &["add", "-A"]);
+    support::git(work, &["commit", "-m", "直接 push 到 PR 分支"]);
+    support::git(work, &["push", "origin", branch_name]);
+    let head = support::git(work, &["rev-parse", "HEAD"]);
+    support::git(work, &["checkout", "main"]);
+    head
+}
+
+/// 遠端分支領先本機（有人直接 push 到 PR 分支）：沿用 Worktree 時先 fast-forward 到遠端，修正的
+/// push 才不會因 non-fast-forward 失敗；push 後遠端同時有外部的 commit 與修正。
+#[tokio::test(flavor = "multi_thread")]
+async fn 沿用_worktree_時先_fast_forward_到遠端分支() {
+    let mut env = Env::new(&[("README.md", "a\n")], agents).await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "fake", "新增 fl.txt").await;
+    let (worktree, base, session) = first_run(&mut conn).await;
+    let branch_name = branch("ORB-1-r1");
+    let external = push_external_commit(&env, &branch_name, "external.txt", "由人直接 push\n");
+
+    offer_fix(&env, &mut conn, "fake", &base, Some(session)).await;
+    let ready = wait_run(&mut conn, "r2", "worktree_ready").await;
+    assert_eq!(
+        PathBuf::from(ready["worktree_path"].as_str().unwrap()),
+        worktree
+    );
+    assert_eq!(
+        support::git(&worktree, &["rev-parse", "HEAD"]),
+        external,
+        "本機分支已 fast-forward 到遠端的 commit"
+    );
+    assert!(worktree.join("external.txt").is_file());
+    let prompt = wait_run(&mut conn, "r2", "prompt_submitted").await;
+    assert!(
+        !prompt.to_string().contains("分岔"),
+        "fast-forward 之後不需要提醒 Agent：{prompt}"
+    );
+    wait_status(&mut conn, "r2", "awaiting_gate").await;
+    let pushed = approve_and_push(&mut conn, "r2").await;
+    assert_eq!(
+        env.remote.branch_head(&branch_name).as_deref(),
+        Some(pushed.as_str())
+    );
+    let show = |path: &str| support::git(&env.remote.bare, &["show", &format!("{pushed}:{path}")]);
+    assert_eq!(show("fl.txt").trim(), "v2");
+    assert_eq!(show("external.txt").trim(), "由人直接 push");
+}
+
+/// 遠端與本機都有對方沒有的 commit（分岔）：Runner 不動本機分支，在 prompt 中說明並交給 Agent 整合；
+/// Agent 沒有整合時 push 因 non-fast-forward 失敗，錯誤訊息附上提示。
+#[tokio::test(flavor = "multi_thread")]
+async fn 本機與遠端分岔時在_prompt_說明_不自動合併() {
+    let mut env = Env::new(&[("README.md", "a\n")], agents).await;
+    let _runner = env.spawn();
+    let mut conn = env.dispatch("r1", "fake", "新增 fl.txt").await;
+    let (worktree, base, session) = first_run(&mut conn).await;
+    let branch_name = branch("ORB-1-r1");
+    // 本機多一個沒有 push 的 commit，遠端也多一個。
+    std::fs::write(worktree.join("local.txt"), "本機\n").unwrap();
+    support::git(&worktree, &["add", "-A"]);
+    support::git(&worktree, &["commit", "-m", "本機沒有 push 的 commit"]);
+    let local = support::git(&worktree, &["rev-parse", "HEAD"]);
+    push_external_commit(&env, &branch_name, "external.txt", "由人直接 push\n");
+
+    offer_fix(&env, &mut conn, "fake", &base, Some(session)).await;
+    wait_run(&mut conn, "r2", "worktree_ready").await;
+    assert_eq!(
+        support::git(&worktree, &["rev-parse", "HEAD"]),
+        local,
+        "分岔時不動本機分支"
+    );
+    let prompt = wait_run(&mut conn, "r2", "prompt_submitted").await;
+    let text = prompt.to_string();
+    assert!(
+        text.contains("分岔") && text.contains(&format!("origin/{branch_name}")),
+        "{text}"
+    );
+    wait_status(&mut conn, "r2", "awaiting_gate").await;
+    conn.control(
+        "r2",
+        "d-r2",
+        "r2-approve",
+        RunControlAction::GateResult {
+            gate: GateKind::Review,
+            decision: GateDecision::Approved,
+        },
+    )
+    .await;
+    let result = conn
+        .control("r2", "d-r2", "r2-push", RunControlAction::PushBranch)
+        .await;
+    let parsed = parse_result(&result);
+    let RunControlOutcome::Rejected { reason, message } = parsed.outcome else {
+        panic!("Agent 沒有整合時 push 應該失敗：{result}");
+    };
+    assert_eq!(
+        reason,
+        orbis_protocol::control::RunControlRejectReason::Failed
+    );
+    assert!(message.contains("有人直接 push 到 PR 分支"), "{message}");
+}

@@ -1,4 +1,9 @@
 //! 執行 git CLI。一律關閉互動式提示（§6.4），並辨識 Git for Windows 的長路徑錯誤。
+//!
+//! - Windows 上一律加 `-c core.longpaths=true`：Worktree 根目錄雖然很短，Repo 內的深層路徑加起來
+//!   仍可能超過 260 字元；Git for Windows 預設會以「Filename too long」失敗。
+//! - [`check_native_git`]：PATH 上的 git 必須是 Windows 的 git（Git for Windows）。WSL 的 git
+//!   （或 `wsl git` 的包裝）看到的是 Linux 的路徑，沒辦法在 Windows 的 Worktree 上工作。
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -68,8 +73,13 @@ impl Git {
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
     {
-        ProcessSpec::new("git")
-            .args(args)
+        let spec = ProcessSpec::new("git");
+        let spec = if cfg!(windows) {
+            spec.args(["-c", "core.longpaths=true"])
+        } else {
+            spec
+        };
+        spec.args(args)
             .cwd(&self.dir)
             .unattended_git()
             .envs(self.env.iter().cloned())
@@ -136,9 +146,94 @@ impl Git {
     }
 }
 
+/// PATH 上的 git 不是 Windows 的 git（例如 WSL 的 git）時的錯誤。
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{0}")]
+pub struct NotNativeGit(pub String);
+
+/// Windows 上確認 `git` 是 Git for Windows：`git --exec-path` 要是磁碟代號開頭的 Windows 路徑。
+/// WSL 的 git（或呼叫 `wsl git` 的包裝腳本）回的是 `/usr/lib/git-core` 這類 Linux 路徑。
+/// 其他平台一律通過。
+pub async fn check_native_git() -> anyhow::Result<()> {
+    check_native_git_with("git").await
+}
+
+/// 同 [`check_native_git`]，`program` 指定要檢查的 git 執行檔（測試用）。
+pub async fn check_native_git_with(program: &str) -> anyhow::Result<()> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let spec = ProcessSpec::new(program).args(["--exec-path"]);
+    let output = process::run(&spec).await.map_err(|e| {
+        NotNativeGit(format!(
+            "找不到可用的 git（{e:#}）：Windows 上的 Runner 需要 Git for Windows，請安裝並確認 git 在 PATH 上"
+        ))
+    })?;
+    if !output.success() {
+        return Err(NotNativeGit(format!(
+            "git --exec-path 失敗：{}",
+            output.combined().trim()
+        ))
+        .into());
+    }
+    let exec_path = output.stdout.trim().to_owned();
+    if is_windows_path(&exec_path) {
+        return Ok(());
+    }
+    Err(NotNativeGit(format!(
+        "PATH 上的 git 不是 Windows 的 git（exec-path 是 {exec_path}），可能是 WSL 的 git 或 `wsl git` 的包裝。\
+Windows 上的 Runner 需要 Git for Windows：請安裝它並放到 PATH 中 WSL 之前；\
+Repo 在 WSL 的檔案系統中時，請改在 WSL 中執行 Runner"
+    ))
+    .into())
+}
+
+/// `C:\…`、`C:/…`、`\\?\C:\…`：Windows 的絕對路徑。
+fn is_windows_path(path: &str) -> bool {
+    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+    let mut chars = path.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(drive), Some(':'), Some('\\' | '/')) if drive.is_ascii_alphabetic()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 辨識_windows_路徑() {
+        assert!(is_windows_path(
+            r"C:\Program Files\Git\mingw64\libexec\git-core"
+        ));
+        assert!(is_windows_path(
+            "C:/Program Files/Git/mingw64/libexec/git-core"
+        ));
+        assert!(is_windows_path(r"\\?\D:\x"));
+        assert!(!is_windows_path("/usr/lib/git-core"));
+        assert!(!is_windows_path("/mnt/c/Program Files/Git"));
+        assert!(!is_windows_path(""));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn wsl_的_git_會被拒絕_git_for_windows_通過() {
+        check_native_git().await.unwrap();
+        // 假的 git：回 Linux 的 exec-path（`wsl git` 包裝的行為）。
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("git.cmd");
+        std::fs::write(&fake, "@echo /usr/lib/git-core\r\n").unwrap();
+        let err = check_native_git_with(&fake.to_string_lossy())
+            .await
+            .unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("WSL") && text.contains("/usr/lib/git-core"),
+            "{text}"
+        );
+        assert!(err.downcast_ref::<NotNativeGit>().is_some());
+    }
 
     #[test]
     fn 辨識長路徑錯誤() {

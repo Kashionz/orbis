@@ -162,6 +162,42 @@ async fn reconnects_after_the_server_closes_the_connection() {
     assert_eq!(hello["type"], "hello");
 }
 
+/// Server 還連著但完全不回應（模擬休眠喚醒後網路介面斷開的半開連線）：Runner 送出的 Heartbeat 與
+/// Ping 都沒有回音，超過上限後自己斷線並重新連線、重新交握。
+#[tokio::test]
+async fn reconnects_when_the_server_stops_responding() {
+    let mut server = FakeServer::start().await;
+    let home = temp_dir("orbis home");
+    let runner = spawn_runner(RunnerOptions::new(&server.base_url(), home.path()));
+    let mut conn = server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_1")).await;
+    // 讀到第一個 heartbeat 後就不再讀 socket：Runner 的 Heartbeat 進了 TCP 緩衝區、Ping 沒有 Pong。
+    conn.wait_for("heartbeat", |v| v["type"] == "heartbeat")
+        .await;
+    let started = tokio::time::Instant::now();
+    let mut next = Box::pin(server.accept());
+    let silent = tokio::time::sleep(Duration::from_secs(8));
+    tokio::select! {
+        _ = &mut next => panic!("上限（10 秒）之前不應該斷線"),
+        () = silent => {}
+    }
+    let mut reconnected = next.await;
+    assert!(
+        started.elapsed() >= Duration::from_secs(10),
+        "要超過 10 秒沒有回應才斷線：{:?}",
+        started.elapsed()
+    );
+    let hello = reconnected.recv().await;
+    assert_eq!(hello["type"], "hello", "{hello}");
+    assert_eq!(hello["pairing"]["kind"], "runner_token", "{hello}");
+    drop(conn);
+    assert!(
+        runner.stderr().contains("沒有收到 Server 的任何訊息"),
+        "{}",
+        runner.stderr()
+    );
+}
+
 /// Pairing token 被拒絕：印出原因並以「需要重新 Pairing」的結束碼結束。
 #[tokio::test]
 async fn exits_with_needs_pairing_code_when_pairing_is_rejected() {

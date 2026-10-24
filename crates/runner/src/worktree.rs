@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use orbis_protocol::dispatch::DispatchRepo;
 use orbis_protocol::event::RunErrorCode;
@@ -105,6 +106,44 @@ pub struct Worktree {
     /// 設定檔中的腳本是否已核准（§6.2「設定的信任核准」）。沒有腳本，或這份內容已被
     /// 「永遠允許」時為 `true`；否則由 Run 取得人工核准後設為 `true`。未核准時不執行任何腳本。
     pub scripts_approved: bool,
+    /// 沿用 Worktree 時本機分支與 `origin/<branch>` 的對齊結果（§5.2）。新建的 Worktree 一律是
+    /// [`RemoteAlignment::UpToDate`]。
+    pub remote_alignment: RemoteAlignment,
+}
+
+/// 沿用 Worktree（Feedback Loop）時，本機分支和遠端分支的關係。有人直接 push 到 PR 分支時，
+/// 修正 Run 的 Agent 要看得到那些 commit，否則 `push_branch` 會因 non-fast-forward 失敗。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RemoteAlignment {
+    /// 遠端沒有這個分支、和本機相同，或本機領先遠端（push 時會 fast-forward）。
+    #[default]
+    UpToDate,
+    /// 遠端領先本機，已把本機分支 fast-forward 到遠端的 commit。
+    FastForwarded { from: String, to: String },
+    /// 兩邊都有對方沒有的 commit（或工作目錄有變更而無法 fast-forward）：不動本機，交給 Agent 整合。
+    Diverged {
+        remote_branch: String,
+        /// 本機沒有的遠端 commit 數。
+        behind: u64,
+        /// 遠端沒有的本機 commit 數。
+        ahead: u64,
+    },
+}
+
+impl RemoteAlignment {
+    /// 分岔時給 Agent 的說明，放進修正 Run 的第一個 prompt；其他情況為 `None`。
+    pub fn prompt_note(&self) -> Option<String> {
+        match self {
+            Self::Diverged {
+                remote_branch,
+                behind,
+                ahead,
+            } => Some(format!(
+                "（注意：遠端分支 {remote_branch} 有 {behind} 個本機沒有的 commit，而本機也有 {ahead} 個遠端沒有的 commit，兩邊已經分岔。請先整合遠端的變更（例如 `git merge {remote_branch}`，衝突請解決後 commit），再進行修改；否則 push 會因為 non-fast-forward 失敗。）"
+            )),
+            _ => None,
+        }
+    }
 }
 
 impl Worktree {
@@ -232,6 +271,12 @@ impl WorktreeManager {
             .repo_checkout(&repo.clone_url, &repo.name)
         {
             let path = paths::normalize(path);
+            if paths::is_wsl_unc(&path) {
+                return Err(WorktreeError::worktree(wsl_unc_message(
+                    &format!("runner.toml 中 {} 對應的 checkout", repo.name),
+                    &path,
+                )));
+            }
             if !path.join(".git").exists() {
                 return Err(WorktreeError::worktree(format!(
                     "runner.toml 中 {} 對應的 {} 不是 git checkout",
@@ -283,6 +328,12 @@ impl WorktreeManager {
             None => self.path_for(&req.repo.name, &req.task_key, req.run_seq)?,
         };
         validate_request(req).await?;
+        if paths::is_wsl_unc(&path) {
+            return Err(WorktreeError::worktree(wsl_unc_message(
+                "Worktree 根目錄",
+                &path,
+            )));
+        }
         if paths::running_in_wsl() && paths::is_wsl_windows_mount(&path) {
             return Err(WorktreeError::worktree(format!(
                 "git 跑在 WSL 中時 Worktree 不可以放在 Windows 磁碟上：{}",
@@ -317,8 +368,12 @@ impl WorktreeManager {
         })?;
 
         let reuse = path.join(".git").exists();
+        let mut remote_alignment = RemoteAlignment::UpToDate;
         if reuse {
             tracing::info!(path = %path.display(), "Worktree 已存在，沿用");
+            if let Some(branch) = &req.branch {
+                remote_alignment = align_with_remote(&Git::new(&path), branch).await?;
+            }
         } else {
             git.run(["worktree", "prune"]).await?;
             if let Some(parent) = path.parent() {
@@ -380,6 +435,7 @@ impl WorktreeManager {
                 .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
         Ok(Worktree {
             scripts_approved,
+            remote_alignment,
             path,
             root_checkout: source,
             member_checkout,
@@ -484,10 +540,8 @@ impl WorktreeManager {
                 "setup 腳本尚未核准，不執行",
             ));
         }
-        let spec = Shell::for_script(script)
-            .spec(script)
+        let spec = Shell::script(script, wt.env())
             .cwd(&wt.path)
-            .envs(wt.env())
             .unattended_git();
         let output = process::run(&spec)
             .await
@@ -538,11 +592,7 @@ impl WorktreeManager {
                     "archive 腳本尚未核准，無法執行，已擋下刪除",
                 ));
             }
-            let spec = Shell::for_script(script)
-                .spec(script)
-                .cwd(&path)
-                .envs(wt.env())
-                .unattended_git();
+            let spec = Shell::script(script, wt.env()).cwd(&path).unattended_git();
             let output = process::run(&spec)
                 .await
                 .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
@@ -555,9 +605,7 @@ impl WorktreeManager {
         }
 
         let source = Git::new(&wt.root_checkout);
-        source
-            .run(["worktree", "remove", "--force", &path.to_string_lossy()])
-            .await?;
+        remove_worktree_dir(&source, &path).await?;
         let mut branch_kept = false;
         if let Some(branch) = &wt.branch {
             let unmerged = source
@@ -579,11 +627,136 @@ impl WorktreeManager {
     }
 }
 
+/// 刪除 Worktree 目錄時每次失敗後等待的時間（合計約 8 秒）：防毒軟體或索引服務掃描時會短暫鎖住
+/// 剛寫入的檔案，Windows 上刪除會以「被另一個程序使用」或「拒絕存取」失敗。
+pub const REMOVE_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(200),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+/// 前幾次用 `git worktree remove`，之後改用直接刪目錄（git 刪一半失敗後目錄已經不是完整的 Worktree）。
+const GIT_REMOVE_ATTEMPTS: usize = 2;
+
+/// 刪除 Worktree 目錄並從 git 的 Worktree 清單移除，被鎖住時重試（[`REMOVE_RETRY_DELAYS`]）。
+async fn remove_worktree_dir(source: &Git, path: &Path) -> Result<(), WorktreeError> {
+    let path_arg = path.to_string_lossy().into_owned();
+    let mut last_error = String::new();
+    for attempt in 0..=REMOVE_RETRY_DELAYS.len() {
+        let result = if attempt < GIT_REMOVE_ATTEMPTS {
+            source
+                .run(["worktree", "remove", "--force", &path_arg])
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        } else {
+            match std::fs::remove_dir_all(path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(format!("刪除 {} 失敗：{e}", path.display())),
+            }
+        };
+        match result {
+            Ok(()) if !path.exists() => {
+                // 直接刪目錄之後要讓 git 忘掉這個 Worktree；git 自己刪成功時 prune 也無害。
+                source.run(["worktree", "prune"]).await?;
+                if attempt > 0 {
+                    tracing::info!(path = %path.display(), attempt, "Worktree 重試後刪除成功");
+                }
+                return Ok(());
+            }
+            Ok(()) => last_error = "指令成功但目錄還在".into(),
+            Err(e) => last_error = e,
+        }
+        if let Some(delay) = REMOVE_RETRY_DELAYS.get(attempt) {
+            tracing::warn!(
+                path = %path.display(),
+                attempt,
+                error = %last_error,
+                "刪除 Worktree 失敗，稍後重試（檔案可能被防毒軟體或索引服務鎖住）"
+            );
+            tokio::time::sleep(*delay).await;
+        }
+    }
+    Err(WorktreeError::worktree(format!(
+        "刪除 {} 失敗（已重試 {} 次，檔案可能被防毒軟體、索引服務或開著的程式鎖住）：{last_error}",
+        path.display(),
+        REMOVE_RETRY_DELAYS.len()
+    )))
+}
+
+/// Repo 或 Worktree 放在 WSL 檔案系統時的錯誤訊息（§6.4）。
+fn wsl_unc_message(what: &str, path: &Path) -> String {
+    format!(
+        "{what} {} 在 WSL 的檔案系統中（\\\\wsl$），Windows 上的 Runner 不支援：請把 Repo clone 到 Windows 磁碟（例如 D:\\code），或改在 WSL 中執行 Runner",
+        path.display()
+    )
+}
+
 /// 刪除的結果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Removal {
     /// 分支上有未合併的 commit，保留下來（UI 顯示為「保留的分支」）。
     pub branch_kept: bool,
+}
+
+/// 沿用的 Worktree 在 `git fetch` 之後把本機分支對齊 `origin/<branch>`（§5.2）：
+/// 遠端是本機的後代時 fast-forward；分岔時不動，回報給 Run 放進 prompt。
+async fn align_with_remote(git: &Git, branch: &str) -> Result<RemoteAlignment, WorktreeError> {
+    let remote_branch = format!("origin/{branch}");
+    let remote_ref = format!("refs/remotes/{remote_branch}");
+    if !git
+        .succeeds(["rev-parse", "--verify", "--quiet", &remote_ref])
+        .await
+    {
+        return Ok(RemoteAlignment::UpToDate);
+    }
+    let local = git.rev_parse_commit("HEAD").await?;
+    let remote = git.rev_parse_commit(&remote_ref).await?;
+    if local == remote {
+        return Ok(RemoteAlignment::UpToDate);
+    }
+    let counts = git
+        .run([
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{remote_ref}"),
+        ])
+        .await?;
+    let mut parts = counts
+        .split_whitespace()
+        .map(|n| n.parse::<u64>().unwrap_or(0));
+    let ahead = parts.next().unwrap_or(0);
+    let behind = parts.next().unwrap_or(0);
+    if behind == 0 {
+        // 本機領先：push 時會 fast-forward。
+        return Ok(RemoteAlignment::UpToDate);
+    }
+    let diverged = RemoteAlignment::Diverged {
+        remote_branch: remote_branch.clone(),
+        behind,
+        ahead,
+    };
+    if ahead > 0 {
+        tracing::warn!(branch, ahead, behind, "本機分支與遠端分岔，交給 Agent 整合");
+        return Ok(diverged);
+    }
+    // 遠端是本機的後代：fast-forward。工作目錄有會被覆寫的變更時 git 會拒絕，這時也交給 Agent。
+    match git.run(["merge", "--ff-only", &remote_ref]).await {
+        Ok(_) => {
+            tracing::info!(branch, from = %local, to = %remote, "本機分支已 fast-forward 到遠端");
+            Ok(RemoteAlignment::FastForwarded {
+                from: local,
+                to: remote,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(branch, error = %e, "無法 fast-forward 到遠端，交給 Agent 整合");
+            Ok(diverged)
+        }
+    }
 }
 
 /// 檢查 DispatchOffer 中會成為 git 參數的值，避免被當成選項（參數注入）。

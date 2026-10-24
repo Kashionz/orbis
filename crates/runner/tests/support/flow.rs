@@ -21,8 +21,17 @@ pub struct Env {
 
 impl Env {
     pub async fn new(files: &[(&str, &str)], runner_toml: impl Fn(&Path) -> String) -> Self {
-        let dir = temp_dir("orbis run");
-        let remote = Remote::new(files);
+        Self::new_in("orbis run", files, runner_toml).await
+    }
+
+    /// 同 [`new`](Self::new)，Runner 本機目錄、Worktree 根目錄與 remote 的暫存目錄都用指定的前綴。
+    pub async fn new_in(
+        prefix: &str,
+        files: &[(&str, &str)],
+        runner_toml: impl Fn(&Path) -> String,
+    ) -> Self {
+        let dir = temp_dir(prefix);
+        let remote = Remote::new_in(prefix, files);
         write_runner_toml(
             &dir.path().join("home"),
             &runner_toml(&dir.path().join("wt")),
