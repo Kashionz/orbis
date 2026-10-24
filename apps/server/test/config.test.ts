@@ -1,3 +1,4 @@
+import path from "node:path";
 import { envVar, NAMES } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
 import {
@@ -39,6 +40,7 @@ describe("Server 設定", () => {
       runnerHeartbeatIntervalMs: DEFAULT_HEARTBEAT_INTERVAL_MS,
       blobDir: DEFAULT_BLOB_DIR,
       previewDomain: null,
+      webDir: null,
       logLevel: "info",
       prettyLogs: false,
     });
@@ -127,5 +129,12 @@ describe("Server 設定", () => {
     expect(
       loadConfig({ ...REQUIRED, NODE_ENV: "production", [envVar("LOG_PRETTY")]: "1" }).prettyLogs,
     ).toBe(true);
+  });
+
+  it("Web 的靜態檔目錄轉成絕對路徑；未設定時為 null", () => {
+    expect(loadConfig({ ...REQUIRED, [envVar("WEB_DIR")]: "web" }).webDir).toBe(
+      path.resolve("web"),
+    );
+    expect(loadConfig({ ...REQUIRED, [envVar("WEB_DIR")]: "" }).webDir).toBeNull();
   });
 });

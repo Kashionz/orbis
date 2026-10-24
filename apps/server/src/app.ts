@@ -27,11 +27,14 @@ import { createTaskRoutes } from "./routes/tasks";
 import { createTeamRoutes } from "./routes/team";
 import { createServices, type Services } from "./services";
 import { SERVER_VERSION } from "./version";
+import { createWebStatic } from "./web/static";
 
 export interface AppDeps {
   config: Pick<Config, "publicUrl" | "bootstrapOwnerGithubUserId"> &
     /** 未提供時以請求的 origin 回應 `/api/health`（測試用；loadConfig 一律會給值）。 */
-    Partial<Pick<Config, "apiOrigin">>;
+    Partial<Pick<Config, "apiOrigin">> &
+    /** Web 的靜態檔目錄；未提供或 null 時只提供 API。 */
+    Partial<Pick<Config, "webDir">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
@@ -102,6 +105,10 @@ export function createApp(deps: AppDeps): Hono {
   // E 軌的 Preview：狀態查詢與 Preview 網址的換票（實作在 src/preview/）。Preview 網址本身的請求
   // 依 Host 在 server.ts 分流，不經過這裡。
   app.route("/", createPreviewRoutes(services));
+
+  // 正式部署時 Server 同時提供 Web 的靜態檔（ARCHITECTURE §16）。放在所有 API 路由之後：
+  // `/api` 底下沒有對應的路徑仍回 404，其他路徑才交給 Web（SPA 的 index.html）。
+  if (deps.config.webDir) app.route("/", createWebStatic(deps.config.webDir));
 
   return app;
 }
