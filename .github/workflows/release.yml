@@ -3,11 +3,22 @@ name: Release
 # Desktop 的發布（ARCHITECTURE §16）：
 # - push tag `v*`：在 Windows、macOS 建置 Runner 與 Desktop 安裝檔，由 electron-builder 上傳到 GitHub Release
 #   （draft）。協調者確認後 publish，Desktop 才會抓到更新。tag 必須和 apps/desktop/package.json 的版本一致。
-# - workflow_dispatch：只建置並上傳成 workflow artifact，不建立 Release（驗證打包用）。
+# - 改到 Desktop、Runner 或這個 workflow 的 PR，以及 workflow_dispatch：只建置並上傳成 workflow artifact，
+#   不建立 Release（驗證打包用）。
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "crates/runner/**"
+      - "crates/orbis-protocol/**"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
