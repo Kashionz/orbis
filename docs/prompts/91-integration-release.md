@@ -25,7 +25,7 @@
    - Team Runner 的 Docker image，Credential 用 Docker secret 傳入。
    - 撰寫 `docs/INSTALL.md`：GitHub App 的安裝、第一次啟動、備份與還原、升級。
 5. **Desktop 發布**：
-   - electron-builder 產出三平台的安裝檔（Windows 不做簽章，文件中說明 SmartScreen 警告）。
+   - electron-builder 產出 Windows 與 macOS 的安裝檔（Linux 暫時不出）（Windows 不做簽章，文件中說明 SmartScreen 警告）。
    - electron-updater 從 private GitHub Releases 自動更新，Runner 執行檔隨 App 一起更新。
 6. **版本相容**：Runner、Server、Desktop 的協定版本不相容時，UI 明確提示需要更新哪一個元件，並用測試驗證。
 
