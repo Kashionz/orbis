@@ -79,8 +79,10 @@ function Resolve-Bin([string]$dir, [string]$name) {
 # ---- 執行檔 -------------------------------------------------------------
 $runnerExe = $null; $dispatchExe = $null
 if ($BinDir -ne "") {
+  # cargo 的輸出目錄把 example 放在 examples\ 底下；也接受兩個執行檔放在同一個目錄。
   $runnerExe = Resolve-Bin $BinDir "orbis-runner"
   $dispatchExe = Resolve-Bin $BinDir "dev_dispatch"
+  if (-not $dispatchExe) { $dispatchExe = Resolve-Bin (Join-Path $BinDir "examples") "dev_dispatch" }
 }
 if (-not $runnerExe -or -not $dispatchExe) {
   Write-Host "== 建置 orbis-runner 與 dev_dispatch（第一次會比較久）"
