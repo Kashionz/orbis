@@ -20,14 +20,12 @@ export interface RunnerAvailability {
   agents: AvailabilityRow[];
 }
 
-/** 沒有任何一台可派工的 Runner 時，Agent 的不可用原因。 */
-export const NO_DISPATCHABLE_RUNNER = "沒有在線而且接受派工的 Runner";
-
 /**
  * 彙整同一種 Runner 的 AgentAvailability。
- * - Agent 只要在任一台可派工的 Runner 上可用就算可用；版本取自第一台可用的 Runner。
+ * - Agent 只要在任一台 Runner 上可用就算可用；版本取自第一台可用的 Runner。
  * - models 與 permissionGaps 取所有回報的聯集（排序），讓對話框列出所有選擇與警告。
- * - 離線或暫停領取的 Runner 也列出它最後回報的 Agent，但一律不可用。
+ * - 離線或暫停領取的 Runner 沿用它最後回報的可用性：ARCHITECTURE §6.1 允許派工給離線的 Runner，
+ *   Run 停在佇列等它上線；是否在線由 `online` 另外表達，對話框據此提示 Run 會排隊。
  */
 export function summarizeDispatchTarget(runners: RunnerAvailability[]): DispatchTarget {
   const byAgent = new Map<
@@ -45,16 +43,13 @@ export function summarizeDispatchTarget(runners: RunnerAvailability[]): Dispatch
       const option: AgentOption = {
         id: row.agent,
         version: details.version ?? null,
-        available: runner.dispatchable && row.available,
-        unavailableReason: null,
+        available: row.available,
+        unavailableReason: row.available
+          ? null
+          : (details.unavailableReason ?? "Agent 目前無法使用"),
         models: [],
         permissionGaps: [],
       };
-      if (!option.available) {
-        option.unavailableReason = !runner.dispatchable
-          ? NO_DISPATCHABLE_RUNNER
-          : (details.unavailableReason ?? "Agent 目前無法使用");
-      }
       const entry = byAgent.get(row.agent) ?? {
         available: null,
         fallback: option,
@@ -62,14 +57,6 @@ export function summarizeDispatchTarget(runners: RunnerAvailability[]): Dispatch
         gaps: new Set<string>(),
       };
       if (option.available && entry.available === null) entry.available = option;
-      // 不可用時，優先顯示 Runner 在線時回報的具體原因。
-      if (
-        !option.available &&
-        runner.dispatchable &&
-        entry.fallback.unavailableReason === NO_DISPATCHABLE_RUNNER
-      ) {
-        entry.fallback = option;
-      }
       for (const model of details.models ?? []) if (model !== "") entry.models.add(model);
       for (const gap of details.permissionGaps ?? []) entry.gaps.add(gap);
       byAgent.set(row.agent, entry);

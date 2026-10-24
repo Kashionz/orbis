@@ -1,0 +1,42 @@
+# Feedback Loop（91 I1 的完整系統 e2e，ARCHITECTURE §5.2）：PR 開出後，review 留言與 CI 失敗各觸發一次修正。
+#
+# Runner 以 `--state-dir` 啟動 Fake Agent，所以修正 Run 以 session/load 接回同一個 session，從下一個回合接續。
+#
+# 1. 原本的 Run：新增 fl.txt（v1）→ Review Gate 核准 → push → PR Open。
+# 2. review 留言觸發的修正 Run（prompt 含 review 的內容「請把 v1 改成 v2」）：改成 v2 → Verifying → push。
+# 3. CI 失敗觸發的修正 Run（prompt 含失敗的 check 名稱「e2e-ci-test」）：改成 v3 → Verifying → push。
+description: Feedback Loop：原 Run、review 修正、CI 修正
+turns:
+  - steps:
+      - message: 新增 fl.txt。
+      - tool_call:
+          id: write-fl
+          title: 新增 fl.txt
+          edit:
+            path: fl.txt
+            content: "v1\n"
+      - stop: end_turn
+  - expect_prompt_contains: 請把 v1 改成 v2
+    steps:
+      - message: 收到 PR 的 review 留言，修正中。
+      - tool_call:
+          id: fix-review
+          title: 修改 fl.txt
+          edit:
+            path: fl.txt
+            old_text: v1
+            new_text: v2
+      - message: 已依 review 留言改成 v2。
+      - stop: end_turn
+  - expect_prompt_contains: e2e-ci-test
+    steps:
+      - message: 收到 CI 失敗的回報，修正中。
+      - tool_call:
+          id: fix-ci
+          title: 修改 fl.txt
+          edit:
+            path: fl.txt
+            old_text: v2
+            new_text: v3
+      - message: 已依 CI 失敗改成 v3。
+      - stop: end_turn

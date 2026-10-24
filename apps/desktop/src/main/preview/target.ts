@@ -24,6 +24,12 @@ export type PreviewTarget =
       url: string;
       /** 留在內嵌瀏覽器中的 origin。 */
       origins: string[];
+      /**
+       * Preview 留言要帶的網址的 origin（這個 Run 的 Preview 網址，§10 規定留言的網址必須是它）。
+       * 本機 Run 在內嵌瀏覽器中開的是 `localhost:<port>`，選取元素時把網址換成這個 origin；
+       * Server 沒有設定 Preview 網域時為 null（Server 不接受 Preview 留言）。
+       */
+      commentOrigin: string | null;
     }
   | { mode: "unavailable"; message: string };
 
@@ -50,6 +56,7 @@ export function resolvePreviewTarget(input: {
       break;
   }
 
+  const share = parseShareUrl(state.shareUrl, runId);
   if (localRunnerId !== null && state.runnerId === localRunnerId) {
     const local = parseLocalUrl(state.localUrl, state.port);
     if (local) {
@@ -58,18 +65,43 @@ export function resolvePreviewTarget(input: {
         runId,
         url: local.href,
         origins: LOOPBACK_HOSTS.map((host) => `http://${host}:${local.port}`),
+        commentOrigin: share?.origin ?? null,
       };
     }
   }
 
-  const share = parseShareUrl(state.shareUrl, runId);
   if (!share) {
     return {
       mode: "unavailable",
       message: "Server 沒有設定 Preview 網域，只能在執行這個 Run 的電腦上開啟 Preview",
     };
   }
-  return { mode: "share", runId, url: share.href, origins: [share.origin] };
+  return {
+    mode: "share",
+    runId,
+    url: share.href,
+    origins: [share.origin],
+    commentOrigin: share.origin,
+  };
+}
+
+/**
+ * Preview 留言要帶的網址：內嵌瀏覽器目前的網址，但本機 Run 開的是 `localhost:<port>`，
+ * 要換成這個 Run 的 Preview 網址（origin 換掉，路徑、查詢字串與 hash 保留）。
+ * 沒有 Preview 網域、或網址不是這個 Preview 的 origin 時原樣回傳。
+ */
+export function previewCommentUrl(
+  pageUrl: string,
+  target: Extract<PreviewTarget, { origins: string[] }>,
+): string {
+  if (!target.commentOrigin) return pageUrl;
+  try {
+    const url = new URL(pageUrl);
+    if (!target.origins.includes(url.origin) || url.origin === target.commentOrigin) return pageUrl;
+    return `${target.commentOrigin}${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return pageUrl;
+  }
 }
 
 /** Runner 回報的本機網址：只接受 http、loopback、而且 port 和 Server 記錄的相同。 */

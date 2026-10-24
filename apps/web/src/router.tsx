@@ -19,7 +19,7 @@ import { NotificationSettingsPage } from "./features/notifications/NotificationS
 import { NotificationsPage } from "./features/notifications/NotificationsPage";
 import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
 import { RepoSpecPage } from "./features/repo-spec/RepoSpecPage";
-import { RunPage } from "./features/run/RunPage";
+import { isRunTab, RunPage, type RunTab } from "./features/run/RunPage";
 import { TaskPage } from "./features/task/TaskPage";
 
 // Monaco 很大，只在進入 diff review 時才載入
@@ -125,12 +125,15 @@ const taskRoute = createRoute({
 const runRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/runs/$runId",
-  validateSearch: (search: Record<string, unknown>): { focus?: string } =>
-    typeof search.focus === "string" ? { focus: search.focus } : {},
+  // `focus`：要捲到的時間軸項目；`tab`：一開始顯示的分頁（Needs You 的「Run 已停下」直接開 Verification）
+  validateSearch: (search: Record<string, unknown>): { focus?: string; tab?: RunTab } => ({
+    ...(typeof search.focus === "string" && { focus: search.focus }),
+    ...(isRunTab(search.tab) && { tab: search.tab }),
+  }),
   component: function RunRouteComponent() {
     const { runId } = runRoute.useParams();
-    const { focus } = runRoute.useSearch();
-    return <RunPage key={runId} runId={runId} focus={focus} />;
+    const { focus, tab } = runRoute.useSearch();
+    return <RunPage key={runId} runId={runId} focus={focus} initialTab={tab} />;
   },
   errorComponent: PageError,
 });

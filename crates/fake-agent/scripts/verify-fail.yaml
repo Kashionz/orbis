@@ -1,0 +1,43 @@
+# Verification 連續失敗、超過重試上限後由人決定（91 I1 的完整系統 e2e，ARCHITECTURE §5.1「失敗重試」）。
+#
+# Task 加一條 command 條件，指令是：
+#
+#     git grep --no-index -q pass verify.txt
+#
+# Project 的 verificationMaxRetries 設成 1，所以第 2 輪失敗後 Run 停在 Verifying，加入 Needs You。
+#
+# 1. 第一回合：寫入 verify.txt（內容是 fail）→ 第 1 輪 Verification 失敗。
+# 2. 收到重試的 prompt（verification_retry）：改寫檔案但還是 fail → 第 2 輪失敗 → 超過上限，等人決定。
+# 3. 人選「附意見再試」而且意見包含「請改成 pass」時：改成 pass → 新的第 1 輪通過 → Review Gate。
+#    人選「略過失敗」時不會有第三回合，直接進入 Review Gate。
+description: Verification 連續失敗兩輪，附意見再試後才通過
+turns:
+  - steps:
+      - message: 新增 verify.txt。
+      - tool_call:
+          id: write-verify
+          title: 新增 verify.txt
+          edit:
+            path: verify.txt
+            content: "fail\n"
+      - stop: end_turn
+  - steps:
+      - message: Verification 失敗，再試一次（還是不會通過）。
+      - tool_call:
+          id: retry-verify
+          title: 修改 verify.txt
+          edit:
+            path: verify.txt
+            content: "fail again\n"
+      - stop: end_turn
+  - expect_prompt_contains: 請改成 pass
+    steps:
+      - message: 收到意見，改成 pass。
+      - tool_call:
+          id: fix-verify
+          title: 修改 verify.txt
+          edit:
+            path: verify.txt
+            content: "pass\n"
+      - message: 已修正。
+      - stop: end_turn

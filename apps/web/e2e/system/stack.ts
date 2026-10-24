@@ -9,7 +9,13 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envVar } from "@orbis/api-contract/names";
-import { type ProcessEntry, processTree } from "@orbis/server/e2e";
+import {
+  type ProcessEntry,
+  parseReadyLine,
+  processTree,
+  type ReadyLine,
+  StackCommander,
+} from "@orbis/server/e2e";
 
 const webDir = fileURLToPath(new URL("../..", import.meta.url));
 const serverDir = fileURLToPath(new URL("../../../server", import.meta.url));
@@ -21,26 +27,13 @@ export const LOG_DIR = join(webDir, "test-results", "system-logs");
 /** 完整系統啟動後交給測試的資訊（環境變數 `<前綴>SYSTEM_E2E_STACK`，JSON）。 */
 export const STACK_ENV = envVar("SYSTEM_E2E_STACK");
 
-/** `e2e:stack` 印出的 ready 行（欄位見 apps/server/README.md）。 */
-export interface ReadyLine {
-  ready: true;
-  serverUrl: string;
-  webOrigin: string;
-  sessionCookie: { name: string; value: string };
-  memberId: string;
-  projectId: string;
-  projectKey: string;
-  repoId: string;
-  runnerId: string;
-  runnerPid: number;
-  bareRepoPath: string;
-  tempDir: string;
-}
+/** `e2e:stack` 印出的 ready 行（欄位見 apps/server/README.md），型別來自 `@orbis/server/e2e`。 */
+export type { ReadyLine };
 
 export function readStack(): ReadyLine {
   const raw = process.env[STACK_ENV];
   if (!raw) throw new Error(`沒有 ${STACK_ENV}：完整系統沒有由 globalSetup 啟動`);
-  return JSON.parse(raw) as ReadyLine;
+  return parseReadyLine(raw);
 }
 
 /** 向作業系統要一個空的 port。 */
@@ -91,6 +84,8 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<number | n
 
 export interface StartedStack {
   ready: ReadyLine;
+  /** 經由 stdin 對 stack 下指令（例如餵 FakeGitHub 資料）。 */
+  commander: StackCommander;
   /** 關閉 stdin 讓 stack 自己清理；逾時就強制結束。回傳結束碼。 */
   stop: () => Promise<number | null | "timeout">;
   /** stack 與它的子孫程序（關閉前記下，關閉後確認都已結束）。 */
@@ -100,8 +95,16 @@ export interface StartedStack {
 export interface StackOptions {
   /** Fake Agent 的劇本（`crates/fake-agent/scripts/` 下的檔名）；省略時用 stack 的預設 `m1.yaml`。 */
   agentScript?: string;
+  /** 第二個 Agent（`fake-child`）的劇本檔名；Delegation e2e 用，省略時不註冊。 */
+  childAgentScript?: string;
+  /** 額外的環境變數（例如 Preview 網域）。 */
+  env?: Record<string, string>;
   /** log 檔名的前綴（同一次測試啟動多組 stack 時區分）。 */
   logPrefix?: string;
+}
+
+function scriptPath(name: string): string {
+  return join(repoRoot, "crates", "fake-agent", "scripts", name);
 }
 
 /**
@@ -122,14 +125,12 @@ export async function startStack(
       [envVar("SERVER_PORT")]: String(serverPort),
       [envVar("PUBLIC_URL")]: webOrigin,
       ...(options.agentScript && {
-        [envVar("E2E_AGENT_SCRIPT")]: join(
-          repoRoot,
-          "crates",
-          "fake-agent",
-          "scripts",
-          options.agentScript,
-        ),
+        [envVar("E2E_AGENT_SCRIPT")]: scriptPath(options.agentScript),
       }),
+      ...(options.childAgentScript && {
+        [envVar("E2E_CHILD_AGENT_SCRIPT")]: scriptPath(options.childAgentScript),
+      }),
+      ...options.env,
     },
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
@@ -144,7 +145,7 @@ export async function startStack(
       const newline = stdout.indexOf("\n");
       if (newline < 0) return;
       clearTimeout(timer);
-      resolve(JSON.parse(stdout.slice(0, newline)) as ReadyLine);
+      resolve(parseReadyLine(stdout.slice(0, newline)));
     });
     child.once("exit", (code) => {
       clearTimeout(timer);
@@ -154,6 +155,7 @@ export async function startStack(
 
   return {
     ready,
+    commander: new StackCommander(child),
     processes: () => (child.pid === undefined ? [] : processTree(child.pid)),
     stop: async () => {
       // README：由程式管理時關閉 stdin，Windows 的 kill() 不會觸發清理

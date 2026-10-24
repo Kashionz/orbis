@@ -51,6 +51,13 @@ function policyColumns(policy: Partial<ProjectPolicy>): Partial<ProjectInsert> {
     columns.defaultPermissionPolicy = policy.defaultPermissionPolicy;
   }
   if (policy.autoCreateIssues !== undefined) columns.autoCreateIssues = policy.autoCreateIssues;
+  // 每個政策欄位都要在這裡對應：漏掉的欄位會被靜默丟掉，只改它時 set({}) 為空還會拋錯（#82 的 e2e 抓到）。
+  if (policy.verificationMaxRetries !== undefined) {
+    columns.verificationMaxRetries = policy.verificationMaxRetries;
+  }
+  if (policy.feedbackBotAllowlist !== undefined) {
+    columns.feedbackBotAllowlist = policy.feedbackBotAllowlist;
+  }
   return columns;
 }
 

@@ -7,8 +7,9 @@ export const NEEDS_YOU_POLL_INTERVAL_MS = 5_000;
 
 /**
  * 點擊通知後要前往的 Web UI 路徑，和 Web UI 的 Needs You 頁「一鍵跳到」的位置相同：
- * Review Gate 到 diff review，權限請求到 Run 頁並聚焦在該請求，其他到 Run 頁。
- * 路由對應 apps/web 的 `src/router.tsx`（`/runs/$runId`、`/runs/$runId/review`、`focus` search 參數）
+ * Review Gate 到 diff review，權限請求到 Run 頁並聚焦在該請求，停下來的 Run（Verification 超過重試上限）
+ * 到 Run 頁的 Verification 分頁，其他到 Run 頁。
+ * 路由對應 apps/web 的 `src/router.tsx`（`/runs/$runId`、`/runs/$runId/review`、`focus` 與 `tab` search 參數）
  * 與 `src/features/needs-you/NeedsYouPage.tsx` 的 `JumpLink`。apps/web 依賴 @orbis/desktop，
  * 不能反過來匯入，Web 改路由時要一起改這裡。
  */
@@ -18,6 +19,7 @@ export function needsYouHref(item: NeedsYouItem): string {
   if (item.kind === "permission_request") {
     return `${run}?focus=${encodeURIComponent(`permission-${item.permissionRequestId}`)}`;
   }
+  if (item.kind === "stopped_run") return `${run}?tab=verification`;
   return run;
 }
 

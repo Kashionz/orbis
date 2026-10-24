@@ -10,7 +10,12 @@ import { NAMES } from "@orbis/api-contract/names";
 import { type BaseWindow, session, shell, WebContentsView } from "electron";
 import type { PreviewBounds, PreviewNavState, PreviewPick } from "../../bridge";
 import { parseRawPick, removeOverlayScript, startPickingScript } from "./picker";
-import { createRateLimiter, decidePreviewNavigation, type PreviewTarget } from "./target";
+import {
+  createRateLimiter,
+  decidePreviewNavigation,
+  type PreviewTarget,
+  previewCommentUrl,
+} from "./target";
 
 type OpenTarget = Extract<PreviewTarget, { origins: string[] }>;
 
@@ -107,10 +112,14 @@ export class PreviewView {
     this.view?.webContents.openDevTools({ mode: "detach" });
   }
 
-  /** 進入選取模式，選取後截下 Preview 的畫面；Esc 取消時回傳 null。 */
+  /**
+   * 進入選取模式，選取後截下 Preview 的畫面；Esc 取消時回傳 null。
+   * 回傳的網址是 Preview 留言要帶的網址：本機 Run 的 `localhost:<port>` 換成這個 Run 的 Preview 網址（§10）。
+   */
   async pickElement(): Promise<PreviewPick | null> {
     const contents = this.view?.webContents;
-    if (!contents) return null;
+    const target = this.target;
+    if (!contents || !target) return null;
     contents.focus();
     const raw = parseRawPick(
       await contents.executeJavaScriptInIsolatedWorld(PICKER_WORLD_ID, [
@@ -124,7 +133,11 @@ export class PreviewView {
         { code: "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))" },
       ]);
       const image = await contents.capturePage();
-      return { ...raw, screenshot: new Uint8Array(image.toPNG()) };
+      return {
+        ...raw,
+        url: previewCommentUrl(raw.url, target),
+        screenshot: new Uint8Array(image.toPNG()),
+      };
     } finally {
       await contents
         .executeJavaScriptInIsolatedWorld(PICKER_WORLD_ID, [{ code: removeOverlayScript() }])

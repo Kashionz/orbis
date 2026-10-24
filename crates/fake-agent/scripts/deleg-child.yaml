@@ -1,0 +1,7 @@
+# Delegation e2e 的 Child Run（stack 註冊的第二個 Agent fake-child）：回一句話就結束。
+# consult 與 branch 兩種模式共用；不改檔，consult 模式（唯讀、在父 Run 的 Worktree 中）才不會弄髒父 Run 的 diff。
+description: Child Run：回覆後結束
+turns:
+  - steps:
+      - message: 我是 Child Run，已看完，重點是 README 只有標題。
+      - stop: end_turn

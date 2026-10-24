@@ -26,7 +26,13 @@ import {
 } from "@orbis/api-contract";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
-import { descendants, parseReadyLine, type ReadyLine, sendPullRequestMergedWebhook } from "../e2e";
+import {
+  descendants,
+  parseReadyLine,
+  type ReadyLine,
+  StackCommander,
+  sendPullRequestMergedWebhook,
+} from "../e2e";
 import { createScratchDatabase, type ScratchDatabase } from "../src/db/test-database";
 import { buildRunnerBinaries } from "./helpers/binaries";
 import { dbSkipReason } from "./helpers/db";
@@ -333,6 +339,29 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本", () => {
     expect(forged.status).toBe(401);
   }, 180_000);
 
+  it("stdin 指令：seed_checks 餵 FakeGitHub、list_issue_comments 列留言；不認得的指令回 ok: false", async () => {
+    const commander = new StackCommander(stack);
+    const seeded = await commander.send<{ runs: number; suites: number }>({
+      command: "seed_checks",
+      sha: "0123456789abcdef0123456789abcdef01234567",
+      runs: [
+        { id: 1, name: "lint" },
+        { id: 2, name: "test", conclusion: "failure" },
+      ],
+    });
+    expect(seeded).toEqual({ runs: 2, suites: 1 });
+    // M1 劇本開出的 PR（上一個測試）在 FakeGitHub 上有 Issue 同步與紀錄的留言；不存在的號碼是空陣列
+    const none = await commander.send<unknown[]>({ command: "list_issue_comments", number: 9_999 });
+    expect(none).toEqual([]);
+    await expect(
+      commander.send({ command: "no_such_command" } as unknown as Parameters<
+        typeof commander.send
+      >[0]),
+    ).rejects.toThrow("不認得的指令");
+    // 指令通道不影響 ready 之後的其他輸出：stack 還活著
+    expect(stack.exitCode).toBeNull();
+  });
+
   it("SIGTERM（Windows 為關閉 stdin）後以 0 結束：沒有殘留的子程序，暫存目錄已刪除", async () => {
     const children = descendants(stack.pid as number);
     expect(children).toContain(ready.runnerPid);
@@ -378,8 +407,9 @@ describe.skipIf(skipStack)("完整系統 e2e 的啟動腳本：--runner-config-o
     expect(toml).toContain(
       `[repos.${JSON.stringify(cloneUrl)}]\npath = ${JSON.stringify(ready.checkoutPath)}`,
     );
+    // Fake Agent 以 --state-dir 啟動（session 保存在 runnerHome 底下），Feedback Loop 的修正 Run 才能接回劇本。
     expect(toml).toMatch(
-      /\[agents\.claude-code\]\ncommand = ".*fake-agent.*"\nargs = \["--script", ".*m1\.yaml"\]/,
+      /\[agents\.claude-code\]\ncommand = ".*fake-agent.*"\nargs = \["--script", ".*m1\.yaml", "--state-dir", ".*agent-sessions.*claude-code"\]/,
     );
 
     // 沒有啟動 Runner：stack 沒有子程序，Server 上也沒有 Runner。

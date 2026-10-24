@@ -108,8 +108,17 @@ test.describe("超過重試上限", () => {
     await expect(panel.getByTestId("verification-1")).toHaveCount(2);
     await expect(panel.getByRole("form", { name: "Verification 的決定" })).toBeVisible();
 
+    // Needs You 的「Run 已停下」：「前往 Run」直接開 Verification 分頁，決定的表單就在眼前
     await page.goto("/needs-you");
-    await expect(page.locator("main")).toContainText("超過重試上限");
+    const stopped = page.locator('.needs-you-item[data-kind="stopped_run"]');
+    await expect(stopped).toContainText("超過重試上限");
+    await stopped.getByRole("link", { name: "前往 Run" }).click();
+    await expect(page).toHaveURL(/\/runs\/run-\d+\?tab=verification$/);
+    await expect(page.getByRole("tab", { name: "Verification" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(page.getByRole("form", { name: "Verification 的決定" })).toBeVisible();
   });
 
   test("略過失敗進入 Review Gate：Review 頁看得到失敗，manual 全部打勾才能核准", async ({

@@ -1,0 +1,22 @@
+# Preview 留言的端到端（91 I1 的 Desktop 完整系統 e2e，ARCHITECTURE §13、§10）：
+# Repo 是一個最小的 Vite app，Runner 依 [preview] 啟動 dev server。
+#
+# 1. 第一回合：修改 index.html 的標題後結束回合 → Review Gate；人在 Desktop 的內嵌瀏覽器選取元素留言後退回。
+# 2. 第二回合：以 echo_prompt 把收到的 prompt 原樣回報（文字含 Preview 網址與 selector、截圖以 image 區塊附上），
+#    e2e 從 Run 的 Event 驗證 Agent 真的收到這些內容。
+description: Preview 留言：改標題、回報退回的 prompt
+turns:
+  - steps:
+      - message: 修改首頁標題。
+      - tool_call:
+          id: edit-title
+          title: 修改 index.html
+          edit:
+            path: index.html
+            old_text: ">preview<"
+            new_text: ">preview v2<"
+      - stop: end_turn
+  - steps:
+      - message: 收到 Review 退回，以下是我收到的 prompt。
+      - echo_prompt
+      - stop: end_turn

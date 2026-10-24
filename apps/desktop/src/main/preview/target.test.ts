@@ -6,6 +6,7 @@ import {
   type PreviewTarget,
   parsePreviewBounds,
   parseRunId,
+  previewCommentUrl,
   resolvePreviewTarget,
 } from "./target";
 
@@ -106,6 +107,45 @@ describe("resolvePreviewTarget", () => {
       });
       expect(target.mode, status).toBe("unavailable");
     }
+  });
+});
+
+describe("previewCommentUrl", () => {
+  const share = `https://${RUN}.preview.example.com`;
+
+  it("本機 Run：localhost 的網址換成這個 Run 的 Preview 網址，路徑、查詢字串與 hash 保留", () => {
+    const local = opened(
+      resolvePreviewTarget({ runId: RUN, state: ready(), localRunnerId: "runner-local" }),
+    );
+    expect(local.commentOrigin).toBe(share);
+    expect(previewCommentUrl("http://localhost:41234/settings?tab=a#b", local)).toBe(
+      `${share}/settings?tab=a#b`,
+    );
+    expect(previewCommentUrl("http://127.0.0.1:41234/", local)).toBe(`${share}/`);
+    // 不是這個 Preview 的網址（例如用外部瀏覽器開的連結）原樣回傳
+    expect(previewCommentUrl("https://docs.example.com/x", local)).toBe(
+      "https://docs.example.com/x",
+    );
+  });
+
+  it("別人的 Run：已經是 Preview 網址，原樣回傳", () => {
+    const target = opened(
+      resolvePreviewTarget({ runId: RUN, state: ready(), localRunnerId: "runner-other" }),
+    );
+    expect(target.commentOrigin).toBe(share);
+    expect(previewCommentUrl(`${share}/a`, target)).toBe(`${share}/a`);
+  });
+
+  it("Server 沒有設定 Preview 網域時沒有可以換的網址，原樣回傳 localhost", () => {
+    const local = opened(
+      resolvePreviewTarget({
+        runId: RUN,
+        state: ready({ shareUrl: null }),
+        localRunnerId: "runner-local",
+      }),
+    );
+    expect(local.commentOrigin).toBeNull();
+    expect(previewCommentUrl("http://localhost:41234/", local)).toBe("http://localhost:41234/");
   });
 });
 

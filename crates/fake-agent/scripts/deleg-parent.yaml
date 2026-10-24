@@ -1,0 +1,33 @@
+# Delegation（91 I1 的完整系統 e2e，ARCHITECTURE §9）：父 Run 以 Orbis MCP 的 delegate 各開一個
+# consult 與 branch 模式的 Child Run（Agent 是 stack 另外註冊的 fake-child，劇本 deleg-child.yaml），
+# 再列出 Child Run，自己也改一個檔案後結束回合（進入 Review Gate）。
+#
+# 劇本是靜態的，拿不到 delegate 回傳的 run_id，所以不呼叫 wait_run 與 merge_child；
+# Child Run 的狀態由 UI 的 Run 樹驗證。
+description: Delegation：consult 與 branch 各一個 Child Run
+turns:
+  - steps:
+      - message: 先請 fake-child 看一下 README，再開一個子分支。
+      - mcp_call:
+          id: delegate-consult
+          server: orbis
+          tool: delegate
+          arguments: { agent: fake-child, prompt: 請讀 README.md 並回覆重點, mode: consult }
+      - mcp_call:
+          id: delegate-branch
+          server: orbis
+          tool: delegate
+          arguments: { agent: fake-child, prompt: 請在子分支上整理檔案, mode: branch }
+      - mcp_call:
+          id: list-runs
+          server: orbis
+          tool: list_runs
+          arguments: {}
+      - tool_call:
+          id: write-parent
+          title: 新增 parent.txt
+          edit:
+            path: parent.txt
+            content: "parent\n"
+      - message: 已開出兩個 Child Run，並新增 parent.txt。
+      - stop: end_turn

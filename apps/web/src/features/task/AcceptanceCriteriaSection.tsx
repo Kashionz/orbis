@@ -4,6 +4,7 @@ import {
   type AcceptanceCriterionKind,
   type UpdateAcceptanceCriterionInput,
 } from "@orbis/api-contract";
+import { NAMES } from "@orbis/api-contract/names";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -289,6 +290,14 @@ function CriterionForm({
             onChange={(event) => onChange({ ...draft, command: event.target.value })}
           />
         </label>
+      )}
+      {draft.kind === "command" && draft.command.trim() === "" && (
+        // Server 不讀 Repo 的設定檔（只有 Runner 在 base commit 讀），這裡只能提醒，不能判斷 Repo 有沒有設定
+        <p className="warning ac-command-warning" role="alert">
+          指令留空會沿用 Repo 設定檔 <code>{`${NAMES.configDir}/${NAMES.configFile}`}</code> 的{" "}
+          <code>[verify].commands</code>
+          ；Repo 沒有設定時，這條條件每次 Verification 都會「無法判定」。
+        </p>
       )}
       <button type="submit" className="primary" disabled={busy || draft.description.trim() === ""}>
         {submitLabel}

@@ -33,11 +33,18 @@ test.describe("Task 頁", () => {
     await expect(list.nth(0)).toContainText("測試通過");
     await expect(list.nth(0)).toContainText("pnpm test");
 
-    // 新增 agent 類型（不顯示指令欄位）
+    // 新增：預設是 command 類型，指令留空時警告會沿用 Repo 設定檔的 [verify].commands（#53 的觀察）
     await page.getByRole("button", { name: "新增 Acceptance Criterion" }).click();
     const form = page.locator(".ac-form");
+    await expect(form.getByRole("alert")).toContainText("[verify].commands");
+    await expect(form.getByRole("alert")).toContainText("無法判定");
+    await form.getByLabel("指令", { exact: true }).fill("pnpm lint");
+    await expect(form.getByRole("alert")).toHaveCount(0);
+
+    // 改成 agent 類型（不顯示指令欄位，也沒有警告）
     await form.getByLabel("類型").selectOption("agent");
     await expect(form.getByLabel("指令", { exact: true })).toHaveCount(0);
+    await expect(form.getByRole("alert")).toHaveCount(0);
     await form.getByLabel("條件").fill("hello.txt 的內容符合 Spec");
     await form.getByRole("button", { name: "加入" }).click();
     await expect(list).toHaveCount(3);

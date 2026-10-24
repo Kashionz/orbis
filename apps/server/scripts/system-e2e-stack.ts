@@ -15,14 +15,15 @@ import { existsSync, fstatSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { API_ROUTES, envVar, NAMES } from "@orbis/api-contract";
-import type { GitHubUserRef } from "@orbis/github";
+import type { GitHubCheckRun, GitHubCheckSuite, GitHubUserRef } from "@orbis/github";
 import { FakeGitHub, TestClock } from "@orbis/github/testing";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
-import type { ReadyLine } from "../e2e/ready";
+import type { ReadyLine, StackCommand, StackReply } from "../e2e/ready";
 import type { GitHubOAuth } from "../src/auth/github-oauth";
 import { DEFAULT_PUBLIC_URL, DEFAULT_SERVER_PORT } from "../src/config";
 import { randomToken, sha256Hex } from "../src/crypto";
@@ -55,6 +56,11 @@ const POSTGRES_IMAGE = "postgres:17";
 const DEFAULT_E2E_HEARTBEAT_MS = 1000;
 /** Fake Agent 執行的劇本（A 軌提供）。 */
 const AGENT_PROFILE = "claude-code";
+/**
+ * Delegation e2e 用的第二個 Agent：同一個 Fake Agent 執行檔、另一份劇本（`E2E_CHILD_AGENT_SCRIPT`）。
+ * 父 Run 以 Orbis MCP 的 `delegate` 派給它，才不會和父 Run 跑同一份劇本（§9）。
+ */
+const CHILD_AGENT_PROFILE = "fake-child";
 /** 等 Runner 上線並回報 Agent 可用的時間上限。 */
 const RUNNER_READY_TIMEOUT_MS = 60_000;
 /** 關閉 Runner 時等它自己結束的時間；逾時就連同子程序強制結束。 */
@@ -85,6 +91,8 @@ export const E2E_STACK_ENV = {
   runnerBin: envVar("E2E_RUNNER_BIN"),
   fakeAgentBin: envVar("E2E_FAKE_AGENT_BIN"),
   agentScript: envVar("E2E_AGENT_SCRIPT"),
+  /** 第二個 Agent（`fake-child`）的劇本；設定時 runner.toml 多註冊它（Delegation e2e）。 */
+  childAgentScript: envVar("E2E_CHILD_AGENT_SCRIPT"),
   /** Preview 網域（E 軌的 Preview e2e 用，例如 `preview.localhost:<port>`）；未設定時不提供 Preview 網址。 */
   previewDomain: envVar("PREVIEW_DOMAIN"),
 } as const;
@@ -217,6 +225,81 @@ const unusedGitHubOAuth: GitHubOAuth = {
   exchangeCode: () => Promise.reject(new Error("e2e stack 不支援 GitHub 登入")),
   fetchUser: () => Promise.reject(new Error("e2e stack 不支援 GitHub 登入")),
 };
+
+// ---- stdin 指令通道（apps/server/e2e/ready.ts 的 StackCommand）----
+// FakeGitHub 活在這個程序中，e2e 要餵它資料（PR head 的 CI 結果、帳號的角色）只能經由這裡。
+
+type CommandHandler = (command: StackCommand) => Promise<unknown>;
+let commandHandler: CommandHandler | null = null;
+
+function createCommandHandler(fakeGitHub: FakeGitHub, repoId: number): CommandHandler {
+  return async (command) => {
+    switch (command.command) {
+      case "seed_checks": {
+        const runs: GitHubCheckRun[] = command.runs.map((run) => ({
+          id: run.id,
+          name: run.name,
+          status: run.status ?? "completed",
+          conclusion: run.conclusion === undefined ? "success" : run.conclusion,
+          appSlug: run.appSlug ?? "github-actions",
+          htmlUrl:
+            run.htmlUrl ??
+            `https://github.com/${SEED.repoOwner}/${SEED.repoName}/actions/runs/1/job/${run.id}`,
+          outputTitle: run.outputTitle ?? null,
+          outputSummary: run.outputSummary ?? null,
+        }));
+        const failed = runs.some((r) => r.conclusion === "failure" || r.conclusion === "timed_out");
+        const suites: GitHubCheckSuite[] = command.suites ?? [
+          {
+            id: 1,
+            appSlug: "github-actions",
+            status: "completed",
+            conclusion: failed ? "failure" : "success",
+            latestCheckRunsCount: runs.length,
+          },
+        ];
+        fakeGitHub.checkSuites.set(command.sha, suites);
+        fakeGitHub.checkRuns.set(command.sha, runs);
+        return { runs: runs.length, suites: suites.length };
+      }
+      case "set_github_role": {
+        const user: GitHubUserRef = {
+          id: command.user.id,
+          login: command.user.login,
+          type: command.user.type ?? "User",
+        };
+        fakeGitHub.addUser(user);
+        fakeGitHub.roles.set(
+          user.login,
+          command.role as Parameters<typeof fakeGitHub.roles.set>[1],
+        );
+        return null;
+      }
+      case "list_issue_comments":
+        return fakeGitHub.commentsOn(repoId, command.number);
+      default:
+        throw new Error(`不認得的指令：${JSON.stringify(command)}`);
+    }
+  };
+}
+
+/** 處理 stdin 的一行指令，在 stdout 回一行 StackReply。 */
+async function handleCommandLine(line: string): Promise<void> {
+  const trimmed = line.trim();
+  if (trimmed === "") return;
+  let command: StackCommand | null = null;
+  let reply: StackReply;
+  try {
+    command = JSON.parse(trimmed) as StackCommand;
+    if (typeof command.id !== "string") throw new Error("指令缺少 id");
+    if (!commandHandler) throw new Error("stack 還沒就緒");
+    reply = { reply: command.id, ok: true, result: await commandHandler(command) };
+  } catch (error) {
+    reply = { reply: command?.id ?? "", ok: false, error: (error as Error).message };
+    logger.warn({ err: error, line: trimmed.slice(0, 200) }, "stdin 指令失敗");
+  }
+  process.stdout.write(`${JSON.stringify(reply)}\n`);
+}
 
 /** 結束 Runner：先關 stdin（sidecar 模式的關閉指令），逾時就連同子程序強制結束。 */
 async function stopRunner(child: ChildProcess): Promise<void> {
@@ -376,12 +459,16 @@ async function main(): Promise<void> {
       env("agentScript") ??
       path.join(repoRoot, "crates", "fake-agent", "scripts", "m1.yaml"),
   );
+  const childAgentScript = env("childAgentScript")
+    ? resolvePath(env("childAgentScript") ?? "")
+    : null;
   // 不啟動 Runner 時（Desktop 的 sidecar 自己啟動），不需要 Runner 執行檔。
   const runnerConfigOut = args["runner-config-out"] ? resolvePath(args["runner-config-out"]) : null;
   const required: [string, string][] = [
     ["Fake Agent 執行檔", fakeAgentBin],
     ["Fake Agent 劇本", agentScript],
   ];
+  if (childAgentScript) required.push([`${CHILD_AGENT_PROFILE} 的劇本`, childAgentScript]);
   if (!runnerConfigOut) required.unshift(["Runner 執行檔", runnerBin]);
   for (const [what, file] of required) {
     if (!existsSync(file)) {
@@ -419,6 +506,7 @@ async function main(): Promise<void> {
     defaultBranch: SEED.defaultBranch,
     installationId: githubRepo.installationId,
   });
+  commandHandler = createCommandHandler(fakeGitHub, githubRepo.id);
 
   // ---- Postgres 與 Server ----
   const database = await connectDatabase();
@@ -528,10 +616,27 @@ async function main(): Promise<void> {
     `[repos.${tomlString(cloneUrl)}]`,
     `path = ${tomlString(repoPaths.checkout)}`,
     "",
+    // --state-dir：Fake Agent 保存 session 進度，宣告 loadSession。Feedback Loop 的修正 Run 才能
+    // 以 session/load 接續前一個 Run 的劇本（§5.2）；其他路徑不受影響。
     `[agents.${AGENT_PROFILE}]`,
     `command = ${tomlString(fakeAgentBin)}`,
-    `args = [${tomlString("--script")}, ${tomlString(agentScript)}]`,
+    `args = [${[
+      "--script",
+      agentScript,
+      "--state-dir",
+      path.join(runnerHome, "agent-sessions", AGENT_PROFILE),
+    ]
+      .map(tomlString)
+      .join(", ")}]`,
     "",
+    ...(childAgentScript
+      ? [
+          `[agents.${CHILD_AGENT_PROFILE}]`,
+          `command = ${tomlString(fakeAgentBin)}`,
+          `args = [${["--script", childAgentScript].map(tomlString).join(", ")}]`,
+          "",
+        ]
+      : []),
   ].join("\n");
   const runnerConfigPath = path.join(runnerHome, NAMES.runnerConfigFile);
   await writeFile(runnerConfigPath, runnerToml);
@@ -564,6 +669,7 @@ async function main(): Promise<void> {
     repoId: seeded.repo.id,
     runnerId: launched?.runnerId ?? null,
     runnerPid: launched?.pid ?? null,
+    childAgent: childAgentScript ? CHILD_AGENT_PROFILE : null,
     runnerHome,
     runnerConfigPath,
     bareRepoPath: repoPaths.bare,
@@ -584,14 +690,19 @@ async function main(): Promise<void> {
 // once 的 listener 執行後就被移除，程序會在清理完成之前被預設行為終止。重複的訊號由 shutdown() 忽略。
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
-// stdin 是 pipe 時（例如由測試或 CI 的程序管理），關閉 stdin 也代表結束。
+// stdin 是 pipe 時（例如由測試或 CI 的程序管理）：每行一個 JSON 指令（StackCommand），關閉 stdin 代表結束。
 // 是終端機、/dev/null（NUL）或一般檔案時不看 stdin：背景執行時 stdin 常是 /dev/null，會立刻讀到結尾。
 // 不用 isFIFO() 判斷：Windows 的 pipe 在 Node 中 isFIFO() 是 false。
 try {
   const stat = fstatSync(0);
   if (!process.stdin.isTTY && !stat.isCharacterDevice() && !stat.isFile()) {
-    process.stdin.on("end", () => void shutdown("stdin 已關閉"));
-    process.stdin.resume();
+    const lines = createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY });
+    // 指令依序處理，一個處理完才處理下一個
+    let queue = Promise.resolve();
+    lines.on("line", (line) => {
+      queue = queue.then(() => handleCommandLine(line));
+    });
+    lines.on("close", () => void shutdown("stdin 已關閉"));
   }
 } catch {
   // 沒有 stdin。

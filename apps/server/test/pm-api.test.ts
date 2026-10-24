@@ -277,6 +277,33 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       });
     });
 
+    it("只改 Verification 重試上限或 Feedback Loop 的 bot 白名單也會寫入；和其他欄位一起改時不會被丟掉", async () => {
+      const project = await createProject();
+      const retries = await as("admin").patch(`/api/projects/${project.id}`, {
+        policy: { verificationMaxRetries: 1 },
+      });
+      expect(retries.status).toBe(200);
+      expect(expectContract(Project, retries.body).policy.verificationMaxRetries).toBe(1);
+
+      const allowlist = await as("admin").patch(`/api/projects/${project.id}`, {
+        policy: { feedbackBotAllowlist: ["coderabbitai[bot]"] },
+      });
+      expect(allowlist.status).toBe(200);
+      expect(expectContract(Project, allowlist.body).policy.feedbackBotAllowlist).toEqual([
+        "coderabbitai[bot]",
+      ]);
+
+      const mixed = await as("admin").patch(`/api/projects/${project.id}`, {
+        policy: { verificationMaxRetries: 5, feedbackBotAllowlist: [], planGateEnabled: true },
+      });
+      expect(mixed.status).toBe(200);
+      expect(expectContract(Project, mixed.body).policy).toMatchObject({
+        verificationMaxRetries: 5,
+        feedbackBotAllowlist: [],
+        planGateEnabled: true,
+      });
+    });
+
     it("可以關閉「自動建立 Issue」", async () => {
       const project = await createProject();
       const res = await as("admin").patch(`/api/projects/${project.id}`, {

@@ -22,8 +22,11 @@ export interface MockConfig {
   forbidWrites?: boolean;
   /** `none`＝剛建立的 Team，還沒有任何 Project。 */
   projects?: "default" | "none";
-  /** 派工對話框的情境：`none`＝沒有任何 Runner 完成 Pairing。 */
-  runners?: "default" | "none";
+  /**
+   * 派工對話框的情境：`none`＝沒有任何 Runner 完成 Pairing；
+   * `local-offline`＝我的 Local Runner 離線（Agent 沿用最後回報的可用性，派工後 Run 會排隊）。
+   */
+  runners?: "default" | "none" | "local-offline";
   /** 另外建立一個等待「設定的信任核准」的 Run。 */
   configTrust?: boolean;
   /** review diff 中 README.md 修改後的內容放在 blob，並多一個二進位檔案。 */

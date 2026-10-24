@@ -110,14 +110,16 @@ function JumpLink({ item }: { item: NeedsYouItem }) {
       </Link>
     );
   }
-  // Plan Gate 的面板、Verification 的決定都在 Run 頁
+  // Plan Gate 的面板、Verification 的決定都在 Run 頁；
+  // 「Run 已停下」（Verification 超過重試上限）直接開 Verification 分頁，決定的按鈕就在那裡
   const focus =
     item.kind === "permission_request" ? `permission-${item.permissionRequestId}` : undefined;
+  const tab = item.kind === "stopped_run" ? "verification" : undefined;
   return (
     <Link
       to="/runs/$runId"
       params={{ runId: item.runId }}
-      search={focus ? { focus } : {}}
+      search={{ ...(focus && { focus }), ...(tab && { tab }) }}
       className="button"
     >
       前往 Run

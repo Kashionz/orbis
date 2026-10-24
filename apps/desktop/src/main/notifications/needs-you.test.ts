@@ -44,11 +44,11 @@ describe("needsYouNotification", () => {
     });
   });
 
-  it("Review Gate 到 diff review，Plan Gate 與停下來的 Run 到 Run 頁，網址中的 ID 會編碼", () => {
+  it("Review Gate 到 diff review，Plan Gate 到 Run 頁，停下來的 Run 到 Verification 分頁，網址中的 ID 會編碼", () => {
     expect(needsYouHref(gate)).toBe("/runs/r1/review");
     expect(needsYouHref({ ...gate, gateKind: "plan" })).toBe("/runs/r1");
-    expect(needsYouHref(stopped)).toBe("/runs/r1");
-    expect(needsYouHref({ ...stopped, runId: "a/b?c" })).toBe("/runs/a%2Fb%3Fc");
+    expect(needsYouHref(stopped)).toBe("/runs/r1?tab=verification");
+    expect(needsYouHref({ ...gate, gateKind: "plan", runId: "a/b?c" })).toBe("/runs/a%2Fb%3Fc");
   });
 });
 
