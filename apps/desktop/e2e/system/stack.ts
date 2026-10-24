@@ -4,14 +4,20 @@
 // Server 與 Web 都用向作業系統要來的空 port，不佔用使用者自己 `pnpm dev` 的 4000 與 5173。
 // 殘留程序的檢查只比對自己啟動的程序樹，不用程序名稱，避免把平行跑的其他測試誤判成殘留。
 
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envVar } from "@orbis/api-contract/names";
-import { parseReadyLine, type ReadyLine } from "@orbis/server/e2e";
-import { isProcessAlive, killProcessTree } from "../../src/main/sidecar/process-tree";
+import {
+  aliveProcesses,
+  type ProcessEntry,
+  parseReadyLine,
+  processTree,
+  type ReadyLine,
+} from "@orbis/server/e2e";
+import { killProcessTree } from "../../src/main/sidecar/process-tree";
 
 const desktopDir = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const serverDir = join(desktopDir, "..", "server");
@@ -38,58 +44,31 @@ export function logTo(name: string): WriteStream {
   return createWriteStream(join(LOG_DIR, name));
 }
 
-/** 某個程序的所有子孫程序。 */
-export function descendants(rootPid: number): number[] {
-  const table =
-    process.platform === "win32"
-      ? execFileSync(
-          "powershell",
-          [
-            "-NoProfile",
-            "-Command",
-            'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
-          ],
-          { encoding: "utf8", windowsHide: true },
-        )
-      : execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" });
-  const children = new Map<number, number[]>();
-  for (const line of table.split(/\r?\n/)) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-    if (!pid || ppid === undefined) continue;
-    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-  }
-  const found: number[] = [];
-  const queue = [rootPid];
-  while (queue.length > 0) {
-    for (const child of children.get(queue.shift() as number) ?? []) {
-      found.push(child);
-      queue.push(child);
-    }
-  }
-  return found;
-}
-
 /**
  * 記下自己啟動的程序樹。程序樹會隨時間變化（Runner、Agent 會中途啟動與結束），
  * 所以在測試的幾個時間點各記一次，結束時確認記過的程序都已經結束。
  */
 export class ProcessLedger {
-  private readonly pids = new Set<number>();
+  // 以 PID 加建立時間辨識程序：記下的程序結束後，PID 可能被無關的程序重用
+  private readonly processes = new Map<string, ProcessEntry>();
 
   /** 記下根程序與它目前的子孫程序。 */
   record(rootPid: number | undefined): void {
     if (rootPid === undefined) return;
-    this.pids.add(rootPid);
-    for (const pid of descendants(rootPid)) this.pids.add(pid);
+    for (const entry of processTree(rootPid)) {
+      this.processes.set(`${entry.pid}:${entry.created ?? ""}`, entry);
+    }
   }
 
-  /** 還活著的程序。 */
-  alive(): number[] {
-    return [...this.pids].filter(isProcessAlive);
+  /** 還活著的程序，以 `<pid> <名稱>` 表示（殘留時錯誤訊息直接看得到是哪些程序）。 */
+  alive(): string[] {
+    return aliveProcesses([...this.processes.values()]).map(
+      (entry) => `${entry.pid} ${entry.name ?? "?"}`,
+    );
   }
 
   get size(): number {
-    return this.pids.size;
+    return this.processes.size;
   }
 }
 

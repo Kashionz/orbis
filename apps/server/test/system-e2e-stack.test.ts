@@ -26,7 +26,7 @@ import {
 } from "@orbis/api-contract";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
-import { parseReadyLine, type ReadyLine, sendPullRequestMergedWebhook } from "../e2e";
+import { descendants, parseReadyLine, type ReadyLine, sendPullRequestMergedWebhook } from "../e2e";
 import { createScratchDatabase, type ScratchDatabase } from "../src/db/test-database";
 import { buildRunnerBinaries } from "./helpers/binaries";
 import { dbSkipReason } from "./helpers/db";
@@ -71,37 +71,6 @@ async function freePort(): Promise<number> {
       server.close(() => resolve(typeof address === "object" && address ? address.port : 0));
     });
   });
-}
-
-/** 某個程序的所有子孫程序。 */
-function descendants(rootPid: number): number[] {
-  const table =
-    process.platform === "win32"
-      ? execFileSync(
-          "powershell",
-          [
-            "-NoProfile",
-            "-Command",
-            'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
-          ],
-          { encoding: "utf8" },
-        )
-      : execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" });
-  const children = new Map<number, number[]>();
-  for (const line of table.split(/\r?\n/)) {
-    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-    if (!pid || ppid === undefined) continue;
-    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-  }
-  const found: number[] = [];
-  const queue = [rootPid];
-  while (queue.length > 0) {
-    for (const child of children.get(queue.shift() as number) ?? []) {
-      found.push(child);
-      queue.push(child);
-    }
-  }
-  return found;
 }
 
 interface StartedStack {

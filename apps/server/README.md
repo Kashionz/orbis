@@ -167,6 +167,19 @@ const { status, pullRequest } = await sendPullRequestMergedWebhook(ready, { bran
   - 以 `ready.github.webhookSecret` 簽章，`X-GitHub-Delivery` 每次隨機產生，然後送到 `ready.github.webhookUrl`。
 - 也匯出 `pullRequestMergedPayload(ready, pullRequest)`，可以只組 payload、自己送出。
 
+### 確認沒有殘留的程序：`processTree` 與 `aliveProcesses`
+
+```ts
+import { aliveProcesses, processTree } from "@orbis/server/e2e";
+
+const recorded = processTree(stackPid); // 關閉前記下根程序與它的子孫（含建立時間與名稱）
+// …關閉 stack…
+expect(aliveProcesses(recorded)).toEqual([]);
+```
+
+- 不要自己只用 ParentProcessId 建程序樹：Windows 的 ParentProcessId 在父程序結束後不會更新，PID 又會很快被重用，父程序早已結束的無關程序（例如 CI 上 `pg_ctl` 以 `cmd.exe` 啟動的 Postgres）會被當成自己的子孫。`processTree` 在 Windows 上比較建立時間排除這種程序；`aliveProcesses` 以 PID 加建立時間辨識同一個程序，記下的程序結束後 PID 被重用也不會誤判。
+- 回傳的每一筆都有 `name`，殘留時可以直接列在錯誤訊息中。
+
 ### 在 CI 中使用
 
 在 Playwright 之前於背景啟動，讀到 ready 行後再開始測試。
