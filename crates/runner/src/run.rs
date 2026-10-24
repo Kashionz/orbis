@@ -820,10 +820,20 @@ impl Run {
                 .unattended_git();
             AcpSession::start(&profile, spec, &wt.path, tx, resume.as_deref(), mcp_servers).await
         };
-        let session = self
-            .interruptible(start)
-            .await?
-            .map_err(|e| Stop::failed(RunErrorCode::AgentStartFailed, e.to_string()))?;
+        let session = match self.interruptible(start).await? {
+            Ok(session) => session,
+            Err(error) => {
+                if matches!(error, AgentError::AuthRequired(_)) {
+                    // 登入失效：之後回報這個 Agent 無法使用，直到再次登入。
+                    crate::login::forget(&self.ctx.home, &self.profile.id);
+                    self.ctx.availability_changed.notify_one();
+                }
+                return Err(Stop::failed(
+                    RunErrorCode::AgentStartFailed,
+                    error.to_string(),
+                ));
+            }
+        };
         tracing::info!(
             run_id = %self.run_id(),
             pid = ?session.pid(),

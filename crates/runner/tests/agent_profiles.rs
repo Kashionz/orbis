@@ -8,9 +8,10 @@ use std::path::Path;
 
 use orbis_fake_agent::agent::{AUTHENTICATED_FILE, SESSION_MODE_PREFIX};
 use orbis_runner::agent::{ANTIGRAVITY, CLAUDE_CODE, CODEX, GROK};
+use orbis_runner::home::RunnerHome;
 use serde_json::Value;
 use support::flow::Env;
-use support::server::fake_agent_toml;
+use support::server::{fake_agent_toml, offer, send_offer};
 use support::{runner_script, toml_string};
 
 /// runner.toml：內建 profile `id` 的啟動指令換成 Fake Agent（加上 `extra` 參數）。
@@ -33,9 +34,18 @@ fn builtin_with_script(id: &str, wt: &Path, script: &str, extra: &[&str]) -> Str
     )
 }
 
+/// 記下 `id` 已由 Runner 代為登入（等同 `orbis-runner login` 成功）。
+fn mark_logged_in(env: &Env, id: &str) {
+    let home = RunnerHome::open_with(Some(env.home()), None).unwrap();
+    orbis_runner::login::record(&home, id).unwrap();
+}
+
 /// 跑一個 Task，回傳 Agent 回報的 session mode 與 `_meta`。
 async fn run_profile(id: &str, extra: &[&str]) -> (String, Value) {
     let mut env = Env::new(&[("README.md", "a\n")], |wt| builtin_as_fake(id, wt, extra)).await;
+    if id == ANTIGRAVITY {
+        mark_logged_in(&env, id);
+    }
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", id, "做事").await;
     let mode = conn
@@ -127,15 +137,68 @@ async fn grok_可以完成一個_task() {
     assert_eq!(meta, Value::Null);
 }
 
-/// Antigravity 還沒有登入（session/new 回 auth_required）：Run 以 agent_start_failed 結束，
-/// 訊息告訴人要執行的登入指令。
+/// AgentAvailability 中 `id` 的項目。
+fn agent_entry(availability: &Value, id: &str) -> Value {
+    availability["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == id)
+        .cloned()
+        .unwrap()
+}
+
+/// Antigravity 還沒有由 Runner 代為登入：回報無法使用（原因是登入指令），也不接受派工。
+/// 否則它會被當成可用的 Agent，Web 的派工對話框可能預設選到它（CI 的完整系統 e2e 發現）。
 #[tokio::test(flavor = "multi_thread")]
-async fn antigravity_未登入時提示登入指令() {
+async fn antigravity_登入前回報無法使用且不接受派工() {
+    let mut env = Env::new(&[("README.md", "a\n")], |wt| {
+        builtin_as_fake(ANTIGRAVITY, wt, &[])
+    })
+    .await;
+    let _runner = env.spawn();
+    let mut conn = env.server.accept().await;
+    conn.handshake(Vec::new(), Some("rt_test")).await;
+    let availability = conn
+        .wait_for("agent_availability", |v| v["type"] == "agent_availability")
+        .await;
+    let entry = agent_entry(&availability, ANTIGRAVITY);
+    assert_eq!(entry["available"], false, "{entry}");
+    assert!(
+        entry["unavailable_reason"]
+            .as_str()
+            .unwrap()
+            .contains("-runner login antigravity"),
+        "{entry}"
+    );
+    assert_eq!(agent_entry(&availability, CLAUDE_CODE)["id"], CLAUDE_CODE);
+    conn.send(&send_offer(offer(
+        "r1",
+        "d-r1",
+        env.remote.dispatch_repo("web"),
+        ANTIGRAVITY,
+        "做事",
+    )))
+    .await;
+    let reply = conn
+        .wait_for("dispatch 回覆", |v| {
+            v["type"] == "dispatch_accept" || v["type"] == "dispatch_reject"
+        })
+        .await;
+    assert_eq!(reply["type"], "dispatch_reject", "{reply}");
+    assert_eq!(reply["reason"], "agent_unavailable", "{reply}");
+}
+
+/// 登入過、之後 Agent 回報需要登入（session/new 回 auth_required，例如認證過期）：Run 以
+/// agent_start_failed 結束並提示登入指令，清掉登入標記，重送的 AgentAvailability 改成無法使用。
+#[tokio::test(flavor = "multi_thread")]
+async fn antigravity_登入失效時清掉標記並提示登入指令() {
     let extra = ["--auth-methods", "oauth-personal,gemini-api-key"];
     let mut env = Env::new(&[("README.md", "a\n")], |wt| {
         builtin_as_fake(ANTIGRAVITY, wt, &extra)
     })
     .await;
+    mark_logged_in(&env, ANTIGRAVITY);
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", ANTIGRAVITY, "做事").await;
     let error = conn.wait_event("error").await;
@@ -148,6 +211,12 @@ async fn antigravity_未登入時提示登入指令() {
         "{error}"
     );
     conn.wait_status("failed").await;
+    let home = RunnerHome::open_with(Some(env.home()), None).unwrap();
+    assert!(!orbis_runner::login::logged_in(&home, ANTIGRAVITY));
+    conn.wait_for("登入失效後的 agent_availability", |v| {
+        v["type"] == "agent_availability" && agent_entry(v, ANTIGRAVITY)["available"] == false
+    })
+    .await;
 }
 
 /// 執行 `orbis-runner --home <env 的 home> <args>`。
@@ -186,6 +255,8 @@ async fn login_子指令以預設的認證方式登入後可以派工() {
         std::fs::read_to_string(state.path().join(AUTHENTICATED_FILE)).unwrap(),
         "oauth-personal"
     );
+    let home = RunnerHome::open_with(Some(env.home()), None).unwrap();
+    assert!(orbis_runner::login::logged_in(&home, ANTIGRAVITY));
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", ANTIGRAVITY, "做事").await;
     conn.wait_status("awaiting_gate").await;
@@ -296,6 +367,7 @@ async fn antigravity_在受保護的目錄新增_skill_時中途問人() {
         builtin_with_script(ANTIGRAVITY, wt, "antigravity-settings.yaml", &[])
     })
     .await;
+    mark_logged_in(&env, ANTIGRAVITY);
     let _runner = env.spawn();
     let mut conn = env.dispatch("r1", ANTIGRAVITY, "做事").await;
     let request = conn.wait_event("permission_request").await;

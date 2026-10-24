@@ -64,6 +64,9 @@ pub enum AgentError {
     Start(anyhow::Error),
     #[error("Agent 回報錯誤：{0}")]
     Acp(acp::Error),
+    /// Agent 回報需要登入（ACP auth_required）；內容是給人的說明。
+    #[error("{0}")]
+    AuthRequired(String),
 }
 
 /// [`AcpSession::probe`] 的結果。
@@ -118,7 +121,7 @@ impl AcpSession {
         if let Err(error) = session.handshake(profile, cwd, resume, mcp_servers).await {
             let error = match error {
                 AgentError::Acp(e) if e.code == acp::ErrorCode::AuthRequired => {
-                    AgentError::Start(anyhow::anyhow!(login_hint(profile)))
+                    AgentError::AuthRequired(login_hint(profile))
                 }
                 other => other,
             };

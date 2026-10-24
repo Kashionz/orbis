@@ -300,6 +300,11 @@ impl Supervisor {
                     (d.available, d.version.clone(), d.unavailable_reason.clone())
                 });
             let learned = self.learned.get(&profile.id).unwrap_or_default();
+            // 需要由 Runner 代為登入的 Agent：登入之前無法使用。
+            let (available, reason) = match crate::login::unavailable_reason(&self.home, profile) {
+                Some(login) if available => (false, Some(login)),
+                _ => (available, reason),
+            };
             // 同一組 Credential 撞到 rate limit：到恢復時間之前不接受這個 Agent 的 Dispatch。
             let (available, reason) = match self.rate_limits.active(&profile.credential) {
                 Some(until) if available => (
@@ -462,6 +467,12 @@ impl Supervisor {
                     profile.id,
                     d.unavailable_reason.clone().unwrap_or_default()
                 ),
+            ));
+        }
+        if let Some(reason) = crate::login::unavailable_reason(&self.home, &profile) {
+            return Err((
+                DispatchRejectReason::AgentUnavailable,
+                format!("Agent {} 無法使用：{reason}", profile.id),
             ));
         }
         if let Some(until) = self.rate_limits.active(&profile.credential) {

@@ -331,7 +331,11 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。改由 Server／UI 在 diff 為空時不做 push（[#73](https://github.com/Kashionz/orbis/issues/73)）。
   - Antigravity 的 `initialize` 沒有宣告 stdio MCP，Orbis MCP bridge（stdio）可能注入不了，這時不能 `delegate`、也不能當判定用的 Child Run。待實機確認；不支援時另開 Issue，讓 hub 提供本機 http 端點。
   - Antigravity 的 session mode（`default`、`auto_edit`、`yolo`）、權限請求的形式、rate limit 的格式（目前沿用 Gemini API 的 `RESOURCE_EXHAUSTED`），以及是否仍讀取 Repo 的 `.gemini/`，都待實機確認。
-- **由 Runner 代為登入**：Agent Profile 指定了認證方式的 Agent（目前只有 Antigravity，預設 `oauth-personal`）回報 ACP `auth_required` 時，Run 以 `agent_start_failed` 結束，訊息提示執行 `orbis-runner login <agent>`。這個子指令啟動 Agent、以指定的方式（`--method` 可以改）呼叫 `authenticate`，由 Agent 自己開瀏覽器並保存認證（Antigravity 存在 `~/.gemini/antigravity-acp/`），Runner 不讀也不存認證內容；10 分鐘內沒有完成就放棄。其他 Agent 用自己的 CLI 登入。
+- **由 Runner 代為登入**：Agent Profile 指定了認證方式的 Agent（目前只有 Antigravity，預設 `oauth-personal`）用 `orbis-runner login <agent>` 登入。
+  - 這個子指令啟動 Agent、以指定的方式（`--method` 可以改）呼叫 `authenticate`，由 Agent 自己開瀏覽器並保存認證（Antigravity 存在 `~/.gemini/antigravity-acp/`），Runner 不讀也不存認證內容；10 分鐘內沒有完成就放棄。
+  - 登入成功後，Runner 在狀態目錄記一個只有時間的標記（`agents/<agent>.login`）。沒有標記時，AgentAvailability 回報這個 Agent 無法使用（原因是要執行的登入指令），派工也以 `agent_unavailable` 拒絕。否則沒登入的 Agent 會被當成可用，Web 的派工對話框可能預設選到它。在其他 ACP client（例如 Zed）登入過的人也要再執行一次。
+  - 之後 Run 遇到 ACP `auth_required`（例如認證過期）時，以 `agent_start_failed` 結束並提示登入指令，同時清掉標記，重送的 AgentAvailability 改成無法使用。
+  - 其他 Agent 用自己的 CLI 登入。
 - **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
 - **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Antigravity（`~/.gemini/antigravity-acp/settings.json`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
