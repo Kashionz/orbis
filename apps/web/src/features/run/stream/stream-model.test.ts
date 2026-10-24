@@ -2,7 +2,13 @@ import type { RunEvent } from "@orbis/api-contract";
 import type { EventKind, RunStatus } from "@orbis/protocol";
 import { describe, expect, it } from "vitest";
 import { applyEvents, EMPTY_TIMELINE, type TimelineItem } from "../timeline";
-import { buildStream, isTurnFinished, type StreamContext, streamTail } from "./stream-model";
+import {
+  buildStream,
+  isTurnFinished,
+  type StreamContext,
+  streamTail,
+  withExtras,
+} from "./stream-model";
 
 /** 依序產生 Event；`gaps[i]` 是第 i 筆和前一筆相差的秒數（預設 1 秒）。 */
 function timeline(kinds: EventKind[], gaps: number[] = []): TimelineItem[] {
@@ -297,5 +303,50 @@ describe("isTurnFinished", () => {
     expect(isTurnFinished("failed", null, [])).toBe(true);
     expect(isTurnFinished("rate_limited", null, [])).toBe(false);
     expect(isTurnFinished(null, null, [])).toBe(false);
+  });
+});
+
+describe("withExtras", () => {
+  const items = timeline([text("開始"), status("completed")], [0, 60]);
+  const stream = buildStream(items, ctx("completed"));
+  const [first] = items;
+  const later = (seconds: number) =>
+    new Date(Date.parse(first?.ts ?? "") + seconds * 1000).toISOString();
+
+  it("切換紀錄與 PR 依時間插入；同一時間放在原本的項目之後", () => {
+    const merged = withExtras(
+      stream,
+      [
+        {
+          ts: later(30),
+          memberId: "me",
+          kind: "policy",
+          agent: null,
+          model: null,
+          effort: null,
+          permissionPolicy: "manual",
+        },
+      ],
+      {
+        number: 12,
+        url: "https://github.com/acme/demo/pull/12",
+        state: "merged",
+        runId: "run-1",
+        openedAt: later(60),
+        mergedAt: later(120),
+      },
+    );
+    expect(merged.map((s) => s.kind)).toEqual([
+      "message",
+      "switch",
+      "status",
+      "pull_request",
+      "pull_request",
+    ]);
+    expect(merged.at(-1)).toMatchObject({ merged: true });
+  });
+
+  it("沒有紀錄時原樣回傳", () => {
+    expect(withExtras(stream, [], null)).toEqual(stream);
   });
 });

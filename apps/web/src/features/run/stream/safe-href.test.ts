@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeHref } from "./TimelineItemView";
+import { safeHref } from "./safe-href";
 
 describe("safeHref", () => {
   it("接受 http 與 https", () => {

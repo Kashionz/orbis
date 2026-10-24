@@ -9,6 +9,7 @@
 import type { GateKind, RunStatus, ToolKind, VerificationOutcome } from "@orbis/protocol";
 import { TERMINAL_RUN_STATUSES } from "@orbis/protocol";
 import type { TimelineItem } from "../timeline";
+import type { RunSettingsChange, TaskPullRequest } from "../types";
 
 type ItemOf<T extends TimelineItem["type"]> = Extract<TimelineItem, { type: T }>;
 
@@ -88,7 +89,11 @@ export type StreamItem =
         | ItemOf<"run_diff">
         | ItemOf<"child_merged">
         | ItemOf<"verification_completed">;
-    });
+    })
+  /** TODO(backend, run-settings)：執行中切換模型、推理強度、權限策略。 */
+  | (Base & { kind: "switch"; change: RunSettingsChange })
+  /** TODO(backend, task-pull-request)：開出或合併 PR。 */
+  | (Base & { kind: "pull_request"; pr: TaskPullRequest; merged: boolean });
 
 export interface StreamContext {
   /** Run 目前的狀態；還不知道時為 null。 */
@@ -344,15 +349,56 @@ export function buildStream(items: readonly TimelineItem[], context: StreamConte
 }
 
 /** 一個項目在時間軸上最早的時間。 */
-function firstTs(draft: Draft): string {
+export function firstTs(draft: Draft): string {
   switch (draft.kind) {
     case "tool_group":
       return (draft.tools[0] as ToolCallItem).ts;
     case "verification_group":
       return (draft.results[0] as VerificationResultItem).ts;
+    case "switch":
+      return draft.change.ts;
+    case "pull_request":
+      return (draft.merged ? draft.pr.mergedAt : null) ?? draft.pr.openedAt;
     default:
       return draft.item.ts;
   }
+}
+
+/**
+ * 把後端缺口 API 的紀錄（執行中切換的設定、PR）依時間插進串流，成為系統事件。
+ * 同一時間的放在原本的項目之後；不影響頭像列。
+ */
+export function withExtras(
+  stream: readonly StreamItem[],
+  changes: readonly RunSettingsChange[],
+  pr: TaskPullRequest | null,
+): StreamItem[] {
+  const extras: StreamItem[] = changes.map((change, index) => ({
+    kind: "switch",
+    key: `switch-${index}-${change.ts}`,
+    head: null,
+    change,
+  }));
+  if (pr) {
+    extras.push({ kind: "pull_request", key: `pr-${pr.number}-open`, head: null, pr, merged: false });
+    if (pr.state === "merged" && pr.mergedAt) {
+      extras.push({ kind: "pull_request", key: `pr-${pr.number}-merged`, head: null, pr, merged: true });
+    }
+  }
+  if (extras.length === 0) return [...stream];
+  const result: StreamItem[] = [];
+  let next = 0;
+  const sorted = [...extras].sort((a, b) => firstTs(a).localeCompare(firstTs(b)));
+  for (const item of stream) {
+    const ts = firstTs(item);
+    while (next < sorted.length && firstTs(sorted[next] as StreamItem) < ts) {
+      result.push(sorted[next] as StreamItem);
+      next += 1;
+    }
+    result.push(item);
+  }
+  result.push(...sorted.slice(next));
+  return result;
 }
 
 function summarizeTools(tools: ToolCallItem[]) {

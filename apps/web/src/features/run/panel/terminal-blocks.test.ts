@@ -74,8 +74,8 @@ describe("terminalBlocks", () => {
   });
 
   it("shell 的提示字元", () => {
-    expect(shellPrompt("PowerShell")).toBe("PS>");
+    expect(shellPrompt("powershell")).toBe("PS>");
     expect(shellPrompt("cmd")).toBe("C:\\>");
-    expect(shellPrompt("Git Bash")).toBe("$");
+    expect(shellPrompt("git-bash")).toBe("$");
   });
 });

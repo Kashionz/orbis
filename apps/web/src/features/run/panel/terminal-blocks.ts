@@ -4,13 +4,17 @@
 import type { TextBody } from "@orbis/protocol";
 import type { TimelineItem } from "../timeline";
 
-/** 終端機分頁的 shell 切換（只影響提示字元）。 */
-export const TERMINAL_SHELLS = ["PowerShell", "cmd", "Git Bash"] as const;
-export type TerminalShell = (typeof TERMINAL_SHELLS)[number];
+/** 終端機分頁的 shell（設定的「預設終端」，只影響提示字元）。名稱是專有名詞，不翻譯。 */
+export const TERMINAL_SHELL_NAMES = {
+  powershell: "PowerShell",
+  cmd: "cmd",
+  "git-bash": "Git Bash",
+} as const;
+export type TerminalShell = keyof typeof TERMINAL_SHELL_NAMES;
 
 export function shellPrompt(shell: TerminalShell): string {
   switch (shell) {
-    case "PowerShell":
+    case "powershell":
       return "PS>";
     case "cmd":
       return "C:\\>";

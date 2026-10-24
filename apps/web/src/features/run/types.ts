@@ -48,6 +48,8 @@ export const RunSettingsChange = z.object({
 export type RunSettingsChange = z.infer<typeof RunSettingsChange>;
 
 export const RunSettings = z.object({
+  /** 派工時的 Agent 與模型（切換紀錄之前的值；事件串流的頭像列依時間決定顯示哪一個）。 */
+  initial: z.object({ agent: z.string(), model: z.string().nullable() }),
   /** 目前的推理強度；模型不支援調整時為 null。 */
   effort: RunEffort.nullable(),
   changes: z.array(RunSettingsChange),

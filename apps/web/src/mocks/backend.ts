@@ -2690,8 +2690,14 @@ export class MockBackend {
 
   /** TODO(backend, run-settings)：目前的推理強度與切換紀錄。 */
   runSettings(runId: string): RunSettings {
-    this.run(runId);
-    return this.state.runSettings[runId] ?? { effort: "std", changes: [] };
+    const run = this.run(runId);
+    return (
+      this.state.runSettings[runId] ?? {
+        initial: { agent: run.agent, model: run.model },
+        effort: "std",
+        changes: [],
+      }
+    );
   }
 
   /** TODO(backend, run-settings)：執行中切換模型（可以換 Agent）、推理強度、權限策略。 */
@@ -2729,7 +2735,7 @@ export class MockBackend {
       changes.push({ ...change, kind: "policy", permissionPolicy: input.permissionPolicy });
     }
     run.updatedAt = now();
-    const next = { effort, changes };
+    const next = { initial: settings.initial, effort, changes };
     this.state.runSettings[runId] = next;
     this.save();
     return next;
