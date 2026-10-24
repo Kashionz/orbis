@@ -505,20 +505,22 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       ]);
     });
 
-    it("Runner 暫停領取或離線時，online 為 false、Agent 不可用", async () => {
+    it("Runner 暫停領取或離線時，online 為 false，Agent 沿用最後回報的可用性（派工後 Run 排隊，§6.1）", async () => {
       const mine = await h.pairRunner(team.members.member, "local");
       mine.heartbeat({ accepting_dispatches: false });
       await waitUntil(() => !h.ctx.services.hub.isAcceptingDispatches(mine.runnerId));
       const paused = await optionsOf("member");
       expect(paused.local).toMatchObject({
         online: false,
-        agents: [{ id: "claude-code", available: false }],
+        agents: [{ id: "claude-code", available: true, unavailableReason: null }],
       });
-      expect(paused.local?.agents[0]?.unavailableReason).not.toBeNull();
       mine.close();
       await mine.closed;
       await waitUntil(() => !h.ctx.services.hub.isOnline(mine.runnerId));
-      expect((await optionsOf("member")).local).toMatchObject({ online: false });
+      expect((await optionsOf("member")).local).toMatchObject({
+        online: false,
+        agents: [{ id: "claude-code", available: true }],
+      });
     });
 
     it("依 Role 與 Project 政策：Viewer 都是 null；禁止 Member 派工到 Team Runner 時 Member 的 team 是 null", async () => {
