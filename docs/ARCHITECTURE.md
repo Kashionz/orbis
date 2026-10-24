@@ -376,7 +376,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 | `propose_tasks(spec, tasks[])` | 提出 Draft Task（含 Acceptance Criterion 與相依關係） |
 | `update_task_note(task_id, note)` | 在 Task 上留下進度或決策紀錄 |
 
-- **工具呼叫的轉送**：Runner 把 Agent 的呼叫轉成 `tool_call` 送給 Server，Server 以 `tool_result` 回覆；防護規則一律以 Server 為準。斷線重連後 Runner 以同一個 `call_id` 重送，Server 依此去除重複。`wait_run`、`ask_parent` 在 Server 端阻塞到有結果為止。
+- **工具呼叫的轉送**：Runner 把 Agent 的呼叫轉成 `tool_call` 送給 Server，Server 以 `tool_result` 回覆；防護規則一律以 Server 為準。斷線重連後 Runner 以同一個 `call_id` 重送，Server 依此去除重複。`wait_run`、`ask_parent` 在 Server 端阻塞到有結果為止；Server 關閉時中斷阻塞中的呼叫，不記下結果也不回覆，Runner 重新連上後以同一個 `call_id` 重送，Server 重新處理。
 - **`ask_parent` 的回答**：父 Agent 在 `wait_run`、`get_run`、`list_runs` 的結果中看到待回答的問題，以 `answer_child` 回答。父 Run 的回合已經結束時，問題加入 Needs You，由人回答。
 - **派工**：Child Run 一律派給父 Run 所在的 Runner；那台 Runner 沒有這個 Agent 時拒絕 `delegate`。
 - **模式**：

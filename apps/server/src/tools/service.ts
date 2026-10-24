@@ -22,6 +22,7 @@ import { dispatches, orbisToolCalls, projects, runs, tasks } from "../db/schema"
 import type { Logger } from "../logger";
 import type { RunnerHub } from "../runner/hub";
 import { type OrbisToolCallInput, OrbisToolCallSchema, ToolCallEnvelope } from "./frames";
+import { RunWatchClosedError } from "./run-watch";
 
 type RunRow = typeof runs.$inferSelect;
 type TaskRow = typeof tasks.$inferSelect;
@@ -143,6 +144,8 @@ export class OrbisToolService {
     try {
       result = { outcome: "ok", output: await handler(context, call.data) };
     } catch (error) {
+      // Server 正在關閉：不寫結果也不回覆。Runner 重新連線後以同一個 call_id 重送，再重新處理。
+      if (error instanceof RunWatchClosedError) return;
       if (error instanceof ToolError) result = toolError(error.code, error.message);
       else {
         this.log.error({ err: error, callId, tool: call.data.tool }, "工具呼叫處理失敗");
