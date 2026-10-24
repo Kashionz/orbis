@@ -321,6 +321,12 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 | Grok Build | 原生 `grok agent stdio --no-leader` | 使用者自己安裝；偵測版本，低於測過的最低版本（目前 1.0.52）時回報無法使用；不共用 leader 程序；beta；需要 SuperGrok 系列訂閱 |
 
   registry 中其他支援 ACP 的 Agent 列為「實驗性」。
+- **實機驗證**（2026-10-24，Windows，使用者自己的帳號；`dev_dispatch` 扮演 Server，Task 是建立檔案 → Review Gate 退回一次 → 核准 → push）：
+  - Claude Code、Grok Build：完整通過。
+  - Codex：ACP 連線、session 建立與錯誤回報已確認。完整 Task 沒有跑完，原因是使用者的 `~/.codex/config.toml` 指定了 ChatGPT 帳號不支援的模型。
+  - Gemini CLI：ACP 連線與錯誤回報已確認，沒有 API key 時以 `agent_start_failed` 讓 Run 轉為 `failed`。完整 Task 沒有跑完，原因是使用者沒有設定認證。
+  - Delegation：Claude Code 經 Orbis MCP `delegate` 給 Codex（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。
+- **已知落差**：Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。
 - **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
 - **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Gemini CLI（`~/.gemini`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
