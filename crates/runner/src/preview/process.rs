@@ -286,10 +286,8 @@ struct OnceContext<'a, N> {
 /// 啟動一次 dev server，直到它停止、Run 結束或要求重新啟動。
 async fn run_once<N: Fn(PreviewNotice)>(ctx: &mut OnceContext<'_, N>) -> Once {
     let spec = ctx.spec;
-    let process_spec = Shell::for_script(&spec.command)
-        .spec(&spec.command)
+    let process_spec = Shell::script(&spec.command, spec.env.clone())
         .cwd(&spec.cwd)
-        .envs(spec.env.clone())
         .unattended_git();
     let mut tree = match ProcessTree::spawn(&process_spec, Pipes::OUTPUT) {
         Ok(tree) => tree,

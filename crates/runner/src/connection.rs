@@ -5,10 +5,13 @@
 //!   （第一次 Pairing 時保存 Server 發的 Runner token）→ AgentAvailability → 持續送 Heartbeat、
 //!   補送與送出 Event、處理 Server 送來的 frame。
 //! - Event 一律先進 [`crate::outbox::Outbox`]；blob 先以 HTTP PUT 上傳成功才送參照它的 Event。
+//! - [`Watchdog`]：每次 Heartbeat 同時送 WebSocket Ping；太久沒有收到 Server 的任何訊息（含 Pong），
+//!   或系統時間跳躍（休眠喚醒）後 Server 沒有回應，就主動斷線重連。半開的 TCP 連線（喚醒後網路
+//!   介面換了、Server 早已逾時關閉）送出的資料不會立刻失敗，不能只靠送 Heartbeat 失敗來發現。
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail};
 use futures_util::{SinkExt, StreamExt};
@@ -211,7 +214,7 @@ async fn connect_once(
     let (ws, _) = tokio_tungstenite::connect_async(config.url.as_str())
         .await
         .with_context(|| format!("無法連線到 {}", config.url))?;
-    let mut conn = Connection { ws };
+    let mut conn = Connection::new(ws);
     let ack = handshake(&mut conn, config, pairing).await?;
     let token = match (&ack.runner_token, stored) {
         (Some(token), _) => {
@@ -265,9 +268,26 @@ async fn connect_once(
 /// 單一 WebSocket 連線上的 frame 收送。
 pub struct Connection {
     ws: Ws,
+    /// 最後一次收到 Server 任何訊息（frame、Pong、Ping、Close）的時間，給 [`Watchdog`] 用。
+    last_inbound: Instant,
 }
 
 impl Connection {
+    fn new(ws: Ws) -> Self {
+        Self {
+            ws,
+            last_inbound: Instant::now(),
+        }
+    }
+
+    /// 送 WebSocket Ping；Server 的 Pong 讓閒置的連線也有 inbound 訊息可以判斷存活。
+    async fn ping(&mut self) -> anyhow::Result<()> {
+        self.ws
+            .send(Message::Ping(Vec::new().into()))
+            .await
+            .context("送出 ping 失敗")
+    }
+
     pub async fn send(&mut self, frame: &RunnerToServer) -> anyhow::Result<()> {
         debug!(frame = frame.type_name(), "送出 frame");
         self.send_text(serde_json::to_string(frame)?).await
@@ -308,6 +328,7 @@ impl Connection {
     /// 收下一個 frame。連線正常關閉時回傳 `None`；無法解析的訊息記 log 後略過。
     pub async fn recv(&mut self) -> anyhow::Result<Option<Inbound>> {
         while let Some(message) = self.ws.next().await {
+            self.last_inbound = Instant::now();
             match message.context("接收 frame 失敗")? {
                 Message::Text(text) => match serde_json::from_str::<ServerToRunner>(&text) {
                     Ok(frame) => {
@@ -429,6 +450,7 @@ impl Session {
 
         let mut heartbeat = tokio::time::interval(self.heartbeat);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut watchdog = Watchdog::new(self.heartbeat);
         let outbox = self.supervisor.outbox().clone();
         // Preview 的轉送（§13）：這條連線結束時所有 stream 一起結束
         let (mut relay, mut preview_out) =
@@ -446,8 +468,14 @@ impl Session {
                     return Ok(true);
                 }
                 _ = heartbeat.tick() => {
+                    match watchdog.on_tick(Instant::now(), SystemTime::now(), self.conn.last_inbound) {
+                        Verdict::Dead(why) => bail!("{why}，視為連線中斷"),
+                        Verdict::Probe => warn!("系統時間跳躍（可能剛從休眠喚醒），送 Ping 確認 Server 還在"),
+                        Verdict::Healthy => {}
+                    }
                     let hb = self.supervisor.heartbeat();
                     self.conn.send_typed("heartbeat", &hb).await?;
+                    self.conn.ping().await?;
                 }
                 Some(frame) = frames.recv() => self.conn.send(&frame).await?,
                 () = outbox.notified() => {}
@@ -524,6 +552,72 @@ impl Session {
     }
 }
 
+/// 連線無回應的判斷：超過 [`Watchdog::silence_limit`] 沒有收到 Server 的任何訊息就算斷線；
+/// 系統時間跳躍（休眠喚醒）時先送 Ping，下一個心跳間隔還沒有任何 inbound 也算斷線。
+#[derive(Debug)]
+pub struct Watchdog {
+    interval: Duration,
+    last_wall: SystemTime,
+    /// 時間跳躍時記下當時的 `last_inbound`；下一次 tick 若沒有變化就是沒有回應。
+    probe: Option<Instant>,
+}
+
+/// [`Watchdog::on_tick`] 的結論。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    Healthy,
+    /// 系統時間跳躍：立刻送 Ping，下一個間隔檢查有沒有回應。
+    Probe,
+    /// 連線已經沒有回應，應該斷線重連。
+    Dead(String),
+}
+
+/// 沒有收到任何訊息的時間上限不低於這個值，避免心跳間隔很短（測試）時誤判。
+const MIN_SILENCE_LIMIT: Duration = Duration::from_secs(10);
+/// 超過幾個心跳間隔沒有 inbound 視為斷線（與 Server 判斷 Runner 離線的 3 個間隔相同）。
+const SILENCE_INTERVALS: u32 = 3;
+/// 兩次 tick 的系統時間差超過幾個心跳間隔算是時間跳躍。
+const JUMP_INTERVALS: u32 = 2;
+
+impl Watchdog {
+    pub fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            last_wall: SystemTime::now(),
+            probe: None,
+        }
+    }
+
+    pub fn silence_limit(&self) -> Duration {
+        (self.interval * SILENCE_INTERVALS).max(MIN_SILENCE_LIMIT)
+    }
+
+    /// 每次心跳 tick 呼叫；`last_inbound` 是最後收到 Server 訊息的時間。
+    pub fn on_tick(&mut self, now: Instant, now_wall: SystemTime, last_inbound: Instant) -> Verdict {
+        let silent = now.saturating_duration_since(last_inbound);
+        if silent > self.silence_limit() {
+            return Verdict::Dead(format!(
+                "{} 秒沒有收到 Server 的任何訊息（含 Pong）",
+                silent.as_secs()
+            ));
+        }
+        if let Some(at_probe) = self.probe.take()
+            && last_inbound <= at_probe
+        {
+            return Verdict::Dead("系統時間跳躍後 Server 沒有回應 Ping".into());
+        }
+        let jumped = now_wall
+            .duration_since(self.last_wall)
+            .map_or(true, |d| d > self.interval * JUMP_INTERVALS);
+        self.last_wall = now_wall;
+        if jumped {
+            self.probe = Some(last_inbound);
+            return Verdict::Probe;
+        }
+        Verdict::Healthy
+    }
+}
+
 /// 目前時間，RFC 3339 UTC（毫秒精度）。
 pub fn now() -> Timestamp {
     timestamp(SystemTime::now())
@@ -553,6 +647,73 @@ mod tests {
         .to_string();
         assert!(text.contains("version_mismatch"), "{text}");
         assert!(text.contains("請更新 Runner"), "{text}");
+    }
+
+    #[test]
+    fn 看門狗_太久沒有_inbound_就判定斷線() {
+        let interval = Duration::from_secs(15);
+        let mut dog = Watchdog::new(interval);
+        assert_eq!(dog.silence_limit(), Duration::from_secs(45));
+        let start = Instant::now();
+        let wall = SystemTime::now();
+        assert_eq!(dog.on_tick(start, wall, start), Verdict::Healthy);
+        // 45 秒內有收到訊息：正常。
+        let t = start + Duration::from_secs(30);
+        assert_eq!(
+            dog.on_tick(t, wall + Duration::from_secs(30), start + Duration::from_secs(20)),
+            Verdict::Healthy
+        );
+        // 超過 45 秒沒有任何訊息：斷線。
+        let t = start + Duration::from_secs(80);
+        assert!(matches!(
+            dog.on_tick(t, wall + Duration::from_secs(80), start + Duration::from_secs(20)),
+            Verdict::Dead(_)
+        ));
+        // 心跳間隔很短時，上限不低於 10 秒。
+        assert_eq!(
+            Watchdog::new(Duration::from_millis(200)).silence_limit(),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn 看門狗_系統時間跳躍後先_ping_沒有回應才斷線() {
+        let interval = Duration::from_secs(15);
+        let mut dog = Watchdog::new(interval);
+        let start = Instant::now();
+        let wall = SystemTime::now();
+        assert_eq!(dog.on_tick(start, wall, start), Verdict::Healthy);
+        // 單調時間只過了一個間隔（休眠時不計時），系統時間卻過了一小時：先探測。
+        let t1 = start + interval;
+        let inbound = start + Duration::from_secs(1);
+        assert_eq!(
+            dog.on_tick(t1, wall + Duration::from_secs(3600), inbound),
+            Verdict::Probe
+        );
+        // 下一個間隔還是沒有新的 inbound：斷線。
+        let t2 = t1 + interval;
+        assert!(matches!(
+            dog.on_tick(t2, wall + Duration::from_secs(3615), inbound),
+            Verdict::Dead(_)
+        ));
+
+        // 有回應（inbound 更新）時恢復正常。
+        let mut dog = Watchdog::new(interval);
+        let wall = SystemTime::now();
+        assert_eq!(dog.on_tick(start, wall, start), Verdict::Healthy);
+        assert_eq!(
+            dog.on_tick(t1, wall + Duration::from_secs(3600), inbound),
+            Verdict::Probe
+        );
+        assert_eq!(
+            dog.on_tick(t2, wall + Duration::from_secs(3615), t1 + Duration::from_secs(1)),
+            Verdict::Healthy
+        );
+        // 系統時間倒退也算跳躍。
+        assert_eq!(
+            dog.on_tick(t2 + interval, wall, t2 + Duration::from_secs(1)),
+            Verdict::Probe
+        );
     }
 
     #[test]

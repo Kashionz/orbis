@@ -527,10 +527,8 @@ impl WorktreeManager {
                 "setup 腳本尚未核准，不執行",
             ));
         }
-        let spec = Shell::for_script(script)
-            .spec(script)
+        let spec = Shell::script(script, wt.env())
             .cwd(&wt.path)
-            .envs(wt.env())
             .unattended_git();
         let output = process::run(&spec)
             .await
@@ -581,10 +579,8 @@ impl WorktreeManager {
                     "archive 腳本尚未核准，無法執行，已擋下刪除",
                 ));
             }
-            let spec = Shell::for_script(script)
-                .spec(script)
+            let spec = Shell::script(script, wt.env())
                 .cwd(&path)
-                .envs(wt.env())
                 .unattended_git();
             let output = process::run(&spec)
                 .await
