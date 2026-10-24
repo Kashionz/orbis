@@ -416,6 +416,8 @@ impl AgentProfile {
             protected_paths: vec![".agents/".into(), ".gemini/".into()],
             permission_gaps: vec![
                 "Antigravity 自己的設定（~/.gemini/antigravity-acp/settings.json）中允許的工具不會詢問 Runner".into(),
+                // 實機確認：session 建立時會讀取使用者全域的 MCP 設定。
+                "會載入使用者全域的 MCP server 設定（~/.gemini/config/mcp_config.json），其中的工具不經過 Runner".into(),
             ],
             known_issues: vec![
                 format!(

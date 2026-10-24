@@ -326,18 +326,19 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - Codex：ACP 連線、session 建立與錯誤回報已確認。完整 Task 沒有跑完，原因是使用者的 `~/.codex/config.toml` 指定了 ChatGPT 帳號不支援的模型。
   - Gemini CLI（已由 Antigravity 取代）：ACP 連線與錯誤回報已確認，沒有 API key 時以 `agent_start_failed` 讓 Run 轉為 `failed`。
   - Delegation：Claude Code 經 Orbis MCP `delegate` 給 Codex（consult）→ `wait_run` 拿到 Child Run 的 `final_message`，整條流程通過。
-  - Antigravity：還沒有實機測試（需要登入）。已在 Windows 以 `login --method <不存在的方式>` 確認 Runner 能下載官方 binary、比對 sha256、啟動並完成 `initialize`，以及 Google LLC 簽章（能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse）。
+  - Antigravity（agy_acp_server 1.4.3）：完整通過。`orbis-runner login antigravity` 下載官方 binary、比對 sha256，經瀏覽器以 Google 帳號登入；Task 中 session mode 已是 `default`（不需要切換），執行指令（`git status`）會送權限請求、經過 Permission Policy。能力：`loadSession`、`session/resume`、圖片；MCP 只宣告 http 與 sse。使用者的帳號被判定為 `free-tier`，Google 回了隱私聲明（資料處理條款依帳號方案而定）。
 - **已知落差**：
   - Agent 回報模型錯誤（例如帳號不支援的模型）時，可能把錯誤當成一般回覆，並以 `end_turn` 結束回合。Runner 目前照常進入 Review Gate，diff 是空的，之後 `push_branch` 會以「分支上沒有任何變更可以 push」失敗。實機中 Codex 會這樣。改由 Server／UI 在 diff 為空時不做 push（[#73](https://github.com/Kashionz/orbis/issues/73)）。
   - Antigravity 的 `initialize` 沒有宣告 stdio MCP，Orbis MCP bridge（stdio）可能注入不了，這時不能 `delegate`、也不能當判定用的 Child Run。待實機確認；不支援時另開 Issue，讓 hub 提供本機 http 端點。
-  - Antigravity 的 session mode（`default`、`auto_edit`、`yolo`）、權限請求的形式、rate limit 的格式（目前沿用 Gemini API 的 `RESOURCE_EXHAUSTED`），以及是否仍讀取 Repo 的 `.gemini/`，都待實機確認。
+  - Antigravity 會載入使用者全域的 MCP server 設定（`~/.gemini/config/mcp_config.json`，實機確認），其中的工具不經過 Runner，列在它的 Permission Policy 落差中。
+  - Antigravity 的 rate limit 格式（目前沿用 Gemini API 的 `RESOURCE_EXHAUSTED`），以及是否仍讀取 Repo 的 `.gemini/`，還沒有在實機遇到，待確認。
 - **由 Runner 代為登入**：Agent Profile 指定了認證方式的 Agent（目前只有 Antigravity，預設 `oauth-personal`）用 `orbis-runner login <agent>` 登入。
   - 這個子指令啟動 Agent、以指定的方式（`--method` 可以改）呼叫 `authenticate`，由 Agent 自己開瀏覽器並保存認證（Antigravity 存在 `~/.gemini/antigravity-acp/`），Runner 不讀也不存認證內容；10 分鐘內沒有完成就放棄。
   - 登入成功後，Runner 在狀態目錄記一個只有時間的標記（`agents/<agent>.login`）。沒有標記時，AgentAvailability 回報這個 Agent 無法使用（原因是要執行的登入指令），派工也以 `agent_unavailable` 拒絕。否則沒登入的 Agent 會被當成可用，Web 的派工對話框可能預設選到它。在其他 ACP client（例如 Zed）登入過的人也要再執行一次。
   - 之後 Run 遇到 ACP `auth_required`（例如認證過期）時，以 `agent_start_failed` 結束並提示登入指令，同時清掉標記，重送的 AgentAvailability 改成無法使用。
   - 其他 Agent 用自己的 CLI 登入。
 - **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
-- **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Antigravity（`~/.gemini/antigravity-acp/settings.json`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
+- **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Antigravity（`~/.gemini/antigravity-acp/settings.json`、`~/.gemini/config/mcp_config.json`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
   - Local Runner 只沿用各 CLI 自己的登入狀態，Orbis 不讀取、不保存。
   - Team Runner **共用一個 Claude 訂閱**，Credential 存放在 Runner 主機的 Docker secret 中。設定頁會顯示條款風險警告。
