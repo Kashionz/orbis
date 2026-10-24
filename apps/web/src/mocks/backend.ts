@@ -718,7 +718,8 @@ export class MockBackend {
     return {
       defaultPermissionPolicy,
       local: {
-        online: true,
+        // 離線時 Agent 仍沿用最後回報的可用性（ARCHITECTURE §6.1：派工後 Run 停在佇列）
+        online: this.config.runners !== "local-offline",
         agents: [
           {
             id: "claude-code",

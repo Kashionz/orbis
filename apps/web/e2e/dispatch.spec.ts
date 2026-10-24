@@ -68,6 +68,23 @@ test.describe("派工對話框", () => {
     });
   });
 
+  test.describe("我的 Local Runner 離線", () => {
+    test.use({ mock: { runners: "local-offline" } });
+
+    test("提示派工後 Run 會排隊，Agent 沿用最後回報的可用性，仍然可以派工（§6.1）", async ({
+      page,
+    }) => {
+      await page.goto("/tasks/ORB-2");
+      await page.getByRole("button", { name: "派工" }).click();
+      const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
+      await expect(dialog).toContainText("目前離線，派工後 Run 會排隊，Runner 上線後才開始");
+      await expect(dialog.getByRole("radio", { name: /^claude-code/ })).toBeEnabled();
+      await expect(dialog.getByRole("radio", { name: /^codex/ })).toBeDisabled();
+      await dialog.getByRole("button", { name: "派工" }).click();
+      await expect(page).toHaveURL(/\/runs\/run-\d+$/);
+    });
+  });
+
   test("只有 Ready 的 Task 顯示派工按鈕", async ({ page }) => {
     await page.goto("/tasks/ORB-1");
     await expect(page.getByRole("heading", { name: /設定 CI 快取/ })).toBeVisible();

@@ -152,7 +152,8 @@ function DispatchFields({ task, options, kinds, onClose, onDispatched }: Dispatc
             />
             {RUNNER_KIND_LABELS[kind]}
             {options[kind]?.online === false && (
-              <span className="hint">（目前離線，Run 會排隊）</span>
+              // ARCHITECTURE §6.1：Runner 離線時 Run 停在佇列，不會轉給別的 Runner
+              <span className="hint">（目前離線，派工後 Run 會排隊，Runner 上線後才開始）</span>
             )}
           </label>
         ))}

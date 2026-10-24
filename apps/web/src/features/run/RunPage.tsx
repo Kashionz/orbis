@@ -28,12 +28,26 @@ import { useRunControls } from "./use-run-controls";
 import { useRunTimeline } from "./use-run-timeline";
 import { VirtualTimeline } from "./VirtualTimeline";
 
-type RunTab = "timeline" | "verification" | "preview";
+const RUN_TABS = ["timeline", "verification", "preview"] as const;
+export type RunTab = (typeof RUN_TABS)[number];
+
+export function isRunTab(value: unknown): value is RunTab {
+  return typeof value === "string" && (RUN_TABS as readonly string[]).includes(value);
+}
 
 /**
- * Run 即時檢視：時間軸、Verification 結果、等待中的 Plan Gate。`focus` 是要捲到的時間軸項目 key。
+ * Run 即時檢視：時間軸、Verification 結果、等待中的 Plan Gate。`focus` 是要捲到的時間軸項目 key；
+ * `initialTab` 是一開始顯示的分頁（Needs You 的「Run 已停下」直接開 Verification 分頁做決定）。
  */
-export function RunPage({ runId, focus }: { runId: string; focus: string | undefined }) {
+export function RunPage({
+  runId,
+  focus,
+  initialTab,
+}: {
+  runId: string;
+  focus: string | undefined;
+  initialTab?: RunTab;
+}) {
   const queryClient = useQueryClient();
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: task } = useQuery(taskQuery(run.taskId));
@@ -42,7 +56,7 @@ export function RunPage({ runId, focus }: { runId: string; focus: string | undef
   const project = projects.find((p) => p.id === task?.projectId);
   const permissions = usePermissions(project, task);
   const { timeline, connected, error: streamError } = useRunTimeline(runId);
-  const [tab, setTab] = useState<RunTab>("timeline");
+  const [tab, setTab] = useState<RunTab>(initialTab ?? "timeline");
 
   const status = timeline.status ?? run.status;
   const usage = timeline.usage ? toRunUsage(timeline.usage) : run.usage;
