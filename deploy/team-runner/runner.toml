@@ -1,0 +1,27 @@
+# Team Runner 的 runner.toml（ARCHITECTURE §6.1），由 deploy/docker-compose.yml 以唯讀方式掛到容器的
+# ~/.orbis/runner.toml。改完執行 `docker compose --profile team-runner restart team-runner`。
+#
+# Server 網址與 Pairing token 不寫在這裡：網址由 compose 的環境變數 ORBIS_SERVER_URL 指定（優先於這個檔案），
+# Pairing token 以 Docker secret 傳入（deploy/secrets/README.md）。所有欄位都是選填。
+
+# 在 UI 上顯示的名稱；compose 已用 --name 指定，這裡不需要。
+# name = "team-runner"
+
+# Worktree 根目錄（預設 ~/.orbis/wt，在 runner-home volume 中）與 Preview 用的 port 範圍
+# worktree_root = "/home/orbis/.orbis/wt"
+# port_range = [41000, 41999]
+
+# Repo 對應到容器內既有的 checkout（key 是 clone URL）。Team Runner 通常不設定：
+# 沒有對應時 Runner 自己把 Repo clone 到 <worktree_root>/<repo>/_main，再從那裡開 Worktree。
+# [repos."https://github.com/acme/web.git"]
+# path = "/home/orbis/.orbis/checkouts/web"
+
+# 內建 Agent 的覆寫，例如同時跑的 Run 數（每組 Credential 的並行上限預設 30）
+# [agents.claude-code]
+# max_concurrent_runs = 4
+
+# 加入一般的 ACP Agent（image 中要有這個指令）
+# [agents.my-agent]
+# command = "my-agent-acp"
+# args = ["--stdio"]
+# env = { MY_AGENT_LOG = "info" }
