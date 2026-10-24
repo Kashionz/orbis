@@ -7,10 +7,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import {
   API_ROUTES,
+  API_VERSION,
   type HealthResponse,
   type MeResponse,
   type NeedsYouItem,
   type PairingTokenCreated,
+  type ServerVersions,
 } from "@orbis/api-contract";
 import { NAMES } from "@orbis/api-contract/names";
 import {
@@ -50,6 +52,10 @@ export interface FakeServerState {
   gateDecisions: { gateId: string; body: unknown }[];
   /** 額外提供的靜態檔案（路徑 → 內容），例如打包好的測試頁。 */
   files: Record<string, { contentType: string; body: string | Buffer }>;
+  /** `/api/health` 回報的版本；undefined 模擬比 Phase 1 更早、不回報版本的 Server。 */
+  versions: ServerVersions | undefined;
+  /** 以 `hello_rejected { reason: version_mismatch }` 拒絕所有 Runner（Server 的協定版本取 versions.protocol）。 */
+  rejectHelloVersion: boolean;
 }
 
 export interface FakeServer {
@@ -114,6 +120,8 @@ export async function startFakeServer(): Promise<FakeServer> {
     screenshots: new Map(),
     gateDecisions: [],
     files: {},
+    versions: { server: "0.0.0-fake", api: API_VERSION, protocol: PROTOCOL_VERSION },
+    rejectHelloVersion: false,
   };
 
   const server = createServer(async (req, res) => {
@@ -122,7 +130,11 @@ export async function startFakeServer(): Promise<FakeServer> {
     const signedIn = session !== null && state.sessions.has(session);
 
     if (url.pathname === API_ROUTES.health) {
-      const health: HealthResponse = { ok: true, apiOrigin: `http://${req.headers.host}` };
+      const health: HealthResponse = {
+        ok: true,
+        apiOrigin: `http://${req.headers.host}`,
+        ...(state.versions && { versions: state.versions }),
+      };
       return json(res, 200, health);
     }
     if (url.pathname === "/test/login") {
@@ -227,6 +239,18 @@ export async function startFakeServer(): Promise<FakeServer> {
         state.runnerFrames.push(frame.type);
         if (frame.type !== "hello") return;
         state.hellos.push(frame);
+        if (state.rejectHelloVersion) {
+          const serverVersion = state.versions?.protocol ?? PROTOCOL_VERSION;
+          const rejected: ServerToRunner = {
+            type: "hello_rejected",
+            reason: "version_mismatch",
+            server_protocol_version: serverVersion,
+            message: `Runner 協定版本 ${frame.protocol_version} 與 Server 的 ${serverVersion} 不相容，請更新 Runner（由 Desktop 代管的 Runner 請更新 Desktop）`,
+          };
+          ws.send(JSON.stringify(rejected));
+          ws.close(1008, "version_mismatch");
+          return;
+        }
         const pairing = frame.pairing;
         const ack: ServerToRunner = {
           type: "hello_ack",

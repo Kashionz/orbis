@@ -52,7 +52,11 @@ describe("checkServerHealth", () => {
       requested = String(input);
       return new Response('{"ok":true}');
     }) as typeof fetch;
-    expect(await checkServerHealth("http://s", fetchFn)).toEqual({ ok: true, apiOrigin: null });
+    expect(await checkServerHealth("http://s", fetchFn)).toEqual({
+      ok: true,
+      apiOrigin: null,
+      versions: undefined,
+    });
     expect(requested).toBe("http://s/api/health");
   });
 
@@ -85,7 +89,7 @@ describe("apiOrigin 與 Runner 的連線網址", () => {
         "http://s",
         health({ ok: true, apiOrigin: "http://localhost:4000/" }),
       ),
-    ).toEqual({ ok: true, apiOrigin: "http://localhost:4000" });
+    ).toEqual({ ok: true, apiOrigin: "http://localhost:4000", versions: undefined });
   });
 
   it("apiOrigin 不是明確的 http／https origin 時視為沒有", async () => {
@@ -93,6 +97,7 @@ describe("apiOrigin 與 Runner 的連線網址", () => {
       expect(await checkServerHealth("http://s", health({ ok: true, apiOrigin }))).toEqual({
         ok: true,
         apiOrigin: null,
+        versions: undefined,
       });
     }
   });

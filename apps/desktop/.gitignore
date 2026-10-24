@@ -1,0 +1,3 @@
+# electron-builder 的輸出與 Runner 的暫存目錄（scripts/stage-runner.mjs）
+/release/
+/build/runner/

@@ -7,7 +7,7 @@ import type { GitHubOAuth } from "../src/auth/github-oauth";
 import { sha256Hex } from "../src/crypto";
 import { runners, teams } from "../src/db/schema";
 import { createLogger } from "../src/logger";
-import { RUNNER_WS_PATH } from "../src/runner/endpoint";
+import { RUNNER_WS_PATH, versionMismatchMessage } from "../src/runner/endpoint";
 import { type RunningServer, startServer } from "../src/server";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 
@@ -180,7 +180,7 @@ describe.skipIf(dbSkipReason !== null)("Runner WebSocket 端點", () => {
     expect(server.runnerEndpoint.connectedCount()).toBe(1);
   });
 
-  it("協定版本不符時回 version_mismatch 並關閉連線", async () => {
+  it("協定版本不符時回 version_mismatch 並關閉連線；Runner 比 Server 新時提示更新 Server", async () => {
     const client = await connect();
     client.send(hello({ kind: "pairing_token", token: DEV_PAIRING_TOKEN }, PROTOCOL_VERSION + 1));
     expect(await client.next()).toEqual({
@@ -191,6 +191,21 @@ describe.skipIf(dbSkipReason !== null)("Runner WebSocket 端點", () => {
     });
     expect(await client.closed).toBe(1008);
     expect(await database.db.select().from(runners)).toHaveLength(0);
+    expect(versionMismatchMessage(PROTOCOL_VERSION + 1)).toContain("請更新 Server");
+  });
+
+  it("Runner 的協定版本比 Server 舊時提示更新 Runner 或 Desktop", async () => {
+    const client = await connect();
+    client.send(hello({ kind: "pairing_token", token: DEV_PAIRING_TOKEN }, PROTOCOL_VERSION - 1));
+    expect(await client.next()).toMatchObject({
+      type: "hello_rejected",
+      reason: "version_mismatch",
+      message: expect.stringContaining("請更新 Runner"),
+    });
+    expect(await client.closed).toBe(1008);
+    expect(versionMismatchMessage(PROTOCOL_VERSION - 1)).toContain("Desktop");
+    // 版本欄位不是數字（更舊的 Hello 形狀）也當成 Runner 過舊
+    expect(versionMismatchMessage("1")).toContain("請更新 Runner");
   });
 
   it("Pairing token 錯誤時回 invalid_pairing_token", async () => {

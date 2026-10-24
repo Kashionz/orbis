@@ -170,6 +170,20 @@ _Avoid_: Log、Journal
 Run 過程中由 Runner 正規化後送到 Server 的一筆紀錄，例如訊息、tool call、diff、權限請求。
 _Avoid_: Log、Message、Transcript entry
 
+### 發布
+
+**協定版本**：
+Runner↔Server 協定的整數版本（`PROTOCOL_VERSION`），只在不相容的變更時遞增；Server 拒絕版本不同的 Runner，並說明要更新哪一邊。
+_Avoid_: Wire version、Schema version
+
+**API 版本**：
+Server↔Web 與 Desktop↔Server 共用的 REST／WebSocket 契約的整數版本（`API_VERSION`）。Server 由 `/api/health` 回報，Web 與 Desktop 比對後提示要重新整理、更新 Desktop 還是更新 Server。
+_Avoid_: Contract version、Server version
+
+**Release**：
+GitHub Releases 上以 tag `v<版本>` 建立的一次 Desktop 發布，附 Windows 與 macOS 的安裝檔、自動更新的描述檔與 Runner 的單獨執行檔。Desktop 從 public Releases 自動更新；draft 與 pre-release 不算。
+_Avoid_: Build、Deploy、Version
+
 ### 測試
 
 **Fake Agent**：

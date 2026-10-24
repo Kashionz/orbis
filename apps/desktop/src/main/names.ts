@@ -23,6 +23,11 @@ export const DESKTOP_ENV = {
   runnerServerUrl: envVar("RUNNER_SERVER_URL"),
   /** 啟用測試用的 hook：記錄通知與本機工具的啟動，而不真的執行。只給 Playwright 使用。 */
   testHooks: envVar("DESKTOP_TEST_HOOKS"),
+  /**
+   * 覆寫自動更新的來源：electron-updater generic provider 的網址（底下要有 latest.yml／latest-mac.yml）。
+   * 設定後開發模式也會檢查更新；e2e 用本機的 fake feed，實機測試可以指向任何靜態檔案伺服器。
+   */
+  updateFeedUrl: envVar("DESKTOP_UPDATE_FEED_URL"),
 } as const;
 
 /** 傳給 Runner sidecar 的環境變數（協定的 names.runner_env）。 */

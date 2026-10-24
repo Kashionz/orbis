@@ -45,6 +45,7 @@ describe("ConfigStore", () => {
         serverUrl: "https://x",
         claimingPaused: "yes",
         runnerId: "",
+        skippedUpdateVersion: 7,
         editor: { preset: "notepad", customCommand: "vim {path}" },
         terminal: { preset: "windows-terminal", customCommand: 3 },
       }),
@@ -53,6 +54,7 @@ describe("ConfigStore", () => {
       serverUrl: "https://x",
       claimingPaused: false,
       runnerId: null,
+      skippedUpdateVersion: null,
       editor: { preset: "vscode", customCommand: "vim {path}" },
       terminal: { preset: "x-terminal-emulator", customCommand: "" },
     });

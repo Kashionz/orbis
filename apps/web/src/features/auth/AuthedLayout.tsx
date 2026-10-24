@@ -5,6 +5,7 @@ import { needsYouQuery, notificationsUnreadCountQuery } from "../../api/resource
 import { ErrorText } from "../../components/ErrorText";
 import { ROLE_LABELS } from "../../lib/labels";
 import { useNotificationStream } from "../notifications/use-notification-stream";
+import { VersionBanner } from "../version/VersionBanner";
 import { meQueryOptions } from "./api";
 import { logout } from "./logout";
 
@@ -37,6 +38,7 @@ export function AuthedLayout() {
         {me.member && <span className="role-badge">{ROLE_LABELS[me.member.role]}</span>}
         <LogoutButton />
       </header>
+      <VersionBanner />
       {me.member ? (
         <Outlet />
       ) : (

@@ -30,4 +30,5 @@ export * from "./task-note";
 export * from "./team";
 export * from "./transitions";
 export * from "./verification";
+export * from "./version";
 export * from "./ws";
