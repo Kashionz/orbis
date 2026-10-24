@@ -363,8 +363,7 @@ async fn 拒絕刪除_worktree_根目錄以外的路徑() {
     assert!(outside.path().exists());
 }
 
-/// Git for Windows 的長路徑錯誤要辨識成 `path_too_long`（§6.4）。
-#[cfg(windows)]
+/// 長路徑、中文路徑、刪除重試等 Windows 強化的測試在 `windows_hardening.rs`。
 #[test]
 fn 測試用的暫存路徑含空白() {
     assert!(
