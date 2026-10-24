@@ -1,0 +1,181 @@
+/*
+ * Design tokens（設計交付 README 的 Design Tokens）。深色是預設，淺色由 html[data-theme="light"] 覆寫；
+ * 「跟隨系統」由 lib/theme.ts 依 prefers-color-scheme 決定 data-theme。
+ * 顏色 token 沿用交付稿的名稱（--o + 深色色碼），方便和原型對照；元件只能用這些變數，不寫死顏色。
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* 表面 */
+  --o121316: #121316; /* App 背景、主欄 */
+  --oside: #121316; /* 側欄 */
+  --o16171a: #16171a; /* 串流、看板背景 */
+  --o131417: #131417; /* 右側面板 */
+  --o18191d: #18191d; /* 看板分欄 */
+  --opop: #1a1b1f; /* Popover、對話框 */
+  --o1a1b1f: #1a1b1f; /* 搜尋框、輸入底 */
+  --o1c1e22: #1c1e22; /* 淡填色（chip、輸入、hover） */
+  --o202227: #202227; /* 關閉鈕 hover */
+  --o22242a: #22242a; /* 次要按鈕、pill */
+  --o24262b: #24262b; /* chip hover */
+  --o2a2d33: #2a2d33; /* Segmented 選取 */
+  --o2b2e34: #2b2e34; /* 次要按鈕 hover */
+  --osel: #222429; /* 側欄選取列 */
+
+  /* 線條 */
+  --o1e2024: #1e2024; /* 細分隔線 */
+  --o26292e: #26292e; /* Popover、輸入框邊框 */
+  --o34373d: #34373d; /* 輸入框 focus 邊框 */
+  --o3d4047: #3d4047;
+
+  /* 文字 */
+  --oe8e9eb: #e8e9eb; /* 主要文字 */
+  --o8b9098: #8b9098; /* 次要文字 */
+  --o6b7078: #6b7078; /* shimmer 底色 */
+  --oeceef0: #eceef0; /* shimmer 亮色 */
+  --o4c5058: #4c5058; /* 虛線空頭像 */
+
+  /* 語意色 */
+  --o7fb0fa: #7fb0fa; /* Accent（連結、focus、選取） */
+  --o9cc3ff: #9cc3ff; /* tint 上的 accent 文字 */
+  --o4fb86a: #4fb86a; /* 成功 */
+  --oef6b62: #ef6b62; /* 危險 */
+  --od9a845: #d9a845; /* 警告、待我處理 */
+
+  /* 按鈕與浮層 */
+  --obtn: #e3e4e6; /* 主要按鈕 */
+  --obtnh: #f4f5f7;
+  --obtnfg: #16171a;
+  --otipbg: #e8e9eb; /* Tooltip */
+  --otipfg: #16171a;
+  --oscrim: rgba(0, 0, 0, 0.55);
+  --osh: rgba(0, 0, 0, 0.35);
+  --ohl: rgba(255, 255, 255, 0.055); /* Fluid hover 高亮 */
+  --oscroll: #2a2c31;
+
+  /* 頭像底色 */
+  --o3a3e46: #3a3e46;
+  --o4a3e52: #4a3e52;
+  --o3b4d45: #3b4d45;
+
+  /* tint（深淺色共用） */
+  --tint-accent-08: rgba(127, 176, 250, 0.08);
+  --tint-accent-12: rgba(127, 176, 250, 0.12);
+  --tint-accent-16: rgba(90, 156, 248, 0.16);
+  --tint-accent-28: rgba(127, 176, 250, 0.28);
+  --tint-success: rgba(79, 184, 106, 0.1);
+  --tint-danger: rgba(239, 107, 98, 0.1);
+  --tint-warn: rgba(217, 168, 69, 0.12);
+  --on-accent: #0f1012; /* accent 實心底上的圖示 */
+  --switch-knob: #ffffff;
+  --fg-on-color: #ffffff; /* 彩色底上的文字（共同編輯游標的名稱） */
+
+  /* 字體 */
+  --font-sans:
+    "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei",
+    sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --fvs-normal: "wght" 400, "opsz" 14;
+  --fvs-medium: "wght" 500, "opsz" 14;
+  --fvs-semibold: "wght" 550, "opsz" 18;
+  --fvs-bold: "wght" 600, "opsz" 18;
+
+  /* Motion：hover 80ms、面板淡入 160ms、關閉 80ms */
+  --ease-fluid: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --dur-hover: 80ms;
+  --dur-panel: 160ms;
+  --dur-dismiss: 80ms;
+  --press-scale: 0.97;
+
+  /* 圓角 */
+  --r-chip: 3px;
+  --r-pill: 4px;
+  --r-btn: 6px;
+  --r-card: 8px;
+  --r-pop: 10px;
+  --r-dialog: 12px;
+  --r-share: 14px;
+
+  /* 陰影 */
+  --sh-pop: 0 12px 32px var(--osh);
+  --sh-dialog: 0 24px 64px var(--osh);
+  --sh-tip: 0 6px 20px var(--osh);
+  --sh-share: 0 16px 40px var(--osh);
+
+  /* 尺寸 */
+  --h-sm: 24px;
+  --h-compact: 28px;
+  --h-default: 32px;
+  --h-lg: 36px;
+  --h-header: 52px;
+
+  /* 疊層（數字越大越上層） */
+  --z-sticky: 3;
+  --z-splitter: 5;
+  --z-menu: 40;
+  --z-toast: 50;
+  --z-dialog: 60;
+  --z-share: 65;
+  --z-popover: 70;
+  --z-tooltip: 200;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --o121316: #ffffff;
+  --oside: #f3f4f6;
+  --o16171a: #ffffff;
+  --o131417: #fafbfe;
+  --o18191d: #f4f5f9;
+  --opop: #ffffff;
+  --o1a1b1f: #f3f4f8;
+  --o1c1e22: #eff1f5;
+  --o202227: #ebedf2;
+  --o22242a: #e8eaf0;
+  --o24262b: #e7e9ee;
+  --o2a2d33: #dfe2e8;
+  --o2b2e34: #dfe2e8;
+  --osel: #e4e6ea;
+
+  --o1e2024: #edeff3;
+  --o26292e: #e4e7ec;
+  --o34373d: #d6d9df;
+  --o3d4047: #b8bbc2;
+
+  --oe8e9eb: #1b1c1e;
+  --o8b9098: #6a6f77;
+  --o6b7078: #898e96;
+  --oeceef0: #16181a;
+  --o4c5058: #a7abb3;
+
+  --o7fb0fa: #2f6fd6;
+  --o9cc3ff: #2563c9;
+  --o4fb86a: #2e8a48;
+  --oef6b62: #cf3f36;
+  --od9a845: #9a6d0c;
+
+  --obtn: #1d1f23;
+  --obtnh: #383b42;
+  --obtnfg: #ffffff;
+  --otipbg: #1d1f23;
+  --otipfg: #ffffff;
+  --oscrim: rgba(20, 22, 28, 0.28);
+  --osh: rgba(0, 0, 0, 0.12);
+  --ohl: rgba(0, 0, 0, 0.05);
+  --oscroll: #d3d6dc;
+
+  --o3a3e46: #dfe1e5;
+  --o4a3e52: #e9dff0;
+  --o3b4d45: #dcebe3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-hover: 0ms;
+    --dur-panel: 0ms;
+    --dur-dismiss: 0ms;
+    --press-scale: 1;
+  }
+}

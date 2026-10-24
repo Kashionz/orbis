@@ -5,13 +5,8 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { cancelRun, queryKeys, taskRunsQuery } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime, formatUsage, toRunUsage } from "../../lib/format";
-import {
-  DELEGATION_MODE_LABELS,
-  RUN_ORIGIN_LABELS,
-  RUN_STATUS_LABELS,
-  RUNNER_KIND_LABELS,
-} from "../../lib/labels";
 import { buildRunTree, flattenRunTree, type RunNode } from "../../lib/run-tree";
 import type { Permissions } from "../auth/use-permissions";
 import { useRunControls } from "../run/use-run-controls";
@@ -65,6 +60,7 @@ function RunTreeNode({
   onSelect: (runId: string) => void;
   canCancel: boolean;
 }) {
+  const t = useT();
   const { run } = node;
   const queryClient = useQueryClient();
   const cancel = useMutation({
@@ -88,20 +84,20 @@ function RunTreeNode({
         >
           <code>{run.id}</code>
         </button>
-        {run.origin !== "dispatch" && <span className="tag">{RUN_ORIGIN_LABELS[run.origin]}</span>}
+        {run.origin !== "dispatch" && <span className="tag">{t.labels.runOrigin[run.origin]}</span>}
         {run.delegationMode && (
-          <span className="tag">{DELEGATION_MODE_LABELS[run.delegationMode]}</span>
+          <span className="tag">{t.labels.delegationMode[run.delegationMode]}</span>
         )}
         <span className="run-node-agent">
           {run.agent}
           {run.model && <span className="hint"> {run.model}</span>}
         </span>
         <span className="status-badge" data-status={run.status}>
-          {RUN_STATUS_LABELS[run.status]}
+          {t.labels.runStatus[run.status]}
         </span>
         <span className="hint run-node-usage">{formatUsage(run.usage)}</span>
         <span className="hint">
-          {RUNNER_KIND_LABELS[run.runnerKind]} · {formatTime(run.createdAt)}
+          {t.labels.runnerKind[run.runnerKind]} · {formatTime(run.createdAt)}
         </span>
         <Link to="/runs/$runId" params={{ runId: run.id }}>
           開啟 Run 頁
@@ -137,6 +133,7 @@ function RunTreeNode({
 
 /** 選取的節點的即時時間軸（訂閱它的 Event）。 */
 function RunLiveView({ run, permissions }: { run: Run; permissions: Permissions }) {
+  const t = useT();
   const { timeline, connected, error } = useRunTimeline(run.id);
   const { controls, error: respondError } = useRunControls(run, permissions);
   const status = timeline.status ?? run.status;
@@ -148,7 +145,7 @@ function RunLiveView({ run, permissions }: { run: Run; permissions: Permissions 
           {run.agent} <code>{run.id}</code>
         </strong>
         <span className="status-badge" data-status={status}>
-          {RUN_STATUS_LABELS[status]}
+          {t.labels.runStatus[status]}
         </span>
         <span className="hint">{formatUsage(usage)}</span>
         <span className="connection" data-connected={connected}>

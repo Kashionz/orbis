@@ -20,8 +20,8 @@ import {
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
+import { useT } from "../../i18n";
 import { appInstallUrl } from "../../lib/github";
-import { PERMISSION_POLICY_LABELS } from "../../lib/labels";
 import { type PolicyFormValues, policyFormValues, validatePolicyForm } from "../../lib/policy-form";
 import { type RepoFormValues, validateRepoForm } from "../../lib/project-forms";
 import { usePermissions } from "../auth/use-permissions";
@@ -317,6 +317,7 @@ function PolicySection({
   canEditPermissionPolicy: boolean;
   canEditPolicies: boolean;
 }) {
+  const t = useT();
   const { policy } = project;
   const yesNo = (value: boolean) => (value ? "是" : "否");
 
@@ -329,7 +330,7 @@ function PolicySection({
         <dl className="settings-list">
           <dt>預設 Permission Policy</dt>
           <dd data-testid="default-permission-policy">
-            {PERMISSION_POLICY_LABELS[policy.defaultPermissionPolicy]}
+            {t.labels.permissionPolicy[policy.defaultPermissionPolicy]}
           </dd>
         </dl>
       )}
@@ -435,6 +436,7 @@ type BooleanPolicyField = {
 }[keyof PolicyFormValues];
 
 function PermissionPolicyForm({ project }: { project: Project }) {
+  const t = useT();
   const current = project.policy.defaultPermissionPolicy;
   const [value, setValue] = useState<PermissionPolicy>(current);
   const update = useUpdateProject(project);
@@ -455,7 +457,7 @@ function PermissionPolicyForm({ project }: { project: Project }) {
         >
           {PERMISSION_POLICIES.map((p) => (
             <option key={p} value={p}>
-              {PERMISSION_POLICY_LABELS[p]}
+              {t.labels.permissionPolicy[p]}
             </option>
           ))}
         </select>

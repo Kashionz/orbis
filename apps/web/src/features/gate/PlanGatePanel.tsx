@@ -4,7 +4,7 @@ import { useState } from "react";
 import Markdown from "react-markdown";
 import { blobTextQuery, decideGate, queryKeys, runEventQuery } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
-import { PLAN_SOURCE_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 
 interface PlanGatePanelProps {
   gate: Gate;
@@ -25,6 +25,7 @@ export function PlanGatePanel({
   canReject,
   canAbort,
 }: PlanGatePanelProps) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [comment, setComment] = useState("");
   const planSeq = gate.planSeq;
@@ -51,7 +52,7 @@ export function PlanGatePanel({
   return (
     <section className="gate-panel plan-gate" aria-labelledby="plan-gate-heading">
       <h2 id="plan-gate-heading">Plan Gate：等待核准 plan</h2>
-      {plan && <p className="hint">來源：{PLAN_SOURCE_LABELS[plan.source]}</p>}
+      {plan && <p className="hint">來源：{t.labels.planSource[plan.source]}</p>}
       <div className="markdown plan-body" data-testid="plan-body">
         {text !== null ? <Markdown>{text}</Markdown> : <p className="hint">正在讀取 plan…</p>}
       </div>

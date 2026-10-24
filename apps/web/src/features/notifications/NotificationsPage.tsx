@@ -4,11 +4,12 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { fetchNotifications, markNotificationsRead, queryKeys } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import { NOTIFICATION_KIND_LABELS } from "../../lib/labels";
 
 /** 通知中心（ARCHITECTURE §12.3）：全部或只看未讀、逐筆或全部標為已讀、點擊前往相關頁面。 */
 export function NotificationsPage() {
+  const t = useT();
   const queryClient = useQueryClient();
   const router = useRouter();
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -83,7 +84,7 @@ export function NotificationsPage() {
               className="notification-open"
               onClick={() => void open(notification)}
             >
-              <span className="tag">{NOTIFICATION_KIND_LABELS[notification.kind]}</span>
+              <span className="tag">{t.labels.notificationKind[notification.kind]}</span>
               {notification.taskKey && <span className="task-key">{notification.taskKey}</span>}
               <strong>{notification.title}</strong>
               {notification.body && <span className="hint">{notification.body}</span>}

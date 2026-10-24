@@ -1,0 +1,188 @@
+/* 全域基礎樣式：字體、focus ring、捲軸、動畫。顏色一律取自 tokens.css。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--o121316);
+  color: var(--oe8e9eb);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+  font-variation-settings: var(--fvs-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+a {
+  color: var(--o7fb0fa);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+textarea,
+input,
+select,
+button {
+  font-family: inherit;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+}
+
+::placeholder {
+  color: var(--o8b9098);
+}
+
+::selection {
+  background: var(--tint-accent-28);
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--o7fb0fa);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--oscroll);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Agent logo：OpenAI 與 xAI 的標誌是淺色填色，淺色主題要反相 */
+html[data-theme="light"] .o-agent-logo[data-invert-light="true"] {
+  filter: invert(1);
+}
+
+.o-mono {
+  font-family: var(--font-mono);
+}
+
+/*
+ * 切換字重不位移：同一格放一份隱藏的半粗體複本佔寬，
+ * 外層 `.o-wstable`，可見文字 `.o-wstable-text`，複本 `.o-wstable-ghost`。
+ */
+.o-wstable {
+  display: inline-grid;
+  min-width: 0;
+}
+
+.o-wstable > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.o-wstable-text {
+  font-variation-settings: var(--fvs-normal);
+  transition: font-variation-settings var(--dur-hover) ease-out;
+}
+
+.o-wstable-text[data-active="true"] {
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.o-wstable-ghost {
+  visibility: hidden;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+@keyframes o-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes o-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes o-shimmer {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+/* 執行中的狀態點 */
+.o-pulse {
+  animation: o-pulse 1.1s ease-in-out infinite;
+}
+
+.o-fade-in {
+  animation: o-fade var(--dur-panel) ease-out both;
+}
+
+.o-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--o6b7078) 0%,
+    var(--o6b7078) 35%,
+    var(--oeceef0) 50%,
+    var(--o6b7078) 65%,
+    var(--o6b7078) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: o-shimmer 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .o-shimmer {
+    color: var(--o8b9098);
+    background: none;
+    animation: none;
+  }
+
+  .o-pulse {
+    animation: none;
+  }
+}

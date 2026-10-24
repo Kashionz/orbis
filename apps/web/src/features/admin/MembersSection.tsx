@@ -13,7 +13,7 @@ import {
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
-import { ROLE_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 
 /** 只有 Owner 能指派或移除 Owner（§12.2）。 */
 function assignableRoles(myRole: Role): readonly Role[] {
@@ -25,6 +25,7 @@ function assignableRoles(myRole: Role): readonly Role[] {
  * 只有 Owner 能指派或移除 Owner；不能移除或降級最後一位 Owner（以 Server 的回應為準）。
  */
 export function MembersSection({ myRole, myMemberId }: { myRole: Role; myMemberId: string }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: members = [], error } = useQuery(membersQuery);
   const [login, setLogin] = useState("");
@@ -79,7 +80,7 @@ export function MembersSection({ myRole, myMemberId }: { myRole: Role; myMemberI
           <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
             {assignableRoles(myRole).map((r) => (
               <option key={r} value={r}>
-                {ROLE_LABELS[r]}
+                {t.labels.role[r]}
               </option>
             ))}
           </select>
@@ -104,6 +105,7 @@ function MemberRow({
   isMe: boolean;
   onChanged: () => Promise<unknown>;
 }) {
+  const t = useT();
   const [confirming, setConfirming] = useState(false);
   const update = useMutation({
     mutationFn: (role: Role) => updateMemberRole(member.id, role),
@@ -131,12 +133,12 @@ function MemberRow({
           >
             {assignableRoles(myRole).map((r) => (
               <option key={r} value={r}>
-                {ROLE_LABELS[r]}
+                {t.labels.role[r]}
               </option>
             ))}
           </select>
         ) : (
-          ROLE_LABELS[member.role]
+          t.labels.role[member.role]
         )}
         <ErrorText error={update.error} />
       </td>
@@ -161,6 +163,7 @@ const OVERRIDE_ROLES = ROLES.filter((r) => r !== "owner");
 
 /** Project 的 Role 覆寫（Admin 以上）：不能覆寫成 Owner，Team 的 Owner 也不能被覆寫。 */
 export function ProjectRolesSection({ projects }: { projects: readonly Project[] }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const { data: members = [] } = useQuery(membersQuery);
@@ -222,7 +225,7 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
               >
                 {OVERRIDE_ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {ROLE_LABELS[r]}
+                    {t.labels.role[r]}
                   </option>
                 ))}
               </select>
@@ -253,7 +256,7 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
               <option value="">選擇成員</option>
               {candidates.map((m) => (
                 <option key={m.id} value={m.id}>
-                  @{m.githubLogin}（Team：{ROLE_LABELS[m.role]}）
+                  @{m.githubLogin}（Team：{t.labels.role[m.role]}）
                 </option>
               ))}
             </select>
@@ -266,7 +269,7 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
             >
               {OVERRIDE_ROLES.map((r) => (
                 <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
+                  {t.labels.role[r]}
                 </option>
               ))}
             </select>

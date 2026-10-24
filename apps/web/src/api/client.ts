@@ -2,14 +2,14 @@
 
 import { ApiError as ApiErrorBody, type READY_REQUIREMENTS } from "@orbis/api-contract";
 import type { z } from "zod";
-import { READY_REQUIREMENT_LABELS } from "../lib/labels";
+import { getMessages } from "../i18n";
 
 type ReadyRequirement = (typeof READY_REQUIREMENTS)[number];
 
 /** Server 回 401：尚未登入或 session 已失效。 */
 export class UnauthorizedError extends Error {
   constructor() {
-    super("尚未登入");
+    super(getMessages().common.signedOut);
     this.name = "UnauthorizedError";
   }
 }
@@ -99,10 +99,13 @@ export async function apiSend(path: string, init: ApiRequestInit = {}): Promise<
  */
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    const t = getMessages();
     if (error.missing.length > 0) {
-      return `還不能進入 Ready，缺少：${error.missing.map((m) => READY_REQUIREMENT_LABELS[m]).join("、")}`;
+      return t.common.notReadyMissing(
+        error.missing.map((m) => t.labels.readyRequirement[m]).join(t.common.listSeparator),
+      );
     }
-    let text = error.status === 403 ? `沒有權限：${error.message}` : error.message;
+    let text = error.status === 403 ? t.common.forbidden(error.message) : error.message;
     for (const issue of error.issues) {
       const field = issue.path.join(".");
       text += field

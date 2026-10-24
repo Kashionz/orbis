@@ -1,6 +1,7 @@
 // MSW 假後端的設定。Playwright 以 `page.addInitScript` 在頁面載入前設定 `window.__MOCK_CONFIG__`。
 
 import type { ProjectPolicy, Role } from "@orbis/api-contract";
+import type { FeatureName } from "../lib/features";
 
 /** 假後端狀態在 sessionStorage 中的 key（e2e 也用它讀出狀態）。 */
 export const MOCK_STATE_STORAGE_KEY = "mock-backend-state";
@@ -60,6 +61,10 @@ export interface MockConfig {
    * `server-outdated`＝Server 比 Web 舊、`no-versions`＝比 Phase 1 更早、不回報版本的 Server。
    */
   health?: "ok" | "web-outdated" | "server-outdated" | "no-versions";
+  /**
+   * 個別關閉後端還沒有的功能（lib/features.ts），模擬真實模式下的停用狀態；省略時全部開啟。
+   */
+  features?: Partial<Record<FeatureName, boolean>>;
 }
 
 declare global {

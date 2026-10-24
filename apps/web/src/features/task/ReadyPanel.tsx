@@ -2,7 +2,7 @@ import { canTransitionManually, type Task, type TaskStatus } from "@orbis/api-co
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { acceptanceCriteriaQuery, queryKeys, transitionTask } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
-import { READY_REQUIREMENT_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 import { missingReadyRequirements, readyChecklist } from "../../lib/ready";
 
 /**
@@ -10,6 +10,7 @@ import { missingReadyRequirements, readyChecklist } from "../../lib/ready";
  * （看板拖曳以外的另一個入口，轉換規則同 `MANUAL_TASK_TRANSITIONS`）。
  */
 export function ReadyPanel({ task, canEdit }: { task: Task; canEdit: boolean }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: criteria = [] } = useQuery(acceptanceCriteriaQuery(task.id));
   const checks = readyChecklist(task, criteria.length);
@@ -34,7 +35,7 @@ export function ReadyPanel({ task, canEdit }: { task: Task; canEdit: boolean }) 
           {checks.map((check) => (
             <li key={check.requirement} data-met={String(check.met)}>
               <span aria-hidden="true">{check.met ? "✓" : "✗"}</span>{" "}
-              {READY_REQUIREMENT_LABELS[check.requirement]}
+              {t.labels.readyRequirement[check.requirement]}
               <span className="visually-hidden">{check.met ? "（已完成）" : "（還缺）"}</span>
             </li>
           ))}
@@ -51,7 +52,7 @@ export function ReadyPanel({ task, canEdit }: { task: Task; canEdit: boolean }) 
         </button>
       )}
       {toReady && missing.length > 0 && (
-        <p className="hint">還缺：{missing.map((m) => READY_REQUIREMENT_LABELS[m]).join("、")}</p>
+        <p className="hint">還缺：{missing.map((m) => t.labels.readyRequirement[m]).join("、")}</p>
       )}
       <ErrorText error={transition.error} />
     </section>

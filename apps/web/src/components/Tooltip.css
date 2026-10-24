@@ -1,0 +1,36 @@
+.o-tooltip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-tooltip);
+  pointer-events: none;
+  max-width: 280px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--otipbg);
+  color: var(--otipfg);
+  box-shadow: var(--sh-tip);
+  font: 400 12px / 16px var(--font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.o-tooltip[data-mono="true"] {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.o-tooltip[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.o-tooltip[data-up="false"][data-visible="false"] {
+  transform: translateY(-2px);
+}

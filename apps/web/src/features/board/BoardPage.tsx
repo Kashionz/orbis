@@ -30,8 +30,8 @@ import {
 } from "../../api/resources";
 import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { unfinishedDependencies } from "../../lib/dependencies";
-import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { matchesTaskKey, parseTaskKeyQuery } from "../../lib/task-key-search";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
@@ -250,6 +250,7 @@ interface ColumnProps {
 }
 
 function Column({ status, tasks, allTasks, members, permissions, dropAllowed }: ColumnProps) {
+  const t = useT();
   const { setNodeRef, isOver } = useDroppable({ id: status, disabled: dropAllowed === false });
   return (
     <section
@@ -261,7 +262,7 @@ function Column({ status, tasks, allTasks, members, permissions, dropAllowed }: 
       aria-labelledby={`column-${status}`}
     >
       <h2 id={`column-${status}`}>
-        {TASK_STATUS_LABELS[status]} <span className="count">{tasks.length}</span>
+        {t.labels.taskStatus[status]} <span className="count">{tasks.length}</span>
       </h2>
       {tasks.length === 0 && <p className="empty">沒有 Task</p>}
       {tasks.map((task) => (

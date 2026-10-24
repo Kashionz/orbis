@@ -9,8 +9,8 @@ import {
   respondToPermission,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { getMessages } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import { PERMISSION_PURPOSE_LABELS } from "../../lib/labels";
 
 /**
  * Needs You 清單（交付 5）：等待自己處理的權限請求、Gate、停下來的 Run。
@@ -76,9 +76,10 @@ export function NeedsYouPage() {
 }
 
 function kindLabel(item: NeedsYouItem): string {
+  const t = getMessages();
   switch (item.kind) {
     case "permission_request":
-      return PERMISSION_PURPOSE_LABELS[item.purpose];
+      return t.labels.permissionPurpose[item.purpose];
     case "gate":
       return item.gateKind === "plan" ? "Plan Gate" : "Review Gate";
     case "stopped_run":

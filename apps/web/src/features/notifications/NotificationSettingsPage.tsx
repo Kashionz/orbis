@@ -12,7 +12,7 @@ import {
   updateNotificationPreferences,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
-import { NOTIFICATION_KIND_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 
 /** 瀏覽器的時區，作為勿擾時段的預設值。 */
 function browserTimeZone(): string {
@@ -31,6 +31,7 @@ function timeZones(current: string): string[] {
  * 勿擾時段只抑制桌面推送，App 內照常記錄，結束後也不補推。
  */
 export function NotificationSettingsPage() {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: saved } = useSuspenseQuery(notificationPreferencesQuery);
   const [disabled, setDisabled] = useState<ReadonlySet<NotificationKind>>(
@@ -92,7 +93,7 @@ export function NotificationSettingsPage() {
                 checked={!disabled.has(kind)}
                 onChange={(event) => toggle(kind, event.target.checked)}
               />
-              {NOTIFICATION_KIND_LABELS[kind]}
+              {t.labels.notificationKind[kind]}
             </label>
           ))}
         </fieldset>

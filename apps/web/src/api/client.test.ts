@@ -42,7 +42,7 @@ describe("errorMessage", () => {
       ["repo", "description", "acceptance_criteria"],
     );
     expect(errorMessage(error)).toBe(
-      "還不能進入 Ready，缺少：指定 Repo、描述或 Spec、至少一條 Acceptance Criterion",
+      "還不能進入就緒，缺少：指定儲存庫、描述或規格、至少一條驗收條件",
     );
   });
 

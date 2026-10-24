@@ -13,7 +13,7 @@ import { useState } from "react";
 import { dispatchOptionsQuery, dispatchRun, queryKeys } from "../../api/resources";
 import { Dialog } from "../../components/Dialog";
 import { ErrorText } from "../../components/ErrorText";
-import { PERMISSION_POLICY_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 import {
   canDispatchTo,
   defaultPermissionPolicy,
@@ -93,6 +93,7 @@ interface DispatchFieldsProps {
 }
 
 function DispatchFields({ task, options, kinds, onClose, onDispatched }: DispatchFieldsProps) {
+  const t = useT();
   const queryClient = useQueryClient();
   const initialKind = kinds[0] ?? "local";
   const [runnerKind, setRunnerKind] = useState<RunnerKind>(initialKind);
@@ -150,7 +151,7 @@ function DispatchFields({ task, options, kinds, onClose, onDispatched }: Dispatc
               checked={runnerKind === kind}
               onChange={() => changeRunnerKind(kind)}
             />
-            {RUNNER_KIND_LABELS[kind]}
+            {t.labels.runnerKind[kind]}
             {options[kind]?.online === false && (
               // ARCHITECTURE §6.1：Runner 離線時 Run 停在佇列，不會轉給別的 Runner
               <span className="hint">（目前離線，派工後 Run 會排隊，Runner 上線後才開始）</span>
@@ -220,7 +221,7 @@ function DispatchFields({ task, options, kinds, onClose, onDispatched }: Dispatc
               checked={policy === value}
               onChange={() => setPolicy(value)}
             />
-            {PERMISSION_POLICY_LABELS[value]}
+            {t.labels.permissionPolicy[value]}
             {value === options.defaultPermissionPolicy && (
               <span className="hint">（Project 預設）</span>
             )}
@@ -229,7 +230,7 @@ function DispatchFields({ task, options, kinds, onClose, onDispatched }: Dispatc
         {!permissionPoliciesFor(runnerKind).includes(options.defaultPermissionPolicy) && (
           <p className="hint" role="note">
             Project 預設是 {options.defaultPermissionPolicy}，但
-            {RUNNER_KIND_LABELS[runnerKind]}不提供，請另外選擇。
+            {t.labels.runnerKind[runnerKind]}不提供，請另外選擇。
           </p>
         )}
       </fieldset>

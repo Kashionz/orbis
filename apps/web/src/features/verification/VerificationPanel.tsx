@@ -17,13 +17,8 @@ import {
   verificationsQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import {
-  AC_KIND_LABELS,
-  VERIFICATION_OUTCOME_LABELS,
-  VERIFICATION_RESOLUTION_LABELS,
-  VERIFICATION_STATUS_LABELS,
-} from "../../lib/labels";
 
 interface VerificationPanelProps {
   runId: string;
@@ -94,6 +89,7 @@ function VerificationRound({
   criteria: readonly AcceptanceCriterion[];
   maxRetries: number;
 }) {
+  const t = useT();
   const byId = new Map(criteria.map((c) => [c.id, c]));
   return (
     <li
@@ -104,7 +100,7 @@ function VerificationRound({
       <header className="verification-header">
         <strong>第 {verification.attempt} 輪</strong>
         <span className="status-badge" data-status={verification.status}>
-          {VERIFICATION_STATUS_LABELS[verification.status]}
+          {t.labels.verificationStatus[verification.status]}
         </span>
         <span className="hint">
           已自動重試 {verification.attempt - 1} 次／上限 {maxRetries} 次
@@ -112,7 +108,7 @@ function VerificationRound({
         <span className="hint">{formatTime(verification.startedAt)}</span>
         {verification.resolution && (
           <span className="tag">
-            人的決定：{VERIFICATION_RESOLUTION_LABELS[verification.resolution]}
+            人的決定：{t.labels.verificationResolution[verification.resolution]}
           </span>
         )}
       </header>
@@ -138,14 +134,15 @@ function ResultView({
   result: VerificationResultItem;
   criterion: AcceptanceCriterion | undefined;
 }) {
+  const t = useT();
   return (
     <li className="verification-result" data-outcome={result.outcome}>
       <div className="verification-result-header">
         <span className="status-badge" data-status={result.outcome}>
-          {VERIFICATION_OUTCOME_LABELS[result.outcome]}
+          {t.labels.verificationOutcome[result.outcome]}
         </span>
         <span>{criterion?.description ?? "（已刪除的條件）"}</span>
-        {criterion && <span className="tag">{AC_KIND_LABELS[criterion.kind]}</span>}
+        {criterion && <span className="tag">{t.labels.acKind[criterion.kind]}</span>}
       </div>
       <p className="verification-summary">{result.summary}</p>
       {result.judgedByRunId && (

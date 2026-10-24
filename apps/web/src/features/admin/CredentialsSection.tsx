@@ -9,8 +9,8 @@ import {
   updateRunnerCredential,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import { QUEUE_WAITING_REASON_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
 
 const numberFormat = new Intl.NumberFormat("en-US");
 const tokens = (value: number | null) => (value === null ? "—" : numberFormat.format(value));
@@ -63,6 +63,7 @@ function CredentialRow({
   credential: CredentialStatus;
   canOverride: boolean;
 }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<string | null>(null);
   const save = useMutation({
@@ -85,7 +86,7 @@ function CredentialRow({
         {c.runnerName}
         <span className="hint">
           {" "}
-          {RUNNER_KIND_LABELS[c.runnerKind]}
+          {t.labels.runnerKind[c.runnerKind]}
           {c.online ? "" : "（離線）"}
         </span>
       </td>
@@ -155,6 +156,7 @@ function CredentialRow({
 
 /** Team Runner 的佇列（依順位）。 */
 export function TeamRunnerQueueSection() {
+  const t = useT();
   const { data: queue = [], error, isSuccess } = useQuery(teamRunnerQueueQuery);
   return (
     <section className="section" aria-labelledby="admin-queue">
@@ -184,7 +186,7 @@ export function TeamRunnerQueueSection() {
                 </td>
                 <td>{item.agent}</td>
                 <td>{item.credential ?? "—"}</td>
-                <td>{QUEUE_WAITING_REASON_LABELS[item.waitingReason]}</td>
+                <td>{t.labels.queueWaitingReason[item.waitingReason]}</td>
                 <td>{formatTime(item.queuedAt)}</td>
               </tr>
             ))}

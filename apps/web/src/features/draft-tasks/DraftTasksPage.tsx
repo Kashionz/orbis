@@ -23,7 +23,7 @@ import {
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
-import { AC_KIND_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 import { parseList } from "../../lib/policy-form";
 import { usePermissions } from "../auth/use-permissions";
 
@@ -201,6 +201,7 @@ function DraftTaskItem({
   onConfirmed: (task: { title: string; key: string }) => Promise<unknown>;
   onChanged: () => Promise<unknown>;
 }) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const confirm = useMutation({
     mutationFn: () => confirmDraftTask(draft.id),
@@ -248,7 +249,7 @@ function DraftTaskItem({
             {draft.acceptanceCriteria.map((criterion, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: 草稿的條件沒有 id
               <li key={index}>
-                <span className="tag">{AC_KIND_LABELS[criterion.kind]}</span>{" "}
+                <span className="tag">{t.labels.acKind[criterion.kind]}</span>{" "}
                 {criterion.description}
                 {criterion.command && <code> {criterion.command}</code>}
               </li>
@@ -325,6 +326,7 @@ function DraftTaskForm({
   repos: readonly Repo[];
   onDone: (saved: boolean) => Promise<unknown>;
 }) {
+  const t = useT();
   const [title, setTitle] = useState(draft.title);
   const [description, setDescription] = useState(draft.description);
   const [repoId, setRepoId] = useState(draft.repoId ?? "");
@@ -398,7 +400,7 @@ function DraftTaskForm({
             >
               {ACCEPTANCE_CRITERION_KINDS.map((kind) => (
                 <option key={kind} value={kind}>
-                  {AC_KIND_LABELS[kind]}
+                  {t.labels.acKind[kind]}
                 </option>
               ))}
             </select>

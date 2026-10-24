@@ -18,14 +18,15 @@ import {
   updateProject,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import { PERMISSION_POLICY_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
 
 /**
  * Team Runner 與 Pairing token（ARCHITECTURE §6.1、§7，Admin 以上）。Team Runner 共用一個 Claude 訂閱，
  * 依 ADR-0005 在這裡清楚顯示條款風險。
  */
 export function RunnersSection() {
+  const t = useT();
   const { data: runners = [], error } = useQuery(runnersQuery);
   const [token, setToken] = useState<PairingTokenCreated | null>(null);
   const create = useMutation({ mutationFn: () => createPairingToken("team"), onSuccess: setToken });
@@ -64,7 +65,7 @@ export function RunnersSection() {
                     {runner.os}/{runner.arch} v{runner.runnerVersion}
                   </span>
                 </td>
-                <td>{RUNNER_KIND_LABELS[runner.kind]}</td>
+                <td>{t.labels.runnerKind[runner.kind]}</td>
                 <td>
                   {runner.online
                     ? runner.acceptingDispatches
@@ -148,6 +149,7 @@ export function PolicySection({ projects }: { projects: readonly Project[] }) {
 }
 
 function ProjectPolicyRow({ project }: { project: Project }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [value, setValue] = useState<PermissionPolicy>(project.policy.defaultPermissionPolicy);
   const save = useMutation({
@@ -165,7 +167,7 @@ function ProjectPolicyRow({ project }: { project: Project }) {
         >
           {PERMISSION_POLICIES.map((p) => (
             <option key={p} value={p}>
-              {PERMISSION_POLICY_LABELS[p]}
+              {t.labels.permissionPolicy[p]}
             </option>
           ))}
         </select>{" "}

@@ -1,0 +1,38 @@
+.o-switch {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  flex: none;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--o2a2d33);
+  cursor: pointer;
+  transition: background-color var(--dur-panel) ease-out;
+}
+
+.o-switch[aria-checked="true"] {
+  background: var(--o7fb0fa);
+}
+
+.o-switch[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.o-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--switch-knob);
+  transition: transform var(--dur-panel) var(--ease-fluid);
+}
+
+.o-switch[aria-checked="true"] .o-switch-knob {
+  transform: translateX(12px);
+}
