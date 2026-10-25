@@ -57,6 +57,7 @@ function pullRequestLink(overrides: Partial<PullRequestLink> = {}): PullRequestL
     headBranch: "feature/x",
     headSha: "a".repeat(40),
     state: "open",
+    mergedAt: null,
     ...overrides,
   };
 }
@@ -237,8 +238,12 @@ export function describeGitHubStoreContract(
         await store.savePullRequestLink(pullRequestLink());
         expect(await store.findPullRequestLink(100, 12)).toEqual(pullRequestLink());
         expect(await store.findPullRequestLink(100, 13)).toBeNull();
-        await store.savePullRequestLink(pullRequestLink({ state: "merged" }));
-        expect((await store.findPullRequestLink(100, 12))?.state).toBe("merged");
+        const mergedAt = "2026-10-25T08:00:00.000Z";
+        await store.savePullRequestLink(pullRequestLink({ state: "merged", mergedAt }));
+        expect(await store.findPullRequestLink(100, 12)).toMatchObject({
+          state: "merged",
+          mergedAt,
+        });
       });
     });
   });

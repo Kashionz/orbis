@@ -287,8 +287,19 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
       const { task, run, pull } = await openPullRequest();
       const [link] = await database.db.select().from(pullRequests);
       expect(link).toMatchObject({ taskId: task.id, runId: run.id, number: pull.number });
+      // Task 帶 PR（事件串流的「開出合併請求」與「已合併」）
+      expect((await getTask(task.id)).pullRequest).toMatchObject({
+        number: pull.number,
+        state: "open",
+        runId: run.id,
+        mergedAt: null,
+      });
       await deliver("pull_request", pullPayload("closed", pull.number, true));
-      expect(await getTask(task.id)).toMatchObject({ status: "done", doneReason: "completed" });
+      const merged = await getTask(task.id);
+      expect(merged).toMatchObject({ status: "done", doneReason: "completed" });
+      expect(merged.pullRequest).toMatchObject({ state: "merged", mergedAt: expect.any(String) });
+      const [row] = await database.db.select().from(pullRequests);
+      expect(row?.mergedAt).not.toBeNull();
     });
 
     it("PR 沒有 merge 就關閉 → Review Gate；重開 → PR Open", async () => {
@@ -297,6 +308,69 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
       expect((await getTask(task.id)).status).toBe("review_gate");
       await deliver("pull_request", pullPayload("reopened", pull.number, false));
       expect((await getTask(task.id)).status).toBe("pr_open");
+    });
+  });
+
+  describe("不指定 Repo 的 Task 與連接到 GitHub", () => {
+    it("沒有 Repo 的 Task 不建立 Issue；補指定 Repo 後才開始同步", async () => {
+      const res = await as("member").post(apiPath(API_ROUTES.projectTasks, { projectId }), {
+        repoId: null,
+        title: "還沒決定放哪",
+      });
+      const task = expectContract(Task, res.body);
+      await ctx.services.githubIdle();
+      expect(await database.db.select().from(taskIssueLinks)).toHaveLength(0);
+      await as("member").patch(apiPath(API_ROUTES.task, { taskId: task.id }), { repoId });
+      await ctx.services.githubIdle();
+      expect((await issueOf(task.id)).title).toContain("還沒決定放哪");
+    });
+
+    it("本機 Repo 連接到 GitHub：App 沒安裝 409 repo_not_connected；已登記 409 repo_exists；成功後改成 GitHub Repo 並同步 Issue", async () => {
+      const created = await as("admin").post(apiPath(API_ROUTES.projectRepos, { projectId }), {
+        kind: "local",
+        name: "notes",
+      });
+      const local = expectContract(Repo, created.body);
+      const task = await as("member").post(apiPath(API_ROUTES.projectTasks, { projectId }), {
+        repoId: local.id,
+        title: "本機的 Task",
+      });
+      const taskId = expectContract(Task, task.body).id;
+      await ctx.services.githubIdle();
+      expect(await database.db.select().from(taskIssueLinks)).toHaveLength(0);
+
+      const path = apiPath(API_ROUTES.repoConnectGithub, { repoId: local.id });
+      expect((await as("member").post(path, { owner: "acme", name: "notes" })).status).toBe(403);
+      const missing = await as("admin").post(path, { owner: "acme", name: "notes" });
+      expect(missing.status).toBe(409);
+      expect(missing.body).toMatchObject({
+        error: "repo_not_connected",
+        installUrl: expect.any(String),
+      });
+      const exists = await as("admin").post(path, { owner: "acme", name: "app" });
+      expect(exists.body).toMatchObject({ error: "repo_exists" });
+
+      gh.github.addRepo({
+        id: 5151,
+        owner: "acme",
+        name: "notes",
+        defaultBranch: "main",
+        installationId: INSTALLATION_ID,
+      });
+      const ok = await as("admin").post(path, { owner: "acme", name: "notes" });
+      expect(ok.status).toBe(200);
+      expect(expectContract(Repo, ok.body)).toMatchObject({
+        kind: "github",
+        owner: "acme",
+        name: "notes",
+      });
+      await ctx.services.githubIdle();
+      const [link] = await database.db
+        .select()
+        .from(taskIssueLinks)
+        .where(eq(taskIssueLinks.taskId, taskId));
+      expect(link).toBeDefined();
+      expect((await as("admin").post(path, { owner: "acme", name: "notes" })).status).toBe(409);
     });
   });
 

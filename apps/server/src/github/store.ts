@@ -39,6 +39,7 @@ const toPullRequestLink = (row: PullRequestRow): PullRequestLink => ({
   headBranch: row.headBranch,
   headSha: row.headSha,
   state: row.state,
+  mergedAt: row.mergedAt?.toISOString() ?? null,
 });
 
 export class DrizzleGitHubStore implements GitHubStore {
@@ -166,6 +167,9 @@ export class DrizzleGitHubStore implements GitHubStore {
       headBranch: link.headBranch,
       headSha: link.headSha,
       state: link.state,
+      ...(link.mergedAt !== undefined && {
+        mergedAt: link.mergedAt === null ? null : new Date(link.mergedAt),
+      }),
     };
     await this.db
       .insert(pullRequests)

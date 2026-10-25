@@ -221,6 +221,8 @@ export interface PullRequestLink {
   headBranch: string;
   headSha: string;
   state: PullRequestState;
+  /** merge 的時間（ISO 8601），由 `pull_request.closed`（merged）寫入；還沒 merge 時為 null 或省略。 */
+  mergedAt?: string | null;
 }
 
 export type DeliveryClaim =
