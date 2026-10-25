@@ -170,6 +170,20 @@ _Avoid_: Log、Journal
 Run 過程中由 Runner 正規化後送到 Server 的一筆紀錄，例如訊息、tool call、diff、權限請求。
 _Avoid_: Log、Message、Transcript entry
 
+### 介面（新工作區介面）
+
+**Task 分享**：
+Task 層級的成員與角色（擁有者、可操作、可檢視），加上一般存取（僅受邀成員、Team 可檢視、Team 可操作）與以 Email 邀請還不是 Member 的人。後端還沒有實作，UI 先以 mock 提供（見 `apps/web/src/features/share`）。
+_Avoid_: Permission sharing、ACL
+
+**模型目錄**：
+每個 Agent 可以選的模型與它們的推理強度（可調整、固定、不支援），以及 Agent 是否已登入。輸入框的模型選單與設定的「代理」分頁共用。
+_Avoid_: Model list、Model registry
+
+**推理強度**：
+送給模型的思考深度：快速、標準、深度。依模型可能可以調整、固定為某個等級，或不支援。
+_Avoid_: Thinking budget、Depth
+
 ### 發布
 
 **協定版本**：
@@ -193,3 +207,49 @@ _Avoid_: Mock agent、Stub agent
 **劇本**：
 描述 Fake Agent 行為的 YAML 檔，由一串回合組成，每次 prompt 消耗一個回合。新的 Agent 行為先寫成劇本，再寫程式碼。
 _Avoid_: Scenario、Fixture
+
+
+## UI 顯示
+
+程式碼、測試名稱、commit 訊息與文件一律用上面的標準名詞；UI 文字照新工作區介面的原型，依語言顯示下表的文字（字典在 `apps/web/src/i18n`）。同一語系內不中英夾雜，模型名稱、CLI 代號、GitHub、PR 編號等專有名詞除外。
+
+| 名詞 | zh-TW 顯示 | en 顯示 |
+|---|---|---|
+| Team | 團隊 | Team |
+| Member | 成員 | Member |
+| Role | 角色 | Role |
+| Owner／Admin／Member／Viewer（Role） | 擁有者／管理員／成員／檢視者 | Owner／Admin／Member／Viewer |
+| Project | 專案 | Project |
+| Repo | 儲存庫 | Repo |
+| Task | 任務 | Task |
+| Task Key | 任務編號 | Task key |
+| Draft Task | 草稿任務 | Draft task |
+| Spec | 規格 | Spec |
+| Repo Spec | 儲存庫規格 | Repo spec |
+| Acceptance Criterion | 驗收條件 | Acceptance criterion |
+| Gate | 關卡 | Gate |
+| Plan Gate | 計畫關卡 | Plan Gate |
+| Review Gate | 審查關卡 | Review Gate |
+| Verification | 驗收 | Verification |
+| Run | 執行 | Run |
+| Child Run | 子執行 | Child run |
+| Delegation | 委派 | Delegation |
+| Dispatch | 派工 | Dispatch |
+| Runner | 執行器 | Runner |
+| Local Runner | 本機執行器（Runner 種類顯示「本機」） | Local runner（Local） |
+| Team Runner | 團隊執行器（Runner 種類顯示「團隊」） | Team runner（Team） |
+| Pairing | 配對 | Pairing |
+| Pairing token | 配對碼 | Pairing token |
+| Worktree | 工作樹 | Worktree |
+| Agent | 代理 | Agent |
+| Credential | 憑證 | Credential |
+| Permission Policy | 權限策略 | Permission policy |
+| `manual`／`auto`／`yolo` | 逐一確認／自動／全部允許 | Manual／Auto／Allow all |
+| Feedback Loop | 回饋循環 | Feedback loop |
+| Preview | 預覽 | Preview |
+| Needs You | 待我處理 | Needs you |
+| 通知 | 通知 | Notifications |
+| PR | 合併請求 | PR |
+| Task 分享 | 分享 | Share |
+| 模型目錄 | 模型 | Model |
+| 推理強度 | 推理強度（快速／標準／深度） | Reasoning effort（Fast／Standard／Deep） |
