@@ -36,7 +36,16 @@ export function useRunWorkspace(run: Run, task: Task, project: Project) {
   const gate = status === "awaiting_gate" ? timeline.gate : null;
   const usage = timeline.usage ? toRunUsage(timeline.usage) : run.usage;
 
-  const { data: gates = [] } = useQuery(taskGatesQuery(task.id));
+  // 停在 Gate 但還沒取得那個 Gate 時（Gate 比 Event 晚到），短暫輪詢到出現為止
+  const { data: gates = [] } = useQuery({
+    ...taskGatesQuery(task.id),
+    refetchInterval: (query) =>
+      status === "awaiting_gate" &&
+      gate !== null &&
+      pendingGate(query.state.data ?? [], run.id, gate) === null
+        ? 1_000
+        : false,
+  });
   const planGate = pendingGate(gates, run.id, "plan");
   const reviewGate = pendingGate(gates, run.id, "review");
 

@@ -200,7 +200,11 @@ function RunWorkspace({
     changedPaths,
     policy: run.permissionPolicy,
     now,
-    pendingPlanSeq: data.planGate?.planSeq ?? null,
+    pendingPlanSeq:
+      data.planGate?.planSeq ??
+      (data.status === "awaiting_gate" && data.gate === "plan"
+        ? (items.findLast((i) => i.type === "plan_proposed")?.seq ?? null)
+        : null),
     focusKey,
     ...expansion,
     ...data.controls,
