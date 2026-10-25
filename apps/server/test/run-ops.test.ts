@@ -13,6 +13,7 @@ import type { ModelInfo } from "@orbis/protocol";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runAgentSegments, runs, taskMembers } from "../src/db/schema";
+import { currentPermissionPolicy } from "../src/runs/run-settings";
 import { client, expectContract, seedMember, seedReadyTask } from "./helpers/api";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 import { AWAITING_REVIEW, type Flow, RUN_DIFF, runRow, startFlow, startRun } from "./helpers/flow";
@@ -262,6 +263,26 @@ describe.skipIf(dbSkipReason !== null)("執行中的 Run 操作", () => {
       const row = await runRow(flow.db, s.run.id);
       expect(row?.model).toBe("sonnet");
       expect(row?.permissionPolicy).toBe("auto");
+    });
+
+    it("Runner 自己宣稱、Server 沒有要求的 Permission Policy 切換不採信", async () => {
+      const s = await started();
+      await s.send({
+        kind: "run_settings_changed",
+        control_id: null,
+        model: null,
+        effort: null,
+        permission_policy: "yolo",
+        not_applied: [],
+        message: null,
+      });
+      const row = await runRow(flow.db, s.run.id);
+      expect(await currentPermissionPolicy(flow.db, row as NonNullable<typeof row>)).toBe("auto");
+      const settings = expectContract(
+        RunSettings,
+        (await flow.as("viewer").get(apiPath(API_ROUTES.runSettings, { runId: s.run.id }))).body,
+      );
+      expect(settings.current.permissionPolicy).toBe("auto");
     });
 
     it("Run 結束後 409 run_finished", async () => {

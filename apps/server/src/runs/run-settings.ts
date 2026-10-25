@@ -47,6 +47,33 @@ function appliedPolicy(body: SettingsChangedBody): PermissionPolicy | null {
   return body.permission_policy;
 }
 
+/**
+ * Server 送出的 `set_permission_policy`：control id → 要求的 Permission Policy。只有這些 RunControl 觸發、
+ * 而且 Event 的值和要求的相同時才算生效，Runner 自己宣稱的切換不採信（改派、Delegation 會沿用這個值）。
+ */
+async function requestedPolicies(
+  db: Executor,
+  runId: string,
+): Promise<Map<string, PermissionPolicy>> {
+  const rows = await db
+    .select({ controlId: runControls.controlId, payload: runControls.payload })
+    .from(runControls)
+    .where(and(eq(runControls.runId, runId), eq(runControls.action, "set_permission_policy")));
+  return new Map(
+    rows.map((row) => [row.controlId, (row.payload as { policy: PermissionPolicy }).policy]),
+  );
+}
+
+/** 這筆 `run_settings_changed` 中真正生效、而且是 Server 要求的 Permission Policy。 */
+function trustedPolicy(
+  body: SettingsChangedBody,
+  requested: Map<string, PermissionPolicy>,
+): PermissionPolicy | null {
+  const policy = appliedPolicy(body);
+  if (policy === null || body.control_id === null) return null;
+  return requested.get(body.control_id) === policy ? policy : null;
+}
+
 /** 目前的 Permission Policy：最後一筆生效的切換，沒有時是派工時的值。 */
 export async function currentPermissionPolicy(
   db: Executor,
@@ -57,8 +84,10 @@ export async function currentPermissionPolicy(
     .from(runEvents)
     .where(and(eq(runEvents.runId, run.id), eq(runEvents.kind, RUN_SETTINGS_CHANGED)))
     .orderBy(desc(runEvents.seq));
+  if (rows.length === 0) return run.permissionPolicy;
+  const requested = await requestedPolicies(db, run.id);
   for (const row of rows) {
-    const policy = appliedPolicy(row.payload as SettingsChangedBody);
+    const policy = trustedPolicy(row.payload as SettingsChangedBody, requested);
     if (policy) return policy;
   }
   return run.permissionPolicy;
@@ -229,6 +258,7 @@ export async function loadRunSettings(db: Executor, run: RunRow): Promise<RunSet
           .where(inArray(runControls.controlId, controlIds))
       : [];
   const byControl = new Map(controls.map((c) => [c.controlId, c]));
+  const requested = await requestedPolicies(db, run.id);
   const current: RunSettingsSnapshot = { ...initial };
   const changes: RunSettingsChange[] = [];
   for (const event of events) {
@@ -261,7 +291,7 @@ export async function loadRunSettings(db: Executor, run: RunRow): Promise<RunSet
     const columns = settingsChangedColumns(body);
     if (columns.model !== undefined) current.model = columns.model;
     if (columns.effort !== undefined) current.effort = columns.effort;
-    const policy = appliedPolicy(body);
+    const policy = trustedPolicy(body, requested);
     if (policy) current.permissionPolicy = policy;
     changes.push({
       ...base,
