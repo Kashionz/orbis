@@ -12,6 +12,7 @@ pub mod git;
 pub mod handoff;
 pub mod home;
 pub mod judge;
+pub mod local_merge;
 pub mod login;
 pub mod normalize;
 pub mod orbis_mcp;

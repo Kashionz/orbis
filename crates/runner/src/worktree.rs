@@ -217,7 +217,7 @@ impl Worktree {
 
     /// 信任紀錄用的 Repo 識別。
     pub fn repo_key(&self, repo: &DispatchRepo) -> String {
-        github_clone_url(repo).to_owned()
+        repo_key(repo)
     }
 }
 
@@ -255,7 +255,8 @@ impl WorktreeManager {
         ))
     }
 
-    fn repo_lock(&self, source: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    /// 同一個 Repo 來源的 git 寫入操作（fetch、worktree add、本機合併、Repo Spec 提交）共用的鎖。
+    pub fn repo_lock(&self, source: &Path) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self
             .repo_locks
             .lock()
@@ -264,12 +265,20 @@ impl WorktreeManager {
     }
 
     /// Repo 來源：Member 的 checkout，或 Runner 自己的 clone（必要時先 clone）。
+    /// 本機 Repo 只依 `runner.toml` 的 `[repos.<名稱>]` 找 checkout，不 clone。
     async fn source(&self, repo: &DispatchRepo) -> Result<(PathBuf, bool), WorktreeError> {
-        if let Some(path) = self
-            .home
-            .settings()
-            .repo_checkout(github_clone_url(repo), repo.name())
-        {
+        let mapped = match repo.clone_url() {
+            Some(clone_url) => self.home.settings().repo_checkout(clone_url, repo.name()),
+            None => self.home.settings().local_checkout(repo.name()),
+        };
+        if repo.clone_url().is_none() && mapped.is_none() {
+            return Err(WorktreeError::worktree(format!(
+                "runner.toml 中沒有本機 Repo {} 的對應（[repos.{}]）",
+                repo.name(),
+                repo.name()
+            )));
+        }
+        if let Some(path) = mapped {
             let path = paths::normalize(path);
             if paths::is_wsl_unc(&path) {
                 return Err(WorktreeError::worktree(wsl_unc_message(
@@ -300,7 +309,7 @@ impl WorktreeManager {
                         "clone",
                         "--no-checkout",
                         "--",
-                        github_clone_url(repo),
+                        repo.clone_url().unwrap_or_default(),
                         MANAGED_CLONE_DIR,
                     ])
                     .await?;
@@ -345,7 +354,10 @@ impl WorktreeManager {
         let lock = self.repo_lock(&source);
         let _guard = lock.lock().await;
 
-        git.run(["fetch", "--prune", "origin"]).await?;
+        // 本機 Repo 不 fetch remote：Worktree 從本機的基準分支開出。
+        if repo_is_github(&req.repo) {
+            git.run(["fetch", "--prune", "origin"]).await?;
+        }
         let (base_commit, config_commit) = match &req.base {
             Some(base) => (
                 git.rev_parse_commit(&base.commit).await?,
@@ -431,7 +443,7 @@ impl WorktreeManager {
         let scripts_approved = config.scripts().is_empty()
             || self
                 .home
-                .is_trusted(github_clone_url(&req.repo), &config.hash)
+                .is_trusted(&repo_key(&req.repo), &config.hash)
                 .map_err(|e| WorktreeError::worktree(format!("{e:#}")))?;
         Ok(Worktree {
             scripts_approved,
@@ -761,11 +773,12 @@ async fn align_with_remote(git: &Git, branch: &str) -> Result<RemoteAlignment, W
 
 /// 檢查 DispatchOffer 中會成為 git 參數的值，避免被當成選項（參數注入）。
 async fn validate_request(req: &WorktreeRequest) -> Result<(), WorktreeError> {
-    for (what, value) in [
-        ("clone URL", github_clone_url(&req.repo)),
-        ("base ref", req.repo.base_ref()),
-        ("default branch", req.repo.default_branch()),
-    ] {
+    let checks = [
+        ("clone URL", req.repo.clone_url()),
+        ("base ref", Some(req.repo.base_ref())),
+        ("default branch", Some(req.repo.default_branch())),
+    ];
+    for (what, value) in checks.into_iter().filter_map(|(w, v)| v.map(|v| (w, v))) {
         if value.is_empty() || value.starts_with('-') || value.chars().any(char::is_control) {
             return Err(WorktreeError::worktree(format!("{what} {value:?} 不合法")));
         }
@@ -785,7 +798,7 @@ async fn validate_request(req: &WorktreeRequest) -> Result<(), WorktreeError> {
 }
 
 /// 路徑中的一段：不可以含分隔字元、`..` 或 Windows 不允許的字元。
-fn path_segment<'a>(raw: &'a str, what: &str) -> Result<&'a str, WorktreeError> {
+pub(crate) fn path_segment<'a>(raw: &'a str, what: &str) -> Result<&'a str, WorktreeError> {
     let bad = raw.is_empty()
         || raw == "."
         || raw == ".."
@@ -838,10 +851,16 @@ fn link_dir(source: &Path, target: &Path) -> Result<(), WorktreeError> {
     }
 }
 
-/// GitHub Repo 的 clone URL。本機 Repo（協定版本 3）在接受 Dispatch 時已以 `repo_unavailable` 拒絕
-/// （TODO(backend, local-repo)），所以這裡一定有值。
-pub(crate) fn github_clone_url(repo: &DispatchRepo) -> &str {
-    repo.clone_url().unwrap_or_default()
+/// 信任紀錄與 Worktree 紀錄用的 Repo 識別：GitHub Repo 是 clone URL，本機 Repo 是 `local:<名稱>`。
+pub fn repo_key(repo: &DispatchRepo) -> String {
+    match repo {
+        DispatchRepo::Github { clone_url, .. } => clone_url.clone(),
+        DispatchRepo::Local { name, .. } => format!("local:{name}"),
+    }
+}
+
+fn repo_is_github(repo: &DispatchRepo) -> bool {
+    repo.kind() == orbis_protocol::enums::RepoKind::Github
 }
 
 #[cfg(test)]

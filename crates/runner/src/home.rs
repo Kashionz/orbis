@@ -280,6 +280,8 @@ pub struct RunWorktreeRecord {
     pub dispatch_id: String,
     pub path: PathBuf,
     pub root_checkout: PathBuf,
+    /// 信任紀錄用的 Repo 識別（[`crate::worktree::repo_key`]：GitHub Repo 是 clone URL，本機 Repo 是
+    /// `local:<名稱>`）。欄位名稱沿用舊的格式。
     pub clone_url: String,
     pub branch: Option<String>,
     pub base_commit: String,
@@ -291,6 +293,10 @@ pub struct RunWorktreeRecord {
     pub task_key: String,
     /// `branch` 模式 Child Run 的父 Run（父 Run 封存時一起處理）。
     pub parent_run_id: Option<String>,
+    /// 本機合併（`merge_local`）時 Run 分支的 HEAD。squash 之後分支不是基準分支的祖先，封存時分支 HEAD
+    /// 還是這個 commit 就刪掉分支（內容已經合併）。
+    #[serde(default)]
+    pub merged_head: Option<String>,
 }
 
 /// 每個 Run 的 Worktree 紀錄（狀態目錄中）。
@@ -505,6 +511,11 @@ impl Settings {
             anyhow::bail!("port_range 必須是 [最小值, 最大值]，而且最小值大於 0");
         }
         Ok(settings)
+    }
+
+    /// 本機 Repo 的 checkout：只依名稱（`[repos.<名稱>]`）。
+    pub fn local_checkout(&self, name: &str) -> Option<&Path> {
+        self.repos.get(name).map(|repo| repo.path.as_path())
     }
 
     /// Repo 對應的本機 checkout：先比對 clone URL，再比對名稱。

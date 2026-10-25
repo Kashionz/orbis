@@ -594,7 +594,7 @@ impl Run {
             dispatch_id: self.offer.dispatch_id.to_string(),
             path: wt.path.clone(),
             root_checkout: wt.root_checkout.clone(),
-            clone_url: crate::worktree::github_clone_url(&self.offer.repo).to_owned(),
+            clone_url: crate::worktree::repo_key(&self.offer.repo),
             branch: wt.branch.clone(),
             base_commit: wt.base_commit.clone(),
             base_ref: wt.base_ref.clone(),
@@ -603,6 +603,7 @@ impl Run {
             port: wt.port,
             task_key: wt.task_key.clone(),
             parent_run_id: parent.as_ref().map(|(caller, _)| caller.run_id.to_string()),
+            merged_head: None,
         };
         if let Err(e) = self
             .ctx
@@ -769,7 +770,7 @@ impl Run {
         match chosen.as_str() {
             "allow_always" => {
                 if let Err(e) = self.ctx.home.trust(
-                    crate::worktree::github_clone_url(&self.offer.repo),
+                    &crate::worktree::repo_key(&self.offer.repo),
                     &wt.config.hash,
                 ) {
                     tracing::warn!(error = %e, "無法保存信任紀錄");
@@ -3109,7 +3110,32 @@ impl Run {
                 None | Some(RunInput::Shutdown) => return Err(Stop::Shutdown),
                 Some(RunInput::Control(control) | RunInput::Switch { control, .. }) => control,
             };
+            let local = self.offer.repo.kind() == orbis_protocol::enums::RepoKind::Local;
             match &control.action {
+                RunControlAction::MergeLocal {
+                    strategy,
+                    push_base,
+                } if local && !completed => match self.merge_local(*strategy, *push_base).await {
+                    Ok(()) => {
+                        self.applied(&control);
+                        completed = true;
+                        self.set_status(RunStatus::Completed, None, None);
+                        self.ctx.outbox.finish_run(self.run_id());
+                        self.ctx.availability_changed.notify_one();
+                    }
+                    // Server 據此讓 Run 停下（local_merge_blocked），處理後重送 merge_local。
+                    Err(message) => self.reject(&control, RunControlRejectReason::Failed, &message),
+                },
+                RunControlAction::MergeLocal { .. } if !local => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "這不是本機 Repo，核准後以 push_branch 開 PR",
+                ),
+                RunControlAction::PushBranch if local => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "本機 Repo 核准後以 merge_local 合併到基準分支",
+                ),
                 RunControlAction::PushBranch => match self.push_branch().await {
                     Ok((branch, commit_sha)) => {
                         self.respond(
@@ -3149,6 +3175,107 @@ impl Run {
 
     /// 把 Run 的分支 push 到 remote。未 commit 的變更先以設定的訊息 commit（§6.3 `[git]`）。
     async fn push_branch(&self) -> Result<(String, String), String> {
+        let branch = self.commit_pending().await?;
+        let wt = self.wt();
+        let git = wt.git();
+        let fail = |e: crate::git::GitError| e.to_string();
+        git.run(["push", "origin", &format!("HEAD:refs/heads/{branch}")])
+            .await
+            .map_err(|e| {
+                let text = e.to_string();
+                if is_non_fast_forward(&text) {
+                    format!(
+                        "{text}
+遠端分支 {branch} 有本機沒有的 commit（有人直接 push 到 PR 分支）。請讓 Agent 先整合 origin/{branch}（例如 `git merge origin/{branch}`）再重新 push。"
+                    )
+                } else {
+                    text
+                }
+            })?;
+        let sha = git.rev_parse_commit("HEAD").await.map_err(fail)?;
+        Ok((branch, sha))
+    }
+
+    /// 本機 Repo 核准之後（ARCHITECTURE §5）：commit 未提交的變更，把 Run 的分支合併到本機 checkout 的
+    /// 基準分支（[`crate::local_merge`]），送 `local_merged`。被擋下（工作目錄有未 commit 的變更、衝突）
+    /// 時回傳 git 的輸出，Run 繼續等下一次 `merge_local`。
+    async fn merge_local(
+        &self,
+        strategy: orbis_protocol::enums::LocalMergeStrategy,
+        push_base: bool,
+    ) -> Result<(), String> {
+        let branch = self.commit_pending().await?;
+        let wt = self.wt();
+        let base = wt.default_branch.clone();
+        let message = wt.config.config.git.commit_message(CommitFields {
+            task_key: &self.offer.task.task_key,
+            title: &self.offer.task.title,
+            run_id: self.offer.run_id.as_str(),
+            branch: &branch,
+        });
+        let head = wt
+            .git()
+            .rev_parse_commit("HEAD")
+            .await
+            .map_err(|e| e.to_string())?;
+        let temp_root = self.ctx.worktrees.root().join(
+            crate::worktree::path_segment(self.offer.repo.name(), "Repo 名稱")
+                .map_err(|e| e.message)?,
+        );
+        let lock = self.ctx.worktrees.repo_lock(&wt.root_checkout);
+        let merged = {
+            let _guard = lock.lock().await;
+            crate::local_merge::merge(
+                &wt.root_checkout,
+                &temp_root,
+                &base,
+                &branch,
+                strategy,
+                &message,
+            )
+            .await
+        };
+        let commit_sha = merged.map_err(|e| self.redactor.redact(&e.to_string()))?;
+        // 封存時依此判斷分支的內容已經合併（squash 之後分支不是基準分支的祖先）。
+        if let Some(mut record) = self.ctx.home.run_worktree(self.run_id().as_str()) {
+            record.merged_head = Some(head);
+            if let Err(e) = self
+                .ctx
+                .home
+                .record_run_worktree(self.run_id().as_str(), record)
+            {
+                tracing::warn!(error = %e, "無法記下本機合併的 commit");
+            }
+        }
+        let pushed = if push_base {
+            match crate::local_merge::push_base(&wt.root_checkout, &base).await {
+                Ok(pushed) => pushed,
+                Err(message) => {
+                    // push 失敗不影響合併的結果。
+                    self.emit(EventKind::Error {
+                        code: RunErrorCode::GitFailed,
+                        message: self
+                            .redactor
+                            .redact(&format!("已合併到 {base}，但 push 失敗：{message}")),
+                        fatal: false,
+                    });
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        self.emit(EventKind::LocalMerged {
+            commit_sha,
+            base_branch: base,
+            pushed,
+        });
+        Ok(())
+    }
+
+    /// 核准之後（push 或本機合併之前）：未 commit 的變更以設定的訊息 commit（§6.3 `[git]`），確認本機檔案
+    /// 沒有進到任何 commit、分支上有變更。回傳 Run 的分支。
+    async fn commit_pending(&self) -> Result<String, String> {
         let wt = self.wt();
         let Some(branch) = wt.branch.clone() else {
             return Err("這個 Run 沒有自己的分支（consult 模式）".into());
@@ -3192,21 +3319,7 @@ impl Run {
         if ahead.trim() == "0" {
             return Err("分支上沒有任何變更可以 push".into());
         }
-        git.run(["push", "origin", &format!("HEAD:refs/heads/{branch}")])
-            .await
-            .map_err(|e| {
-                let text = e.to_string();
-                if is_non_fast_forward(&text) {
-                    format!(
-                        "{text}
-遠端分支 {branch} 有本機沒有的 commit（有人直接 push 到 PR 分支）。請讓 Agent 先整合 origin/{branch}（例如 `git merge origin/{branch}`）再重新 push。"
-                    )
-                } else {
-                    text
-                }
-            })?;
-        let sha = git.rev_parse_commit("HEAD").await.map_err(fail)?;
-        Ok((branch, sha))
+        Ok(branch)
     }
 }
 

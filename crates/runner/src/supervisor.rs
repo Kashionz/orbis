@@ -464,12 +464,11 @@ impl Supervisor {
                 "這台 Runner 已暫停領取新的 Run".into(),
             ));
         }
-        // TODO(backend, local-repo)：本機 Repo（協定版本 3）實作之前一律拒絕。
-        if offer.repo.kind() == orbis_protocol::enums::RepoKind::Local {
-            return Err((
-                DispatchRejectReason::RepoUnavailable,
-                format!("這個版本的 Runner 還不支援本機 Repo {}", offer.repo.name()),
-            ));
+        // 本機 Repo 只依 runner.toml 的 [repos.<名稱>] 找 checkout（ARCHITECTURE §6.2）。
+        if offer.repo.kind() == orbis_protocol::enums::RepoKind::Local
+            && let Err(message) = self.local_checkout(offer.repo.name())
+        {
+            return Err((DispatchRejectReason::RepoUnavailable, message));
         }
         if let Some(delegation) = &offer.delegation {
             use crate::orbis_mcp::hub::{MAX_CHILDREN, MAX_DEPTH};
@@ -594,6 +593,98 @@ impl Supervisor {
         });
         if !matches!(sent, Some(Ok(()))) {
             reject("Run 已經結束".into());
+        }
+    }
+
+    /// 本機 Repo 在 `runner.toml` 中對應的 checkout；沒有對應或不是 git checkout 時回傳原因。
+    fn local_checkout(&self, name: &str) -> Result<std::path::PathBuf, String> {
+        let Some(path) = self.home.settings().local_checkout(name) else {
+            return Err(format!(
+                "runner.toml 中沒有本機 Repo {name} 的對應（[repos.{name}]）"
+            ));
+        };
+        let path = crate::paths::normalize(path);
+        if !path.join(".git").exists() {
+            return Err(format!(
+                "runner.toml 中 {name} 對應的 {} 不是 git checkout",
+                path.display()
+            ));
+        }
+        Ok(path)
+    }
+
+    /// 本機 Repo 的 Repo Spec 提交（frame `repo_spec_commit`，ARCHITECTURE §12.1）：在背景 commit 到
+    /// 基準分支，回 `repo_spec_commit_result`。
+    pub fn handle_repo_spec_commit(&self, commit: orbis_protocol::repo_spec::RepoSpecCommit) {
+        let Some(me) = self.me.upgrade() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let outcome = me.repo_spec_commit(&commit).await;
+            let _ = me.frames.send(RunnerToServer::RepoSpecCommitResult(
+                orbis_protocol::repo_spec::RepoSpecCommitResult {
+                    commit_id: commit.commit_id,
+                    outcome,
+                },
+            ));
+        });
+    }
+
+    async fn repo_spec_commit(
+        &self,
+        commit: &orbis_protocol::repo_spec::RepoSpecCommit,
+    ) -> orbis_protocol::repo_spec::RepoSpecCommitOutcome {
+        use crate::local_merge::{LocalError, SpecCommit};
+        use orbis_protocol::repo_spec::{RepoSpecCommitFailure, RepoSpecCommitOutcome};
+        let failed = |reason, message: String| RepoSpecCommitOutcome::Failed {
+            reason,
+            message: crate::secrets::Redactor::new().redact(&message),
+        };
+        let checkout = match self.local_checkout(&commit.repo) {
+            Ok(path) => path,
+            Err(message) => return failed(RepoSpecCommitFailure::RepoUnavailable, message),
+        };
+        let path = match crate::local_merge::spec_path(&commit.path) {
+            Ok(path) => path,
+            Err(message) => return failed(RepoSpecCommitFailure::Failed, message),
+        };
+        let invalid_branch = commit.base_branch.is_empty()
+            || commit.base_branch.starts_with('-')
+            || !crate::git::Git::new(".")
+                .succeeds(["check-ref-format", "--branch", &commit.base_branch])
+                .await;
+        if invalid_branch {
+            return failed(
+                RepoSpecCommitFailure::Failed,
+                format!("基準分支 {:?} 不合法", commit.base_branch),
+            );
+        }
+        let temp_root = match crate::worktree::path_segment(&commit.repo, "Repo 名稱") {
+            Ok(name) => self.worktrees.root().join(name),
+            Err(e) => return failed(RepoSpecCommitFailure::Failed, e.message),
+        };
+        let lock = self.worktrees.repo_lock(&checkout);
+        let _guard = lock.lock().await;
+        match crate::local_merge::commit_file(
+            &checkout,
+            &temp_root,
+            &commit.base_branch,
+            &path,
+            &commit.content,
+            &commit.message,
+        )
+        .await
+        {
+            Ok(SpecCommit::Committed(commit_sha)) => {
+                RepoSpecCommitOutcome::Committed { commit_sha }
+            }
+            Ok(SpecCommit::Unchanged(commit_sha)) => {
+                RepoSpecCommitOutcome::Unchanged { commit_sha }
+            }
+            Err(e @ LocalError::Dirty { .. }) => {
+                failed(RepoSpecCommitFailure::WorkingTreeDirty, e.to_string())
+            }
+            Err(e) => failed(RepoSpecCommitFailure::Failed, e.to_string()),
         }
     }
 

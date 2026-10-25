@@ -563,17 +563,9 @@ impl Session {
             ServerToRunner::TerminalInput(_)
             | ServerToRunner::TerminalResize(_)
             | ServerToRunner::TerminalClose(_) => {}
+            // 本機 Repo 的 Repo Spec 提交（§12.1）：在背景處理，結果經由 frames 送出。
             ServerToRunner::RepoSpecCommit(commit) => {
-                let result = orbis_protocol::repo_spec::RepoSpecCommitResult {
-                    commit_id: commit.commit_id,
-                    outcome: orbis_protocol::repo_spec::RepoSpecCommitOutcome::Failed {
-                        reason: orbis_protocol::repo_spec::RepoSpecCommitFailure::RepoUnavailable,
-                        message: "這個版本的 Runner 還不支援本機 Repo".into(),
-                    },
-                };
-                self.conn
-                    .send(&RunnerToServer::RepoSpecCommitResult(result))
-                    .await?;
+                self.supervisor.handle_repo_spec_commit(commit);
             }
         }
         Ok(())
