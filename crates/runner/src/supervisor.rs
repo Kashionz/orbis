@@ -323,9 +323,16 @@ impl Supervisor {
                 unavailable_reason: reason,
                 // 啟動時探測的結果；還沒探測過（代管的 adapter 尚未安裝）時，第一次派工後更新。
                 capabilities: learned.capabilities,
+                // TODO(backend, model-catalog, agent-relogin)：模型目錄、顯示資訊、登入狀態與登入方式
+                // 從 Agent Profile 與 session 的 config option 填入。
                 models: Vec::new(),
                 permission_gaps: profile.permission_gaps.clone(),
                 credential: Some(profile.credential.clone()),
+                display_name: profile.id.clone(),
+                vendor: None,
+                cli: None,
+                signed_in: None,
+                login_hint: None,
             });
             if !credentials.iter().any(|c| c.label == profile.credential) {
                 credentials.push(CredentialInfo {
@@ -335,9 +342,12 @@ impl Supervisor {
                 });
             }
         }
+        let mut mapped_repos: Vec<String> = self.home.settings().repos.keys().cloned().collect();
+        mapped_repos.sort();
         AgentAvailability {
             agents,
             credentials,
+            mapped_repos,
         }
     }
 
@@ -420,6 +430,13 @@ impl Supervisor {
             return Err((
                 DispatchRejectReason::AgentUnavailable,
                 "這台 Runner 已暫停領取新的 Run".into(),
+            ));
+        }
+        // TODO(backend, local-repo)：本機 Repo（協定版本 3）實作之前一律拒絕。
+        if offer.repo.kind() == orbis_protocol::enums::RepoKind::Local {
+            return Err((
+                DispatchRejectReason::RepoUnavailable,
+                format!("這個版本的 Runner 還不支援本機 Repo {}", offer.repo.name()),
             ));
         }
         if let Some(delegation) = &offer.delegation {

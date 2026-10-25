@@ -308,6 +308,7 @@ async fn branch_的_merge_child_發生衝突() {
                 text: "請 merge c1".into(),
             }],
             source: Some(PromptSource::ReviewGate),
+            delivery: None,
         },
     )
     .await;

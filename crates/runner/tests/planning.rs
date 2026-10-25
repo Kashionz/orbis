@@ -136,6 +136,7 @@ async fn plan_gate_退回後在同一個_session_重新產出_plan() {
                 text: "請補上測試".into(),
             }],
             source: Some(PromptSource::PlanGate),
+            delivery: None,
         },
     )
     .await;

@@ -90,7 +90,7 @@ impl Remote {
     }
 
     pub fn dispatch_repo(&self, name: &str) -> DispatchRepo {
-        DispatchRepo {
+        DispatchRepo::Github {
             name: name.into(),
             clone_url: self.clone_url(),
             default_branch: "main".into(),

@@ -408,6 +408,7 @@ async fn validates_dispatch_offers() {
             RunControlAction::Prompt {
                 prompt: Vec::new(),
                 source: None,
+                delivery: None,
             },
         )
         .await;
