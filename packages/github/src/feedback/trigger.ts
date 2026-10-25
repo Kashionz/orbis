@@ -80,7 +80,7 @@ async function authorAllowed(
     const allowlist = (await deps.botAllowlist(task.projectId)).map((l) => l.toLowerCase());
     return allowlist.includes(author.login.toLowerCase()) ? null : "bot_not_allowlisted";
   }
-  return (await senderCanWrite(ctx, task.projectId, link.repoId, author.login, author.id))
+  return (await senderCanWrite(ctx, task.projectId, link.repoId, author.login, author.id, task.id))
     ? null
     : "no_write_permission";
 }

@@ -141,8 +141,11 @@ export interface DomainService {
   getMember(memberId: string): Promise<MemberRecord | null>;
   /** 在 Project 所屬的 Team 中，找出這個 GitHub 帳號對應的 Member。 */
   findMemberByGithubUserId(projectId: string, githubUserId: number): Promise<MemberRecord | null>;
-  /** 這位 Member 在這個 Project 能不能編輯 Task（考慮 Project 的 Role 覆寫；Viewer 不行）。 */
-  canEditTasks(projectId: string, memberId: string): Promise<boolean>;
+  /**
+   * 這位 Member 在這個 Project 能不能編輯 Task（考慮 Project 的 Role 覆寫；Viewer 不行）。
+   * 傳入 taskId 時判斷在那個 Task 上的權限（Task 分享，ADR-0012）。
+   */
+  canEditTasks(projectId: string, memberId: string, taskId?: string): Promise<boolean>;
   /**
    * Project 是否開啟「自動建立 Issue」（預設開啟）。關閉時不為 Task 建立新的 Issue，
    * 但已經對應的 Issue（包括匯入的）照常同步。

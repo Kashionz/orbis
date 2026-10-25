@@ -4,7 +4,7 @@ import { WRITE_ROLES } from "./client/types";
 import { connectedRepo, type IntegrationContext } from "./context";
 
 /**
- * 送出 webhook 的人能不能改動 Task：在 Project 中能編輯 Task 的 Member，
+ * 送出 webhook 的人能不能改動 Task：在這個 Task 上能編輯的 Member（含 Task 分享的限制與調高，ADR-0012），
  * 或對 repo 有寫入權限（admin、maintain、write）的人。
  */
 export async function senderCanWrite(
@@ -13,9 +13,10 @@ export async function senderCanWrite(
   repoId: string,
   login: string,
   githubUserId: number,
+  taskId: string,
 ): Promise<boolean> {
   const member = await ctx.domain.findMemberByGithubUserId(projectId, githubUserId);
-  if (member && (await ctx.domain.canEditTasks(projectId, member.id))) return true;
+  if (member && (await ctx.domain.canEditTasks(projectId, member.id, taskId))) return true;
   const record = await ctx.domain.getRepo(repoId);
   const repo = record && connectedRepo(record);
   if (!repo) return false;

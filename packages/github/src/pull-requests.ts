@@ -183,6 +183,7 @@ export async function handlePullRequestEvent(
           current.repoId,
           payload.sender.login,
           payload.sender.id,
+          task.id,
         ))
       ) {
         // PR 的狀態照實記錄，Task 維持原狀；由負責人決定要不要處理。

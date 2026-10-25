@@ -24,6 +24,7 @@ import type {
 } from "@orbis/github";
 import { and, asc, count, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { authorize, effectiveRole } from "../authz/capabilities";
+import { memberOnTask } from "../authz/task-access";
 import type { Database } from "../db/client";
 import {
   acceptanceCriteria,
@@ -337,7 +338,12 @@ export class GitHubDomainService implements DomainService {
     return row ? toMemberRecord(row.member) : null;
   }
 
-  async canEditTasks(projectId: string, memberId: string): Promise<boolean> {
+  async canEditTasks(projectId: string, memberId: string, taskId?: string): Promise<boolean> {
+    if (taskId) {
+      // Task 上的權限（Task 分享，ADR-0012）。
+      const onTask = await memberOnTask(this.db, taskId, memberId);
+      return onTask !== null && authorize("edit_task", { memberId, role: onTask.taskRole }).ok;
+    }
     return canEditTasks(this.db, projectId, memberId);
   }
 

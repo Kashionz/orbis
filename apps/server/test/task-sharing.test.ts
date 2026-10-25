@@ -13,6 +13,8 @@ import {
 } from "@orbis/api-contract";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { collabAccess } from "../src/collab/authz";
+import { collabDocRef } from "../src/collab/doc-name";
 import { sha256Hex } from "../src/crypto";
 import {
   members,
@@ -24,6 +26,7 @@ import {
   taskMembers,
   tasks,
 } from "../src/db/schema";
+import { GitHubDomainService } from "../src/domain/github-domain";
 import { RecordingMailer } from "../src/mail/mailer";
 import {
   client,
@@ -98,6 +101,14 @@ describe.skipIf(dbSkipReason !== null)("Task 分享與邀請", () => {
       createdByMemberId: team.members.owner.id,
       ...overrides,
     });
+  }
+
+  async function canEditTask(memberId: string, taskId: string) {
+    return new GitHubDomainService(database.db, ctx.services.lifecycle).canEditTasks(
+      project.id,
+      memberId,
+      taskId,
+    );
   }
 
   async function share(taskId: string, memberId: string, role: "view" | "edit") {
@@ -183,6 +194,33 @@ describe.skipIf(dbSkipReason !== null)("Task 分享與邀請", () => {
         .where(eq(taskMembers.memberId, team.members.viewer.id));
       expect((await as("viewer").post(path, { status: "ready" })).status).toBe(200);
     });
+  });
+
+  it("共同編輯 Task 描述依 Task 上的 Role 判斷讀寫", async () => {
+    const task = await ownedTask({ generalAccess: "team_view" });
+    const ref = collabDocRef("task-description", task.id);
+    const actorOf = (role: Role) => ({
+      memberId: team.members[role].id,
+      teamId: team.teamId,
+      teamRole: role,
+      githubUserId: team.members[role].githubUserId,
+      sessionId: "s",
+    });
+    // 一般存取限制成 Team 可檢視：Member 只能讀
+    expect(await collabAccess(database.db, actorOf("member"), ref)).toBe("read");
+    // 被分享為可操作的 Viewer 可以寫
+    await share(task.id, team.members.viewer.id, "edit");
+    expect(await collabAccess(database.db, actorOf("viewer"), ref)).toBe("write");
+    await database.db.update(tasks).set({ generalAccess: "invited" }).where(eq(tasks.id, task.id));
+    await expect(collabAccess(database.db, actorOf("member"), ref)).rejects.toThrow();
+  });
+
+  it("GitHub 上的修改依 Task 上的權限判斷是否算數", async () => {
+    const task = await ownedTask({ generalAccess: "team_view" });
+    expect(await canEditTask(team.members.member.id, task.id)).toBe(false);
+    await share(task.id, team.members.member.id, "edit");
+    expect(await canEditTask(team.members.member.id, task.id)).toBe(true);
+    expect(await canEditTask(team.members.viewer.id, task.id)).toBe(false);
   });
 
   describe("列表過濾", () => {
