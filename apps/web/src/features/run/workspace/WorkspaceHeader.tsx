@@ -5,10 +5,11 @@ import type { Run, Task } from "@orbis/api-contract";
 import type { GateKind, RunStatus } from "@orbis/protocol";
 import { Link } from "@tanstack/react-router";
 import { CornerLeftUp, PanelRight, Square } from "lucide-react";
-import { type ReactNode, useRef } from "react";
+import { useRef } from "react";
 import { useElementWidth } from "../../../components/hooks";
 import { StatusDot } from "../../../components/StatusDot";
 import { useLanguage, useT } from "../../../i18n";
+import { ShareCluster } from "../../share/ShareCluster";
 import { isRunLive, runTone, TONE_COLOR, taskTone } from "../run-tone";
 import { runStatusLabel } from "../stream/StreamRows";
 import { headerLayout } from "./header-layout";
@@ -29,8 +30,6 @@ interface WorkspaceHeaderProps {
   onRedispatch: () => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
-  /** U1 的分享按鈕（頭像堆疊＋分享），依寬度收合。 */
-  share?: (layout: { avatars: boolean; label: boolean }) => ReactNode;
 }
 
 export function WorkspaceHeader({
@@ -46,7 +45,6 @@ export function WorkspaceHeader({
   onRedispatch,
   panelOpen,
   onTogglePanel,
-  share,
 }: WorkspaceHeaderProps) {
   const t = useT();
   const h = t.workspace.header;
@@ -116,7 +114,8 @@ export function WorkspaceHeader({
           {h.redispatch}
         </button>
       )}
-      {share?.({ avatars: layout.wide, label: layout.shareLabel })}
+      {/* 成員頭像與分享（U1），依標題列寬度自己收合 */}
+      {width > 0 && <ShareCluster task={task} headerWidth={width} />}
       <button
         type="button"
         className="wk-header-panel"

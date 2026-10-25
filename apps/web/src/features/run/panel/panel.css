@@ -1349,3 +1349,26 @@ button.rp-line:hover {
 .rp-term-running {
   color: var(--o7fb0fa);
 }
+
+/* 檢視模式的規格照原型是一般文字：不顯示編輯器的外框與同步狀態；有人在編輯時仍顯示在線名單，Viewer 仍標示唯讀 */
+.rp-spec-view .collab {
+  border: 0;
+}
+
+.rp-spec-view .collab-bar {
+  padding: 0 0 6px;
+  border-bottom: 0;
+}
+
+.rp-spec-view .collab-bar:not(:has(.collab-peers, .tag)) {
+  display: none;
+}
+
+.rp-spec-view .collab-status {
+  display: none;
+}
+
+.rp-spec-view .collab-content {
+  min-height: 0;
+  padding: 0;
+}
