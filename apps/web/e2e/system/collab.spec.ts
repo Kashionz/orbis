@@ -12,6 +12,8 @@ async function openTask(context: BrowserContext, baseURL: string, key: string): 
   await context.addCookies([{ ...stack.sessionCookie, url: baseURL }]);
   const page = await context.newPage();
   await page.goto(`/tasks/${key}`);
+  // 檢視時規格是唯讀的共同編輯文件：按任務分頁的「編輯」才能修改
+  await page.getByRole("tabpanel").getByRole("button", { name: "編輯", exact: true }).click();
   await expect(page.getByTestId("collab-status")).toHaveText("已同步");
   return page;
 }
@@ -32,8 +34,8 @@ test("兩個 context 同時編輯 Task 描述，內容即時同步並回寫", as
   const a = await openTask(first, origin, task.key);
   const second = await browser.newContext({ baseURL: origin });
   const b = await openTask(second, origin, task.key);
-  const editorA = a.getByRole("textbox", { name: "描述" });
-  const editorB = b.getByRole("textbox", { name: "描述" });
+  const editorA = a.getByRole("textbox", { name: "規格" });
+  const editorB = b.getByRole("textbox", { name: "規格" });
   await expect(editorB).toContainText("第一段。");
 
   // 對方在線

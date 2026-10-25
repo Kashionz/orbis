@@ -19,7 +19,8 @@ test("從 UI 建立 Project、登記 Repo：前綴重複時顯示 409，App 未�
   await expect(page.locator("tr[data-repo] td[data-installed]")).toHaveText("已安裝");
 
   await page.goto("/board");
-  await page.getByRole("button", { name: "新增 Project" }).click();
+  await page.getByRole("button", { name: /^專案 / }).click();
+  await page.getByRole("menu", { name: "專案" }).getByText("新增專案").click();
   const dialog = page.getByRole("dialog", { name: "新增專案" });
   await dialog.getByLabel("名稱").fill("從 UI 建立的 Project");
   await dialog.getByLabel("任務編號前綴").fill(stack.projectKey);
@@ -31,11 +32,11 @@ test("從 UI 建立 Project、登記 Repo：前綴重複時顯示 409，App 未�
   await dialog.getByLabel("任務編號前綴").fill(prefix);
   await dialog.getByRole("button", { name: "建立" }).click();
   await expect(dialog).toBeHidden();
-  await expect(
-    page.getByRole("combobox", { name: "Project", exact: true }).locator("option:checked"),
-  ).toHaveText(`從 UI 建立的 Project（${prefix}）`);
+  const projectMenu = page.getByRole("button", { name: /^專案 / });
+  await expect(projectMenu).toHaveAccessibleName("專案 從 UI 建立的 Project");
 
-  await page.getByRole("link", { name: "Project 設定" }).click();
+  await projectMenu.click();
+  await page.getByRole("menu", { name: "專案" }).getByText("專案設定").click();
   await expect(page.getByText("還沒有登記任何儲存庫。")).toBeVisible();
   const form = page.getByRole("form", { name: "登記儲存庫" });
   await form.getByLabel("帳號或組織").fill("octocat");

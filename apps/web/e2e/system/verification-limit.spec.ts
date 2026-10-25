@@ -73,25 +73,35 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     });
 
     await page.goto(`/tasks/${task.key}`);
-    await page.locator(".ready-panel").getByRole("button", { name: "移到 Ready" }).click();
-    await page.getByRole("button", { name: "派工" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "派工" }).click();
-    await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
-    return { task, runId: page.url().split("/").pop() ?? "" };
+    await page.locator(".wk-norun").getByRole("button", { name: "移到就緒" }).click();
+    await page.getByRole("form", { name: "派工" }).getByRole("button", { name: "派工" }).click();
+    await expect(page).toHaveURL(new RegExp(`/tasks/${task.key}[?]run=[^&]+$`));
+    return { task, runId: new URL(page.url()).searchParams.get("run") ?? "" };
   }
+
+  /** 任務分頁驗收紀錄中，超過重試上限時的決定表單。 */
+  const decision = (page: Page) =>
+    page
+      .getByTestId("verification-section")
+      .getByRole("form", { name: /驗收連續失敗 \d+ 輪，超過重試上限/ });
 
   /** 第一次執行 Verification 的指令前問人（不在 allow_commands 中），然後兩輪都失敗、停下來。 */
   async function untilStopped(page: Page): Promise<void> {
     const timeline = page.getByTestId("timeline");
-    const permission = timeline.locator('.event-permission[data-resolved="false"]');
+    const permission = timeline.locator('.st-perm[data-resolved="false"]');
     await expect(permission).toContainText(VERIFY_COMMAND, { timeout: 120_000 });
-    await permission.getByRole("button", { name: "允許這次" }).click();
-    await expect(timeline).toContainText("第 1 輪 Verification 結束：失敗", { timeout: 120_000 });
-    await expect(timeline).toContainText("送出 prompt（驗收重試）");
-    await expect(timeline).toContainText("第 2 輪 Verification 結束：失敗", { timeout: 120_000 });
+    await permission.getByRole("button", { name: "允許一次" }).click();
+    const rounds = timeline.locator(".st-verify");
+    await expect(rounds).toHaveCount(2, { timeout: 120_000 });
+    await expect(timeline).toContainText("驗收重試");
+    await expect(rounds.nth(1).locator(".st-glyph").first()).toHaveText("✕", {
+      timeout: 120_000,
+    });
     // 到了上限：不再送回 Agent，等人決定
-    await expect(timeline).not.toContainText("第 3 輪 Verification");
-    await expect(page.getByRole("link", { name: "Diff review" })).toHaveCount(0);
+    await expect(decision(page)).toBeVisible();
+    await expect(rounds).toHaveCount(2);
+    await expect(page.locator(".cp-dock")).toContainText("驗收未通過");
+    await expect(page.getByRole("button", { name: "開啟差異審查" })).toHaveCount(0);
   }
 
   test("兩輪失敗後停在 Verifying；Needs You 的「前往 Run」開 Verification 分頁；略過失敗 → Review Gate → 核准", async ({
@@ -107,37 +117,35 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     );
     await untilStopped(page);
 
-    // Needs You：停下來的 Run，一鍵直接開 Verification 分頁（#53 的觀察）
+    // 待我處理：停下來的 Run，一鍵直接開任務分頁的驗收紀錄（#53 的觀察）
     await page.goto("/needs-you");
-    const stopped = page.locator('.needs-you-item[data-kind="stopped_run"]', { hasText: task.key });
-    await expect(stopped).toContainText("Verification 連續失敗 2 次");
-    await stopped.getByRole("link", { name: "前往 Run" }).click();
-    await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?tab=verification$`));
-    await expect(page.getByRole("tab", { name: "Verification" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    const stopped = page.locator('.ny-row[data-kind="stopped_run"]', { hasText: task.key });
+    await expect(stopped).toContainText("超過重試上限");
+    await stopped.getByRole("button", { name: "前往決定" }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/tasks/${task.key}[?]run=${runId}&tab=task&focus=verification$`),
     );
-    const form = page.getByRole("form", { name: "Verification 的決定" });
-    await expect(form).toBeVisible();
-    await expect(form).toContainText("Verification 連續失敗 2 輪，超過重試上限");
+    await expect(page.getByRole("tab", { name: "任務" })).toHaveAttribute("aria-selected", "true");
+    const form = decision(page);
+    await expect(form).toBeInViewport();
+    await expect(form).toContainText("驗收連續失敗 2 輪，超過重試上限");
     // 兩輪的證據都在
-    const second = page.getByTestId("verification-2");
-    await expect(second.locator('[data-evidence="command_output"]')).toContainText("exit code 1");
+    const second = page.getByTestId("verification-section").getByTestId("verification-2");
+    const head = second.locator(".rp-round-head");
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    await expect(second.locator('[data-evidence="command_output"]')).toContainText("結束碼 1");
 
-    // 略過失敗：進入 Review Gate，Review 頁看得到失敗，manual 打勾後才能核准
-    await form.getByRole("button", { name: "略過失敗，進入 Review Gate" }).click();
+    // 略過失敗：進入審查關卡，看得到失敗，人工確認打勾後才能核准
+    await form.getByRole("button", { name: "略過失敗，進入審查關卡" }).click();
     await expect(form).toHaveCount(0);
-    await page.getByRole("link", { name: "Diff review" }).click({ timeout: 60_000 });
-    const approve = page.getByRole("button", { name: "核准並開 PR" });
+    await page.getByRole("button", { name: "開啟差異審查" }).click({ timeout: 60_000 });
+    const approve = page.getByRole("button", { name: "核准並開啟合併請求" });
     await expect(approve).toBeDisabled();
-    await page
-      .getByRole("region", { name: "Acceptance Criterion" })
-      .getByRole("checkbox", { name: "verify.txt 的內容正確" })
-      .check();
+    await page.getByRole("checkbox", { name: "verify.txt 的內容正確" }).check();
     await approve.click();
     await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 60_000 });
-    await page.goto(`/tasks/${task.key}`);
-    await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
+    await page.getByRole("tab", { name: "任務" }).click();
+    await expect(page.locator(".rp-status")).toHaveText("合併請求已開啟");
     await context.close();
   });
 
@@ -150,22 +158,26 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     const { runId } = await dispatchTask(page, context.request, "Verification 上限：附意見再試");
     await untilStopped(page);
 
-    // 直接以 ?tab=verification 開 Verification 分頁（桌面通知點擊也是這個位置）
+    // 直接以 ?tab=verification 開驗收紀錄（桌面通知點擊也是這個位置）
     await page.goto(`/runs/${runId}?tab=verification`);
-    const form = page.getByRole("form", { name: "Verification 的決定" });
-    await expect(form).toBeVisible();
-    await form.getByLabel("給 Agent 的意見（選填）").fill("請改成 pass");
+    await expect(page.getByRole("tab", { name: "任務" })).toHaveAttribute("aria-selected", "true");
+    const form = decision(page);
+    await expect(form).toBeInViewport();
+    await form.getByLabel("給代理的意見（選填）").fill("請改成 pass");
     await form.getByRole("button", { name: "附意見再試" }).click();
     await expect(form).toHaveCount(0);
 
     // Agent 收到意見後寫入 pass；新的一輪從 1 開始計算並通過
-    await page.getByRole("tab", { name: "時間軸" }).click();
     const timeline = page.getByTestId("timeline");
     await expect(timeline).toContainText("收到意見，改成 pass。", { timeout: 120_000 });
-    await expect(timeline).toContainText("第 1 輪 Verification 結束：通過", { timeout: 120_000 });
-    await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
-    await page.getByRole("tab", { name: "Verification" }).click();
-    await expect(page.getByTestId("verification-2").first()).toContainText("人的決定：附意見再試");
+    await expect(timeline.locator(".st-verify").last().locator(".st-glyph").first()).toHaveText(
+      "✓",
+      { timeout: 120_000 },
+    );
+    await expect(page.getByRole("button", { name: "開啟差異審查" })).toBeVisible();
+    await expect(
+      page.getByTestId("verification-section").getByTestId("verification-2").first(),
+    ).toContainText("決定：附意見再試");
     await context.close();
   });
 });

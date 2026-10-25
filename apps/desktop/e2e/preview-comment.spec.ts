@@ -109,18 +109,18 @@ test("在 Preview 上選取元素留言：草稿帶 selector、網址與截圖�
   await preview.click('[data-testid="save"]');
 
   // 留言框：截圖、selector、網址
-  const form = main.getByRole("form", { name: "Preview 留言" });
+  const form = main.getByRole("form", { name: "預覽留言" });
   await expect(form).toBeVisible();
   await expect(form.locator("code")).toHaveText('[data-testid="save"]');
   await expect(form).toContainText(`${devServer.url}/`);
-  await expect(form.getByRole("img", { name: "Preview 的截圖" })).toBeVisible();
+  await expect(form.getByRole("img", { name: "預覽的截圖" })).toBeVisible();
   // 選取時攔下點擊，頁面沒有收到；截圖後移除外框
   expect(await preview.run("window.clicked ?? 0")).toBe(0);
   expect(await preview.overlayPresent()).toBe(false);
 
   await form.getByRole("textbox", { name: "留言內容" }).fill("儲存按鈕的顏色太淡");
-  await form.getByRole("button", { name: "加入 Review 留言草稿" }).click();
-  const drafts = main.getByRole("region", { name: "Preview 留言草稿" });
+  await form.getByRole("button", { name: "加入審查留言草稿" }).click();
+  const drafts = main.getByRole("region", { name: "預覽留言草稿" });
   await expect(drafts).toContainText("儲存按鈕的顏色太淡");
   await expect(drafts.locator("code")).toHaveText('[data-testid="save"]');
   await expect(form).toBeHidden();
@@ -167,15 +167,15 @@ test("取消選取或取消留言時不產生草稿", async () => {
   await preview.waitForOverlay();
   await preview.pressEscape();
   await expect(main.getByRole("button", { name: "選取元素留言" })).toBeEnabled();
-  await expect(main.getByRole("form", { name: "Preview 留言" })).toBeHidden();
+  await expect(main.getByRole("form", { name: "預覽留言" })).toBeHidden();
 
   await main.getByRole("button", { name: "選取元素留言" }).click();
   await preview.waitForOverlay();
   await preview.click("li.target");
-  const form = main.getByRole("form", { name: "Preview 留言" });
+  const form = main.getByRole("form", { name: "預覽留言" });
   await expect(form.locator("code")).toHaveText("li:nth-of-type(2)");
   await form.getByRole("button", { name: "取消" }).click();
   await expect(form).toBeHidden();
-  await expect(main.getByRole("region", { name: "Preview 留言草稿" })).toBeHidden();
+  await expect(main.getByRole("region", { name: "預覽留言草稿" })).toBeHidden();
   expect(server.state.screenshots.size).toBe(0);
 });

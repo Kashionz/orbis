@@ -63,13 +63,13 @@ test.describe("Plan Gate 到核准（完整系統）", () => {
     });
 
     await page.goto(`/tasks/${task.key}`);
-    await page.locator(".ready-panel").getByRole("button", { name: "移到 Ready" }).click();
-    await page.getByRole("button", { name: "派工" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "派工" }).click();
-    await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
+    await page.locator(".wk-norun").getByRole("button", { name: "移到就緒" }).click();
+    await page.getByRole("form", { name: "派工" }).getByRole("button", { name: "派工" }).click();
+    await expect(page).toHaveURL(new RegExp(`/tasks/${task.key}[?]run=[^&]+$`));
+    const timeline = page.getByTestId("timeline");
 
-    // Plan Gate
-    const plan = page.getByRole("region", { name: "Plan Gate：等待核准 plan" });
+    // 計畫關卡：事件串流顯示待核准的計畫
+    const plan = timeline.locator('.st-plan[data-pending="true"]');
     await expect(plan.getByTestId("plan-body")).toContainText("新增 verify.txt");
 
     // 通知中心（§12.3）：Gate 等待核准的通知經由 /api/ws 即時送到，標頭顯示未讀數；
@@ -86,32 +86,34 @@ test.describe("Plan Gate 到核准（完整系統）", () => {
     await page.goto(runUrl);
     await expect(plan.getByTestId("plan-body")).toContainText("新增 verify.txt");
 
-    await plan.getByRole("button", { name: "核准 plan" }).click();
+    await page.getByRole("button", { name: "核准計畫" }).click();
     await expect(plan).toHaveCount(0);
 
     // Verification 的指令不在 allow_commands 中：第一次執行前問人
-    const timeline = page.getByTestId("timeline");
-    const permission = timeline.locator('.event-permission[data-resolved="false"]');
+    const permission = timeline.locator('.st-perm[data-resolved="false"]');
     await expect(permission).toContainText(VERIFY_COMMAND, { timeout: 120_000 });
-    await permission.getByRole("button", { name: "允許這次" }).click();
+    await permission.getByRole("button", { name: "允許一次" }).click();
 
     // 第一輪失敗，自動重試後第二輪通過
-    await expect(timeline).toContainText("第 1 輪 Verification 結束：失敗", { timeout: 120_000 });
-    await expect(timeline).toContainText("送出 prompt（驗收重試）");
-    await expect(timeline).toContainText("第 2 輪 Verification 結束：通過", { timeout: 120_000 });
-    await page.getByRole("tab", { name: "Verification" }).click();
-    const first = page.getByTestId("verification-1");
+    const rounds = timeline.locator(".st-verify");
+    await expect(rounds).toHaveCount(2, { timeout: 120_000 });
+    await expect(rounds.nth(0).locator(".st-glyph").first()).toHaveText("✕");
+    await expect(timeline).toContainText("驗收重試");
+    await expect(rounds.nth(1).locator(".st-glyph").first()).toHaveText("✓", {
+      timeout: 120_000,
+    });
+    // 任務分頁的驗收紀錄：第一輪的指令輸出
+    const first = page.getByTestId("verification-section").getByTestId("verification-1");
+    const head = first.locator(".rp-round-head");
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
     await expect(first.locator('[data-evidence="command_output"]')).toContainText(VERIFY_COMMAND);
-    await expect(first.locator('[data-evidence="command_output"]')).toContainText("exit code 1");
+    await expect(first.locator('[data-evidence="command_output"]')).toContainText("結束碼 1");
 
-    // Review Gate：manual 打勾後核准
-    await page.getByRole("link", { name: "Diff review" }).click();
-    const approve = page.getByRole("button", { name: "核准並開 PR" });
+    // 審查關卡：人工確認打勾後核准
+    await page.getByRole("button", { name: "開啟差異審查" }).click();
+    const approve = page.getByRole("button", { name: "核准並開啟合併請求" });
     await expect(approve).toBeDisabled();
-    await page
-      .getByRole("region", { name: "Acceptance Criterion" })
-      .getByRole("checkbox", { name: "verify.txt 的內容正確" })
-      .check();
+    await page.getByRole("checkbox", { name: "verify.txt 的內容正確" }).check();
     await approve.click();
     await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 60_000 });
     await context.close();

@@ -259,39 +259,38 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
   expect(localUrl).toMatch(/^http:\/\/localhost:\d+\/$/);
   const shareOrigin = `http://${runId}.preview.localhost:${serverPort}`;
 
-  // ---- 第一回合結束：Review Gate
+  // ---- 第一回合結束：審查關卡
   await page.goto(`${webOrigin}/runs/${runId}`);
-  await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 120_000 });
+  await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡", { timeout: 120_000 });
 
-  // ---- Preview 分頁：內嵌瀏覽器開 localhost；選取 #app 留言，留言的網址換成 Preview 網址
-  await page.getByRole("tab", { name: "Preview" }).click();
+  // ---- 預覽分頁：內嵌瀏覽器開 localhost；選取 #app 留言，留言的網址換成 Preview 網址
+  await page.getByRole("tab", { name: /預覽/ }).click();
   const preview = previewTools(d);
   await waitUntil(preview.url, (url) => url === localUrl, "內嵌瀏覽器開啟 localhost", 60_000);
   await page.getByRole("button", { name: "選取元素留言" }).click();
   await preview.waitForOverlay();
   await preview.click("#app");
-  const form = page.getByRole("form", { name: "Preview 留言" });
+  const form = page.getByRole("form", { name: "預覽留言" });
   await expect(form).toBeVisible();
   await expect(form.locator("code")).toHaveText("#app");
   await expect(form).toContainText(`${shareOrigin}/`);
   await expect(form).not.toContainText(localUrl);
-  await expect(form.getByRole("img", { name: "Preview 的截圖" })).toBeVisible();
+  await expect(form.getByRole("img", { name: "預覽的截圖" })).toBeVisible();
   await form.getByRole("textbox", { name: "留言內容" }).fill("標題要更大");
-  await form.getByRole("button", { name: "加入 Review 留言草稿" }).click();
+  await form.getByRole("button", { name: "加入審查留言草稿" }).click();
   await expect(form).toBeHidden();
-  // 草稿（截圖已上傳成這個 Run 的 blob）列在 Preview 分頁，存在 sessionStorage，換頁不會遺失
-  const panelDrafts = page.getByRole("region", { name: "Preview 留言草稿" });
+  // 草稿（截圖已上傳成這個 Run 的 blob）列在預覽分頁，存在 sessionStorage，換分頁不會遺失
+  const panelDrafts = page.getByRole("region", { name: "預覽留言草稿" });
   await expect(panelDrafts).toContainText("標題要更大");
   await expect(panelDrafts.locator("code")).toHaveText("#app");
 
-  // ---- Review 頁：草稿列在「Preview 留言」區塊，退回時一起送出（Server 檢查網址是這個 Run 的 Preview 網址）
-  await page.getByRole("link", { name: "Diff review" }).click();
-  const drafts = page.getByRole("region", { name: /^Preview 留言（1）/ });
+  // ---- 差異分頁：草稿列在「預覽留言」區塊，退回時一起送出（Server 檢查網址是這個 Run 的 Preview 網址）
+  await page.getByRole("tab", { name: /差異/ }).click();
+  const drafts = page.getByRole("region", { name: "預覽留言 1" });
   await expect(drafts).toContainText("標題要更大");
   await expect(drafts.locator("code")).toHaveText("#app");
   await expect(drafts).toContainText(`${shareOrigin}/`);
-  await page.getByRole("button", { name: /退回並附上留言/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+  await page.getByRole("button", { name: "退回（1）" }).click();
 
   // ---- Agent 的第二回合回報收到的 prompt：文字含 Preview 網址、selector 與截圖編號，截圖以 image 區塊附上
   const agentText = async () =>
@@ -306,7 +305,7 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
   expect(reported).toContain("在 Preview 上的留言：");
   // 截圖：Agent 宣告支援圖片時以 ACP image 區塊送出；Fake Agent 沒有宣告，Runner 改送說明文字（A2 的設計）
   expect(reported).toMatch(/image:image\/png:[A-Za-z0-9+/=]{100,}|\[圖片 [^\]]*image\/png[^\]]*\]/);
-  // 第二回合結束，再次進入 Review Gate
-  await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 60_000 });
+  // 第二回合結束，再次進入審查關卡
+  await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡", { timeout: 60_000 });
   recordProcesses();
 });

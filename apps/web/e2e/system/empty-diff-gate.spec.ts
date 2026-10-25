@@ -62,26 +62,21 @@ test.describe("Review Gate 的 diff 為空（完整系統）", () => {
     });
 
     await page.goto(`/tasks/${task.key}`);
-    await page.locator(".ready-panel").getByRole("button", { name: "移到 Ready" }).click();
-    await page.getByRole("button", { name: "派工" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "派工" }).click();
-    await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
-    const runId = new URL(page.url()).pathname.split("/").at(-1) ?? "";
-    await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 120_000 });
+    await page.locator(".wk-norun").getByRole("button", { name: "移到就緒" }).click();
+    await page.getByRole("form", { name: "派工" }).getByRole("button", { name: "派工" }).click();
+    await expect(page).toHaveURL(new RegExp(`/tasks/${task.key}[?]run=[^&]+$`));
+    const runId = new URL(page.url()).searchParams.get("run") ?? "";
+    await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡", { timeout: 120_000 });
 
-    // Review Gate：diff 為空，看得到 Agent 最後的回覆，沒有「核准並開 PR」
-    await page.getByRole("link", { name: "Diff review" }).click();
-    const empty = page.getByRole("region", { name: "這一版沒有任何檔案變更" });
+    // 審查關卡：diff 為空，看得到 Agent 最後的回覆，沒有「核准並開啟合併請求」
+    await page.getByRole("button", { name: "開啟差異審查" }).click();
+    const empty = page.getByRole("region", { name: "沒有變更" });
     await expect(empty.getByTestId("final-message")).toHaveText(MODEL_ERROR);
-    await expect(page.getByRole("button", { name: "核准並開 PR" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "核准並開啟合併請求" })).toHaveCount(0);
     const finish = page.getByRole("button", { name: "結束（沒有變更）" });
     await expect(finish).toBeDisabled();
-    await page
-      .getByRole("region", { name: "Acceptance Criterion" })
-      .getByRole("checkbox", { name: "回覆內容正確" })
-      .check();
+    await page.getByRole("checkbox", { name: "回覆內容正確" }).check();
     await finish.click();
-    await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
     await expect(page.getByTestId("run-status")).toHaveText("已中止", { timeout: 60_000 });
 
     const taskResponse = await request.get(apiPath(API_ROUTES.task, { taskId: task.id }));
@@ -100,8 +95,8 @@ test.describe("Review Gate 的 diff 為空（完整系統）", () => {
     });
     expect(refs.trim()).toBe("");
 
-    await page.getByRole("link", { name: new RegExp(task.key) }).click();
-    await expect(page.locator(".page-header .status-badge")).toHaveText("完成");
+    await page.getByRole("tab", { name: /任務/ }).click();
+    await expect(page.locator(".rp-status")).toHaveText("完成");
     await context.close();
   });
 });

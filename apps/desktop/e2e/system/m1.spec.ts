@@ -97,10 +97,10 @@ test.afterAll(async () => {
   console.log(`自己啟動的 ${ledger.size} 個程序（stack、Vite、Electron 與其子孫）都已結束`);
 });
 
-/** 用滑鼠把 Task 卡片拖到某一欄（dnd-kit 需要中間的移動事件）。 */
+/** 用滑鼠把 Task 卡片拖到看板分欄檢視的某一欄（dnd-kit 需要中間的移動事件）。 */
 async function dragCard(page: Page, taskKey: string, status: string): Promise<void> {
   const from = await page.locator(`[data-task-key="${taskKey}"]`).boundingBox();
-  const to = await page.locator(`.board-column[data-status="${status}"]`).boundingBox();
+  const to = await page.locator(`.bd-column[data-status="${status}"]`).boundingBox();
   if (!from || !to) throw new Error("找不到要拖曳的元素");
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
@@ -163,31 +163,45 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   await expect(page).toHaveURL(new RegExp(`/tasks/${ready.projectKey}-\\d+$`));
   const taskKey = page.url().split("/").pop() ?? "";
 
-  await page.getByRole("button", { name: "新增 Acceptance Criterion" }).click();
-  await page.locator(".ac-form").getByLabel("類型").selectOption("manual");
-  await page.locator(".ac-form").getByLabel("條件").fill("m1.txt 存在");
-  await page.locator(".ac-form").getByRole("button", { name: "加入" }).click();
-  await expect(page.locator(".ac-list > li")).toHaveCount(1);
+  // 在任務分頁的內嵌編輯新增一條人工確認的條件
+  await page.getByRole("tabpanel").getByRole("button", { name: "編輯", exact: true }).click();
+  await page.getByRole("button", { name: "新增條件" }).click();
+  const draft = page.locator(".rp-draft").last();
+  await draft.getByLabel("條件描述").fill("m1.txt 存在");
+  await draft.getByRole("button", { name: /條件類型/ }).click();
+  await page.getByRole("menuitemradio", { name: /人工/ }).click();
+  await page.getByRole("button", { name: "儲存", exact: true }).click();
+  await expect(page.locator(".rp-criterion")).toHaveCount(1);
 
-  // ---- 看板：Backlog → Ready，再拖到 Running 開派工對話框，派工到「我的電腦」
+  // ---- 看板（分欄）：待辦 → 就緒，再拖到執行中開派工對話框，派工到本機
   await page.goto(`${webOrigin}/board`);
+  await page.getByRole("radio", { name: "分欄" }).click();
   await dragCard(page, taskKey, "ready");
   await expect(page.locator(`[data-status="ready"] [data-task-key="${taskKey}"]`)).toBeVisible();
   await dragCard(page, taskKey, "running");
   const dispatch = page.getByRole("dialog", { name: `派工 ${taskKey}` });
-  await expect(dispatch.getByRole("radio", { name: "本機" })).toBeChecked();
-  await expect(dispatch.getByRole("radio", { name: /^claude-code/ })).toBeChecked();
+  await expect(dispatch.getByRole("radio", { name: /^本機/ })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await expect(dispatch.getByRole("radio", { name: /claude-code/ })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
   // Project 的預設政策是 manual，寫檔權限請求一定會出現
-  await expect(dispatch.getByRole("radio", { name: /^逐一確認/ })).toBeChecked();
+  await expect(dispatch.getByRole("radio", { name: "逐一確認" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
   await dispatch.getByRole("button", { name: "派工" }).click();
-  await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
-  const runId = page.url().split("/").pop() ?? "";
+  await expect(page).toHaveURL(new RegExp(`/tasks/${taskKey}[?]run=[^&]+$`));
+  const runId = new URL(page.url()).searchParams.get("run") ?? "";
 
-  // ---- 即時 Event：Worktree 建好、Agent 請求寫檔權限
+  // ---- 即時 Event：工作樹建好、Agent 請求寫檔權限
   const timeline = page.getByTestId("timeline");
-  await expect(timeline).toContainText("Worktree 已就緒");
+  await expect(timeline).toContainText("工作樹已就緒");
   await expect(timeline).toContainText("我要新增 m1.txt。");
-  const request = timeline.locator('.event-permission[data-resolved="false"]');
+  const request = timeline.locator('.st-perm[data-resolved="false"]');
   await expect(request).toContainText("新增 m1.txt");
   await expect(page.getByTestId("needs-you-count")).toBeVisible();
   // Agent 正在等權限回覆：記下 sidecar 底下的 Agent 程序
@@ -195,45 +209,39 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   expect((await d.hooks((h) => h.sidecar())).status?.active_runs).toBe(1);
 
   // ---- 回覆權限請求
-  await request.getByRole("button", { name: "允許這次", exact: true }).click();
-  await expect(timeline.locator('.event-permission[data-resolved="true"]')).toHaveCount(1);
+  await request.getByRole("button", { name: "允許一次", exact: true }).click();
+  await expect(timeline.locator('.st-perm[data-resolved="true"]')).toHaveCount(1);
   await expect(timeline).toContainText("已新增 m1.txt。");
 
-  // ---- 第一回合結束，進入 Review Gate；在 diff 上留言退回
-  await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
-  await expect(timeline).toContainText("已產生 review diff");
-  await page.getByRole("link", { name: "Diff review" }).click();
+  // ---- 第一回合結束，進入審查關卡；在差異分頁留言退回
+  await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡");
+  await expect(timeline).toContainText("已產生審查差異");
+  await page.getByRole("tab", { name: /差異/ }).click();
   await page
-    .locator(".file-list")
+    .locator(".rp-file-tabs")
     .getByRole("button", { name: /m1\.txt/ })
     .click();
-  await expect(page.locator(".editor.modified .view-lines")).toContainText("version 1");
+  await expect(page.locator(".rp-file")).toContainText("version 1");
   // M1 劇本要求退回的 prompt 含「改成第二版」
-  await page.getByLabel("行號").fill("1");
-  await page.getByLabel("留言內容").fill("請改成第二版");
+  await page.getByRole("button", { name: "對修改後第 1 行留言", exact: true }).click();
+  await page.getByRole("combobox", { name: "對修改後第 1 行留言" }).fill("請改成第二版");
   await page.getByRole("button", { name: "加入留言" }).click();
-  await page.getByRole("button", { name: /退回並附上留言/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+  await page.getByRole("button", { name: "退回（1）" }).click();
 
   // ---- 第二回合跑完後核准
   await expect(timeline).toContainText("已改成第二版。");
-  await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
+  await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡");
   recordProcesses();
-  await page.getByRole("link", { name: "Diff review" }).click();
   await page
-    .locator(".file-list")
+    .locator(".rp-file-tabs")
     .getByRole("button", { name: /m1\.txt/ })
     .click();
-  await expect(page.locator(".editor.modified .view-lines")).toContainText("version 2");
-  // manual 條件全部打勾後才能核准（Review 頁的 Acceptance Criterion 勾選框）
-  const approve = page.getByRole("button", { name: "核准並開 PR" });
+  await expect(page.locator(".rp-file")).toContainText("version 2");
+  // 人工確認的條件全部打勾後才能核准
+  const approve = page.getByRole("button", { name: "核准並開啟合併請求" });
   await expect(approve).toBeDisabled();
-  await page
-    .getByRole("region", { name: "Acceptance Criterion" })
-    .getByRole("checkbox", { name: "m1.txt 存在" })
-    .check();
+  await page.getByRole("checkbox", { name: "m1.txt 存在" }).check();
   await approve.click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
   await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 60_000 });
 
   // push 到本機 bare repo 的是第二版
@@ -246,8 +254,8 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   expect(pushed).toBe("version 2\n");
 
   // ---- PR Open
-  await page.getByRole("link", { name: new RegExp(taskKey) }).click();
-  await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
+  await page.getByRole("tab", { name: /任務/ }).click();
+  await expect(page.locator(".rp-status")).toHaveText("合併請求已開啟");
   await page.goto(`${webOrigin}/board`);
   await expect(page.locator(`[data-status="pr_open"] [data-task-key="${taskKey}"]`)).toBeVisible();
 
@@ -261,6 +269,6 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
     });
   }).toPass({ timeout: 30_000 });
   await page.goto(`${webOrigin}/tasks/${taskKey}`);
-  await expect(page.locator(".page-header .status-badge")).toHaveText("完成");
+  await expect(page.locator(".rp-status")).toHaveText("完成");
   recordProcesses();
 });

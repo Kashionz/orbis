@@ -114,19 +114,16 @@ test.describe("Feedback Loop（完整系統）", () => {
     const original = Run.parse(await dispatched.json());
 
     await page.goto(`/runs/${original.id}`);
-    await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 120_000 });
-    await page.getByRole("link", { name: "Diff review" }).click();
-    await page
-      .getByRole("region", { name: "Acceptance Criterion" })
-      .getByRole("checkbox", { name: "fl.txt 存在" })
-      .check();
-    await page.getByRole("button", { name: "核准並開 PR" }).click();
+    await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡", { timeout: 120_000 });
+    await page.getByRole("button", { name: "開啟差異審查" }).click();
+    await page.getByRole("checkbox", { name: "fl.txt 存在" }).check();
+    await page.getByRole("button", { name: "核准並開啟合併請求" }).click();
     await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 60_000 });
     const branch = original.branch ?? (await runsOf(request, task.id))[0]?.branch ?? "";
     expect(branch).not.toBe("");
     expect(pushedFile(branch)).toBe("v1\n");
     await page.goto(`/tasks/${task.key}`);
-    await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
+    await expect(page.locator(".rp-status")).toHaveText("合併請求已開啟");
     const opened = await findPullRequest(ready, { branch });
 
     // ---- review 留言：有寫入權限的人類（種子 Member）送出有內容的 review，立刻觸發修正
@@ -143,19 +140,17 @@ test.describe("Feedback Loop（完整系統）", () => {
     expect(firstFix.resumesRunId).toBe(original.id);
     expect(firstFix.branch).toBe(branch);
     expect(pushedFile(branch)).toBe("v2\n");
-    await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟", {
-      timeout: 30_000,
-    });
-    // Task 頁的 Run 樹：第二個 Run 標示 Feedback Loop、已完成
-    const tree = page.getByRole("list", { name: "Run 與 Child Run" });
-    await expect(tree.locator(".run-node")).toHaveCount(2);
-    const fixNode = tree.locator(`[data-run-id="${firstFix.id}"] > .run-node-row`);
+    await expect(page.locator(".rp-status")).toHaveText("合併請求已開啟", { timeout: 30_000 });
+    // 任務分頁的執行紀錄：第二個 Run 標示回饋循環、已完成
+    const tree = page.getByRole("list", { name: "執行紀錄" });
+    await expect(tree.locator(".rp-run")).toHaveCount(2);
+    const fixNode = tree.locator(`.rp-run[data-run-id="${firstFix.id}"]`);
     await expect(fixNode).toContainText("回饋循環");
-    await expect(fixNode.locator(".status-badge")).toHaveText("已完成");
-    // 修正 Run 的時間軸：接回同一個 session，收到 review 留言的 prompt
+    await expect(fixNode).toContainText("已完成");
+    // 修正 Run 的事件串流：接回同一個 session，收到 review 留言的 prompt
     await page.goto(`/runs/${firstFix.id}`);
     await expect(page.getByTestId("timeline")).toContainText("已依 review 留言改成 v2。");
-    await expect(page.locator(".run-meta")).toContainText("回饋循環");
+    await expect(page.getByTestId("run-origin")).toContainText("回饋循環");
 
     // ---- CI 失敗：PR 的 head 已經是修正後的 commit；先餵 FakeGitHub 這個 commit 的 check，再送 webhook
     const synchronized = await findPullRequest(ready, { branch });
@@ -204,10 +199,8 @@ test.describe("Feedback Loop（完整系統）", () => {
     );
 
     await page.goto(`/tasks/${task.key}`);
-    await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
-    await expect(
-      page.getByRole("list", { name: "Run 與 Child Run" }).locator(".run-node"),
-    ).toHaveCount(3);
+    await expect(page.locator(".rp-status")).toHaveText("合併請求已開啟");
+    await expect(page.getByRole("list", { name: "執行紀錄" }).locator(".rp-run")).toHaveCount(3);
     await context.close();
   });
 });
