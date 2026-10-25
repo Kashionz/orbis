@@ -23,6 +23,7 @@ import {
   updateTask,
 } from "../../../api/resources";
 import { Avatar } from "../../../components/Avatar";
+import { DoneReasonBadge } from "../../../components/DoneReasonBadge";
 import { ErrorText } from "../../../components/ErrorText";
 import { type MenuGroup, Popover } from "../../../components/Popover";
 import { StatusDot } from "../../../components/StatusDot";
@@ -268,8 +269,8 @@ function TaskMeta({
         <span className="rp-status" style={{ color: TONE_COLOR[taskTone(task.status)] }}>
           <StatusDot color="currentColor" />
           {t.labels.taskStatus[task.status]}
-          {task.doneReason && ` ${t.labels.taskDoneReason[task.doneReason]}`}
         </span>
+        <DoneReasonBadge task={task} />
         {needs && <span className="rp-needs">{w.needsYou}</span>}
       </MetaRow>
       <MetaRow label={w.repo}>

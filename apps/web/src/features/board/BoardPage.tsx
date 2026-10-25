@@ -35,6 +35,7 @@ import {
   transitionTask,
 } from "../../api/resources";
 import { AgentLogo } from "../../components/AgentLogo";
+import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { Avatar } from "../../components/Avatar";
 import { ErrorText } from "../../components/ErrorText";
 import { useElementWidth } from "../../components/hooks";
@@ -585,6 +586,7 @@ function ListRow({
         >
           {row.task.title}
         </Link>
+        <DoneReasonBadge task={row.task} />
         {row.blockedBy.length > 0 && (
           <span className="bd-blocked">{b.blockedBy(row.blockedBy.join(" "))}</span>
         )}
@@ -644,6 +646,7 @@ function Card({ row, allTasks, members, permissions, onOpenTask, onOpenDrafts }:
       <span className="bd-card-top">
         <span className="bd-key">{row.task.key}</span>
         {row.needs && <span className="bd-needs" data-needs="true" data-tip={b.needs} />}
+        <DoneReasonBadge task={row.task} />
         <span
           className="bd-card-avatar"
           data-tip={assignee ? `@${assignee.githubLogin}` : t.common.unassigned}
