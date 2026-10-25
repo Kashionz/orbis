@@ -340,7 +340,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 
 - Runner 在 Run 的 Worktree 中開 PTY（`portable-pty`，Windows 用 ConPTY），輸入輸出經由 Runner 通道到 Server，再經由專用的 WebSocket（`/api/terminals/<terminal-id>/ws`）到 Web 的終端機分頁（xterm.js）。
 - **frame**：Server→Runner `terminal_open { terminal_id, run_id, cols, rows }`、`terminal_input`、`terminal_resize`、`terminal_close`；Runner→Server `terminal_output`、`terminal_exited { code, reason }`。資料以 base64 傳送，單一 frame 解碼後最多 64 KiB；沒有 credit 背壓，Runner 送出時排在 Event、control 與 Heartbeat 之後。每個 `terminal_open` 最後恰好有一個 `terminal_exited`（開不起來時也是，`reason` 說明原因）。
-- **誰能用**：Local Runner 只限那台 Runner 的擁有者（和權限回覆的規則相同）；Team Runner 只限 Admin 以上，而且 Team 設定「允許 Team Runner 的終端機」預設關閉。Server 把 `terminal_id` 綁定到開啟者的 session，只轉送那個人的輸入；Runner 只接受自己開過的 `terminal_id`。連線期間 Server 每 30 秒重新確認一次（session 仍有效、開啟者仍有權限、Run 仍在同一台 Runner），不符或確認失敗就關閉終端機；登出時關閉這個 session 開的所有終端機。
+- **誰能用**：Local Runner 只限那台 Runner 的擁有者，而且在這個 Task 上能操作（和權限回覆的規則相同）；Team Runner 只限 Admin 以上，而且 Team 設定「允許 Team Runner 的終端機」預設關閉。Server 把 `terminal_id` 綁定到開啟者的 session，只轉送那個人的輸入；Runner 只接受自己開過的 `terminal_id`。連線期間 Server 每 30 秒重新確認一次（session 仍有效、開啟者仍有權限、Run 仍在同一台 Runner），不符或確認失敗就關閉終端機；登出時關閉這個 session 開的所有終端機。
 - **Runner 端的開關**：`runner.toml` 的 `allow_terminal`，Team Runner 預設 `false`、Local Runner 預設 `true`（種類取自 `hello_ack` 的 `runner_kind`，缺少時視為 `false`）。不允許時 `terminal_open` 回 `terminal_exited`（`reason = disabled`）。Team Runner 要同時打開 Team 設定與這個開關才能開終端機。
 - 終端機是人自己下指令，不經過 Permission Policy。Server 只記錄誰在什麼時候開、關（`terminal_sessions`），不記錄按鍵與輸出。
 - Worktree 存在期間都能用（Run 結束後也可以，Runner 依本機的 Worktree 紀錄找到路徑）；閒置 30 分鐘自動關閉（`runner.toml` 的 `terminal_idle_timeout_secs` 可以改）；每個 Run 最多同時 3 個（`terminal_limit`）。Worktree 已封存時回 `worktree_archived`。
@@ -399,7 +399,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - 派工時可以指定推理強度（`dispatch_offer` 的 `effort`），Runner 在 session 建立後以 config option 套用；派工時的 `model` 也一樣（`run_settings_changed` 的 `control_id` 為 `null`）。Agent 沒有推理強度的 config option 時，`runner.toml` 的 `[agents.<id>] effort_args` 可以指定各等級的啟動參數，只在啟動 Agent 時（派工、換 Agent）套用。
   - 推理強度對應到 thought level 的值：Agent Profile 的對應優先，沒有時依值的名稱判斷（`low`／`minimal` 是快速、`medium` 是標準、`high`／`max` 是深度）。
 - **執行中切換設定**：模型與推理強度（`set_session_config`）在下一個回合開始前生效；Permission Policy（`set_permission_policy`）立即生效，從下一個權限請求開始套用。生效時 Runner 送 `run_settings_changed`，Agent 不支援的項目列在 `not_applied`。Server 判斷目前的 Permission Policy 時只採信 `control_id` 對應到自己送出的 `set_permission_policy` 的 `run_settings_changed`；`agent_switched` 也只有對應到 Server 送出的 `switch_agent` 時才更新 Run 的 Agent 與用量分段。
-- **換 Agent**（[ADR-0016](adr/0016-agent-switch-handoff.md)）：`switch_agent` 只在回合之間生效（回合中送出時等回合結束），只能換成同一台 Runner 上可以用的 Agent。Run id 與 Worktree 不變，Runner 結束舊的 session，以新的 Agent 開新的 session、依新 Agent 的 Agent Profile 重新套用 session mode，送出交接 prompt（來源 `handoff`）並送 `agent_switched`。用量與費用依 Agent 分段記錄：`agent_switched` 之後的 `usage` 是新的一段從 0 開始的累計值。Child Run 不受影響。
+- **換 Agent**（[ADR-0016](adr/0016-agent-switch-handoff.md)）：`switch_agent` 只在回合之間生效（回合中送出時等回合結束），只能換成同一台 Runner 上可以用的 Agent；Local Runner 上只限那台 Runner 的擁有者（§8）。Run id 與 Worktree 不變，Runner 結束舊的 session，以新的 Agent 開新的 session、依新 Agent 的 Agent Profile 重新套用 session mode，送出交接 prompt（來源 `handoff`）並送 `agent_switched`。用量與費用依 Agent 分段記錄：`agent_switched` 之後的 `usage` 是新的一段從 0 開始的累計值。Child Run 不受影響。
   - 交接 prompt 依序是：Task 的規格與驗收條件、人送出的所有 prompt、Agent 每個回合最後的回覆、目前的計畫、diff 摘要（改了哪些檔案、各增減幾行）、還沒處理的審查留言。規格、驗收條件與審查留言由 Server 放在 `switch_agent` 的 `handoff` 中，其他由 Runner 從 Event 與 Worktree 組出。不請舊的 Agent 寫摘要。
   - Runner 把交接需要的歷史（交給 Agent 的 prompt、每個回合的 `final_message`、最新的計畫）隨 Run 的 Worktree 紀錄存在狀態目錄，Runner 重新啟動後仍然完整，Worktree 封存時刪除；Run 改派到另一台 Runner 時那台沒有這份歷史（Worktree 也不同）。
   - 先以新的 Agent 開新的 session，成功後才結束舊的；新的 Agent 啟動失敗時保留舊的，送非 fatal 的 `agent_start_failed`。Gate 等待中切換時立即生效，新的 Agent 帶著交接 prompt 開始回合。
@@ -448,7 +448,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
   - Local Runner 上的權限請求，只有該 Runner 的擁有者能回覆。
   - Team Runner 上的權限請求，Project 中 Role 至少是 Member 的人都能回覆。
   - 設定的信任核准（§6.2）一律只有 Project 中 Admin 以上能回覆，不論 Runner 種類：Local Runner 上的 Run 也一樣，Runner 擁有者不是 Admin 時不能回覆。
-- **執行中切換**：Run 執行中也可以換 Permission Policy（RunControl `set_permission_policy`），規則和派工時能不能選這個策略相同；從下一個權限請求開始套用。
+- **執行中切換**：Run 執行中也可以換 Permission Policy（RunControl `set_permission_policy`），規則和派工時能不能選這個策略相同；從下一個權限請求開始套用。Local Runner 上的 Run 只有那台 Runner 的擁有者能換（和回覆權限請求相同，Admin 也不行）；換 Agent（§7）也一樣，因為新的 Agent 用那台電腦上的 Credential 啟動。
 - **派工時的選擇**：
   - 能派工的人都可以選 `manual` 或 `auto`，預設為 Project 的預設政策。
   - `yolo` 只能在「在我的電腦跑」時選，UI 會顯示警告。Team Runner 的 `yolo` 留到 Phase 2。
@@ -478,7 +478,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 | `ask_parent(question)` | Child Run 向父 Run 提問，阻塞等待回答 |
 | `answer_child(run_id, question_id, answer)` | 父 Agent 回答 Child Run 的問題 |
 | `propose_tasks(spec, tasks[])` | 提出 Draft Task（含 Acceptance Criterion 與相依關係） |
-| `update_task_note(task_id, note)` | 在 Task 上留下進度或決策紀錄 |
+| `update_task_note(task_id, note)` | 在 Task 上留下進度或決策紀錄；寫在其他 Task 時依派工的人在那個 Task 上的權限（看不到的 Task 和不存在一樣回 `not_found`，只能檢視時不能寫） |
 
 - **工具呼叫的轉送**：Runner 把 Agent 的呼叫轉成 `tool_call` 送給 Server，Server 以 `tool_result` 回覆；防護規則一律以 Server 為準。斷線重連後 Runner 以同一個 `call_id` 重送，Server 依此去除重複。`wait_run`、`ask_parent` 在 Server 端阻塞到有結果為止；Server 關閉時中斷阻塞中的呼叫，不記下結果也不回覆，Runner 重新連上後以同一個 `call_id` 重送，Server 重新處理。
 - **`ask_parent` 的回答**：父 Agent 在 `wait_run`、`get_run`、`list_runs` 的結果中看到待回答的問題，以 `answer_child` 回答。父 Run 的回合已經結束時，問題加入 Needs You，由人回答。
@@ -601,7 +601,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 ### 12.3 通知與 @mention
 
-- **通知管道**：App 內的通知中心，加上 Electron 的桌面通知。發送層要設計成可以擴充管道的介面（email、Slack 留到之後）。
+- **通知管道**：App 內的通知中心，加上 Electron 的桌面通知。通知中心、未讀數與桌面 feed 列出時依目前的 Task 可見性過濾（ADR-0012），之後看不到的 Task 的舊通知不再出現。發送層要設計成可以擴充管道的介面（email、Slack 留到之後）。
   - Electron 的桌面通知目前只涵蓋 Needs You：Desktop 每 5 秒輪詢 Needs You 清單，出現新項目時發出原生通知（§16.1）。
 - **觸發通知的事件**：
   - 權限請求（Needs You）
