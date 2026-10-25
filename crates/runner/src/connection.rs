@@ -241,13 +241,17 @@ async fn connect_once(
     }
     let id = Some(ack.runner_id.to_string());
     state.send_replace((SidecarConnectionState::Connected, id.clone()));
+    supervisor.set_runner_kind(ack.runner_kind);
     supervisor.on_connected(&ack.resume);
     supervisor.blobs().set_access(&config.http_base, &token);
+    let (terminals, terminal_out) = crate::terminal::Terminals::new();
     let session = Session {
         conn,
         supervisor: supervisor.clone(),
         uploader: BlobUploader::new(&config.http_base, token),
         heartbeat: Duration::from_millis(ack.heartbeat_interval_ms.into()),
+        terminals,
+        terminal_out,
     };
     match session.run(frames, shutdown).await {
         Ok(true) => Ok(ConnectionEnd::Shutdown),
@@ -434,6 +438,9 @@ struct Session {
     supervisor: Arc<Supervisor>,
     uploader: BlobUploader,
     heartbeat: Duration,
+    /// 這條連線開的終端機（§6.5），連線結束時一起關閉。
+    terminals: crate::terminal::Terminals,
+    terminal_out: mpsc::UnboundedReceiver<RunnerToServer>,
 }
 
 impl Session {
@@ -497,6 +504,8 @@ impl Session {
                     None => return Ok(false),
                 },
                 Some(outbound) = preview_out.recv() => self.conn.send_preview(outbound).await?,
+                // 終端機的輸出和 Preview 的資料一樣沒有 credit 背壓，排在最後（§6.5）。
+                Some(frame) = self.terminal_out.recv() => self.conn.send(&frame).await?,
             }
         }
     }
@@ -547,22 +556,15 @@ impl Session {
             | ServerToRunner::PreviewEnd(_)
             | ServerToRunner::PreviewReset(_)
             | ServerToRunner::PreviewWsClose(_) => {}
-            // TODO(backend, terminal, local-repo)：互動式終端機與本機 Repo Spec 提交（協定版本 3）
-            // 實作之前開終端機一律回 spawn_failed、提交一律回 repo_unavailable。
+            // 互動式終端機（§6.5）：只接受這條連線開過的 terminal_id。
             ServerToRunner::TerminalOpen(open) => {
-                let exited = orbis_protocol::terminal::TerminalExited {
-                    terminal_id: open.terminal_id,
-                    code: None,
-                    reason: orbis_protocol::terminal::TerminalExitReason::SpawnFailed,
-                    message: Some("這個版本的 Runner 還不支援終端機".into()),
-                };
-                self.conn
-                    .send(&RunnerToServer::TerminalExited(exited))
-                    .await?;
+                let env = self.supervisor.terminal_env();
+                let worktree = self.supervisor.terminal_worktree(&open.run_id);
+                self.terminals.open(open, &env, worktree);
             }
-            ServerToRunner::TerminalInput(_)
-            | ServerToRunner::TerminalResize(_)
-            | ServerToRunner::TerminalClose(_) => {}
+            ServerToRunner::TerminalInput(input) => self.terminals.input(input),
+            ServerToRunner::TerminalResize(resize) => self.terminals.resize(resize),
+            ServerToRunner::TerminalClose(close) => self.terminals.close(close),
             // 本機 Repo 的 Repo Spec 提交（§12.1）：在背景處理，結果經由 frames 送出。
             ServerToRunner::RepoSpecCommit(commit) => {
                 self.supervisor.handle_repo_spec_commit(commit);

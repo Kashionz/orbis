@@ -65,6 +65,8 @@ pub struct Supervisor {
     /// 上次看到的「由 Runner 代為登入」的登入標記。`<Runner> login` 是另一個程序（例如 Desktop 執行的），
     /// Heartbeat 時比對，有變化就重送 AgentAvailability。
     login_seen: Mutex<Option<Vec<(String, bool)>>>,
+    /// Server 在 `hello_ack` 回報的 Runner 種類（決定 `allow_terminal` 的預設值）；沒有回報時為 `None`。
+    runner_kind: Mutex<Option<orbis_protocol::enums::RunnerKind>>,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -88,6 +90,7 @@ impl Supervisor {
             me: me.clone(),
             catalog,
             login_seen: Mutex::new(None),
+            runner_kind: Mutex::new(None),
             worktrees: Arc::new(WorktreeManager::new(home.clone())),
             home,
             outbox,
@@ -686,6 +689,53 @@ impl Supervisor {
             }
             Err(e) => failed(RepoSpecCommitFailure::Failed, e.to_string()),
         }
+    }
+
+    /// 記下 Server 回報的 Runner 種類（每次連線的 `hello_ack`）。
+    pub fn set_runner_kind(&self, kind: Option<orbis_protocol::enums::RunnerKind>) {
+        *lock(&self.runner_kind) = kind;
+    }
+
+    /// 終端機的設定（ARCHITECTURE §6.5）。`allow_terminal` 沒有設定時：Local Runner 允許、Team Runner 與
+    /// 不知道種類（舊的 Server）時不允許。
+    pub fn terminal_env(&self) -> crate::terminal::TerminalEnv {
+        use orbis_protocol::enums::RunnerKind;
+        let settings = self.home.settings();
+        let allowed = settings
+            .allow_terminal
+            .unwrap_or(*lock(&self.runner_kind) == Some(RunnerKind::Local));
+        crate::terminal::TerminalEnv {
+            allowed,
+            shell: crate::terminal::resolve_shell(settings.terminal_shell.as_deref()),
+            idle_timeout: Duration::from_secs(settings.terminal_idle_timeout_secs.unwrap_or(
+                u64::from(orbis_protocol::terminal::TERMINAL_IDLE_TIMEOUT_SECS),
+            )),
+        }
+    }
+
+    /// 終端機要開在哪裡：依本機的 Worktree 紀錄（Run 結束後也可以，同 `archive`）。
+    /// 已封存或不在這台電腦時為 `None`。
+    pub fn terminal_worktree(&self, run_id: &RunId) -> Option<crate::terminal::TerminalWorktree> {
+        let record = self.home.run_worktree(run_id.as_str())?;
+        record.path.join(".git").exists().then(|| {
+            use orbis_protocol::names;
+            crate::terminal::TerminalWorktree {
+                env: vec![
+                    (
+                        names::ENV_ROOT_PATH.into(),
+                        record.root_checkout.to_string_lossy().into_owned(),
+                    ),
+                    (
+                        names::ENV_WORKTREE_PATH.into(),
+                        record.path.to_string_lossy().into_owned(),
+                    ),
+                    (names::ENV_PORT.into(), record.port.to_string()),
+                    (names::ENV_RUN_ID.into(), run_id.to_string()),
+                    (names::ENV_TASK_KEY.into(), record.task_key.clone()),
+                ],
+                path: record.path,
+            }
+        })
     }
 
     /// 中止 `parent` 還在進行中的 Child Run（以 Runner 內部的 RunControl，不回 `run_control_result`）。

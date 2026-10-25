@@ -432,6 +432,10 @@ fn user_home_dir() -> Option<PathBuf> {
 /// [repos."https://github.com/acme/web.git"]
 /// path = "D:\\code\\web"
 ///
+/// # 互動式終端機（Team Runner 預設不允許，Local Runner 預設允許）
+/// allow_terminal = true
+/// terminal_shell = ["pwsh", "-NoLogo"]
+///
 /// # 加入一般的 ACP Agent，或覆寫內建 Agent Profile 的啟動指令
 /// [agents.my-agent]
 /// command = "my-agent-acp"
@@ -452,6 +456,14 @@ pub struct Settings {
     /// 判定 `browser` 類型條件時注入的瀏覽器 MCP server；沒有設定時用 Runner 管理的
     /// Playwright MCP（鎖定版本，ARCHITECTURE §5.1）。
     pub browser_judge: Option<BrowserJudgeSettings>,
+    /// 是否允許互動式終端機（ARCHITECTURE §6.5）。沒有設定時依 Runner 的種類：Local Runner 允許、
+    /// Team Runner 不允許（Server 沒有回報種類時也不允許）。
+    pub allow_terminal: Option<bool>,
+    /// 終端機的 shell 與參數，例如 `["pwsh", "-NoLogo"]`；沒有設定時 Windows 用 PowerShell、
+    /// 其他平台用 `$SHELL`。
+    pub terminal_shell: Option<Vec<String>>,
+    /// 終端機閒置（沒有輸入也沒有輸出）多少秒後關閉，預設 1800。
+    pub terminal_idle_timeout_secs: Option<u64>,
 }
 
 /// 判定 `browser` 類型條件用的 MCP server 啟動設定。Runner 在 `args` 之後加上 Preview 的

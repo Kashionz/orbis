@@ -28,4 +28,5 @@ pub mod secrets;
 pub mod shell;
 pub mod sidecar;
 pub mod supervisor;
+pub mod terminal;
 pub mod worktree;

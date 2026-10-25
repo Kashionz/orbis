@@ -365,8 +365,18 @@ impl RunnerSide {
         self.send_value(&serde_json::to_value(frame).unwrap()).await;
     }
 
-    /// 完成交握：收 hello、回 hello_ack。回傳 hello。
+    /// 完成交握：收 hello、回 hello_ack（不回報 Runner 的種類，同舊的 Server）。回傳 hello。
     pub async fn handshake(&mut self, resume: Vec<RunResume>, runner_token: Option<&str>) -> Value {
+        self.handshake_as(resume, runner_token, None).await
+    }
+
+    /// 同 [`handshake`](Self::handshake)，`hello_ack` 回報 Runner 的種類。
+    pub async fn handshake_as(
+        &mut self,
+        resume: Vec<RunResume>,
+        runner_token: Option<&str>,
+        runner_kind: Option<orbis_protocol::enums::RunnerKind>,
+    ) -> Value {
         let hello = self.recv().await;
         assert_eq!(hello["type"], "hello", "第一個 frame 應該是 hello：{hello}");
         self.send(&orbis_protocol::frame::ServerToRunner::HelloAck(HelloAck {
@@ -375,7 +385,7 @@ impl RunnerSide {
             runner_token: runner_token.map(str::to_owned),
             heartbeat_interval_ms: 200,
             resume,
-            runner_kind: None,
+            runner_kind,
         }))
         .await;
         hello
