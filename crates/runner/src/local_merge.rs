@@ -242,14 +242,27 @@ async fn commit_in(
     let git = Git::new(dir);
     let file = dir.join(path);
     let parent = file.parent().unwrap_or(dir);
+    // 不跟著連結寫到 checkout 以外：建立目錄之前，先確認已經存在的每一層（含檔案本身）都不是
+    // symlink／junction，之後才建立不存在的目錄。
+    let mut current = dir.to_path_buf();
+    for part in path.split('/') {
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(LocalError::Failed(format!(
+                    "{path} 經由連結指向 checkout 以外"
+                )));
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
     std::fs::create_dir_all(parent)
         .map_err(|e| LocalError::Failed(format!("無法建立 {}：{e}", parent.display())))?;
-    // 不跟著連結寫到 checkout 以外。
     if !crate::paths::is_within(
         &crate::paths::canonical(parent),
         &crate::paths::canonical(dir),
-    ) || std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink())
-    {
+    ) {
         return Err(LocalError::Failed(format!(
             "{path} 經由連結指向 checkout 以外"
         )));
@@ -300,6 +313,41 @@ mod tests {
         );
         assert_eq!(checked_out_at(listing, "dev"), None);
         assert_eq!(checked_out_at(listing, "mai"), None, "要完整比對分支名稱");
+    }
+
+    /// 建立目錄連結：Windows 用 junction（不需要權限），其他平台用 symlink。
+    fn link_dir(target: &Path, link: &Path) {
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd.exe")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(status.status.success(), "{status:?}");
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    /// Repo Spec 的路徑經過 checkout 中的目錄連結時拒絕，也不在外面建立任何目錄（安全審查的發現）。
+    #[tokio::test]
+    async fn repo_spec_不經由目錄連結寫到_checkout_以外() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        Git::new(&repo).run(["init", "-q"]).await.unwrap();
+        link_dir(&outside, &repo.join("docs"));
+        let error = commit_in(&repo, "docs/deep/spec.md", "# x\n", "m")
+            .await
+            .unwrap_err();
+        assert!(matches!(error, LocalError::Failed(_)), "{error}");
+        assert!(!outside.join("deep").exists(), "不可以在外面建立目錄");
     }
 
     #[test]
