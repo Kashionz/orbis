@@ -110,9 +110,10 @@ function ProfileMenu({
       role="menu"
       aria-label={t.shell.profileMenu}
       className="profile-menu"
+      // README：側欄底部的個人按鈕上方，左緣 10px
       position={(anchor) => ({
-        left: Math.max(8, anchor.left - 2),
-        bottom: window.innerHeight - anchor.top + 6,
+        left: Math.max(8, anchor.left + 2),
+        bottom: window.innerHeight - anchor.top + 12,
       })}
     >
       <div className="profile-menu-header">
