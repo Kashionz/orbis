@@ -357,6 +357,8 @@ class RunnerConnection implements RunnerLink {
       runner_token: runnerToken,
       heartbeat_interval_ms: this.options.heartbeatIntervalMs,
       resume,
+      // Runner 依種類決定 runner.toml 的預設值，例如 Team Runner 預設不允許終端機（ADR-0014）。
+      runner_kind: runner.kind,
     });
     hub.register(runner.id, this);
   }

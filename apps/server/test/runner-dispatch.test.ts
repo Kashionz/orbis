@@ -104,6 +104,8 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
       const ack = await runner.next("hello_ack");
       const [row] = await database.db.select().from(runners).where(eq(runners.id, ack.runner_id));
       expect(row).toMatchObject({ kind: "local", memberId: team.members.member.id });
+      // Runner 依種類決定 runner.toml 的預設值（終端機）。
+      expect(ack.runner_kind).toBe("local");
       // 建立 token 的 session 複製到 Runner，登出時據此撤銷。
       const [token] = await database.db
         .select()
