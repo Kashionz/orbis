@@ -588,13 +588,16 @@ impl Supervisor {
             Ok(profile) => profile,
             Err((_, message)) => return reject(message),
         };
-        let sent = lock(&self.runs).get(&control.run_id).map(|handle| {
-            handle.tx.send(RunInput::Switch {
-                control: control.clone(),
-                profile: Box::new(profile),
-            })
+        let sent = lock(&self.runs).get(&control.run_id).is_some_and(|handle| {
+            handle
+                .tx
+                .send(RunInput::Switch {
+                    control: control.clone(),
+                    profile: Box::new(profile),
+                })
+                .is_ok()
         });
-        if !matches!(sent, Some(Ok(()))) {
+        if !sent {
             reject("Run 已經結束".into());
         }
     }

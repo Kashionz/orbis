@@ -302,14 +302,14 @@ mod tests {
 
     #[test]
     fn 找出簽出基準分支的_worktree() {
-        let listing = "worktree D:/code/web\nHEAD abc\nbranch refs/heads/main\n\nworktree C:/ob/web/ORB-1-1\nHEAD def\nbranch refs/heads/orbis/ORB-1-x\n\nworktree C:/tmp/detached\nHEAD 123\ndetached\n";
+        let listing = "worktree D:/code/web\nHEAD abc\nbranch refs/heads/main\n\nworktree D:/wt/feature\nHEAD def\nbranch refs/heads/feature/x\n\nworktree D:/tmp/detached\nHEAD 123\ndetached\n";
         assert_eq!(
             checked_out_at(listing, "main"),
             Some(PathBuf::from("D:/code/web"))
         );
         assert_eq!(
-            checked_out_at(listing, "orbis/ORB-1-x"),
-            Some(PathBuf::from("C:/ob/web/ORB-1-1"))
+            checked_out_at(listing, "feature/x"),
+            Some(PathBuf::from("D:/wt/feature"))
         );
         assert_eq!(checked_out_at(listing, "dev"), None);
         assert_eq!(checked_out_at(listing, "mai"), None, "要完整比對分支名稱");
