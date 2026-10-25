@@ -122,7 +122,7 @@ export default {
     agentDefaultModel: "代理預設",
 
     dock: {
-      permission: "等待你回覆權限請求",
+      permission: "等待回覆權限請求",
       jumpToRequest: "跳至請求",
       reviewGate: "審查關卡",
       reviewDetail: (files: number) => `${files} 個檔案`,

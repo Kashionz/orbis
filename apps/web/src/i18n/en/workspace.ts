@@ -118,7 +118,7 @@ export default {
     agentDefaultModel: "Agent default",
 
     dock: {
-      permission: "Waiting for your permission reply",
+      permission: "Waiting for a permission reply",
       jumpToRequest: "Jump to request",
       reviewGate: "Review Gate",
       reviewDetail: (files: number) => `${files} ${files === 1 ? "file" : "files"}`,
