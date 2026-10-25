@@ -643,7 +643,7 @@ function Card({ row, allTasks, members, permissions, onOpenTask, onOpenDrafts }:
     >
       <span className="bd-card-top">
         <span className="bd-key">{row.task.key}</span>
-        {row.needs && <span className="bd-needs" data-needs="true" aria-label={b.needs} />}
+        {row.needs && <span className="bd-needs" data-needs="true" data-tip={b.needs} />}
         <span
           className="bd-card-avatar"
           data-tip={assignee ? `@${assignee.githubLogin}` : t.common.unassigned}
