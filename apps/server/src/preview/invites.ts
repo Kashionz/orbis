@@ -23,7 +23,7 @@ import type { Session } from "../auth/service";
 import { loadRunScope, type RunScope, requireProjectCapability } from "../authz/scope";
 import { randomToken, sha256Hex } from "../crypto";
 import type { Database } from "../db/client";
-import { members, previewInvites, runControls, runs, teams } from "../db/schema";
+import { members, previewInvites, projects, runControls, runs, tasks, teams } from "../db/schema";
 import type { Executor } from "../db/tx";
 import { isTerminalRunStatus } from "../domain/run-status";
 import { ApiError, conflict, notFound, readId, readJson } from "../http/errors";
@@ -42,12 +42,22 @@ const DURATION_MS: Record<PreviewInviteDuration, number> = {
 type InviteRow = typeof previewInvites.$inferSelect;
 type RunRow = typeof runs.$inferSelect;
 
-/** Run 的 Preview 目前能不能用邀請開：Run 還在進行、Preview 沒有停止、Worktree 沒有封存。 */
+/**
+ * Run 的 Preview 目前能不能用邀請開：Team 仍允許對外分享預覽、Run 還在進行、Preview 沒有停止、
+ * Worktree 沒有封存。
+ */
 export async function previewOpenForInvites(
   db: Database,
-  run: Pick<RunRow, "id" | "status" | "runnerId">,
+  run: Pick<RunRow, "id" | "status" | "runnerId" | "taskId">,
 ): Promise<boolean> {
   if (isTerminalRunStatus(run.status)) return false;
+  const [team] = await db
+    .select({ allowed: teams.allowExternalPreview })
+    .from(tasks)
+    .innerJoin(projects, eq(projects.id, tasks.projectId))
+    .innerJoin(teams, eq(teams.id, projects.teamId))
+    .where(eq(tasks.id, run.taskId));
+  if (!team?.allowed) return false;
   const state = await loadPreviewState(db, run, null);
   if (state.status === "stopped" || state.status === "not_configured") return false;
   const [archived] = await db
@@ -100,7 +110,7 @@ function isInvitee(row: InviteRow, session: Pick<Session, "githubUserId" | "veri
 export async function hasActivePreviewInvite(
   db: Database,
   session: Pick<Session, "githubUserId" | "verifiedEmail">,
-  run: Pick<RunRow, "id" | "status" | "runnerId">,
+  run: Pick<RunRow, "id" | "status" | "runnerId" | "taskId">,
   now: Date,
 ): Promise<boolean> {
   const rows = await db
@@ -148,11 +158,12 @@ export function createPreviewInviteRoutes(s: Services): Hono<AppEnv> {
   const { db, auth, clock } = s;
   const app = new Hono<AppEnv>();
 
-  async function editableScope(c: Context<AppEnv>): Promise<RunScope> {
+  /** 列出與建立要 Team 設定打開；撤銷在關閉時也可以（關閉時邀請本來就全部無效）。 */
+  async function editableScope(c: Context<AppEnv>, requireEnabled = true): Promise<RunScope> {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
     requireProjectCapability(actor, scope, "edit_task");
-    await requireSharingEnabled(db, actor.teamId);
+    if (requireEnabled) await requireSharingEnabled(db, actor.teamId);
     return scope;
   }
 
@@ -221,7 +232,7 @@ export function createPreviewInviteRoutes(s: Services): Hono<AppEnv> {
   });
 
   app.delete(API_ROUTES.runPreviewInvite, auth, async (c) => {
-    const scope = await editableScope(c);
+    const scope = await editableScope(c, false);
     const inviteId = readId(c, "inviteId", "預覽邀請");
     const [row] = await db
       .update(previewInvites)

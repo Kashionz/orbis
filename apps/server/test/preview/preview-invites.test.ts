@@ -235,12 +235,26 @@ describe.skipIf(dbSkipReason !== null)("預覽邀請", () => {
     await database.db
       .insert(taskMembers)
       .values({ taskId, memberId: team.members.viewer.id, role: "edit" });
-    expect((await as("viewer").post(list(), { email: "a@example.com" })).status).toBe(201);
+    const created = expectContract(
+      PreviewInviteCreated,
+      (await as("viewer").post(list(), { email: "a@example.com" })).body,
+    );
+    const pm = await seedSession(database.db, { email: "a@example.com" });
+    expect(await canViewRun(database.db, ctx.clock, pm.sessionId, runId)).toBe(true);
 
     await database.db
       .update(teams)
       .set({ allowExternalPreview: false })
       .where(eq(teams.id, team.teamId));
+    // 關閉後既有的邀請全部失效，但仍然可以撤銷
+    expect(await canViewRun(database.db, ctx.clock, pm.sessionId, runId)).toBe(false);
+    expect((await open(created.inviteUrl, pm.cookie)).headers.get("location")).toContain(
+      "code=invite_expired",
+    );
+    const revoke = await as("member").delete(
+      apiPath(API_ROUTES.runPreviewInvite, { runId, inviteId: created.invite.id }),
+    );
+    expect(revoke.status).toBe(204);
     const create = await as("member").post(list(), { email: "a@example.com" });
     expect(create.status).toBe(403);
     expect(create.body).toMatchObject({ error: "preview_sharing_disabled" });
