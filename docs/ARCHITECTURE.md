@@ -111,7 +111,8 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 - **回合結束**：Agent 結束回合後，Runner 先送出 Run 的完整 diff（§10），再回報等待 Review Gate。Review Gate 期間 Run 不會結束，退回時在同一個 session 繼續。
 - **核准之後**：Task 立刻進入 PR Open。Runner 結束 Agent 程序、push 分支，**push 成功後 Run 才算 `completed`**。push 失敗時 Run 不會是 `completed`，並加入 Needs You。
 - **本機 Repo 核准之後**（[ADR-0013](adr/0013-local-repo-and-connect-to-github.md)）：Server 送 RunControl `merge_local`，Runner 結束 Agent、自動 commit 未提交的變更，把 Run 的分支合併到本機 checkout 的基準分支（`local_merged` Event），Task 直接轉 Done（trigger `local_merge`，關閉原因 `completed`），接著封存 Worktree。
-  - 基準分支沒有在 checkout 中簽出：在暫時的 worktree 中合併。已簽出且工作目錄乾淨：直接在 checkout 中合併。
+  - 基準分支沒有在 checkout 中簽出：在暫時的 worktree（`<Worktree 根目錄>/<repo>/.merge-<短 id>`，做完就刪）中合併。已簽出（在 checkout 或它的某個 worktree）且工作目錄乾淨：直接在那裡合併。「乾淨」只看已追蹤的檔案，未追蹤的檔案會被合併覆寫時 git 自己會擋下，一樣回報為擋下。
+  - commit 使用 checkout 自己的 git 設定與 hook。squash 合併後 Run 的分支不是基準分支的祖先：Runner 記下合併時分支的 HEAD，封存時分支還在那個 commit 就刪掉分支。
   - 工作目錄有未 commit 的變更或合併衝突：不合併，Run 停下（Needs You 的 `reasonCode` 為 `local_merge_blocked`，`detail` 是 git 的輸出）。Runner 保留這個 Run；人處理好本機 checkout 後在待我處理按「重試」（`POST /api/runs/<run-id>/merge-local`，權限同核准 Review Gate），Server 以 Project 目前的設定重送 `merge_local`。
   - 合併方式是 Project 設定：squash（預設）或 merge commit。checkout 有 `origin` 時，Project 可以設定合併後 push 基準分支（預設關閉）；push 失敗不影響合併。
 - **停下來的 Run**：Needs You 的 `stopped_run` 以代碼表示原因（`verification_limit`、`push_failed`、`pr_open_failed`、`local_merge_blocked`），附第幾輪（只有 `verification_limit`）與原始的錯誤訊息；給人看的文字由 UI 依代碼在地化。
@@ -222,7 +223,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - 每個 `run_control`（取消、後續 prompt、回覆權限請求、Gate 結果、push 分支）都會收到一個 `run_control_result`，以 `control_id` 對應。Run 因此產生的後續變化仍以 Event 回報。
 - **本機 Repo 的派工**（[ADR-0013](adr/0013-local-repo-and-connect-to-github.md)）：本機 Repo 只派給 `runner.toml` 有對應這個 Repo 名稱的 Local Runner（依 `agent_availability` 的 `mapped_repos` 判斷），Team Runner 不能選；派工對話框以 `repo_not_mapped` 標示不能派。Team 的其他人在自己的 `runner.toml` 設了同名對應，也可以派到自己的電腦。
 - **Runner 的本機目錄**（`~/.orbis/`）：
-  - `runner.toml` 給人編輯：Server 網址、Runner 名稱、Worktree 根目錄、port 範圍、Repo 對應到本機 checkout（`[repos.<key>] path`）、額外的 ACP Agent（`[agents.<id>] command／args／env`）。
+  - `runner.toml` 給人編輯：Server 網址、Runner 名稱、Worktree 根目錄、port 範圍、Repo 對應到本機 checkout（`[repos.<key>] path`）、額外的 ACP Agent（`[agents.<id>] command／args／env`，推理強度的啟動參數 `effort_args`）、終端機（`allow_terminal`、`terminal_shell`、`terminal_idle_timeout_secs`，§6.5）。
   - `runner/` 是狀態目錄：依 Server 網址分開保存的 Runner token、port 分配、信任核准紀錄、Event 暫存、Runner 代管安裝的 ACP adapter。
   - `--home` 或 `ORBIS_HOME` 覆寫整個目錄（測試用）；`ORBIS_RUNNER_STATE_DIR` 只覆寫狀態目錄（Desktop 代管的 Runner 用，不和手動啟動的 Runner 共用 Runner token）。
   - 已保存這個 Server 的 Runner token 時，Pairing token 會被忽略。
@@ -342,9 +343,11 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 - **誰能用**：Local Runner 只限那台 Runner 的擁有者（和權限回覆的規則相同）；Team Runner 只限 Admin 以上，而且 Team 設定「允許 Team Runner 的終端機」預設關閉。Server 把 `terminal_id` 綁定到開啟者的 session，只轉送那個人的輸入；Runner 只接受自己開過的 `terminal_id`。
 - **Runner 端的開關**：`runner.toml` 的 `allow_terminal`，Team Runner 預設 `false`、Local Runner 預設 `true`（種類取自 `hello_ack` 的 `runner_kind`，缺少時視為 `false`）。不允許時 `terminal_open` 回 `terminal_exited`（`reason = disabled`）。Team Runner 要同時打開 Team 設定與這個開關才能開終端機。
 - 終端機是人自己下指令，不經過 Permission Policy。Server 只記錄誰在什麼時候開、關（`terminal_sessions`），不記錄按鍵與輸出。
-- Worktree 存在期間都能用（Run 結束後也可以，Runner 依本機的 Worktree 紀錄找到路徑）；閒置 30 分鐘自動關閉；每個 Run 最多同時 3 個（`terminal_limit`）。Worktree 已封存時回 `worktree_archived`。
+- Worktree 存在期間都能用（Run 結束後也可以，Runner 依本機的 Worktree 紀錄找到路徑）；閒置 30 分鐘自動關閉（`runner.toml` 的 `terminal_idle_timeout_secs` 可以改）；每個 Run 最多同時 3 個（`terminal_limit`）。Worktree 已封存時回 `worktree_archived`。
+- 一條 Runner 連線開的終端機只屬於那條連線：連線中斷或 Runner 結束時全部關閉。終端機的程序開在 PTY 上，關閉時 Windows 關掉 ConPTY（掛在上面的程序跟著結束）、macOS／Linux 關掉 PTY（整個 session 收到 SIGHUP），另外結束 shell 本身。
+- Windows 的 ConPTY 啟動時會先送游標位置的查詢（`ESC[6n`），等終端機回覆後 shell 才開始輸出；xterm.js 會自動回覆。
 - WebSocket 關閉即關閉終端機，不支援重新接上。
-- shell：Windows 預設 PowerShell，其他平台用 `$SHELL`；Runner 設定可以覆寫。
+- shell：Windows 預設 PowerShell（優先 pwsh），其他平台用 `$SHELL`（沒有時 `/bin/sh`）；`runner.toml` 的 `terminal_shell` 可以覆寫。執行檔依 PATH 找到絕對路徑，不在 Worktree 中搜尋。
 
 ---
 
@@ -385,15 +388,21 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - 登入成功後，Runner 在狀態目錄記一個只有時間的標記（`agents/<agent>.login`）。沒有標記時，AgentAvailability 回報這個 Agent 無法使用（原因是要執行的登入指令），派工也以 `agent_unavailable` 拒絕。否則沒登入的 Agent 會被當成可用，Web 的派工對話框可能預設選到它。在其他 ACP client（例如 Zed）登入過的人也要再執行一次。
   - 之後 Run 遇到 ACP `auth_required`（例如認證過期）時，以 `agent_start_failed` 結束並提示登入指令，同時清掉標記，重送的 AgentAvailability 改成無法使用。
   - 其他 Agent 用自己的 CLI 登入。
-  - **重新登入**：Agent Profile 提供登入方式（AgentAvailability 的 `login_hint`）：`runner`＝Desktop 在那台電腦上執行 `<Runner> login <agent>`；`cli`＝顯示在終端機要執行的指令。Team Runner 無法遠端互動登入，只顯示要在伺服器上執行的指令（限 Admin 以上）。
-- **執行中傳訊息**：Run 在回合中或等待權限回覆時，人送出的訊息（RunControl `prompt`，`delivery = queue`）先排隊（`prompt_queued`），回合結束後 Runner 不進入 Gate，直接以排隊的訊息開始下一個回合，多則依序以空行合併成一則（每則各送一筆帶自己 `control_id` 的 `prompt_submitted`）。還在排隊的訊息可以收回（`withdraw_prompt`、`prompt_withdrawn`）。`interrupt` 先 `session/cancel` 目前的回合，回合結束後立即送出。Gate 等待時不用這條路，改用 Gate 的退回。
+  - **重新登入**：Agent Profile 提供登入方式（AgentAvailability 的 `login_hint`）：`runner`＝Desktop 在那台電腦上執行 `<Runner> login <agent>`（bridge 的 `loginAgent`，用 sidecar 同一個執行檔與狀態目錄）；`cli`＝顯示在終端機要執行的指令。Team Runner 無法遠端互動登入，只顯示要在伺服器上執行的指令（限 Admin 以上）。
+  - `<Runner> login` 是另一個程序，sidecar 在每次 Heartbeat 時比對登入標記，改變了就重送 AgentAvailability。
+  - **登入狀態**（`signed_in`）：Runner 代為登入的 Agent 看登入標記；其他 Agent 看最近一次 session 的結果（建立成功是已登入、遇到 `auth_required` 是未登入），還沒跑過 session 時不知道（`null`）。
+- **執行中傳訊息**：Run 在回合中或等待權限回覆時，人送出的訊息（RunControl `prompt`，`delivery = queue`）先排隊（`prompt_queued`），回合結束後 Runner 不進入 Gate，直接以排隊的訊息開始下一個回合，多則依序以空行合併成一則（每則各送一筆帶自己 `control_id` 的 `prompt_submitted`）。還在排隊的訊息可以收回（`withdraw_prompt`、`prompt_withdrawn`）。`interrupt` 先 `session/cancel` 目前的回合，回合結束後立即送出（接在已排隊的訊息之後，不送 `prompt_queued`）；Agent 在 10 秒內沒有停下來時 Run 以 `agent_error` 失敗。Gate 等待時不用這條路，改用 Gate 的退回。
+  - 啟動中與等額度恢復（`rate_limited`）時送出的訊息也排隊（之後一定接著回合；這時沒有回合可以中斷，`interrupt` 也只是排隊）。`verifying` 時不接受（`invalid_state`）：Verification 結束後要重試還是進 Review Gate 由 Server 決定。
 - **模型目錄與推理強度**：ACP 沒有 `session/set_model`，模型與推理強度屬於 `session/set_config_option` 的選項（類別 `model`、`thought_level`）。
   - Agent Profile 內建一份靜態清單：模型 id、顯示名稱、標記、推理強度能力（可調整／固定為某個等級／不支援），以及快速、標準、深度各自對應的 config option 值。Runner 記下每個 Agent 最近一次真實 session 回傳的 config option，之後回報以那一份為準（`source = session`），存在 Runner home。
   - Server 彙整目前 Member 可用的 Runner 回報的 AgentAvailability，提供模型目錄 API。
-  - 派工時可以指定推理強度（`dispatch_offer` 的 `effort`），Runner 在 session 建立後以 config option 套用。
+  - 派工時可以指定推理強度（`dispatch_offer` 的 `effort`），Runner 在 session 建立後以 config option 套用；派工時的 `model` 也一樣（`run_settings_changed` 的 `control_id` 為 `null`）。Agent 沒有推理強度的 config option 時，`runner.toml` 的 `[agents.<id>] effort_args` 可以指定各等級的啟動參數，只在啟動 Agent 時（派工、換 Agent）套用。
+  - 推理強度對應到 thought level 的值：Agent Profile 的對應優先，沒有時依值的名稱判斷（`low`／`minimal` 是快速、`medium` 是標準、`high`／`max` 是深度）。
 - **執行中切換設定**：模型與推理強度（`set_session_config`）在下一個回合開始前生效；Permission Policy（`set_permission_policy`）立即生效，從下一個權限請求開始套用。生效時 Runner 送 `run_settings_changed`，Agent 不支援的項目列在 `not_applied`。
 - **換 Agent**（[ADR-0016](adr/0016-agent-switch-handoff.md)）：`switch_agent` 只在回合之間生效（回合中送出時等回合結束），只能換成同一台 Runner 上可以用的 Agent。Run id 與 Worktree 不變，Runner 結束舊的 session，以新的 Agent 開新的 session、依新 Agent 的 Agent Profile 重新套用 session mode，送出交接 prompt（來源 `handoff`）並送 `agent_switched`。用量與費用依 Agent 分段記錄：`agent_switched` 之後的 `usage` 是新的一段從 0 開始的累計值。Child Run 不受影響。
   - 交接 prompt 依序是：Task 的規格與驗收條件、人送出的所有 prompt、Agent 每個回合最後的回覆、目前的計畫、diff 摘要（改了哪些檔案、各增減幾行）、還沒處理的審查留言。規格、驗收條件與審查留言由 Server 放在 `switch_agent` 的 `handoff` 中，其他由 Runner 從 Event 與 Worktree 組出。不請舊的 Agent 寫摘要。
+  - Runner 把交接需要的歷史（交給 Agent 的 prompt、每個回合的 `final_message`、最新的計畫）隨 Run 的 Worktree 紀錄存在狀態目錄，Runner 重新啟動後仍然完整，Worktree 封存時刪除；Run 改派到另一台 Runner 時那台沒有這份歷史（Worktree 也不同）。
+  - 先以新的 Agent 開新的 session，成功後才結束舊的；新的 Agent 啟動失敗時保留舊的，送非 fatal 的 `agent_start_failed`。Gate 等待中切換時立即生效，新的 Agent 帶著交接 prompt 開始回合。
 - **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
 - **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Antigravity（`~/.gemini/antigravity-acp/settings.json`、`~/.gemini/config/mcp_config.json`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
@@ -752,7 +761,7 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
   - Runner 要連的 API origin 取自 `GET /api/health` 回報的 `apiOrigin`；回應沒有這個欄位時，退回 Web UI 的 origin。Desktop 在取得 Pairing token 時決定這個網址，sidecar 重新啟動也沿用同一個網址。
 - **安全設定**：
   - 主視窗啟用 `contextIsolation` 與 `sandbox`，不啟用 `nodeIntegration`。
-  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree、登出前的 `beforeLogout()`、Preview 的內嵌瀏覽器。main 程序只接受來自 Server origin 主 frame 的呼叫。
+  - preload 只暴露最小的 bridge：版本、用編輯器開啟 Worktree、在終端機開啟 Worktree、在檔案總管開啟 Worktree（`revealWorktree`，同樣的路徑限制）、登出前的 `beforeLogout()`、Preview 的內嵌瀏覽器、Agent 重新登入（`loginAgent`，§7）、桌面通知總開關（`getNotificationsEnabled`／`setNotificationsEnabled`）。main 程序只接受來自 Server origin 主 frame 的呼叫。
 - **Preview 的內嵌瀏覽器**（§13）：
   - Web UI 的 Preview 分頁經由 bridge 要求顯示某個 Run 的 Preview，並回報分頁的位置；Desktop 以 WebContentsView 疊在主視窗上。網址列、上一頁、重新整理、DevTools 由 Web UI 顯示，透過 bridge 操作。
   - 開哪個網址由 main 程序自己向 Server 查詢 Run 的 Preview 狀態後決定，Web UI 只給 Run ID：這台 Desktop 的 Local Runner 跑的 Run 開 `localhost:<port>`（只接受 loopback 與 Server 記錄的 port），其他 Run 開 Preview 網址。
