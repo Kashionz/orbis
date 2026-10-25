@@ -1,0 +1,8 @@
+# 登入失敗（agent-relogin）：authenticate 回錯誤。
+description: 登入失敗
+auth:
+  methods: [oauth-personal]
+  error: 使用者取消了登入
+turns:
+  - steps:
+      - message: 已登入

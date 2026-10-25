@@ -1,0 +1,5 @@
+# 推理強度以 runner.toml 的 effort_args 在啟動時套用（dispatch-effort）：回報啟動參數指定的 session mode。
+description: 以啟動參數套用推理強度
+turns:
+  - steps:
+      - echo_session_mode

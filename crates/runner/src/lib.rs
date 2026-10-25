@@ -4,10 +4,12 @@
 pub mod agent;
 pub mod archive;
 pub mod blobs;
+pub mod catalog;
 pub mod config;
 pub mod connection;
 pub mod diff;
 pub mod git;
+pub mod handoff;
 pub mod home;
 pub mod judge;
 pub mod login;

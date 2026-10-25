@@ -15,9 +15,9 @@ use agent_client_protocol::schema::v1::Implementation;
 use agent_client_protocol::schema::v1::{
     AuthenticateRequest, CancelNotification, ContentBlock, InitializeRequest, InitializeResponse,
     LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest, SessionId,
-    SessionModeId, SessionModeState, SessionNotification, SessionUpdate, SetSessionModeRequest,
-    StopReason,
+    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest, SessionConfigOption,
+    SessionId, SessionModeId, SessionModeState, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{self as acp, Agent, ByteStreams, ConnectionTo};
 use anyhow::Context;
@@ -87,6 +87,9 @@ pub struct AcpSession {
     resumed: bool,
     /// 套用修補後的 session mode（見 [`Self::mode`]）。
     mode: Option<String>,
+    /// Agent 最近一次回報的 config option（建立 session、`session/set_config_option` 的回應，
+    /// 或 `config_option_update` 通知），模型目錄與執行中切換設定用（ARCHITECTURE §7）。
+    config_options: Mutex<Vec<SessionConfigOption>>,
     tree: ProcessTree,
     shutdown: Option<oneshot::Sender<()>>,
     driver: tokio::task::JoinHandle<()>,
@@ -300,6 +303,7 @@ impl AcpSession {
             agent_info: None,
             resumed: false,
             mode: None,
+            config_options: Mutex::new(Vec::new()),
             tree,
             shutdown: Some(shutdown_tx),
             driver,
@@ -349,6 +353,7 @@ impl AcpSession {
                     .map_err(AgentError::Acp)?;
                 self.session_id = SessionId::new(id.to_owned());
                 self.resumed = true;
+                self.set_config_options(response.config_options.unwrap_or_default());
                 response.modes
             }
             Some(id) if caps.load_session => {
@@ -364,6 +369,7 @@ impl AcpSession {
                     .map_err(AgentError::Acp)?;
                 self.session_id = SessionId::new(id.to_owned());
                 self.resumed = true;
+                self.set_config_options(response.config_options.unwrap_or_default());
                 response.modes
             }
             _ => {
@@ -378,6 +384,7 @@ impl AcpSession {
                     .await
                     .map_err(AgentError::Acp)?;
                 self.session_id = response.session_id.clone();
+                self.set_config_options(response.config_options.unwrap_or_default());
                 response.modes
             }
         };
@@ -452,6 +459,39 @@ impl AcpSession {
             .await
             .map(|_| ())
             .map_err(AgentError::Acp)
+    }
+
+    /// Agent 最近一次回報的 config option；不支援 config option 的 Agent 為空。
+    pub fn config_options(&self) -> Vec<SessionConfigOption> {
+        self.config_options
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// 換成 Agent 新回報的完整清單（`config_option_update` 通知）。
+    pub fn set_config_options(&self, options: Vec<SessionConfigOption>) {
+        *self
+            .config_options
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = options;
+    }
+
+    /// 以 `session/set_config_option` 把 select 類型的選項 `config_id` 設成 `value`，
+    /// 記下 Agent 回覆的完整清單。
+    pub async fn set_config_option(&self, config_id: &str, value: &str) -> Result<(), AgentError> {
+        let response = self
+            .cx
+            .send_request(SetSessionConfigOptionRequest::new(
+                self.session_id.clone(),
+                config_id.to_owned(),
+                value,
+            ))
+            .block_task()
+            .await
+            .map_err(AgentError::Acp)?;
+        self.set_config_options(response.config_options);
+        Ok(())
     }
 
     /// ACP session ID（Feedback Loop 與重新啟動 Agent 時用來接續）。

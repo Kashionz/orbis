@@ -60,6 +60,11 @@ pub struct Supervisor {
     mcp: Arc<crate::orbis_mcp::hub::McpHub>,
     /// 已經開始探測 Agent 的能力旗標（第一次連上 Server 後才開始）。
     probing: std::sync::atomic::AtomicBool,
+    /// 模型目錄（session 回報的 config option 與登入狀態，ARCHITECTURE §7）。
+    catalog: Arc<crate::catalog::CatalogStore>,
+    /// 上次看到的「由 Runner 代為登入」的登入標記。`<Runner> login` 是另一個程序（例如 Desktop 執行的），
+    /// Heartbeat 時比對，有變化就重送 AgentAvailability。
+    login_seen: Mutex<Option<Vec<(String, bool)>>>,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -78,8 +83,11 @@ impl Supervisor {
         let (frames, frames_rx) = mpsc::unbounded_channel();
         let profiles = Profiles::from_settings(home.settings());
         let mcp = crate::orbis_mcp::hub::McpHub::start(frames.clone(), outbox.clone())?;
+        let catalog = Arc::new(crate::catalog::CatalogStore::new(home.agents_dir()));
         let supervisor = Arc::new_cyclic(|me| Self {
             me: me.clone(),
+            catalog,
+            login_seen: Mutex::new(None),
             worktrees: Arc::new(WorktreeManager::new(home.clone())),
             home,
             outbox,
@@ -191,11 +199,29 @@ impl Supervisor {
 
     pub fn heartbeat(&self) -> Heartbeat {
         self.publish_snapshot();
+        self.check_logins();
         Heartbeat {
             ts: now(),
             active_run_ids: self.active_run_ids(),
             accepting_dispatches: !self.is_paused(),
         }
+    }
+
+    /// 「由 Runner 代為登入」的 Agent 的登入標記有變化（另一個程序執行了 `<Runner> login`）時，
+    /// 重送 AgentAvailability（ARCHITECTURE §7「重新登入」）。
+    fn check_logins(&self) {
+        let now: Vec<(String, bool)> = self
+            .profiles
+            .iter()
+            .filter(|p| p.auth_method.is_some())
+            .map(|p| (p.id.clone(), crate::login::logged_in(&self.home, &p.id)))
+            .collect();
+        let mut seen = lock(&self.login_seen);
+        if seen.as_ref().is_some_and(|before| *before != now) {
+            tracing::info!("Agent 的登入狀態改變，重送 AgentAvailability");
+            self.availability_changed.notify_one();
+        }
+        *seen = Some(now);
     }
 
     async fn detected(&self) -> Vec<(String, agent::Detected)> {
@@ -285,7 +311,7 @@ impl Supervisor {
         let runs = lock(&self.runs);
         let active_by_credential = |label: &str| {
             runs.values()
-                .filter(|h| h.is_active() && h.credential == label)
+                .filter(|h| h.is_active() && h.credential() == label)
                 .count() as u32
         };
         let mut agents = Vec::new();
@@ -316,6 +342,13 @@ impl Supervisor {
                 ),
                 _ => (available, reason),
             };
+            let entry = self.catalog.get(&profile.id);
+            // 由 Runner 代為登入的 Agent 看登入標記；其他看最近一次 session 的結果（還沒跑過時不知道）。
+            let signed_in = if profile.auth_method.is_some() {
+                Some(crate::login::logged_in(&self.home, &profile.id))
+            } else {
+                entry.signed_in
+            };
             agents.push(AgentInfo {
                 id: profile.id.clone(),
                 version: version.or(learned.version),
@@ -323,16 +356,14 @@ impl Supervisor {
                 unavailable_reason: reason,
                 // 啟動時探測的結果；還沒探測過（代管的 adapter 尚未安裝）時，第一次派工後更新。
                 capabilities: learned.capabilities,
-                // TODO(backend, model-catalog, agent-relogin)：模型目錄、顯示資訊、登入狀態與登入方式
-                // 從 Agent Profile 與 session 的 config option 填入。
-                models: Vec::new(),
+                models: crate::catalog::model_infos(profile, &entry),
                 permission_gaps: profile.permission_gaps.clone(),
                 credential: Some(profile.credential.clone()),
-                display_name: profile.id.clone(),
-                vendor: None,
-                cli: None,
-                signed_in: None,
-                login_hint: None,
+                display_name: profile.display_name.clone(),
+                vendor: profile.vendor.map(str::to_owned),
+                cli: profile.cli.map(str::to_owned),
+                signed_in,
+                login_hint: profile.login_hint.clone(),
             });
             if !credentials.iter().any(|c| c.label == profile.credential) {
                 credentials.push(CredentialInfo {
@@ -388,6 +419,7 @@ impl Supervisor {
                         rate_limits: self.rate_limits.clone(),
                         blobs: self.blobs.clone(),
                         mcp: self.mcp.clone(),
+                        catalog: self.catalog.clone(),
                     },
                 );
                 // 父 Run 結束（中止、失敗、完成或 Runner 不再執行它）時，連同 Child Run 一起中止（§9）。
@@ -467,10 +499,21 @@ impl Supervisor {
                 ));
             }
         }
-        let Some(profile) = self.profiles.get(&offer.agent).cloned() else {
+        self.usable_agent(&offer.agent, None).await
+    }
+
+    /// 這台 Runner 現在能不能用 `agent`（派工與換 Agent 共用）：有這個 Agent Profile、偵測為可用、
+    /// 需要時已登入、Credential 沒有在 rate limit 中、沒有超過並行上限。`except` 是換 Agent 的 Run 本身
+    /// （它原本佔用的名額不算）。
+    async fn usable_agent(
+        &self,
+        agent: &str,
+        except: Option<&RunId>,
+    ) -> Result<agent::AgentProfile, (DispatchRejectReason, String)> {
+        let Some(profile) = self.profiles.get(agent).cloned() else {
             return Err((
                 DispatchRejectReason::AgentUnavailable,
-                format!("這台 Runner 沒有 Agent {}", offer.agent),
+                format!("這台 Runner 沒有 Agent {agent}"),
             ));
         };
         let detected = self.detected().await;
@@ -504,7 +547,9 @@ impl Supervisor {
         }
         let active = lock(&self.runs)
             .values()
-            .filter(|h| h.is_active() && h.credential == profile.credential)
+            .filter(|h| {
+                h.is_active() && Some(&h.run_id) != except && h.credential() == profile.credential
+            })
             .count() as u32;
         if active >= profile.max_concurrent_runs {
             return Err((
@@ -516,6 +561,40 @@ impl Supervisor {
             ));
         }
         Ok(profile)
+    }
+
+    /// `switch_agent`：確認這台 Runner 能用新的 Agent 後交給 Run（附上 Agent Profile），不能用時
+    /// 回 `rejected(failed)`（ARCHITECTURE §7）。
+    async fn handle_switch(&self, control: RunControl) {
+        let RunControlAction::SwitchAgent { agent, .. } = &control.action else {
+            return;
+        };
+        let reject = |message: String| {
+            let _ = self
+                .frames
+                .send(RunnerToServer::RunControlResult(RunControlResult {
+                    control_id: control.control_id.clone(),
+                    run_id: control.run_id.clone(),
+                    dispatch_id: control.dispatch_id.clone(),
+                    outcome: RunControlOutcome::Rejected {
+                        reason: RunControlRejectReason::Failed,
+                        message,
+                    },
+                }));
+        };
+        let profile = match self.usable_agent(agent, Some(&control.run_id)).await {
+            Ok(profile) => profile,
+            Err((_, message)) => return reject(message),
+        };
+        let sent = lock(&self.runs).get(&control.run_id).map(|handle| {
+            handle.tx.send(RunInput::Switch {
+                control: control.clone(),
+                profile: Box::new(profile),
+            })
+        });
+        if !matches!(sent, Some(Ok(()))) {
+            reject("Run 已經結束".into());
+        }
     }
 
     /// 中止 `parent` 還在進行中的 Child Run（以 Runner 內部的 RunControl，不回 `run_control_result`）。
@@ -662,6 +741,14 @@ impl Supervisor {
                     dispatch_id: control.dispatch_id.clone(),
                     outcome: RunControlOutcome::Applied,
                 }));
+            return;
+        }
+        // 換 Agent 要先確認這台 Runner 能用新的 Agent（偵測、登入、並行數），在背景做完再交給 Run。
+        if matches!(control.action, RunControlAction::SwitchAgent { .. }) {
+            drop(runs);
+            if let Some(me) = self.me.upgrade() {
+                tokio::spawn(async move { me.handle_switch(control).await });
+            }
             return;
         }
         if handle.tx.send(RunInput::Control(control.clone())).is_err() {

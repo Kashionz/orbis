@@ -1,0 +1,8 @@
+# 登入很慢（agent-relogin 的逾時測試）：authenticate 等 30 秒才回覆。
+description: 登入很慢
+auth:
+  methods: [oauth-personal]
+  delay_ms: 30000
+turns:
+  - steps:
+      - message: 已登入

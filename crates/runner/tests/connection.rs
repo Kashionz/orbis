@@ -400,7 +400,8 @@ async fn validates_dispatch_offers() {
         .control("nope", "d4", "c2", RunControlAction::Cancel)
         .await;
     assert_eq!(unknown["reason"], "unknown_run");
-    let busy = conn
+    // 執行中的 prompt 排進佇列（協定版本 3）；Review Gate 之前不能 push。
+    let queued = conn
         .control(
             "r4",
             "d4",
@@ -411,6 +412,10 @@ async fn validates_dispatch_offers() {
                 delivery: None,
             },
         )
+        .await;
+    assert_eq!(queued["outcome"], "applied", "{queued}");
+    let busy = conn
+        .control("r4", "d4", "c3b", RunControlAction::PushBranch)
         .await;
     assert_eq!(busy["reason"], "invalid_state");
     let cancel = conn

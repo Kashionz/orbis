@@ -12,6 +12,13 @@
 //!
 //! 任何時候收到 cancel：結束整個程序樹，Run 進入 `canceled`（保留 Worktree）。
 //! 每次送出 prompt 前，先比對 Agent 自己的設定檔和 base commit，有差異就先問人。
+//!
+//! 執行中的操作（協定版本 3，ARCHITECTURE §7）：
+//! - 回合中送出的 `prompt` 排進佇列（`interrupt` 另外先 `session/cancel`），回合結束後不進 Gate，
+//!   直接以佇列開始下一個回合；還在佇列中的可以收回。
+//! - `set_session_config` 在下一個回合開始前（Gate 等待中立即）以 config option 套用；
+//!   `set_permission_policy` 立即生效。
+//! - `switch_agent` 在回合之間生效：以新的 Agent 開新的 session，送出交接 prompt（[`crate::handoff`]）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,20 +27,24 @@ use std::time::Duration;
 use agent_client_protocol::schema::v1 as acp;
 use orbis_protocol::availability::AgentCapability;
 use orbis_protocol::control::{
-    RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason, RunControlResult,
+    HandoffContext, RunControl, RunControlAction, RunControlOutcome, RunControlRejectReason,
+    RunControlResult,
 };
 use orbis_protocol::dispatch::DispatchOffer;
-use orbis_protocol::enums::{DelegationMode, GateDecision, GateKind, PromptSource, RunStatus};
+use orbis_protocol::enums::{
+    DelegationMode, Effort, GateDecision, GateKind, PromptDelivery, PromptSource, RunStatus,
+};
 use orbis_protocol::event::{
     ContentBlock, EventKind, PermissionOption, PermissionOptionKind, PermissionPurpose, PlanSource,
-    RunErrorCode, TextBody, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
+    RunErrorCode, RunSettingName, TextBody, ToolCall, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use orbis_protocol::frame::RunnerToServer;
-use orbis_protocol::ids::{PermissionRequestId, RunId, Timestamp};
+use orbis_protocol::ids::{PermissionRequestId, RunControlId, RunId, Timestamp};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::agent::AgentProfile;
 use crate::agent::acp::{AcpSession, AgentError, AgentNotice};
+use crate::catalog::{self, OptionCategory};
 use crate::connection::now;
 use crate::home::RunnerHome;
 use crate::normalize::{self, Normalizer};
@@ -52,6 +63,8 @@ pub const INTERNAL_CONTROL_PREFIX: &str = "runner-internal:";
 
 /// 送出 `session/cancel` 後等 Agent 自己結束回合的時間，超過就直接結束程序樹。
 const CANCEL_GRACE: Duration = Duration::from_secs(10);
+/// 排隊的訊息合併成一個回合送出時，各則之間插入的文字區塊（一個空行）。
+const QUEUED_SEPARATOR: &str = "\n";
 /// rate limit 沒有提供恢復時間時的等待時間。
 const DEFAULT_RATE_LIMIT_WAIT: Duration = Duration::from_secs(60);
 /// 恢復時間已經過了（或很快就到）時，至少等這麼久再繼續。
@@ -96,14 +109,28 @@ pub struct RunContext {
     pub blobs: Arc<crate::blobs::BlobFetcher>,
     /// Orbis MCP 的工具呼叫（ARCHITECTURE §9）。
     pub mcp: Arc<crate::orbis_mcp::hub::McpHub>,
+    /// 模型目錄（session 回報的 config option 與登入狀態，ARCHITECTURE §7）。
+    pub catalog: Arc<crate::catalog::CatalogStore>,
 }
 
 /// 送給 Run 的訊息。
 #[derive(Debug)]
 pub enum RunInput {
     Control(RunControl),
+    /// `switch_agent`：Supervisor 已確認這台 Runner 能用新的 Agent，附上它的 Agent Profile。
+    Switch {
+        control: RunControl,
+        profile: Box<AgentProfile>,
+    },
     /// Runner 要結束：結束 Agent，不再送出 Event。
     Shutdown,
+}
+
+/// Run 目前使用的 Agent 與 Credential（換 Agent 時改變，Supervisor 依此計算並行數）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunIdentity {
+    pub agent: String,
+    pub credential: String,
 }
 
 /// Supervisor 持有的 Run。
@@ -113,8 +140,7 @@ pub struct RunHandle {
     /// Child Run 的父 Run。
     pub parent: Option<RunId>,
     pub dispatch_id: orbis_protocol::ids::DispatchId,
-    pub agent: String,
-    pub credential: String,
+    pub identity: Arc<std::sync::Mutex<RunIdentity>>,
     pub tx: mpsc::UnboundedSender<RunInput>,
     pub status: watch::Receiver<RunStatus>,
     pub task: tokio::task::JoinHandle<()>,
@@ -124,6 +150,15 @@ impl RunHandle {
     pub fn is_active(&self) -> bool {
         !self.status.borrow().is_terminal() && !self.task.is_finished()
     }
+
+    /// 目前使用的 Credential。
+    pub fn credential(&self) -> String {
+        self.identity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .credential
+            .clone()
+    }
 }
 
 /// 啟動一個 Run。呼叫端必須已經送出 DispatchAccept 並開啟 outbox 的暫存。
@@ -131,13 +166,22 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
     let (tx, rx) = mpsc::unbounded_channel();
     let (status_tx, status) = watch::channel(RunStatus::Starting);
     let parent = offer.delegation.as_ref().map(|d| d.parent_run_id.clone());
-    let handle_info = (
-        offer.run_id.clone(),
-        offer.dispatch_id.clone(),
-        offer.agent.clone(),
-        profile.credential.clone(),
-    );
+    let handle_info = (offer.run_id.clone(), offer.dispatch_id.clone());
+    let identity = Arc::new(std::sync::Mutex::new(RunIdentity {
+        agent: offer.agent.clone(),
+        credential: profile.credential.clone(),
+    }));
+    let history = ctx.home.run_history(offer.run_id.as_str());
     let run = Run {
+        identity: identity.clone(),
+        history,
+        queued: std::collections::VecDeque::new(),
+        pending_config: Vec::new(),
+        pending_switch: None,
+        launch_effort: offer.effort,
+        launched_effort: None,
+        current_model: None,
+        current_effort: None,
         redactor: Redactor::new(),
         offer,
         profile,
@@ -169,8 +213,7 @@ pub fn spawn(offer: DispatchOffer, profile: AgentProfile, ctx: RunContext) -> Ru
         parent,
         run_id: handle_info.0,
         dispatch_id: handle_info.1,
-        agent: handle_info.2,
-        credential: handle_info.3,
+        identity,
         tx,
         status,
         task,
@@ -210,11 +253,13 @@ enum Pending {
     },
 }
 
-/// 要送給 Agent 的 prompt（協定的內容區塊）與它的來源（`prompt_submitted` Event 用）。
+/// 要送給 Agent 的 prompt（協定的內容區塊）、它的來源與觸發它的 RunControl（`prompt_submitted` Event 用）。
 #[derive(Debug, Clone)]
 struct Prompt {
     blocks: Vec<ContentBlock>,
     source: PromptSource,
+    /// 觸發它的 RunControl `prompt`；DispatchOffer 的第一個 prompt 與 Runner 自己產生的為 `None`。
+    control_id: Option<RunControlId>,
 }
 
 impl Prompt {
@@ -224,8 +269,54 @@ impl Prompt {
                 text: text.to_owned(),
             }],
             source,
+            control_id: None,
         }
     }
+
+    /// RunControl `prompt` 帶來的 prompt。
+    fn from_control(control: &RunControl, blocks: &[ContentBlock], source: PromptSource) -> Self {
+        Self {
+            blocks: blocks.to_vec(),
+            source,
+            control_id: Some(control.control_id.clone()),
+        }
+    }
+}
+
+/// 等下一個回合開始前套用的模型與推理強度（`set_session_config`）。
+struct PendingConfig {
+    control_id: Option<RunControlId>,
+    model: Option<String>,
+    effort: Option<Effort>,
+}
+
+/// 等回合結束才切換的 Agent（`switch_agent`）。
+struct PendingSwitch {
+    control_id: RunControlId,
+    profile: AgentProfile,
+    model: Option<String>,
+    effort: Option<Effort>,
+    handoff: HandoffContext,
+}
+
+/// 回合進行中的 RunControl 對回合的影響。
+enum TurnEffect {
+    None,
+    /// `cancel`：中止 Run。
+    Cancel,
+    /// `prompt` 的 `interrupt`：中斷這個回合，接著送出佇列。
+    Interrupt,
+}
+
+/// 這個階段的 `prompt` 是否排隊（回合中、等待權限回覆，以及之後一定接著回合的啟動中與 rate limit 等待中）。
+fn queues_prompts(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Starting
+            | RunStatus::Running
+            | RunStatus::AwaitingPermission
+            | RunStatus::RateLimited
+    )
 }
 
 /// Plan Gate 的結果。
@@ -238,6 +329,8 @@ enum PlanDecision {
 /// 一個回合怎麼結束。
 enum TurnEnd {
     Done(acp::StopReason),
+    /// 被 `interrupt` 的 prompt 中斷（Agent 停下來了），接著送出佇列。
+    Interrupted,
     /// 回合中 Agent 的設定檔被改（例如 Claude Code 自己寫入 `.claude/settings.local.json`），
     /// Runner 中止了這個回合，要先問人（issue #52）。
     SettingsChanged,
@@ -288,6 +381,23 @@ struct Run {
     read_only: bool,
     /// Feedback Loop 的新 Run 沒有接續到原本的 session：第一個 prompt 要附上 Task 與目前的變更。
     fresh_continuation: bool,
+    /// 目前的 Agent 與 Credential（和 Supervisor 的 RunHandle 共用）。
+    identity: Arc<std::sync::Mutex<RunIdentity>>,
+    /// 交接 prompt 用的歷史（主 Run 同時存在狀態目錄）。
+    history: crate::handoff::History,
+    /// 排隊中的 prompt（回合結束後依序合併送出）。
+    queued: std::collections::VecDeque<Prompt>,
+    /// 等下一個回合開始前套用的 `set_session_config`。
+    pending_config: Vec<PendingConfig>,
+    /// 等回合結束才切換的 `switch_agent`。
+    pending_switch: Option<PendingSwitch>,
+    /// 下一次啟動 Agent 時以 Agent Profile 的 `effort_args` 套用的推理強度。
+    launch_effort: Option<Effort>,
+    /// 這個 session 啟動時已經以啟動參數套用的推理強度。
+    launched_effort: Option<Effort>,
+    /// 目前已套用的模型與推理強度（Agent 重新啟動、開新 session 時重新套用）。
+    current_model: Option<String>,
+    current_effort: Option<Effort>,
 }
 
 impl Run {
@@ -333,7 +443,7 @@ impl Run {
             while let Some(input) = self.rx.recv().await {
                 match input {
                     RunInput::Shutdown => break,
-                    RunInput::Control(control) => self.reject(
+                    RunInput::Control(control) | RunInput::Switch { control, .. } => self.reject(
                         &control,
                         RunControlRejectReason::InvalidState,
                         "Run 已經結束",
@@ -422,7 +532,10 @@ impl Run {
             self.load_settings_baseline().await;
             self.planning = self.offer.plan_gate;
             self.start_agent(None).await?;
-            return self.enter_plan_mode().await;
+            self.announce_session();
+            self.enter_plan_mode().await?;
+            self.apply_dispatch_config().await;
+            return Ok(());
         }
         // `branch` 模式的 Child Run：從父 Run 當下的 HEAD 開出子 Worktree，設定檔沿用父 Run 的
         // base commit 與信任核准。
@@ -567,6 +680,7 @@ impl Run {
             .and_then(|c| c.session_id.clone());
         let wanted_resume = resume.is_some();
         let resumed = self.start_agent(resume).await?;
+        self.announce_session();
         if self.offer.continuation.is_some() && !resumed {
             // 沒辦法接續原本的 session：開新的 session，第一個 prompt 附上 Task 與目前的變更（§5.2）。
             if wanted_resume {
@@ -578,7 +692,16 @@ impl Run {
             }
             self.fresh_continuation = true;
         }
-        self.enter_plan_mode().await
+        self.enter_plan_mode().await?;
+        self.apply_dispatch_config().await;
+        Ok(())
+    }
+
+    /// 派工時指定的模型與推理強度（ARCHITECTURE §7）：session 建立後以 config option 套用，
+    /// 送 `run_settings_changed`（`control_id = null`）。
+    async fn apply_dispatch_config(&mut self) {
+        let (model, effort) = (self.offer.model.clone(), self.offer.effort);
+        self.apply_config(None, model, effort).await;
     }
 
     /// 主 Run：推動 Task 生命週期的 Run（人派工與 Feedback Loop 的 Run）。Child Run、判定
@@ -805,6 +928,14 @@ impl Run {
         }
         let agents_dir = self.ctx.home.agents_dir();
         let profile = self.profile.clone();
+        // 推理強度要以啟動參數套用（Agent Profile 的 `effort_args`）時，只能在啟動時加上。
+        let effort_args = self.launch_effort.and_then(|effort| {
+            profile
+                .effort_launch_args(effort)
+                .map(|args| (effort, args.to_vec()))
+        });
+        self.launched_effort = effort_args.as_ref().map(|(effort, _)| *effort);
+        let extra_args = effort_args.map(|(_, args)| args).unwrap_or_default();
         let (tx, rx) = mpsc::unbounded_channel();
         let start = async move {
             profile
@@ -815,6 +946,7 @@ impl Run {
             let spec = profile
                 .launch_spec(&agents_dir)
                 .map_err(AgentError::Start)?
+                .args(extra_args.iter())
                 .envs(wt.env())
                 .unattended_git();
             AcpSession::start(&profile, spec, &wt.path, tx, resume.as_deref(), mcp_servers).await
@@ -825,6 +957,9 @@ impl Run {
                 if matches!(error, AgentError::AuthRequired(_)) {
                     // 登入失效：之後回報這個 Agent 無法使用，直到再次登入。
                     crate::login::forget(&self.ctx.home, &self.profile.id);
+                    if self.profile.auth_method.is_none() {
+                        self.ctx.catalog.record_signed_in(&self.profile.id, false);
+                    }
                     self.ctx.availability_changed.notify_one();
                 }
                 return Err(Stop::failed(
@@ -841,14 +976,20 @@ impl Run {
             "Agent 已啟動"
         );
         let resumed = session.resumed();
-        self.emit(EventKind::AgentSession {
-            session_id: session.session_id().to_owned(),
-        });
         let learned = crate::agent::Learned {
             capabilities: session.capabilities().to_vec(),
             version: session.agent_info().map(|(_, version)| version),
         };
-        if self.ctx.learned.record(&self.profile.id, learned) {
+        let mut changed = self.ctx.learned.record(&self.profile.id, learned);
+        // 模型目錄以這個 session 回報的 config option 為準；Agent 自己處理登入時，建立成功就是已登入。
+        changed |= self.ctx.catalog.record_session(
+            &self.profile.id,
+            &catalog::select_options(&session.config_options()),
+        );
+        if self.profile.auth_method.is_none() {
+            changed |= self.ctx.catalog.record_signed_in(&self.profile.id, true);
+        }
+        if changed {
             self.ctx.availability_changed.notify_one();
         }
         self.session = Some(session);
@@ -859,6 +1000,15 @@ impl Run {
         }
         self.notices = Some(rx);
         Ok(resumed)
+    }
+
+    /// 回報目前 session 的 id（`agent_session`，Feedback Loop 以此接續）。
+    fn announce_session(&self) {
+        if let Some(session) = &self.session {
+            self.emit(EventKind::AgentSession {
+                session_id: session.session_id().to_owned(),
+            });
+        }
     }
 
     /// 注入到 session 的 Orbis MCP server（ARCHITECTURE §9）。第一次呼叫時在 hub 登記這個 Run。
@@ -917,11 +1067,17 @@ impl Run {
         let changed = self.changed_agent_settings();
         self.restore_agent_settings(&changed)?;
         tracing::info!(run_id = %self.run_id(), ?resume, "還原設定檔後重新啟動 Agent");
-        if self.start_agent(resume).await? {
+        self.launch_effort = self.current_effort.or(self.launch_effort);
+        let resumed = self.start_agent(resume).await?;
+        self.announce_session();
+        if resumed {
             self.enter_plan_mode().await?;
             return Ok(Prompt::text(SETTINGS_RESUME_PROMPT, self.last_source));
         }
         self.enter_plan_mode().await?;
+        // 新的 session 回到 Agent 的預設值：重新套用目前的模型與推理強度。
+        let (model, effort) = (self.current_model.clone(), self.current_effort);
+        self.apply_config(None, model, effort).await;
         let mut prompt = self.first_prompt().await;
         prompt.blocks.push(ContentBlock::Text {
             text: SETTINGS_RESTART_NOTE.to_owned(),
@@ -954,6 +1110,7 @@ impl Run {
         Prompt {
             blocks,
             source: self.offer.prompt_source.unwrap_or(PromptSource::User),
+            control_id: None,
         }
     }
 
@@ -1063,7 +1220,18 @@ impl Run {
                             self.applied(&control);
                             return Err(Stop::Canceled);
                         }
-                        self.reject(&control, RunControlRejectReason::InvalidState, "Run 還在啟動中");
+                        let status = *self.status_tx.borrow();
+                        if let Some(control) = self.on_common_control(control, queues_prompts(status)) {
+                            self.reject(&control, RunControlRejectReason::InvalidState, busy_message(status));
+                        }
+                    }
+                    Some(RunInput::Switch { control, profile }) => {
+                        let status = *self.status_tx.borrow();
+                        if queues_prompts(status) {
+                            self.on_switch(control, *profile);
+                        } else {
+                            self.reject(&control, RunControlRejectReason::InvalidState, busy_message(status));
+                        }
                     }
                 },
             }
@@ -1095,6 +1263,21 @@ impl Run {
             let control = match input {
                 RunInput::Shutdown => return Err(Stop::Shutdown),
                 RunInput::Control(control) => control,
+                RunInput::Switch { control, profile } => {
+                    if queues_prompts(previous) {
+                        self.on_switch(control, *profile);
+                    } else {
+                        self.reject(
+                            &control,
+                            RunControlRejectReason::InvalidState,
+                            "Run 正在等待權限請求的回覆",
+                        );
+                    }
+                    continue;
+                }
+            };
+            let Some(control) = self.on_common_control(control, queues_prompts(previous)) else {
+                continue;
             };
             match &control.action {
                 RunControlAction::PermissionResponse {
@@ -1113,7 +1296,7 @@ impl Run {
                     self.emit(EventKind::PermissionResolved {
                         request_id: request_id.clone(),
                         selected_option_id: Some(option_id.clone()),
-                        control_id: None,
+                        control_id: Some(control.control_id.clone()),
                     });
                     self.set_status(previous, None, None);
                     return Ok(option_id.clone());
@@ -1343,34 +1526,50 @@ impl Run {
     // ── 執行與 Review ──────────────────────────────────────────────────────────
 
     async fn work(&mut self) -> Result<(), Stop> {
-        let mut prompt = self.first_prompt().await;
+        let mut prompts = vec![self.first_prompt().await];
         loop {
-            match self.turn(prompt).await? {
+            let (mut next, ended) = match self.turn(prompts).await? {
                 TurnEnd::RateLimited { resets_at, message } => {
                     self.wait_rate_limit(resets_at, message).await?;
-                    prompt = Prompt::text(RESUME_PROMPT, self.last_source);
+                    (vec![Prompt::text(RESUME_PROMPT, self.last_source)], None)
                 }
                 TurnEnd::SettingsChanged => {
                     let restore = self.check_agent_settings(SettingsCheck::MidSession).await?;
-                    prompt = if restore {
+                    let prompt = if restore {
                         // Agent 可能已經把新的設定載入記憶體（例如 Claude Code 的「永遠允許」同時
                         // 更新 session 中的規則），只還原檔案不夠：重新啟動 Agent 讓它重新讀取。
                         self.restart_agent().await?
                     } else {
                         Prompt::text(SETTINGS_RESUME_PROMPT, self.last_source)
                     };
+                    (vec![prompt], None)
                 }
-                TurnEnd::Done(_) if self.planning => {
+                TurnEnd::Done(reason) => (Vec::new(), Some(reason)),
+                TurnEnd::Interrupted => (Vec::new(), Some(acp::StopReason::Cancelled)),
+            };
+            // 回合之間：先換 Agent（交接 prompt 取代「請繼續」之類的補送），再接上排隊的訊息。
+            // 有要送的就不進 Gate，直接開始下一個回合。
+            if let Some(handoff) = self.switch_pending_agent().await? {
+                next = vec![handoff];
+            }
+            next.extend(self.queued.drain(..));
+            if !next.is_empty() {
+                prompts = next;
+                continue;
+            }
+            let reason = ended.expect("沒有要送的 prompt 時回合已經結束");
+            match reason {
+                _ if self.planning => {
                     self.propose_plan();
-                    prompt = match self.await_plan_gate().await? {
+                    prompts = vec![match self.await_plan_gate().await? {
                         PlanDecision::Approved => {
                             self.leave_plan_mode().await?;
                             Prompt::text(PLAN_APPROVED_PROMPT, PromptSource::PlanGate)
                         }
                         PlanDecision::Revise(next) => next,
-                    };
+                    }];
                 }
-                TurnEnd::Done(reason) if !self.is_primary() => {
+                reason if !self.is_primary() => {
                     if !self.read_only {
                         self.send_run_diff().await;
                     }
@@ -1378,7 +1577,7 @@ impl Run {
                     self.ctx.outbox.finish_run(self.run_id());
                     return Ok(());
                 }
-                TurnEnd::Done(reason) => {
+                reason => {
                     self.send_run_diff().await;
                     let mut message = stop_reason_text(reason);
                     // merge_child 的衝突在回合結束時還沒解決：停下來等人處理（§9）。
@@ -1397,7 +1596,7 @@ impl Run {
                         Some(message),
                     );
                     match self.await_review().await? {
-                        Some(next) => prompt = next,
+                        Some(next) => prompts = vec![next],
                         None => return self.await_push().await,
                     }
                 }
@@ -1426,10 +1625,11 @@ impl Run {
             }
             None => (self.turn_text.clone(), PlanSource::PromptFallback),
         };
+        let text = self.redactor.redact(&text);
+        self.history.plan_proposed = Some(text.clone());
+        self.save_history();
         self.emit(EventKind::PlanProposed {
-            body: TextBody::Inline {
-                text: self.redactor.redact(&text),
-            },
+            body: TextBody::Inline { text },
             source,
         });
         self.set_status(RunStatus::AwaitingGate, Some(GateKind::Plan), None);
@@ -1441,6 +1641,18 @@ impl Run {
             let control = match self.rx.recv().await {
                 None | Some(RunInput::Shutdown) => return Err(Stop::Shutdown),
                 Some(RunInput::Control(control)) => control,
+                // Gate 等待中（閒置）立即換：交接 prompt 讓新的 Agent 重新產出 plan。
+                Some(RunInput::Switch { control, profile }) => {
+                    self.on_switch(control, *profile);
+                    if let Some(handoff) = self.switch_pending_agent().await? {
+                        return Ok(PlanDecision::Revise(handoff));
+                    }
+                    continue;
+                }
+            };
+            let Some(control) = self.on_common_control(control, false) else {
+                self.apply_pending_config().await;
+                continue;
             };
             match &control.action {
                 RunControlAction::Cancel => {
@@ -1463,10 +1675,11 @@ impl Run {
                 }
                 RunControlAction::Prompt { prompt, source, .. } => {
                     self.applied(&control);
-                    return Ok(PlanDecision::Revise(Prompt {
-                        blocks: prompt.clone(),
-                        source: source.unwrap_or(PromptSource::PlanGate),
-                    }));
+                    return Ok(PlanDecision::Revise(Prompt::from_control(
+                        &control,
+                        prompt,
+                        source.unwrap_or(PromptSource::PlanGate),
+                    )));
                 }
                 RunControlAction::PermissionResponse { .. } => self.reject(
                     &control,
@@ -1483,18 +1696,34 @@ impl Run {
     }
 
     /// 送出 prompt，處理期間的 update、權限請求與 RunControl，直到回合結束。
-    async fn turn(&mut self, prompt: Prompt) -> Result<TurnEnd, Stop> {
+    ///
+    /// 多則 prompt（排隊的訊息）依序合併成一則送出，中間以一個空行的文字區塊分隔；每則各送一筆
+    /// `prompt_submitted`（各自的來源與 `control_id`）。
+    async fn turn(&mut self, prompts: Vec<Prompt>) -> Result<TurnEnd, Stop> {
         self.check_agent_settings(SettingsCheck::BeforePrompt)
             .await?;
+        // 執行中切換的模型與推理強度在下一個回合開始前生效。
+        self.apply_pending_config().await;
         self.rate_limit_hint = None;
         self.turn_text.clear();
-        self.last_source = prompt.source;
-        self.emit(EventKind::PromptSubmitted {
-            prompt: prompt.blocks.clone(),
-            source: prompt.source,
-            control_id: None,
-        });
-        let prompt = self.prompt_blocks(&prompt.blocks).await;
+        let mut blocks = Vec::new();
+        for (i, prompt) in prompts.iter().enumerate() {
+            self.last_source = prompt.source;
+            self.emit(EventKind::PromptSubmitted {
+                prompt: prompt.blocks.clone(),
+                source: prompt.source,
+                control_id: prompt.control_id.clone(),
+            });
+            self.history.record_prompt(&prompt.blocks, prompt.source);
+            if i > 0 {
+                blocks.push(ContentBlock::Text {
+                    text: QUEUED_SEPARATOR.to_owned(),
+                });
+            }
+            blocks.extend(prompt.blocks.iter().cloned());
+        }
+        self.save_history();
+        let prompt = self.prompt_blocks(&blocks).await;
         self.set_status(RunStatus::Running, None, None);
         let session = self.session.as_ref().expect("Agent 已啟動");
         let mut closed = session.closed();
@@ -1503,6 +1732,9 @@ impl Run {
         let mut notices = self.notices.take().expect("Agent 已啟動");
         let mut canceling: Option<tokio::time::Instant> = None;
         let mut settings_changed = false;
+        // `cancel`：中止 Run。`interrupt`：中斷回合，接著送出佇列。
+        let mut canceled = false;
+        let mut interrupting = false;
         let result = loop {
             let deadline = canceling
                 .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86400 * 365));
@@ -1523,12 +1755,19 @@ impl Run {
                         return Err(Stop::Shutdown);
                     }
                     Some(RunInput::Control(control)) => {
-                        if self.on_control_while_running(control) && canceling.is_none() {
+                        let effect = self.on_control_while_running(control);
+                        match effect {
+                            TurnEffect::None => {}
+                            TurnEffect::Cancel => canceled = true,
+                            TurnEffect::Interrupt => interrupting = true,
+                        }
+                        if !matches!(effect, TurnEffect::None) && canceling.is_none() {
                             self.session.as_ref().expect("Agent 已啟動").cancel();
                             self.cancel_pending();
                             canceling = Some(tokio::time::Instant::now() + CANCEL_GRACE);
                         }
                     }
+                    Some(RunInput::Switch { control, profile }) => self.on_switch(control, *profile),
                 },
                 () = wait_closed(&mut closed) => {
                     // Agent 程序結束：回合不會再有回應。
@@ -1537,7 +1776,7 @@ impl Run {
                         break result;
                     }
                     self.notices = Some(notices);
-                    if canceling.is_some() && !settings_changed {
+                    if canceled && !settings_changed {
                         return Err(Stop::Canceled);
                     }
                     let tail = self.session.as_ref().map(AcpSession::stderr_tail).unwrap_or_default();
@@ -1550,6 +1789,12 @@ impl Run {
                         return Err(Stop::failed(
                             RunErrorCode::AgentError,
                             "Agent 的設定檔被修改後，Agent 沒有在寬限期內停下來",
+                        ));
+                    }
+                    if !canceled {
+                        return Err(Stop::failed(
+                            RunErrorCode::AgentError,
+                            "中斷回合後 Agent 沒有在寬限期內停下來",
                         ));
                     }
                     return Err(Stop::Canceled);
@@ -1565,7 +1810,7 @@ impl Run {
         if settings_changed {
             return Ok(TurnEnd::SettingsChanged);
         }
-        if canceling.is_some() {
+        if canceled {
             return Err(Stop::Canceled);
         }
         // Claude Code 以 rate limit 事件回報額度用完，回合本身可能照常結束。
@@ -1580,18 +1825,25 @@ impl Run {
         }
         match result {
             Ok(reason) => {
+                let text = self.redactor.redact(&self.turn_text);
+                self.history.record_reply(&text);
+                self.save_history();
                 self.emit(EventKind::FinalMessage {
-                    text: TextBody::Inline {
-                        text: self.redactor.redact(&self.turn_text),
-                    },
+                    text: TextBody::Inline { text },
                 });
-                Ok(TurnEnd::Done(reason))
+                Ok(if interrupting {
+                    TurnEnd::Interrupted
+                } else {
+                    TurnEnd::Done(reason)
+                })
             }
             Err(error) => match crate::rate_limit::from_error(&error) {
                 Some(limit) => Ok(TurnEnd::RateLimited {
                     resets_at: limit.resets_at,
                     message: error.message.clone(),
                 }),
+                // 中斷時 Agent 以錯誤結束回合也算停下來了。
+                None if interrupting => Ok(TurnEnd::Interrupted),
                 None => Err(Stop::failed(
                     RunErrorCode::AgentError,
                     format!(
@@ -1604,12 +1856,28 @@ impl Run {
         }
     }
 
-    /// 回合進行中的 RunControl。回傳 `true` 表示要中止回合。
-    fn on_control_while_running(&mut self, control: RunControl) -> bool {
+    /// 回合進行中的 RunControl。
+    fn on_control_while_running(&mut self, control: RunControl) -> TurnEffect {
+        if let RunControlAction::Prompt {
+            prompt,
+            source,
+            delivery: Some(PromptDelivery::Interrupt),
+        } = &control.action
+        {
+            // 接在已排隊的訊息之後，中斷這個回合後一起送出。
+            let queued =
+                Prompt::from_control(&control, prompt, source.unwrap_or(PromptSource::User));
+            self.queued.push_back(queued);
+            self.applied(&control);
+            return TurnEffect::Interrupt;
+        }
+        let Some(control) = self.on_common_control(control, true) else {
+            return TurnEffect::None;
+        };
         match &control.action {
             RunControlAction::Cancel => {
                 self.applied(&control);
-                true
+                TurnEffect::Cancel
             }
             RunControlAction::PermissionResponse {
                 request_id,
@@ -1621,7 +1889,7 @@ impl Run {
                         RunControlRejectReason::UnknownPermissionRequest,
                         "沒有這個權限請求，或請求已經結束",
                     );
-                    return false;
+                    return TurnEffect::None;
                 };
                 if !options.iter().any(|(id, _)| id == option_id) {
                     self.reject(
@@ -1629,7 +1897,7 @@ impl Run {
                         RunControlRejectReason::UnknownPermissionRequest,
                         "option_id 不在選項中",
                     );
-                    return false;
+                    return TurnEffect::None;
                 }
                 let Some(Pending::Agent {
                     reply,
@@ -1658,12 +1926,12 @@ impl Run {
                 self.emit(EventKind::PermissionResolved {
                     request_id: request_id.clone(),
                     selected_option_id: Some(option_id.clone()),
-                    control_id: None,
+                    control_id: Some(control.control_id.clone()),
                 });
                 if self.pending.is_empty() {
                     self.set_status(RunStatus::Running, None, None);
                 }
-                false
+                TurnEffect::None
             }
             _ => {
                 self.reject(
@@ -1671,7 +1939,7 @@ impl Run {
                     RunControlRejectReason::InvalidState,
                     "Run 正在執行，請等回合結束",
                 );
-                false
+                TurnEffect::None
             }
         }
     }
@@ -1716,6 +1984,18 @@ impl Run {
                 {
                     self.rate_limit_hint = Some(limit);
                 }
+                // Agent 主動更新 config option（例如自己換了模型）：模型目錄以最新的為準。
+                if let acp::SessionUpdate::ConfigOptionUpdate(changed) = &update
+                    && let Some(session) = &self.session
+                {
+                    session.set_config_options(changed.config_options.clone());
+                    if self.ctx.catalog.record_session(
+                        &self.profile.id,
+                        &catalog::select_options(&changed.config_options),
+                    ) {
+                        self.ctx.availability_changed.notify_one();
+                    }
+                }
                 let finished = tool_call_finished(&update);
                 if let Some(id) = &finished {
                     self.accept_approved_settings_write(id);
@@ -1726,6 +2006,10 @@ impl Run {
                     .expect("Worktree 已經建立")
                     .session_update(update);
                 for event in events {
+                    if let EventKind::Plan { entries } = &event {
+                        self.history.record_plan_entries(entries);
+                        self.save_history();
+                    }
                     self.emit(event);
                 }
                 finished.is_some() && !self.changed_agent_settings().is_empty()
@@ -1998,6 +2282,18 @@ impl Run {
             let control = match self.rx.recv().await {
                 None | Some(RunInput::Shutdown) => return Err(Stop::Shutdown),
                 Some(RunInput::Control(control)) => control,
+                // Gate 等待中（閒置）立即換：新的 Agent 帶著交接 prompt 繼續工作。
+                Some(RunInput::Switch { control, profile }) => {
+                    self.on_switch(control, *profile);
+                    if let Some(handoff) = self.switch_pending_agent().await? {
+                        return Ok(Some(handoff));
+                    }
+                    continue;
+                }
+            };
+            let Some(control) = self.on_common_control(control, false) else {
+                self.apply_pending_config().await;
+                continue;
             };
             match &control.action {
                 RunControlAction::Cancel => {
@@ -2023,10 +2319,11 @@ impl Run {
                 }
                 RunControlAction::Prompt { prompt, source, .. } => {
                     self.applied(&control);
-                    return Ok(Some(Prompt {
-                        blocks: prompt.clone(),
-                        source: source.unwrap_or(PromptSource::ReviewGate),
-                    }));
+                    return Ok(Some(Prompt::from_control(
+                        &control,
+                        prompt,
+                        source.unwrap_or(PromptSource::ReviewGate),
+                    )));
                 }
                 RunControlAction::Verify(request) => {
                     self.applied(&control);
@@ -2057,17 +2354,377 @@ impl Run {
                     RunControlRejectReason::InvalidState,
                     "這個動作不經過 Run 處理",
                 ),
-                // TODO(backend, run-prompt, run-settings, agent-switch, local-repo)：協定 v3 的新動作，實作之前一律拒絕。
-                RunControlAction::WithdrawPrompt { .. }
-                | RunControlAction::SetSessionConfig { .. }
-                | RunControlAction::SetPermissionPolicy { .. }
-                | RunControlAction::SwitchAgent { .. }
-                | RunControlAction::MergeLocal { .. } => self.reject(
+                RunControlAction::MergeLocal { .. } => self.reject(
                     &control,
                     RunControlRejectReason::InvalidState,
-                    "這個版本的 Runner 還不支援這個動作",
+                    "Review Gate 核准後才能合併",
+                ),
+                // `switch_agent` 由 Supervisor 轉成 RunInput::Switch；其他由 on_common_control 處理。
+                RunControlAction::SwitchAgent { .. }
+                | RunControlAction::WithdrawPrompt { .. }
+                | RunControlAction::SetSessionConfig { .. }
+                | RunControlAction::SetPermissionPolicy { .. } => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "Run 正在等待 Review Gate",
                 ),
             }
+        }
+    }
+
+    // ── 執行中的操作（協定版本 3）───────────────────────────────────────────────
+
+    /// 不論 Run 在哪個階段都一樣處理的 RunControl。處理完回傳 `None`；呼叫端要自己處理的原樣回傳。
+    /// `queue` 為 `true` 時 `prompt` 排進佇列（回合中、等待權限回覆、啟動中、rate limit 等待中）。
+    fn on_common_control(&mut self, control: RunControl, queue: bool) -> Option<RunControl> {
+        match &control.action {
+            RunControlAction::Prompt { prompt, source, .. } if queue => {
+                // 不在回合中時沒有回合可以中斷：`interrupt` 也只是排隊，之後的回合一起送出。
+                let queued =
+                    Prompt::from_control(&control, prompt, source.unwrap_or(PromptSource::User));
+                self.emit(EventKind::PromptQueued {
+                    control_id: control.control_id.clone(),
+                    prompt: queued.blocks.clone(),
+                });
+                self.queued.push_back(queued);
+                self.applied(&control);
+                None
+            }
+            RunControlAction::WithdrawPrompt { prompt_control_id } => {
+                let position = self
+                    .queued
+                    .iter()
+                    .position(|q| q.control_id.as_ref() == Some(prompt_control_id));
+                match position {
+                    Some(index) => {
+                        self.queued.remove(index);
+                        self.applied(&control);
+                        self.emit(EventKind::PromptWithdrawn {
+                            control_id: prompt_control_id.clone(),
+                        });
+                    }
+                    None => self.reject(
+                        &control,
+                        RunControlRejectReason::InvalidState,
+                        "這則訊息已經交給 Agent，或不在佇列中",
+                    ),
+                }
+                None
+            }
+            RunControlAction::SetPermissionPolicy { policy } => {
+                // 立即生效：之後的權限請求與 Verification 指令都以新的策略判斷。
+                self.offer.permission_policy = *policy;
+                self.applied(&control);
+                self.emit(EventKind::RunSettingsChanged {
+                    control_id: Some(control.control_id.clone()),
+                    model: None,
+                    effort: None,
+                    permission_policy: Some(*policy),
+                    not_applied: Vec::new(),
+                    message: None,
+                });
+                None
+            }
+            RunControlAction::SetSessionConfig { model, effort } => {
+                if model.is_none() && effort.is_none() {
+                    self.reject(
+                        &control,
+                        RunControlRejectReason::InvalidState,
+                        "沒有要切換的模型或推理強度",
+                    );
+                    return None;
+                }
+                self.pending_config.push(PendingConfig {
+                    control_id: Some(control.control_id.clone()),
+                    model: model.clone(),
+                    effort: *effort,
+                });
+                self.applied(&control);
+                None
+            }
+            _ => Some(control),
+        }
+    }
+
+    /// `switch_agent`（Supervisor 已確認這台 Runner 可以用這個 Agent）：記下，回合之間才切換。
+    fn on_switch(&mut self, control: RunControl, profile: AgentProfile) {
+        let RunControlAction::SwitchAgent {
+            model,
+            effort,
+            handoff,
+            ..
+        } = &control.action
+        else {
+            self.reject(
+                &control,
+                RunControlRejectReason::InvalidState,
+                "不是 switch_agent",
+            );
+            return;
+        };
+        self.pending_switch = Some(PendingSwitch {
+            control_id: control.control_id.clone(),
+            profile,
+            model: model.clone(),
+            effort: *effort,
+            handoff: (**handoff).clone(),
+        });
+        self.applied(&control);
+    }
+
+    /// 套用等待中的 `set_session_config`（還沒有 session 時留到 session 建立之後）。
+    async fn apply_pending_config(&mut self) {
+        if self.session.is_none() {
+            return;
+        }
+        for pending in std::mem::take(&mut self.pending_config) {
+            self.apply_config(pending.control_id, pending.model, pending.effort)
+                .await;
+        }
+    }
+
+    /// 以 ACP `session/set_config_option` 套用模型與推理強度，送 `run_settings_changed`。
+    /// Agent 沒有對應的選項、值不在清單中或回報錯誤的項目列在 `not_applied`。兩者都沒有值時不做任何事。
+    async fn apply_config(
+        &mut self,
+        control_id: Option<RunControlId>,
+        model: Option<String>,
+        effort: Option<Effort>,
+    ) {
+        if model.is_none() && effort.is_none() {
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let options = catalog::select_options(&session.config_options());
+        let mut not_applied = Vec::new();
+        let mut reasons = Vec::new();
+        let mut applied_model = None;
+        let mut applied_effort = None;
+        if let Some(model) = model {
+            match catalog::option_of(&options, OptionCategory::Model) {
+                Some(option) if option.values.iter().any(|v| v.id == model) => {
+                    match session.set_config_option(&option.id, &model).await {
+                        Ok(()) => applied_model = Some(model),
+                        Err(e) => {
+                            not_applied.push(RunSettingName::Model);
+                            reasons.push(format!("無法切換到模型 {model}：{e}"));
+                        }
+                    }
+                }
+                Some(_) => {
+                    not_applied.push(RunSettingName::Model);
+                    reasons.push(format!("{} 沒有提供模型 {model}", self.profile.id));
+                }
+                None => {
+                    not_applied.push(RunSettingName::Model);
+                    reasons.push(format!(
+                        "{} 沒有提供選擇模型的 config option",
+                        self.profile.id
+                    ));
+                }
+            }
+        }
+        if let Some(effort) = effort {
+            let thought = catalog::option_of(&options, OptionCategory::ThoughtLevel);
+            let value = thought.and_then(|t| catalog::effort_value(&self.profile, t, effort));
+            match (thought, value) {
+                // 這個 session 啟動時已經以啟動參數（effort_args）套用了。
+                _ if self.launched_effort == Some(effort) => applied_effort = Some(effort),
+                (Some(option), Some(value)) => {
+                    match session.set_config_option(&option.id, &value).await {
+                        Ok(()) => applied_effort = Some(effort),
+                        Err(e) => {
+                            not_applied.push(RunSettingName::Effort);
+                            reasons.push(format!("無法切換推理強度：{e}"));
+                        }
+                    }
+                }
+                (Some(_), None) => {
+                    not_applied.push(RunSettingName::Effort);
+                    reasons.push(format!(
+                        "{} 的推理強度沒有對應「{}」的值",
+                        self.profile.id,
+                        effort.as_str()
+                    ));
+                }
+                (None, _) => {
+                    not_applied.push(RunSettingName::Effort);
+                    reasons.push(format!(
+                        "{} 沒有提供推理強度的 config option",
+                        self.profile.id
+                    ));
+                }
+            }
+        }
+        if applied_model.is_some() || applied_effort.is_some() {
+            let options = catalog::select_options(&session.config_options());
+            if self.ctx.catalog.record_session(&self.profile.id, &options) {
+                self.ctx.availability_changed.notify_one();
+            }
+        }
+        if applied_model.is_some() {
+            self.current_model.clone_from(&applied_model);
+        }
+        if applied_effort.is_some() {
+            self.current_effort = applied_effort;
+        }
+        let message = (!reasons.is_empty()).then(|| self.redactor.redact(&reasons.join("；")));
+        self.emit(EventKind::RunSettingsChanged {
+            control_id,
+            model: applied_model,
+            effort: applied_effort,
+            permission_policy: None,
+            not_applied,
+            message,
+        });
+    }
+
+    /// 回合之間執行等待中的 `switch_agent`（ARCHITECTURE §7、ADR-0016）：以新的 Agent 開新的 session，
+    /// 成功後才結束舊的 session，回傳交接 prompt。新的 Agent 啟動失敗時保留舊的，送非 fatal 的錯誤。
+    async fn switch_pending_agent(&mut self) -> Result<Option<Prompt>, Stop> {
+        let Some(switch) = self.pending_switch.take() else {
+            return Ok(None);
+        };
+        let from = self.profile.id.clone();
+        let to = switch.profile.id.clone();
+        tracing::info!(run_id = %self.run_id(), %from, %to, "換 Agent");
+        let old_session = self.session.take();
+        let old_notices = self.notices.take();
+        let old_profile = std::mem::replace(&mut self.profile, switch.profile.clone());
+        let old_baseline = std::mem::take(&mut self.settings_baseline);
+        let old_launched = self.launched_effort;
+        self.launch_effort = switch.effort;
+        // 新的 Agent 有自己的受保護設定檔：以 base commit 為基準重新比對，有差異先問人。
+        self.load_settings_baseline().await;
+        let started = match self.check_agent_settings(SettingsCheck::BeforePrompt).await {
+            Ok(_) => self.start_agent(None).await,
+            Err(stop) => Err(stop),
+        };
+        match started {
+            Ok(_) => {}
+            Err(Stop::Failed { message, .. }) => {
+                self.session = old_session;
+                self.notices = old_notices;
+                self.profile = old_profile;
+                self.settings_baseline = old_baseline;
+                self.launched_effort = old_launched;
+                self.emit(EventKind::Error {
+                    code: RunErrorCode::AgentStartFailed,
+                    message: self
+                        .redactor
+                        .redact(&format!("無法換成 {to}，繼續使用 {from}：{message}")),
+                    fatal: false,
+                });
+                return Ok(None);
+            }
+            Err(other) => {
+                // 中止或 Runner 結束：舊的 session 交回去，由 main 一起結束。
+                if self.session.is_none() {
+                    self.session = old_session;
+                } else if let Some(old) = old_session {
+                    old.shutdown().await;
+                }
+                return Err(other);
+            }
+        }
+        if let Some(old) = old_session {
+            old.shutdown().await;
+        }
+        self.offer.agent = to.clone();
+        {
+            let mut identity = self
+                .identity
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            identity.agent = to.clone();
+            identity.credential = self.profile.credential.clone();
+        }
+        self.ctx.availability_changed.notify_one();
+        self.emit(EventKind::AgentSwitched {
+            from: from.clone(),
+            to,
+            model: switch.model.clone(),
+            control_id: Some(switch.control_id.clone()),
+        });
+        self.announce_session();
+        self.current_model = None;
+        self.current_effort = None;
+        self.enter_plan_mode().await?;
+        self.apply_config(Some(switch.control_id.clone()), switch.model, switch.effort)
+            .await;
+        let spec = match &switch.handoff.task_spec {
+            TextBody::Inline { text } => text.clone(),
+            TextBody::Blob(blob) => match self.ctx.blobs.fetch(blob).await {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(e) => format!("（無法下載 Task 的規格：{e}）"),
+            },
+        };
+        let changes = self.changed_files().await;
+        let text = crate::handoff::prompt(&from, &switch.handoff, &spec, &self.history, &changes);
+        Ok(Some(Prompt::text(
+            &self.redactor.redact(&text),
+            PromptSource::Handoff,
+        )))
+    }
+
+    /// 交接 prompt 的 diff 摘要：相對 base commit 的檔案與增減行數，加上還沒加入 git 的新檔案；
+    /// 只在本機使用的檔案（`copy`、`shared_dirs`）不列。
+    async fn changed_files(&self) -> Vec<crate::handoff::ChangedFile> {
+        let wt = self.wt();
+        let git = wt.git();
+        let mut files = crate::handoff::parse_numstat(
+            &git.run([
+                "-c",
+                "core.quotepath=false",
+                "diff",
+                "--numstat",
+                &wt.base_commit,
+            ])
+            .await
+            .unwrap_or_default(),
+        );
+        let untracked = git
+            .run(["ls-files", "--others", "--exclude-standard", "-z"])
+            .await
+            .unwrap_or_default();
+        for path in untracked.split('\0').filter(|p| !p.is_empty()) {
+            let lines = std::fs::read(wt.path.join(path)).ok().and_then(|bytes| {
+                (!bytes.contains(&0)).then(|| {
+                    let count = bytes.iter().filter(|b| **b == b'\n').count() as u64;
+                    let tail = u64::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
+                    (count + tail, 0)
+                })
+            });
+            files.push(crate::handoff::ChangedFile {
+                path: path.to_owned(),
+                lines,
+                untracked: true,
+            });
+        }
+        let local_only = wt.local_only_paths();
+        files.retain(|f| {
+            !local_only.iter().any(|p| {
+                let p = p.trim_end_matches('/');
+                f.path == p || f.path.starts_with(&format!("{p}/"))
+            })
+        });
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        files
+    }
+
+    /// 主 Run 的歷史存到狀態目錄（Runner 重新啟動後交接 prompt 仍然完整）。
+    fn save_history(&self) {
+        if !self.is_primary() {
+            return;
+        }
+        if let Err(e) = self
+            .ctx
+            .home
+            .save_run_history(self.run_id().as_str(), &self.history)
+        {
+            tracing::warn!(run_id = %self.run_id(), error = %e, "無法保存 Run 的歷史");
         }
     }
 
@@ -2456,7 +3113,7 @@ impl Run {
         loop {
             let control = match self.rx.recv().await {
                 None | Some(RunInput::Shutdown) => return Err(Stop::Shutdown),
-                Some(RunInput::Control(control)) => control,
+                Some(RunInput::Control(control) | RunInput::Switch { control, .. }) => control,
             };
             match &control.action {
                 RunControlAction::PushBranch => match self.push_branch().await {
@@ -2478,6 +3135,11 @@ impl Run {
                     self.applied(&control);
                     return Err(Stop::Canceled);
                 }
+                RunControlAction::SwitchAgent { .. } if !completed => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "Review 已核准，不能再換 Agent",
+                ),
                 _ => self.reject(
                     &control,
                     RunControlRejectReason::InvalidState,
@@ -2551,6 +3213,16 @@ impl Run {
             })?;
         let sha = git.rev_parse_commit("HEAD").await.map_err(fail)?;
         Ok((branch, sha))
+    }
+}
+
+/// 忙碌中（不能做這個動作）時給 Server 的說明。
+fn busy_message(status: RunStatus) -> &'static str {
+    match status {
+        RunStatus::Starting => "Run 還在啟動中",
+        RunStatus::Verifying => "Run 正在執行 Verification",
+        RunStatus::RateLimited => "Run 正在等額度恢復",
+        _ => "Run 目前不能做這個動作",
     }
 }
 
