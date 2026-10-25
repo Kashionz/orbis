@@ -570,7 +570,7 @@ function ListRow({
       <span
         className="bd-needs"
         data-needs={row.needs}
-        aria-label={row.needs ? b.needs : undefined}
+        data-tip={row.needs ? b.needs : undefined}
       />
       <span className="bd-key">{row.task.key}</span>
       <span className="bd-row-title">
