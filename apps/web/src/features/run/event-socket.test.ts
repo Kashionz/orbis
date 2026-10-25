@@ -51,6 +51,7 @@ function event(seq: number): RunEvent {
     seq,
     ts: "2026-10-23T08:00:00.000Z",
     event: { kind: "message_chunk", content: { type: "text", text: `#${seq}` } },
+    actorMemberId: null,
   } as RunEvent;
 }
 
@@ -66,6 +67,7 @@ function notification(id: string): Notification {
     title: "有人提到你",
     body: null,
     url: null,
+    stoppedRun: null,
     readAt: null,
     createdAt: "2026-10-23T08:00:00.000Z",
   };

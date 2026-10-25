@@ -160,7 +160,9 @@ function Row({
       : item.kind === "gate"
         ? n.summary[item.gateKind === "plan" ? "plan_gate" : "review_gate"]
         : item.kind === "stopped_run"
-          ? item.reason
+          ? item.reasonCode === "verification_limit"
+            ? n.stoppedReason.verification_limit(item.attempt ?? 1)
+            : n.stoppedReason[item.reasonCode]
           : item.question;
 
   return (

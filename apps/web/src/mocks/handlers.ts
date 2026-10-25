@@ -644,7 +644,11 @@ export function createHandlers(backend: MockBackend) {
     ),
     http.patch(
       API_ROUTES.team,
-      handle(async (request) => backend.updateTeam((await parse(request, UpdateTeamInput)).name)),
+      // TODO(backend, preview-share, terminal)：mock 只處理 Team 名稱，兩個 Team 設定還沒有 UI。
+      handle(async (request) => {
+        const { name } = await parse(request, UpdateTeamInput);
+        return name === undefined ? backend.team() : backend.updateTeam(name);
+      }),
     ),
     http.get(
       API_ROUTES.needsYou,

@@ -24,7 +24,9 @@ const stopped: NeedsYouItem = {
   ...base,
   id: "n3",
   kind: "stopped_run",
-  reason: "Verification 失敗 3 次",
+  reasonCode: "verification_limit",
+  attempt: 3,
+  detail: null,
 };
 
 describe("needsYouNotification", () => {
@@ -40,7 +42,7 @@ describe("needsYouNotification", () => {
     );
     expect(needsYouNotification(stopped)).toMatchObject({
       title: "ORB-12 的 Run 停下來了",
-      body: "Verification 失敗 3 次",
+      body: "Verification 連續失敗 3 次",
     });
   });
 

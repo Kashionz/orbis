@@ -162,13 +162,11 @@ function ReposSection({ project, canRegister }: { project: Project; canRegister:
           <tbody>
             {repos.map((repo) => (
               <tr key={repo.id} data-repo={`${repo.owner}/${repo.name}`}>
-                <td>
-                  {repo.owner}/{repo.name}
-                </td>
+                <td>{repo.owner ? `${repo.owner}/${repo.name}` : repo.name}</td>
                 <td>
                   <code>{repo.defaultBranch}</code>
                 </td>
-                <td data-installed={String(repo.github.installed)}>
+                <td data-installed={String(repo.github?.installed ?? false)}>
                   <RepoInstallation repo={repo} canManage={canRegister} />
                 </td>
               </tr>
@@ -205,6 +203,8 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
   });
   const mismatch = refresh.error instanceof ApiError && refresh.error.code === "repo_mismatch";
 
+  // TODO(backend, local-repo)：本機 Repo 沒有 GitHub App，改顯示「連接到 GitHub」。
+  if (!repo.github) return null;
   if (repo.github.installed) return <>{t.project.installed}</>;
   return (
     <div className="repo-installation">
@@ -230,7 +230,7 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
           {refresh.isPending ? t.project.checking : t.project.refreshInstallation}
         </button>
       )}
-      {refresh.isSuccess && !refresh.data.github.installed && (
+      {refresh.isSuccess && refresh.data.github?.installed === false && (
         <p className="hint" role="status">
           {t.project.stillNotInstalled}
         </p>

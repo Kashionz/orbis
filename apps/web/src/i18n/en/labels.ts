@@ -130,6 +130,7 @@ export default {
     feedback_review: "Feedback loop (review comments)",
     feedback_ci: "Feedback loop (CI failure)",
     child_question: "Answer to a child run",
+    handoff: "Agent handoff",
   },
   planSource: {
     plan_mode: "Plan mode",

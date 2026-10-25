@@ -187,6 +187,7 @@ export default {
     feedback_review: "回饋循環（審查留言）",
     feedback_ci: "回饋循環（CI 失敗）",
     child_question: "回答子執行的問題",
+    handoff: "換代理的交接",
   } satisfies Record<PromptSource, string>,
 
   planSource: {

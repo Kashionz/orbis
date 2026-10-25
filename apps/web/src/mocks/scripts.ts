@@ -302,6 +302,7 @@ export function toRunEvents(runId: string, kinds: readonly EventKind[], firstSeq
     seq: firstSeq + index,
     ts: new Date(BASE_TIME + (firstSeq + index) * 1000).toISOString(),
     event: value,
+    actorMemberId: null,
   }));
 }
 

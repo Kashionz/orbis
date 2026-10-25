@@ -15,7 +15,13 @@ function timeline(kinds: EventKind[], gaps: number[] = []): TimelineItem[] {
   let at = Date.UTC(2026, 9, 25, 8, 0, 0);
   const events: RunEvent[] = kinds.map((event, index) => {
     at += (gaps[index] ?? 1) * 1000;
-    return { runId: "run-1", seq: index + 1, ts: new Date(at).toISOString(), event };
+    return {
+      runId: "run-1",
+      seq: index + 1,
+      ts: new Date(at).toISOString(),
+      event,
+      actorMemberId: null,
+    };
   });
   return [...applyEvents(EMPTY_TIMELINE, events).items];
 }

@@ -98,6 +98,27 @@ export interface DesktopBridge {
    * 所以是選填：舊版 Desktop 沒有時，Web UI 改用瀏覽器版本的 Preview。
    */
   preview?: DesktopPreviewBridge;
+
+  // 以下是新工作區介面後端缺口的方法，型別先在契約 PR 中定好（實作由 Runner＋Desktop worker 加上）。
+  // 都是選填：還沒有這些方法的 Desktop，Web UI 顯示「尚未開放」或改用其他做法。
+
+  /**
+   * 在這台電腦上執行 Runner 的登入子指令（`<Runner> login <agent>`，後端缺口 `agent-relogin`），
+   * 只用於模型目錄的 `loginHint.kind` 是 `runner` 的 Agent。瀏覽器由 Agent 自己開啟；完成後 Runner 重新回報
+   * 可用性。逾時或失敗時 `ok: false`，`message` 可以直接顯示給人看。
+   */
+  loginAgent?(agentId: string): Promise<DesktopActionResult>;
+  /**
+   * 在檔案總管（macOS 是 Finder）開啟 Run 的 Worktree（後端缺口 `reveal-in-explorer`），
+   * 路徑限制同 `openWorktreeInEditor`。
+   */
+  revealWorktree?(worktreePath: string): Promise<DesktopActionResult>;
+  /**
+   * 桌面通知總開關（後端缺口 `desktop-notify-toggle`），存在這台電腦的 Desktop 設定檔。
+   * 關閉時 Desktop 照常輪詢 Needs You，但不發原生通知。
+   */
+  getNotificationsEnabled?(): Promise<boolean>;
+  setNotificationsEnabled?(enabled: boolean): Promise<void>;
 }
 
 /** 在 Desktop 中執行時回傳 bridge，在一般瀏覽器中回傳 null。 */

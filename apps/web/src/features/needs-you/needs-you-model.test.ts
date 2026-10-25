@@ -22,7 +22,14 @@ const permission: NeedsYouItem = {
 };
 const review: NeedsYouItem = { ...base, id: "n2", kind: "gate", gateKind: "review" };
 const plan: NeedsYouItem = { ...base, id: "n3", kind: "gate", gateKind: "plan" };
-const stopped: NeedsYouItem = { ...base, id: "n4", kind: "stopped_run", reason: "驗收失敗" };
+const stopped: NeedsYouItem = {
+  ...base,
+  id: "n4",
+  kind: "stopped_run",
+  reasonCode: "verification_limit",
+  attempt: 4,
+  detail: null,
+};
 const question: NeedsYouItem = {
   ...base,
   id: "n5",

@@ -10,6 +10,7 @@ function events(...kinds: EventKind[]): RunEvent[] {
     seq: index + 1,
     ts: at(index),
     event,
+    actorMemberId: null,
   }));
 }
 

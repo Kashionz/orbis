@@ -10,6 +10,7 @@ function items(kinds: EventKind[]) {
     seq: index + 1,
     ts: new Date(Date.UTC(2026, 9, 25, 8, 0, index)).toISOString(),
     event,
+    actorMemberId: null,
   }));
   return applyEvents(EMPTY_TIMELINE, events).items;
 }

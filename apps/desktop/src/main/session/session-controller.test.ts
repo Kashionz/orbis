@@ -8,7 +8,7 @@ const member = (id: string): MeResponse => ({
   githubLogin: "octo",
   name: null,
   avatarUrl: null,
-  member: { id, teamId: "t1", teamName: "Team", role: "member" },
+  member: { id, teamId: "t1", teamName: "Team", role: "member", email: null },
 });
 
 const pairingToken = (token: string): PairingTokenCreated => ({

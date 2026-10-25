@@ -25,6 +25,20 @@ export function needsYouHref(item: NeedsYouItem): string {
 
 const GATE_LABELS: Record<string, string> = { plan: "Plan Gate", review: "Review Gate" };
 
+/** 停下來的原因（API 版本 2 改成代碼）。 */
+function stoppedReason(item: Extract<NeedsYouItem, { kind: "stopped_run" }>): string {
+  switch (item.reasonCode) {
+    case "verification_limit":
+      return `Verification 連續失敗 ${item.attempt ?? 1} 次`;
+    case "push_failed":
+      return "push 分支失敗";
+    case "pr_open_failed":
+      return "開 PR 失敗";
+    case "local_merge_blocked":
+      return "本機合併被擋下";
+  }
+}
+
 export interface NotificationContent {
   title: string;
   body: string;
@@ -43,7 +57,7 @@ export function needsYouNotification(item: NeedsYouItem): NotificationContent {
         href,
       };
     case "stopped_run":
-      return { title: `${item.taskKey} 的 Run 停下來了`, body: item.reason, href };
+      return { title: `${item.taskKey} 的 Run 停下來了`, body: stoppedReason(item), href };
     case "child_question":
       return { title: `${item.taskKey} 的 Child Run 有問題要問`, body: item.question, href };
   }

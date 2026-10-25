@@ -10,6 +10,7 @@ function run(id: string, createdAt: string, parentRunId: string | null = null): 
     delegationMode: parentRunId ? "consult" : null,
     agent: "claude-code",
     model: null,
+    effort: null,
     permissionPolicy: "auto",
     runnerKind: "local",
     runnerId: null,
