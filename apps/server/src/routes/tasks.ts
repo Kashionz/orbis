@@ -2,6 +2,7 @@
 
 import {
   API_ROUTES,
+  type BoardSummaryResponse,
   CreateAcceptanceCriterionInput,
   CreateTaskInput,
   formatTaskKey,
@@ -11,7 +12,21 @@ import {
   UpdateAcceptanceCriterionInput,
   UpdateTaskInput,
 } from "@orbis/api-contract";
-import { and, asc, count, eq, gt, gte, inArray, lt, lte, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -25,6 +40,7 @@ import {
 import { collabDocRef } from "../collab/doc-name";
 import {
   acceptanceCriteria,
+  gates,
   members,
   projects,
   repoSpecs,
@@ -72,6 +88,78 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
       )
       .orderBy(asc(tasks.number));
     return c.json(await toTasks(db, rows, taskViewer(actor, scope)));
+  });
+
+  /**
+   * 看板摘要：一次取得 Project 中看得到的每個 Task 的最新主 Run（不算 Child Run、判定用與 @agent 的 Run）
+   * 與 Acceptance Criterion 最近一次判定的結果。
+   */
+  app.get(API_ROUTES.projectBoardSummary, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
+    requireProjectCapability(actor, scope, "view");
+    const visible = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.projectId, scope.project.id),
+          visibleTasksCondition(actor.memberId, scope.role),
+        ),
+      )
+      .orderBy(asc(tasks.number));
+    const ids = visible.map((t) => t.id);
+    if (ids.length === 0) return c.json({ tasks: [] } satisfies BoardSummaryResponse);
+    const runRows = await db
+      .select()
+      .from(runs)
+      .where(
+        and(
+          inArray(runs.taskId, ids),
+          isNull(runs.parentRunId),
+          inArray(runs.origin, ["dispatch", "feedback_loop"]),
+        ),
+      )
+      .orderBy(desc(runs.createdAt), desc(runs.id));
+    const latest = new Map<string, (typeof runRows)[number]>();
+    for (const run of runRows) if (!latest.has(run.taskId)) latest.set(run.taskId, run);
+    const waiting = [...latest.values()]
+      .filter((r) => r.status === "awaiting_gate")
+      .map((r) => r.id);
+    const openGates =
+      waiting.length > 0
+        ? await db
+            .select({ runId: gates.runId, kind: gates.kind })
+            .from(gates)
+            .where(and(inArray(gates.runId, waiting), isNull(gates.decision)))
+        : [];
+    const gateOf = new Map(openGates.map((g) => [g.runId, g.kind]));
+    const criteria = await db
+      .select({ taskId: acceptanceCriteria.taskId, passed: acceptanceCriteria.passed })
+      .from(acceptanceCriteria)
+      .where(inArray(acceptanceCriteria.taskId, ids));
+    return c.json({
+      tasks: ids.map((taskId) => {
+        const run = latest.get(taskId);
+        const own = criteria.filter((x) => x.taskId === taskId);
+        return {
+          taskId,
+          latestRun: run
+            ? {
+                id: run.id,
+                status: run.status,
+                gate: run.status === "awaiting_gate" ? (gateOf.get(run.id) ?? null) : null,
+                agent: run.agent,
+              }
+            : null,
+          acceptance: {
+            passed: own.filter((x) => x.passed === true).length,
+            failed: own.filter((x) => x.passed === false).length,
+            total: own.length,
+          },
+        };
+      }),
+    } satisfies BoardSummaryResponse);
   });
 
   app.post(API_ROUTES.projectTasks, auth, async (c) => {
