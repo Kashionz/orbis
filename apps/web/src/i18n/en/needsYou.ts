@@ -22,7 +22,8 @@ export default {
     child_question: "Open child run",
   },
   stoppedReason: {
-    verification_limit: (attempt: number) => `Verification failed ${attempt} times in a row`,
+    verification_limit: (attempt: number) =>
+      `Verification failed ${attempt} times in a row, over the retry limit`,
     push_failed: "Pushing the branch failed",
     pr_open_failed: "Opening the PR failed",
     local_merge_blocked: "Local merge was blocked",
