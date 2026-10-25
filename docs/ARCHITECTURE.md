@@ -47,7 +47,7 @@
 | Runner | `crates/runner` | Rust、tokio、`agent-client-protocol`（ACP v1）、`portable-pty`、git CLI |
 | Fake Agent | `crates/fake-agent` | Rust，依 YAML 劇本行動的 ACP agent，只用於測試 |
 | Server | `apps/server` | Node.js、TypeScript、Hono、Drizzle ORM、PostgreSQL、`ws`、Yjs（`y-websocket` 協定） |
-| Web UI | `apps/web` | React、Vite、TanStack Router 與 Query、Monaco（diff）、xterm.js、TipTap 與 Yjs |
+| Web UI | `apps/web` | React、Vite、TanStack Router 與 Query、`diff`（行的增刪）、xterm.js、TipTap 與 Yjs |
 | Desktop | `apps/desktop` | Electron、electron-builder、electron-updater；Runner 以 sidecar 子程序執行 |
 | GitHub | `packages/github` | GitHub App（Octokit）、webhook 處理、Issues 同步、PR Feedback Loop |
 | Generated types | `packages/protocol` | 由 `ts-rs` 產生，**不可手改** |
@@ -454,10 +454,10 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 
 ## 10. Review
 
-- **Diff review**：用 Monaco 顯示 diff，比較對象是 base_commit 與 Worktree 目前的狀態。行內留言可以打包送回 Agent，作為下一個 prompt。
+- **Diff review**：在工作區的差異分頁逐檔以行格顯示 diff，比較對象是 base_commit 與 Worktree 目前的狀態。點行號可以留行內留言，退回時打包送回 Agent，作為下一個 prompt。
 - **Review Gate 的動作**：核准（接著自動 push 並開 PR）、退回（附上留言，包括 diff 行內留言與 Preview 留言，§13）、中止 Run。
   - diff 為空時沒有東西可以 push，核准改為**結束（沒有變更）**（§5）。
-  - Review 頁顯示說明與 Agent 最後的回覆（這份 diff 之前的 `final_message`），讓人判斷是本來就不需要改檔，還是 Agent 出了錯。
+  - 差異分頁顯示說明與 Agent 最後的回覆（這份 diff 之前的 `final_message`），讓人判斷是本來就不需要改檔，還是 Agent 出了錯。
 - **Project 可以要求**「Member 不能核准自己的 Task」。「自己的 Task」指 Task 的指派對象，所有種類的 Gate 都適用。
 - **diff 的來源**：
   - Agent 結束回合、進入 Review Gate 之前，Runner 送出 Run 的完整 diff：從 base_commit 到 Worktree 目前的狀態，包含未 commit 的變更。
@@ -723,9 +723,9 @@ Desktop 只是 Web UI 的外殼（[ADR-0008](adr/0008-electron-desktop-shell.md)
   - 關閉主視窗只是縮到系統匣，結束 App 要用系統匣或選單。
 - **桌面通知**：
   - 登入後每 5 秒輪詢 Needs You 清單。第一次輪詢只建立基準，之後新出現的項目各發一次原生通知。
-  - 點擊通知後顯示主視窗，並前往和 Web UI 的 Needs You 清單相同的位置：Review Gate 到 diff review，權限請求與其他項目到 Run 頁。
+  - 點擊通知後顯示主視窗，並前往和 Web UI 的 Needs You 清單相同的位置：Review Gate 到工作區的差異分頁，Verification 超過重試上限到任務分頁的驗收紀錄，權限請求與其他項目到那個 Run 的工作區。
 - **開啟本機工具**：
-  - Run 頁面可以用設定的編輯器或終端機開啟 Worktree，兩者都提供預設選項與自訂指令（`{path}` 會換成 Worktree 路徑）。
+  - 工作區的 Worktree 路徑選單可以用設定的編輯器或終端機開啟 Worktree，兩者都提供預設選項與自訂指令（`{path}` 會換成 Worktree 路徑）。
   - Desktop 只接受 Worktree 根目錄（§6.2）底下 `<repo>/<Worktree>` 這一層、而且確實存在的目錄，並解析 symlink 確認沒有跳出根目錄。
   - 執行檔一律以絕對路徑啟動，不在目前目錄（Worktree）中搜尋。Worktree 的內容可能是 Agent 寫的。
   - Windows 上的 `.cmd` shim 經由 `cmd.exe` 執行，參數由 Desktop 自己加引號。

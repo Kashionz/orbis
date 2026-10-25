@@ -172,6 +172,26 @@ _Avoid_: Log、Message、Transcript entry
 
 ### 介面（新工作區介面）
 
+**工作區**：
+Task 的主畫面（`/tasks/<Task Key>`）：左邊是選定 Run 的事件串流與輸入框，右邊是任務、差異、預覽、終端機四個分頁。`/runs/<id>` 與 `/runs/<id>/review` 開的是同一個工作區。
+_Avoid_: Run 頁、Task 頁、Review 頁
+
+**事件串流**：
+工作區中依序顯示一個 Run 的 Event：人與 Agent 的訊息、思考、工具呼叫、計畫、驗收、權限請求與狀態變化。
+_Avoid_: Chat、Log
+
+**輸入框**：
+工作區下方對 Run 送出文字的地方，連同模型、推理強度、Permission Policy 與 Runner 的選擇。依 Run 的狀態，送出代表退回計畫、退回審查、附意見再試或追加 prompt。
+_Avoid_: Chat box、Prompt bar
+
+**看板**：
+一個 Project 的 Task 依狀態分組，可以切換列表與分欄，在待辦、就緒之間拖曳，拖到執行中即派工。
+_Avoid_: Kanban、Task list
+
+**執行紀錄**：
+任務分頁中這個 Task 的 Run 與 Child Run 樹，點一個節點就在工作區切換到那個 Run。
+_Avoid_: Run tree、Run history
+
 **Task 分享**：
 Task 層級的成員與角色（擁有者、可操作、可檢視），加上一般存取（僅受邀成員、Team 可檢視、Team 可操作）與以 Email 邀請還不是 Member 的人。後端還沒有實作，UI 先以 mock 提供（見 `apps/web/src/features/share`）。
 _Avoid_: Permission sharing、ACL
@@ -250,6 +270,13 @@ _Avoid_: Scenario、Fixture
 | Needs You | 待我處理 | Needs you |
 | 通知 | 通知 | Notifications |
 | PR | 合併請求 | PR |
+| 工作區 | 工作區 | Workspace |
+| 事件串流 | 事件串流 | Event stream |
+| 輸入框 | 輸入框 | Composer |
+| 看板 | 看板 | Board |
+| 執行紀錄 | 執行紀錄 | Runs |
+| consult／branch（Delegation 的模式） | 諮詢（唯讀）／分支（子分支） | Consult (read-only)／Branch (child branch) |
+| Done 的 `completed`／`not_planned` | 已完成／不處理 | Completed／Not planned |
 | Task 分享 | 分享 | Share |
 | 模型目錄 | 模型 | Model |
 | 推理強度 | 推理強度（快速／標準／深度） | Reasoning effort（Fast／Standard／Deep） |
