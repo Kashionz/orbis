@@ -267,6 +267,16 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
   await page.getByRole("tab", { name: /預覽/ }).click();
   const preview = previewTools(d);
   await waitUntil(preview.url, (url) => url === localUrl, "內嵌瀏覽器開啟 localhost", 60_000);
+  // 等 Preview 的頁面載入並渲染完：載入中開始選取的話，頁面重新整理（例如 Vite 第一次載入）會洗掉選取的外框
+  await waitUntil(
+    () =>
+      preview.run<boolean>(
+        "document.readyState === 'complete' && !!document.querySelector('#app')",
+      ),
+    (ready) => ready,
+    "Preview 的頁面載入完成",
+    60_000,
+  );
   await page.getByRole("button", { name: "選取元素留言" }).click();
   await preview.waitForOverlay();
   await preview.click("#app");

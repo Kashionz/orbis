@@ -242,7 +242,12 @@ function DiffTabInner({
                 >
                   <span className="rp-mono-muted rp-ellipsis">
                     {comment.url}
-                    {comment.selector && ` ${comment.selector}`}
+                    {comment.selector && (
+                      <>
+                        {" "}
+                        <code>{comment.selector}</code>
+                      </>
+                    )}
                   </span>
                   <div className="rp-comment-body">{comment.body}</div>
                   {comment.screenshotBlobId && (
