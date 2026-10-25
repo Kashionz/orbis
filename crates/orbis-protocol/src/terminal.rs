@@ -1,4 +1,4 @@
-//! 互動式終端機（協定版本 3，ARCHITECTURE「互動式終端機」、ADR-0014）。
+//! 互動式終端機（協定版本 3，ARCHITECTURE §6.5、ADR-0014）。
 //!
 //! Runner 在 Run 的 Worktree 中開 PTY（Windows 用 ConPTY），輸入輸出經由既有的 Runner 連線轉送。
 //! 一個終端機以 `terminal_id` 區分（由 Server 產生）。

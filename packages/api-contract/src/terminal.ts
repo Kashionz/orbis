@@ -1,4 +1,4 @@
-// 互動式終端機（後端缺口 `terminal`，ADR-0014、ARCHITECTURE「互動式終端機」）。
+// 互動式終端機（後端缺口 `terminal`，ADR-0014、ARCHITECTURE §6.5）。
 //
 // Runner 在 Run 的 Worktree 中開 PTY，輸入輸出經由 Runner 通道到 Server，再經由這裡的 WebSocket
 // （`API_ROUTES.terminalWs`）到 Web 的終端機分頁。資料以 base64 傳送。
