@@ -1,0 +1,253 @@
+/* 待我處理（README「Needs You」）。權限選項的 st-option 樣式來自事件串流的 stream.css。 */
+
+.ny {
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--o16171a);
+}
+
+.ny-column {
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 28px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.ny-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ny-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.ny-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--o8b9098);
+}
+
+.ny-head .ny-count {
+  font-size: 12px;
+}
+
+.ny-empty {
+  padding: 72px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--o8b9098);
+  font-size: 13px;
+  animation: o-fade var(--dur-panel) ease-out both;
+}
+
+.ny-empty-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--o1c1e22);
+  display: grid;
+  place-items: center;
+  color: var(--o4fb86a);
+}
+
+.ny-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.ny-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin-bottom: 4px;
+}
+
+.ny-group-icon {
+  display: flex;
+  color: var(--od9a845);
+}
+
+.ny-group-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.ny-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ny-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--o1e2024);
+  animation: o-fade var(--dur-panel) ease-out both;
+}
+
+.ny-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ny-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.ny-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--o8b9098);
+  flex: none;
+  width: 56px;
+}
+
+.ny-task-title {
+  font-size: 13px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  color: var(--oe8e9eb);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.ny-line:hover .ny-task-title {
+  text-decoration: underline;
+}
+
+.ny-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--o8b9098);
+  padding-left: 66px;
+}
+
+.ny-purpose {
+  flex: none;
+}
+
+.ny-summary {
+  color: var(--oe8e9eb);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ny-row[data-kind="child_question"] .ny-summary,
+.ny-row[data-kind="stopped_run"] .ny-summary {
+  white-space: normal;
+}
+
+.ny-options {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 0 66px;
+  flex-wrap: wrap;
+}
+
+.ny-answer {
+  padding: 4px 0 0 66px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ny-textarea {
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-card);
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  resize: vertical;
+  outline: none;
+}
+
+.ny-textarea:focus {
+  border-color: var(--o34373d);
+}
+
+.ny-side {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  height: 20px;
+}
+
+.ny-ago {
+  font-size: 12px;
+  color: var(--o8b9098);
+  white-space: nowrap;
+}
+
+.ny-go {
+  height: 24px;
+  padding: 0 6px 0 8px;
+  margin: -2px -6px 0 0;
+  border-radius: 6px;
+  color: var(--o8b9098);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    color var(--dur-hover) ease-out;
+}
+
+.ny-go:hover {
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+}
+
+@media (max-width: 640px) {
+  .ny-detail,
+  .ny-options,
+  .ny-answer {
+    padding-left: 0;
+  }
+
+  .ny-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
+
+  .ny-side {
+    justify-content: flex-start;
+  }
+}
