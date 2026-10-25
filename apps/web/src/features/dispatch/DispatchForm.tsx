@@ -233,6 +233,11 @@ function DispatchFields({
 
       <div className="df-notes">
         <span className="df-muted">{t.labels.permissionPolicyDescription[policy]}</span>
+        {policies.includes(options.defaultPermissionPolicy) && (
+          <span className="df-muted">
+            {n.projectDefault(t.labels.permissionPolicy[options.defaultPermissionPolicy])}
+          </span>
+        )}
         {!policies.includes(options.defaultPermissionPolicy) && (
           <span className="df-muted" role="note">
             {n.defaultPolicyUnavailable(t.labels.permissionPolicy[options.defaultPermissionPolicy])}

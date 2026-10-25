@@ -20,10 +20,7 @@ test.describe("待我處理", () => {
 
   test("權限請求一鍵跳到工作區並標示那筆請求", async ({ page }) => {
     await page.goto("/needs-you");
-    await rows(page)
-      .filter({ hasText: "ORB-3" })
-      .getByRole("button", { name: "前往執行" })
-      .click();
+    await rows(page).filter({ hasText: "ORB-3" }).getByRole("button", { name: "前往執行" }).click();
     await expect(page).toHaveURL(/\/tasks\/ORB-3\?run=run-\d+&focus=permission-perm-write-config$/);
     const focused = stream(page).locator('.st-item[data-focused="true"]');
     await expect(focused).toContainText("權限請求");

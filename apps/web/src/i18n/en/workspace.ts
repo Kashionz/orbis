@@ -267,6 +267,7 @@ export default {
     defaultPolicyUnavailable: (policy: string) =>
       `The project default is ${policy}, which this runner doesn’t offer; choose another`,
     met: "done",
+    projectDefault: (policy: string) => `Project default: ${policy}`,
     notMet: "missing",
   },
 

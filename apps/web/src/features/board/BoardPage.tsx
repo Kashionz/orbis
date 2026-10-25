@@ -35,8 +35,8 @@ import {
   transitionTask,
 } from "../../api/resources";
 import { AgentLogo } from "../../components/AgentLogo";
-import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { Avatar } from "../../components/Avatar";
+import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { ErrorText } from "../../components/ErrorText";
 import { useElementWidth } from "../../components/hooks";
 import { type MenuGroup, Popover } from "../../components/Popover";

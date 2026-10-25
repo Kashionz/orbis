@@ -269,6 +269,7 @@ export default {
     defaultPolicyUnavailable: (policy: string) =>
       `專案預設是「${policy}」，這種執行器不提供，請另外選擇`,
     met: "已完成",
+    projectDefault: (policy: string) => `專案預設：${policy}`,
     notMet: "還缺",
   },
 
