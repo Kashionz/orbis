@@ -41,7 +41,7 @@ export function AcceptanceList({
         )}
       </div>
       {criteria.length === 0 && <span className="rp-muted">{w.noCriteria}</span>}
-      <ul className="rp-criteria ac-list">
+      <ul className="rp-criteria">
         {[...criteria]
           .sort((a, b) => a.position - b.position)
           .map((criterion) => (
@@ -90,7 +90,7 @@ function CriterionRow({
           {RESULT_GLYPH[criterion.result]}
         </span>
         <span className="rp-criterion-main">
-          <span className="rp-criterion-desc ac-description">{criterion.description}</span>
+          <span className="rp-criterion-desc">{criterion.description}</span>
           <span className="rp-criterion-meta">
             <span className="rp-mono">{t.labels.acKind[criterion.kind]}</span>
             {criterion.command && <span className="rp-mono rp-ellipsis">{criterion.command}</span>}

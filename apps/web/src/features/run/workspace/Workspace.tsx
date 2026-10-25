@@ -38,6 +38,7 @@ import type { WorkspaceTab } from "./route-state";
 import { useNow } from "./use-now";
 import { useRunWorkspace } from "./use-run-workspace";
 import { WorkspaceHeader } from "./WorkspaceHeader";
+import "../scope.css";
 import "./workspace.css";
 
 export interface WorkspaceProps {

@@ -186,7 +186,7 @@ function DiffTabInner({
               <button
                 key={f.path}
                 type="button"
-                className="rp-file-tab file-button"
+                className="rp-file-tab"
                 aria-current={selected ? "true" : undefined}
                 data-change={f.change}
                 data-tip={f.path}
@@ -389,10 +389,7 @@ function FileView({
   }
 
   const commentCard = (comment: ReviewCommentInput) => (
-    <div
-      key={`${comment.side}-${comment.line}-${comment.body}`}
-      className="rp-comment review-comment"
-    >
+    <div key={`${comment.side}-${comment.line}-${comment.body}`} className="rp-comment">
       <div className="rp-comment-head">
         <Avatar person={{ name: me.githubLogin, avatarUrl: me.avatarUrl }} size={18} />
         <span className="rp-comment-author">{me.githubLogin}</span>
@@ -463,7 +460,7 @@ function FileView({
               )}
               {composing && target && (
                 <form
-                  className="rp-compose comment-form"
+                  className="rp-compose"
                   aria-label={w.commentOn(sideLabel(target.side), target.line)}
                   onSubmit={(event) => {
                     event.preventDefault();
@@ -529,7 +526,7 @@ function CodeLine({
   );
   if (!canComment) {
     return (
-      <div className="rp-line diff-line" data-kind={row.kind}>
+      <div className="rp-line" data-kind={row.kind}>
         {cells}
       </div>
     );
@@ -537,7 +534,7 @@ function CodeLine({
   return (
     <button
       type="button"
-      className="rp-line diff-line"
+      className="rp-line"
       data-kind={row.kind}
       aria-label={label}
       onClick={onClick}
@@ -561,7 +558,7 @@ function EmptyDiff({
   const w = t.workspace.diff;
   const reply = useTextBody(finalMessage);
   return (
-    <section className="rp-diff-empty review-empty" aria-label={w.empty}>
+    <section className="rp-diff-empty" aria-label={w.empty}>
       <span className="rp-empty-title">{w.empty}</span>
       {reviewing && <span className="rp-muted">{w.emptyHint}</span>}
       {finished && <span className="rp-muted">{w.finishedWithoutChanges}</span>}
@@ -573,7 +570,7 @@ function EmptyDiff({
       ) : reply.text.trim() === "" ? (
         <span className="rp-muted">{w.noFinalMessage}</span>
       ) : (
-        <pre className="rp-final-message final-message" data-testid="final-message">
+        <pre className="rp-final-message" data-testid="final-message">
           {reply.text}
         </pre>
       )}
@@ -614,7 +611,7 @@ function ManualChecks({
     },
   });
   return (
-    <section className="rp-diff-section review-criteria" aria-labelledby="rp-manual-heading">
+    <section className="rp-diff-section" aria-labelledby="rp-manual-heading">
       <h3 id="rp-manual-heading" className="rp-section-title">
         {w.manualCriteria}
       </h3>
@@ -651,7 +648,7 @@ function PreviousReviews({ gates }: { gates: readonly Gate[] }) {
   const w = t.workspace.diff;
   const [open, setOpen] = useState(false);
   return (
-    <section className="rp-diff-section previous-reviews" aria-labelledby="rp-previous-heading">
+    <section className="rp-diff-section" aria-labelledby="rp-previous-heading">
       <button
         id="rp-previous-heading"
         type="button"
@@ -674,7 +671,7 @@ function PreviousReviews({ gates }: { gates: readonly Gate[] }) {
               </span>
               {gate.comment && <MentionMarkdown text={gate.comment} />}
               {gate.reviewComments.map((comment) => (
-                <div key={comment.id} className="rp-comment review-comment">
+                <div key={comment.id} className="rp-comment">
                   <span className="rp-muted">
                     <span className="rp-mono">{comment.path}</span>{" "}
                     {w.lineRef(comment.side === "new" ? w.newSide : w.oldSide, comment.line)}

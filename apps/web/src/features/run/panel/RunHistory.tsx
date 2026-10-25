@@ -42,11 +42,11 @@ export function RunHistory({ taskKey, runs, currentRunId, canCancel }: RunHistor
         {w.runs}
       </h2>
       {list.length === 0 && <span className="rp-muted">{w.noRuns}</span>}
-      <ul className="rp-runs run-tree" aria-label={w.runs}>
+      <ul className="rp-runs" aria-label={w.runs}>
         {list.map(({ run, depth }) => (
           <li
             key={run.id}
-            className="rp-run run-node"
+            className="rp-run"
             data-run-id={run.id}
             data-depth={depth}
             data-current={run.id === currentRunId}

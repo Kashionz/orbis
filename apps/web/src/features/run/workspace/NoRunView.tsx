@@ -53,9 +53,9 @@ export function NoRunView({ task, project, permissions, onDispatched }: NoRunVie
       <div className="wk-norun-column">
         <h2 className="wk-norun-title">{n.title}</h2>
         {task.status === "backlog" && (
-          <section className="wk-norun-section ready-panel" aria-label={n.missing}>
+          <section className="wk-norun-section" aria-label={n.missing}>
             {missing.length > 0 && <span className="wk-muted">{n.missing}</span>}
-            <ul className="wk-checklist ready-checklist">
+            <ul className="wk-checklist">
               {checks.map((check) => (
                 <li key={check.requirement} data-met={String(check.met)}>
                   <span className="wk-check-glyph" data-met={check.met} aria-hidden="true">

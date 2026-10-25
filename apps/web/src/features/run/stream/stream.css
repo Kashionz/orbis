@@ -705,6 +705,7 @@
 
 .st-tool-toggle:disabled {
   cursor: default;
+  opacity: 1;
 }
 
 .st-tool-icon {
@@ -928,6 +929,7 @@
 
 .st-perm-title:disabled {
   cursor: default;
+  opacity: 1;
 }
 
 .st-perm-title:hover:not(:disabled) {

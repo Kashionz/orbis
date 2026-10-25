@@ -243,7 +243,7 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
                     {row.kind === "tail" && <TailRow tail={row.tail} />}
                     {row.kind === "item" && (
                       <div
-                        className="st-item timeline-row"
+                        className="st-item"
                         data-key={row.item.key}
                         data-type={row.item.kind}
                         data-focused={highlight === row.item.key ? "true" : undefined}

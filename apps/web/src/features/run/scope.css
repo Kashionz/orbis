@@ -1,0 +1,19 @@
+/*
+ * 工作區、看板、待我處理的按鈕重設：styles.css 以 :where(button) 給沒有 class 的按鈕預設樣式
+ * （置中、灰底、hover 底色）。這裡同樣是零權重、載入在後面，讓這些區塊的按鈕從透明開始，
+ * 各元件的 class 再自己決定外觀。
+ */
+:where(.st-wrap, .cp-outer, .rp, .wk-header, .wk-norun, .df, .bd, .ny) :where(button) {
+  justify-content: normal;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+:where(.st-wrap, .cp-outer, .rp, .wk-header, .wk-norun, .df, .bd, .ny)
+  :where(button:hover:not(:disabled)) {
+  background: transparent;
+}

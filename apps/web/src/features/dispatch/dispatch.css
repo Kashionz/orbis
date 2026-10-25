@@ -52,6 +52,7 @@
   cursor: pointer;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
   transition:
     background-color var(--dur-hover) ease-out,
