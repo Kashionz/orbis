@@ -409,3 +409,23 @@
     width: 140px;
   }
 }
+
+/* 代理在終端機登入的指令（按一下複製） */
+.setting-login-command {
+  appearance: none;
+  border: 1px solid var(--o2a2d33);
+  background: transparent;
+  border-radius: 6px;
+  padding: 2px 8px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--oe8e9eb);
+  font-size: 12px;
+}
+
+.setting-login-command:hover {
+  background: var(--o1c1e22);
+}

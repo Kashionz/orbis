@@ -1,83 +1,115 @@
 // 輸入框底部的 chip：模型、推理強度、權限策略、執行電腦。
-// 執行中切換設定是後端缺口（TODO(backend, run-settings)）：真實模式停用並顯示「尚未開放」。
+// 切換以 RunControl 送給 Runner（回 202），生效時 Runner 送 Event，之後重新取得 Run 的設定。
+// 選了其他 Agent 的模型是換 Agent（同一個 Run 與 Worktree，回合中選擇時等回合結束）。
 
-import type { PermissionPolicy, Run } from "@orbis/api-contract";
+import type {
+  PermissionPolicy,
+  Run,
+  RunSettings,
+  UpdateRunSettingsInput,
+} from "@orbis/api-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Shield } from "lucide-react";
 import { useRef, useState } from "react";
+import { errorMessage } from "../../../api/client";
 import { queryKeys, runnersQuery } from "../../../api/resources";
 import { AgentLogo } from "../../../components/AgentLogo";
 import { type MenuGroup, Popover } from "../../../components/Popover";
 import { useToast } from "../../../components/Toast";
 import { useT } from "../../../i18n";
-import { isFeatureEnabled } from "../../../lib/features";
 import { permissionPoliciesFor } from "../../../lib/permissions";
 import {
-  catalogModel,
   EFFORT_LEVELS,
   type EffortLevel,
+  findModel,
   modelDisplayName,
   useAgentCatalog,
 } from "../../agents/catalog";
-import type { RunSettings, UpdateRunSettingsInput } from "../types";
-import { updateRunSettings, workspaceKeys } from "../workspace-api";
+import { switchRunAgent, updateRunSettings, workspaceKeys } from "../workspace-api";
 
 const ICON = { size: 14, strokeWidth: 1.75, "aria-hidden": true } as const;
 
 interface ChipsProps {
   run: Run;
-  projectId: string;
   settings: RunSettings | null;
   /** Run 已結束，或沒有控制 Run 的權限。 */
   locked: boolean;
   /** Runner 連線中（執行電腦的圖示顏色）。 */
   connected: boolean;
+  /** 能換 Permission Policy 與換 Agent：Local Runner 上只限那台 Runner 的擁有者。 */
+  runnerOwner: boolean;
 }
+
+type SwitchRequest =
+  | { kind: "settings"; input: UpdateRunSettingsInput }
+  | { kind: "agent"; agent: string; model: string };
 
 function useSwitch(run: Run) {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const t = useT();
   return useMutation({
-    mutationFn: (input: UpdateRunSettingsInput) => updateRunSettings(run.id, input),
-    onSuccess: (settings) => {
-      queryClient.setQueryData(workspaceKeys.runSettings(run.id), settings);
+    mutationFn: async (request: SwitchRequest) => {
+      if (request.kind === "agent") {
+        await switchRunAgent(run.id, { agent: request.agent, model: request.model });
+      } else {
+        await updateRunSettings(run.id, request.input);
+      }
+    },
+    onSuccess: () => {
+      toast.show(t.workspace.composer.switchRequested);
+      void queryClient.invalidateQueries({ queryKey: workspaceKeys.runSettings(run.id) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.run(run.id) });
     },
-    onError: (error) => toast.show(error instanceof Error ? error.message : String(error)),
+    onError: (error) => toast.show(errorMessage(error)),
   });
 }
 
-export function ComposerChips({ run, projectId, settings, locked, connected }: ChipsProps) {
+export function ComposerChips({ run, settings, locked, connected, runnerOwner }: ChipsProps) {
   const t = useT();
   const c = t.workspace.composer;
-  const available = isFeatureEnabled("runSettings");
   const switchSettings = useSwitch(run);
-  const blocked = locked || !available || switchSettings.isPending;
-  const reason = !available ? t.common.notAvailableYet : null;
+  const blocked = locked || switchSettings.isPending;
+  // 目前已生效的設定（派工時的值，加上之後生效的切換）
+  const current = settings?.current ?? {
+    agent: run.agent,
+    model: run.model,
+    effort: run.effort,
+    permissionPolicy: run.permissionPolicy,
+  };
 
   return (
     <div className="cp-chips">
       <ModelChip
-        run={run}
-        projectId={projectId}
+        agent={current.agent}
+        model={current.model}
         disabled={blocked}
-        reason={reason}
+        reason={null}
+        otherAgents={runnerOwner}
         onSelect={(agent, model) =>
-          switchSettings.mutate(agent === run.agent ? { model } : { agent, model })
+          switchSettings.mutate(
+            agent === current.agent
+              ? { kind: "settings", input: { model } }
+              : { kind: "agent", agent, model },
+          )
         }
       />
       <EffortChip
-        run={run}
-        settings={settings}
+        agent={current.agent}
+        model={current.model}
+        effort={current.effort}
         disabled={blocked}
-        reason={reason}
-        onSelect={(effort) => switchSettings.mutate({ effort })}
+        reason={null}
+        onSelect={(effort) => switchSettings.mutate({ kind: "settings", input: { effort } })}
       />
       <PolicyChip
         run={run}
-        disabled={blocked}
-        reason={reason}
-        onSelect={(permissionPolicy) => switchSettings.mutate({ permissionPolicy })}
+        policy={current.permissionPolicy}
+        disabled={blocked || !runnerOwner}
+        reason={!locked && !runnerOwner ? c.runnerOwnerOnly : null}
+        onSelect={(permissionPolicy) =>
+          switchSettings.mutate({ kind: "settings", input: { permissionPolicy } })
+        }
       />
       <RunnerChip run={run} connected={connected} label={c.runner} />
     </div>
@@ -91,23 +123,30 @@ interface ChipProps {
 }
 
 function ModelChip({
-  run,
-  projectId,
+  agent,
+  model,
   disabled,
   reason,
+  otherAgents,
   onSelect,
-}: ChipProps & { run: Run; projectId: string; onSelect: (agent: string, model: string) => void }) {
+}: ChipProps & {
+  agent: string;
+  model: string | null;
+  /** 能不能換成其他 Agent；不能時只列出目前 Agent 的模型。 */
+  otherAgents: boolean;
+  onSelect: (agent: string, model: string) => void;
+}) {
   const t = useT();
   const c = t.workspace.composer;
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const { data: catalog } = useAgentCatalog(projectId);
-  const current = `${run.agent}|${run.model ?? ""}`;
+  const { data: catalog } = useAgentCatalog();
+  const current = `${agent}|${model ?? ""}`;
   const groups: MenuGroup<string>[] = catalog
-    .filter((entry) => entry.models.length > 0)
+    .filter((entry) => entry.models.length > 0 && (otherAgents || entry.agentId === agent))
     .map((entry) => ({
       title: entry.tool,
-      titleSub: entry.vendor,
+      titleSub: entry.vendor ?? undefined,
       logo: <AgentLogo agent={entry.agentId} size={14} />,
       items: entry.models.map((model) => ({
         value: `${entry.agentId}|${model.id}`,
@@ -116,7 +155,7 @@ function ModelChip({
         checked: `${entry.agentId}|${model.id}` === current,
       })),
     }));
-  const name = run.model ? modelDisplayName(run.model) : c.agentDefaultModel;
+  const name = model ? modelDisplayName(model, catalog) : c.agentDefaultModel;
   return (
     <>
       <button
@@ -131,7 +170,7 @@ function ModelChip({
         data-open={open}
         onClick={() => !disabled && groups.length > 0 && setOpen((v) => !v)}
       >
-        <AgentLogo agent={run.agent} size={14} />
+        <AgentLogo agent={agent} size={14} />
         <span className="cp-chip-model-name">{name}</span>
       </button>
       <Popover
@@ -153,24 +192,30 @@ function ModelChip({
 }
 
 function EffortChip({
-  run,
-  settings,
+  agent,
+  model,
+  effort,
   disabled,
   reason,
   onSelect,
 }: ChipProps & {
-  run: Run;
-  settings: RunSettings | null;
+  agent: string;
+  model: string | null;
+  effort: EffortLevel | null;
   onSelect: (effort: EffortLevel) => void;
 }) {
   const t = useT();
   const c = t.workspace.composer;
   const anchorRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const mode = run.model ? catalogModel(run.model).effort : "adjustable";
-  const unsupported = mode === "none";
-  const fixed = mode.startsWith("fixed:") ? (mode.slice("fixed:".length) as EffortLevel) : null;
-  const current: EffortLevel = fixed ?? settings?.effort ?? "std";
+  const { data: catalog } = useAgentCatalog();
+  // 模型目錄沒有列出時視為可以調整（Runner 不支援時以「沒有套用」回報）
+  const support = (model ? findModel(catalog, agent, model)?.effort : null) ?? {
+    kind: "adjustable" as const,
+  };
+  const unsupported = support.kind === "unsupported";
+  const fixed = support.kind === "fixed" ? support.level : null;
+  const current: EffortLevel = fixed ?? effort ?? "std";
   const inactive = disabled || unsupported || fixed !== null;
   const tip = unsupported ? c.effortUnsupported : fixed ? c.effort : (reason ?? c.effort);
   return (
@@ -220,10 +265,15 @@ function EffortChip({
 
 function PolicyChip({
   run,
+  policy: currentPolicy,
   disabled,
   reason,
   onSelect,
-}: ChipProps & { run: Run; onSelect: (policy: PermissionPolicy) => void }) {
+}: ChipProps & {
+  run: Run;
+  policy: PermissionPolicy;
+  onSelect: (policy: PermissionPolicy) => void;
+}) {
   const t = useT();
   const c = t.workspace.composer;
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -237,14 +287,14 @@ function PolicyChip({
         className="cp-chip"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`${c.policy} ${t.labels.permissionPolicy[run.permissionPolicy]}`}
+        aria-label={`${c.policy} ${t.labels.permissionPolicy[currentPolicy]}`}
         aria-disabled={disabled || undefined}
         data-tip={reason ?? c.policy}
         data-open={open}
         onClick={() => !disabled && setOpen((v) => !v)}
       >
         <Shield {...ICON} />
-        <span className="cp-mono">{t.labels.permissionPolicy[run.permissionPolicy]}</span>
+        <span className="cp-mono">{t.labels.permissionPolicy[currentPolicy]}</span>
       </button>
       <Popover
         anchorRef={anchorRef}
@@ -257,13 +307,13 @@ function PolicyChip({
               label: t.labels.permissionPolicy[policy],
               sub: t.labels.permissionPolicyDescription[policy],
               mono: true,
-              checked: policy === run.permissionPolicy,
+              checked: policy === currentPolicy,
               disabled: !allowed.includes(policy),
               disabledReason: c.policyLocalOnly,
             })),
           },
         ]}
-        onSelect={(policy) => policy !== run.permissionPolicy && onSelect(policy)}
+        onSelect={(policy) => policy !== currentPolicy && onSelect(policy)}
         label={c.policy}
         prefer="up"
         minWidth={260}

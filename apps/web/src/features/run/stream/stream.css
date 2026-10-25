@@ -1201,3 +1201,44 @@
     color: var(--o8b9098);
   }
 }
+
+/* 執行中排隊的訊息：回合結束後送出，可以收回 */
+.st-prompt[data-queued="true"] .st-bubble {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+.st-prompt[data-queued="withdrawn"] .st-bubble {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.st-queued-note {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.st-queued-withdraw {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--oe8e9eb);
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.st-queued-withdraw:hover {
+  background: var(--o1c1e22);
+}
+
+.st-sys-note {
+  color: var(--o8b9098);
+}

@@ -70,4 +70,17 @@ export default {
   createProject: "New project",
   keyPrefixHint:
     "For example ORB gives task keys ORB-1, ORB-2. 2–10 uppercase letters or digits, starting with a letter. Can't be changed later.",
+  repoKind: "Repo type",
+  repoKindGithub: "GitHub",
+  repoKindLocal: "Local",
+  localRepo: "Local",
+  localRepoHint:
+    "A local repo only has a name; each computer's runner.toml maps it to a checkout. Approved runs merge locally without a PR.",
+  connectGithub: "Connect to GitHub",
+  connectGithubHint:
+    "First point the local checkout's origin at the GitHub repo and push the base branch, for example by running in the checkout:",
+  connect: "Connect",
+  localMergeStrategy: "Local repo merge method",
+  localMergeStrategyOption: { squash: "Squash", merge: "Merge commit" },
+  localPushBase: "Push the base branch after a local merge",
 } satisfies Messages["project"];

@@ -16,6 +16,7 @@ import {
   PlanRow,
   PromptRow,
   PullRequestRow,
+  QueuedPromptRow,
   RateLimitedRow,
   StatusRow,
   SwitchRow,
@@ -70,6 +71,8 @@ function ItemBody({ item }: { item: StreamItem }) {
   switch (item.kind) {
     case "prompt":
       return <PromptRow item={item} />;
+    case "queued_prompt":
+      return <QueuedPromptRow item={item} />;
     case "message":
       return <MessageRow item={item} />;
     case "thought":

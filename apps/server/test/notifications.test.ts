@@ -10,8 +10,10 @@ import {
   type Role,
   WebServerMessage,
 } from "@orbis/api-contract";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
+import { taskMembers, tasks } from "../src/db/schema";
 import { notificationNotifier } from "../src/github/app";
 import {
   isInQuietHours,
@@ -321,6 +323,48 @@ describe.skipIf(dbSkipReason !== null)("通知系統", () => {
         (await flow.as("member").get(`/api/notifications/desktop-feed?after=${next.cursor}`)).body,
       );
       expect(again.items).toEqual([]);
+    });
+
+    it("列出時依目前的 Task 可見性過濾：Task 改成僅受邀成員後，舊通知不再出現", async () => {
+      const { member } = flow.team.members;
+      const task = await seedReadyTask(flow.db, flow.project, flow.repoId, {
+        createdByMemberId: flow.team.members.admin.id,
+      });
+      const feed = expectContract(
+        NotificationDesktopFeed,
+        (await flow.as("member").get("/api/notifications/desktop-feed")).body,
+      );
+      await notify([member.id], { title: "Task 的通知", taskId: task.id });
+      await notify([member.id], { title: "沒有 Task 的通知" });
+      expect((await list("member")).map((n) => n.title)).toEqual([
+        "沒有 Task 的通知",
+        "Task 的通知",
+      ]);
+
+      await flow.db.update(tasks).set({ generalAccess: "invited" }).where(eq(tasks.id, task.id));
+      expect((await list("member")).map((n) => n.title)).toEqual(["沒有 Task 的通知"]);
+      const unread = expectContract(
+        NotificationUnreadCount,
+        (await flow.as("member").get("/api/notifications/unread-count")).body,
+      );
+      expect(unread.count).toBe(1);
+      const next = expectContract(
+        NotificationDesktopFeed,
+        (await flow.as("member").get(`/api/notifications/desktop-feed?after=${feed.cursor}`)).body,
+      );
+      expect(next.items.map((n) => n.title)).toEqual(["沒有 Task 的通知"]);
+      // cursor 仍然越過看不到的通知
+      const again = expectContract(
+        NotificationDesktopFeed,
+        (await flow.as("member").get(`/api/notifications/desktop-feed?after=${next.cursor}`)).body,
+      );
+      expect(again.items).toEqual([]);
+
+      // 重新加進 Task 後又看得到
+      await flow.db
+        .insert(taskMembers)
+        .values({ taskId: task.id, memberId: member.id, role: "view" });
+      expect(await list("member")).toHaveLength(2);
     });
 
     it("Web 經由 /api/ws 即時收到自己的通知", async () => {

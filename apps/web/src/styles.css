@@ -1400,3 +1400,36 @@
   align-items: center;
   padding: 0.25rem 0;
 }
+
+/* 本機 Repo 與連接到 GitHub（ADR-0013） */
+.repo-kind-tag {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--o1c1e22);
+  color: var(--o8b9098);
+  margin-right: 6px;
+}
+
+.repo-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.repo-connect-command {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--o1c1e22);
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.repo-connect-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

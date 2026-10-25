@@ -423,3 +423,98 @@ iframe.pv-frame {
     animation: none;
   }
 }
+
+/* 預覽邀請（ADR-0015） */
+.pv-invites {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--o2a2d33);
+}
+
+.pv-invites-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pv-invites-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pv-invites-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--o2a2d33);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.pv-invites-select {
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--o2a2d33);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.pv-invites-created {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.pv-invites-link {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.pv-invites-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pv-invites-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.pv-invites-row[data-status="revoked"],
+.pv-invites-row[data-status="expired"] {
+  opacity: 0.6;
+}
+
+.pv-invites-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pv-invites-revoke {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--danger, #e5484d);
+  cursor: pointer;
+}

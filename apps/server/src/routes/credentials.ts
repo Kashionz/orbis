@@ -13,6 +13,7 @@ import { and, asc, eq, gte, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { authorize, roleAtLeast } from "../authz/capabilities";
 import { requireTeamCapability } from "../authz/scope";
+import { visibleTaskIds } from "../authz/task-access";
 import {
   agentAvailabilities,
   projects,
@@ -189,7 +190,14 @@ export function createCredentialRoutes(s: Services): Hono<AppEnv> {
       .orderBy(asc(runs.createdAt), asc(runs.id));
     const now = s.clock.now();
     const response: TeamRunnerQueueResponse = [];
+    // 看不到的 Task（Task 分享）不列出，但順位照整個佇列計算。
+    const visible = await visibleTaskIds(
+      db,
+      actor,
+      rows.map((r) => r.run.taskId),
+    );
     for (const [index, { run, taskKey }] of rows.entries()) {
+      if (!visible.has(run.taskId)) continue;
       const placement = await s.dispatcher.placement(run, now);
       response.push({
         runId: run.id,

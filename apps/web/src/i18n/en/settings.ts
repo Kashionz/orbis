@@ -51,6 +51,10 @@ export default {
   needsSignIn: "Sign-in required",
   signIn: "Sign in again",
   signingIn: (tool: string) => `Opening ${tool} sign-in`,
+  signInUnknown: "Sign-in status unknown",
+  loginCommandTip: "Run this command in a terminal to sign in (click to copy)",
+  alwaysOn: "On",
+  windowsLongPathsAlwaysOn: "Runners always enable long paths on Windows",
   defaultModel: "Default model",
   defaultModelOf: (tool: string) => `Default model for ${tool}`,
   agentDefault: "Agent default",
@@ -66,4 +70,9 @@ export default {
   members: "Members",
   memberCount: (n: number) => `${n} ${n === 1 ? "member" : "members"}`,
   manageMembers: "Manage",
+  allowExternalPreview: "Allow sharing previews outside the team",
+  allowExternalPreviewSub: "People who can edit a task can invite others to view its preview",
+  allowTeamRunnerTerminal: "Allow terminals on team runners",
+  allowTeamRunnerTerminalSub:
+    "Admins can open a terminal on team runners (a shell on a shared machine)",
 } satisfies Messages["settings"];

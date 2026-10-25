@@ -1,7 +1,7 @@
 // 發送通知的介面（ARCHITECTURE §12.3）。產生事件的服務（Gate、Verification、GitHub 整合…）只依賴這個介面，
 // 實作見 notifications/service.ts。
 
-import type { NotificationKind } from "@orbis/api-contract";
+import type { NotificationKind, StoppedRunInfo } from "@orbis/api-contract";
 import type { UnitOfWork } from "../db/tx";
 
 export interface NotifyRequest {
@@ -17,6 +17,8 @@ export interface NotifyRequest {
   body?: string | null;
   /** 點擊後前往的 Web 路徑或網址；未提供時用 Task 的網址。 */
   url?: string | null;
+  /** `run_stopped` 的原因與細節（UI 依代碼在地化）；其他種類省略。 */
+  stoppedRun?: StoppedRunInfo | null;
 }
 
 export interface Notify {

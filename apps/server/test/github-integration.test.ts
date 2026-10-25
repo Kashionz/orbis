@@ -4,6 +4,7 @@
 import {
   API_ROUTES,
   apiPath,
+  type GeneralAccess,
   ImportableIssue,
   ImportIssueResult,
   NAMES,
@@ -184,6 +185,67 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
     });
   });
 
+  describe("僅受邀成員的 Task（ADR-0012）", () => {
+    const setAccess = async (taskId: string, generalAccess: GeneralAccess) => {
+      const res = await as("member").put(apiPath(API_ROUTES.taskShareGeneral, { taskId }), {
+        generalAccess,
+      });
+      expect(res.status).toBe(200);
+      await ctx.services.githubIdle();
+    };
+
+    it("不自動建立 Issue；改回 Team 可見後才建立", async () => {
+      await as("admin").patch(`/api/projects/${projectId}`, {
+        policy: { autoCreateIssues: false },
+      });
+      const task = await createTask();
+      await setAccess(task.id, "invited");
+      await as("admin").patch(`/api/projects/${projectId}`, {
+        policy: { autoCreateIssues: true },
+      });
+      await as("member").patch(`/api/tasks/${task.id}`, { title: "不公開的工作" });
+      await ctx.services.githubIdle();
+      expect(gh.github.callsTo("createIssue")).toHaveLength(0);
+
+      await setAccess(task.id, "team_view");
+      expect(await issueOf(task.id)).toMatchObject({ title: "不公開的工作", state: "open" });
+    });
+
+    it("已有 Issue 的改成僅受邀成員：保留 Issue 但不再更新；GitHub 的回寫照常；改回後補寫", async () => {
+      const task = await createTask();
+      const { number } = await issueOf(task.id);
+      await setAccess(task.id, "invited");
+      const updates = gh.github.callsTo("updateIssue").length;
+      const comments =
+        gh.github.callsTo("updateIssueComment").length +
+        gh.github.callsTo("createIssueComment").length;
+
+      await as("member").patch(`/api/tasks/${task.id}`, { description: "內部細節" });
+      await ctx.services.githubIdle();
+      expect(gh.github.callsTo("updateIssue")).toHaveLength(updates);
+      expect(
+        gh.github.callsTo("updateIssueComment").length +
+          gh.github.callsTo("createIssueComment").length,
+      ).toBe(comments);
+      expect((await issueOf(task.id)).body).not.toContain("內部細節");
+
+      // GitHub → Orbis 不受影響
+      const edited = gh.github.humanEdit(GITHUB_REPO_ID, number, { title: "GitHub 上改的標題" });
+      await deliver("issues", {
+        ...issuePayload("edited", edited, memberOnGitHub),
+        changes: { title: { from: "新增登入頁" } },
+      });
+      // 僅受邀成員的 Task 只有成員看得到，以擁有者讀取
+      const own = await as("member").get<{ title: string }>(`/api/tasks/${task.id}`);
+      expect(own.body.title).toBe("GitHub 上改的標題");
+
+      await setAccess(task.id, "team_edit");
+      const issue = await issueOf(task.id);
+      expect(issue.body).toContain("內部細節");
+      expect(issue.title).toBe("GitHub 上改的標題");
+    });
+  });
+
   describe("Issue → Task", () => {
     it("Issue 以 not planned 關閉 → Task Done 並記下關閉原因；重開 → Backlog、清空原因", async () => {
       const task = await createTask();
@@ -287,8 +349,19 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
       const { task, run, pull } = await openPullRequest();
       const [link] = await database.db.select().from(pullRequests);
       expect(link).toMatchObject({ taskId: task.id, runId: run.id, number: pull.number });
+      // Task 帶 PR（事件串流的「開出合併請求」與「已合併」）
+      expect((await getTask(task.id)).pullRequest).toMatchObject({
+        number: pull.number,
+        state: "open",
+        runId: run.id,
+        mergedAt: null,
+      });
       await deliver("pull_request", pullPayload("closed", pull.number, true));
-      expect(await getTask(task.id)).toMatchObject({ status: "done", doneReason: "completed" });
+      const merged = await getTask(task.id);
+      expect(merged).toMatchObject({ status: "done", doneReason: "completed" });
+      expect(merged.pullRequest).toMatchObject({ state: "merged", mergedAt: expect.any(String) });
+      const [row] = await database.db.select().from(pullRequests);
+      expect(row?.mergedAt).not.toBeNull();
     });
 
     it("PR 沒有 merge 就關閉 → Review Gate；重開 → PR Open", async () => {
@@ -297,6 +370,69 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
       expect((await getTask(task.id)).status).toBe("review_gate");
       await deliver("pull_request", pullPayload("reopened", pull.number, false));
       expect((await getTask(task.id)).status).toBe("pr_open");
+    });
+  });
+
+  describe("不指定 Repo 的 Task 與連接到 GitHub", () => {
+    it("沒有 Repo 的 Task 不建立 Issue；補指定 Repo 後才開始同步", async () => {
+      const res = await as("member").post(apiPath(API_ROUTES.projectTasks, { projectId }), {
+        repoId: null,
+        title: "還沒決定放哪",
+      });
+      const task = expectContract(Task, res.body);
+      await ctx.services.githubIdle();
+      expect(await database.db.select().from(taskIssueLinks)).toHaveLength(0);
+      await as("member").patch(apiPath(API_ROUTES.task, { taskId: task.id }), { repoId });
+      await ctx.services.githubIdle();
+      expect((await issueOf(task.id)).title).toContain("還沒決定放哪");
+    });
+
+    it("本機 Repo 連接到 GitHub：App 沒安裝 409 repo_not_connected；已登記 409 repo_exists；成功後改成 GitHub Repo 並同步 Issue", async () => {
+      const created = await as("admin").post(apiPath(API_ROUTES.projectRepos, { projectId }), {
+        kind: "local",
+        name: "notes",
+      });
+      const local = expectContract(Repo, created.body);
+      const task = await as("member").post(apiPath(API_ROUTES.projectTasks, { projectId }), {
+        repoId: local.id,
+        title: "本機的 Task",
+      });
+      const taskId = expectContract(Task, task.body).id;
+      await ctx.services.githubIdle();
+      expect(await database.db.select().from(taskIssueLinks)).toHaveLength(0);
+
+      const path = apiPath(API_ROUTES.repoConnectGithub, { repoId: local.id });
+      expect((await as("member").post(path, { owner: "acme", name: "notes" })).status).toBe(403);
+      const missing = await as("admin").post(path, { owner: "acme", name: "notes" });
+      expect(missing.status).toBe(409);
+      expect(missing.body).toMatchObject({
+        error: "repo_not_connected",
+        installUrl: expect.any(String),
+      });
+      const exists = await as("admin").post(path, { owner: "acme", name: "app" });
+      expect(exists.body).toMatchObject({ error: "repo_exists" });
+
+      gh.github.addRepo({
+        id: 5151,
+        owner: "acme",
+        name: "notes",
+        defaultBranch: "main",
+        installationId: INSTALLATION_ID,
+      });
+      const ok = await as("admin").post(path, { owner: "acme", name: "notes" });
+      expect(ok.status).toBe(200);
+      expect(expectContract(Repo, ok.body)).toMatchObject({
+        kind: "github",
+        owner: "acme",
+        name: "notes",
+      });
+      await ctx.services.githubIdle();
+      const [link] = await database.db
+        .select()
+        .from(taskIssueLinks)
+        .where(eq(taskIssueLinks.taskId, taskId));
+      expect(link).toBeDefined();
+      expect((await as("admin").post(path, { owner: "acme", name: "notes" })).status).toBe(409);
     });
   });
 

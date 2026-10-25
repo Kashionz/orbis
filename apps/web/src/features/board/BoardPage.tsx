@@ -44,7 +44,6 @@ import { Segmented } from "../../components/Segmented";
 import { StatusDot } from "../../components/StatusDot";
 import { useT } from "../../i18n";
 import { unfinishedDependencies } from "../../lib/dependencies";
-import { isFeatureEnabled } from "../../lib/features";
 import { usePersistentState } from "../../lib/storage";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
@@ -152,11 +151,7 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
   const now = useNow(60_000);
 
   const needsTaskIds = useMemo(() => new Set(needs.map((n) => n.taskId)), [needs]);
-  const visibleTasks = useMemo(
-    () => tasks.map((task) => ({ id: task.id, status: task.status })),
-    [tasks],
-  );
-  const summaries = useBoardSummaries(project.id, visibleTasks, isFeatureEnabled("boardSummary"));
+  const summaries = useBoardSummaries(project.id);
   const input = {
     tasks,
     drafts,

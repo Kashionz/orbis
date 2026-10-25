@@ -5,6 +5,9 @@
 //   兩邊同一欄位都改過時，以最後寫入者為準（Issue 的 updated_at 對上 Task 的 updatedAt）。
 // - 回音：App 自己的寫入造成的 webhook 以 sender 辨認並略過；就算沒有略過，
 //   payload 與快照相同（或不比快照新）也不會寫入。
+// - 一般存取是 `invited`（僅受邀成員，ADR-0012）的 Task 不寫到 GitHub：不建立 Issue，已有的 Issue 保留但不再
+//   更新（含狀態摘要留言）。快照停在最後一次同步，改回 Team 可見後依快照補寫，沒有 Issue 的那時建立。
+//   GitHub→Orbis 的回寫與 Issue 匯入不受影響。
 
 import { createHash } from "node:crypto";
 import { senderCanWrite } from "../authz";
@@ -37,7 +40,12 @@ import {
 export type PushOutcome =
   | {
       kind: "skipped";
-      reason: "task_not_found" | "no_repo" | "repo_not_connected" | "auto_create_disabled";
+      reason:
+        | "task_not_found"
+        | "no_repo"
+        | "repo_not_connected"
+        | "auto_create_disabled"
+        | "task_invited_only";
     }
   | { kind: "synced"; issueNumber: number; created: boolean; wrote: SyncedField[] };
 
@@ -131,7 +139,7 @@ async function applySharedFields(
 
   // 與 GitHub 上的修改相同的規則：做出修改的人在這個 Project 也要能編輯 Task，或對 repo 有寫入權限。
   // 沒有權限時這個 Task 維持原狀，快照也不更新（Issue 上是另一個 Project 的值）。
-  if (!(await senderCanWrite(ctx, task.projectId, link.repoId, actor.login, actor.id))) {
+  if (!(await senderCanWrite(ctx, task.projectId, link.repoId, actor.login, actor.id, task.id))) {
     await pushTaskLocked(ctx, taskId, {
       notice: `@${actor.login} 在另一個 Project 的 Task ${sourceKey} 修改了這個 Issue，但沒有這個 Project 的編輯權限，這個 Task 維持原狀。`,
     });
@@ -181,6 +189,7 @@ async function pushTaskLocked(
 ): Promise<PushOutcome> {
   const task = await ctx.domain.getTask(taskId);
   if (!task) return { kind: "skipped", reason: "task_not_found" };
+  if (task.generalAccess === "invited") return { kind: "skipped", reason: "task_invited_only" };
   if (!task.repoId) return { kind: "skipped", reason: "no_repo" };
   const record = await ctx.domain.getRepo(task.repoId);
   const repo = record && connectedRepo(record);
@@ -471,6 +480,7 @@ async function applyIssueChange(
       link.repoId,
       payload.sender.login,
       payload.sender.id,
+      task.id,
     ))
   ) {
     // 例如公開 repo 上 Issue 的作者可以改自己 Issue 的內容、關閉自己的 Issue，但不應該因此改動 Task。

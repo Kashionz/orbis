@@ -1,3 +1,4 @@
+import { PAGE_ROUTES } from "@orbis/api-contract";
 import type { QueryClient } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
@@ -11,6 +12,7 @@ import {
 import { lazy, Suspense, useEffect } from "react";
 import { AdminPage } from "./features/admin/AdminPage";
 import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
+import { InviteErrorPage } from "./features/auth/InviteErrorPage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
 import { DraftTasksPage } from "./features/draft-tasks/DraftTasksPage";
@@ -45,6 +47,18 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+});
+
+/** 邀請連結失敗時的頁面（Server 的 `/invites/<token>`、`/preview-invites/<token>` 轉到這裡）。 */
+const inviteErrorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: PAGE_ROUTES.inviteError,
+  validateSearch: (search: Record<string, unknown>): { code?: string } =>
+    typeof search.code === "string" ? { code: search.code } : {},
+  component: function InviteErrorRouteComponent() {
+    const { code } = inviteErrorRoute.useSearch();
+    return <InviteErrorPage code={code} />;
+  },
 });
 
 const indexRoute = createRoute({
@@ -233,6 +247,7 @@ function PageError({ error }: ErrorComponentProps) {
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  inviteErrorRoute,
   indexRoute,
   ...(ComponentGallery ? [componentGalleryRoute] : []),
   authedRoute.addChildren([

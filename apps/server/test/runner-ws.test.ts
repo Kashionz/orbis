@@ -314,6 +314,7 @@ describe.skipIf(dbSkipReason !== null)("Runner WebSocket 端點", () => {
       runner_token: null,
       heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
       resume: [],
+      runner_kind: "team",
     });
     const [runner] = await database.db.select().from(runners).where(eq(runners.id, ack.runner_id));
     expect(runner?.runnerVersion).toBe("0.2.0");

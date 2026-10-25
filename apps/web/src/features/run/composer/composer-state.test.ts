@@ -14,7 +14,7 @@ const base: ComposerSituation = {
   reviewGatePending: false,
   verificationAwaitingDecision: false,
 };
-const all: SendCapabilities = { reject: true, control: true, prompt: true };
+const all: SendCapabilities = { reject: true, control: true };
 const permission = { key: "permission-p1", title: "執行指令", detail: "pnpm test" };
 const reviewGate: ComposerSituation = {
   ...base,
@@ -76,11 +76,11 @@ describe("sendStateFor", () => {
     });
   });
 
-  it("執行中傳訊息：後端不支援時標示尚未開放", () => {
+  it("執行中傳訊息：沒有權限或 Run 不接受訊息時不能送出", () => {
     expect(sendStateFor(base, all)).toEqual({ action: "prompt", blocker: null });
-    expect(sendStateFor(base, { ...all, prompt: false })).toEqual({
+    expect(sendStateFor({ ...base, status: "queued" }, all)).toEqual({
       action: "prompt",
-      blocker: "unavailable",
+      blocker: "not_accepting",
     });
     expect(sendStateFor(base, { ...all, control: false })).toEqual({
       action: "prompt",

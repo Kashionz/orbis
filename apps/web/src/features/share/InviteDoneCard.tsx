@@ -1,21 +1,19 @@
 // 邀請成功卡（README §8）：在分享卡的位置顯示，沒有 scrim；Esc 或點外面關閉，「完成」預設 focus。
+// 以 email 邀請時，邀請連結只在這裡出現一次：有寄信時顯示已寄出，沒有時提示複製連結傳給對方。
 
 import type { Task } from "@orbis/api-contract";
 import { useQuery } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { type RefObject, useRef } from "react";
 import { membersQuery } from "../../api/resources";
 import { Avatar } from "../../components/Avatar";
 import { Floating } from "../../components/Floating";
+import { useToast } from "../../components/Toast";
 import { useT } from "../../i18n";
+import type { ShareAddResult } from "./api";
 import { shareCardPosition } from "./SharePopover";
-import type { InviteRole } from "./types";
 
-export interface InviteResult {
-  /** 加入的 Member id 或 Email。 */
-  who: string[];
-  role: InviteRole;
-}
+export type InviteResult = ShareAddResult;
 
 const MAX_ROWS = 4;
 
@@ -34,17 +32,32 @@ export function InviteDoneCard({
 }) {
   const t = useT();
   const doneRef = useRef<HTMLButtonElement>(null);
+  const toast = useToast();
   const { data: members = [] } = useQuery(membersQuery);
-  const people = (result?.who ?? []).map((value) => {
-    if (value.includes("@")) return { key: value, name: value, email: true, avatarUrl: null };
-    const member = members.find((m) => m.id === value);
+  const memberPerson = (id: string) => {
+    const member = members.find((m) => m.id === id);
     return {
-      key: value,
-      name: member?.githubLogin ?? value,
+      key: id,
+      name: member?.githubLogin ?? id,
       email: false,
       avatarUrl: member?.avatarUrl ?? null,
+      link: null as { url: string; emailSent: boolean } | null,
     };
-  });
+  };
+  const people = [
+    ...(result?.memberIds ?? []).map(memberPerson),
+    ...(result?.invites ?? []).map((created) =>
+      created.kind === "member_added"
+        ? memberPerson(created.member.id)
+        : {
+            key: created.invite.id,
+            name: created.invite.email,
+            email: true,
+            avatarUrl: null,
+            link: { url: created.inviteUrl, emailSent: created.emailSent },
+          },
+    ),
+  ];
   const [first] = people;
   const title =
     people.length === 1 && first
@@ -92,8 +105,26 @@ export function InviteDoneCard({
             />
             <span className="invite-done-name">
               <span>{person.name}</span>
-              {person.email && <span className="invite-done-email">{t.share.emailInvite}</span>}
+              {person.link && (
+                <span className="invite-done-email">
+                  {person.link.emailSent ? t.share.emailSent : t.share.copyLinkToSend}
+                </span>
+              )}
             </span>
+            {person.link && (
+              <button
+                type="button"
+                className="share-text-button"
+                aria-label={t.share.copyInviteLink}
+                data-tip={t.share.copyInviteLink}
+                onClick={() => {
+                  const url = person.link?.url ?? "";
+                  void navigator.clipboard?.writeText(url).then(() => toast.show(t.common.copied));
+                }}
+              >
+                <Copy size={13} />
+              </button>
+            )}
             <span className="invite-done-role">{result ? t.share.role[result.role] : ""}</span>
           </div>
         ))}

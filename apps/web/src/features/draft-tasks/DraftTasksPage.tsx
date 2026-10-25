@@ -25,6 +25,7 @@ import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
 import { useT } from "../../i18n";
+import { repoDisplayName } from "../../lib/github";
 import { parseList } from "../../lib/policy-form";
 import { usePermissions } from "../auth/use-permissions";
 
@@ -225,7 +226,7 @@ function DraftTaskItem({
         )}
         <span className="task-key">#{draft.position}</span>
         <strong>{draft.title}</strong>
-        <span className="hint">{repo ? `${repo.owner}/${repo.name}` : t.draftTasks.noRepo}</span>
+        <span className="hint">{repo ? repoDisplayName(repo) : t.draftTasks.noRepo}</span>
       </div>
       {editing ? (
         <DraftTaskForm
@@ -386,7 +387,7 @@ function DraftTaskForm({
           <option value="">{t.draftTasks.repoNone}</option>
           {repos.map((repo) => (
             <option key={repo.id} value={repo.id}>
-              {repo.owner}/{repo.name}
+              {repoDisplayName(repo)}
             </option>
           ))}
         </select>

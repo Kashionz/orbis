@@ -9,8 +9,11 @@ import {
   LOGIN_HINT_KINDS,
   MODEL_SOURCES,
   MODEL_TAGS,
+  REPO_SPEC_COMMIT_FAILURES,
   RUN_CONTROL_REJECT_REASONS,
   type RunnerToServer,
+  TERMINAL_EXIT_REASONS,
+  TERMINAL_MAX_CHUNK,
 } from "@orbis/protocol";
 import { z } from "zod";
 
@@ -139,6 +142,61 @@ export const RunControlResultFrame = z.discriminatedUnion("outcome", [
     message: z.string(),
   }),
 ]) satisfies z.ZodType<RunControlResultFrame, unknown>;
+
+/** base64 解碼後最多 TERMINAL_MAX_CHUNK 位元組（4／3 倍再加 padding）。 */
+const TerminalData = z
+  .string()
+  .max(Math.ceil(TERMINAL_MAX_CHUNK / 3) * 4)
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/);
+
+export const TerminalOutputFrame = z.object({
+  type: z.literal("terminal_output"),
+  terminal_id: z.uuid(),
+  data: TerminalData,
+}) satisfies z.ZodType<Extract<RunnerToServer, { type: "terminal_output" }>, unknown>;
+
+export const TerminalExitedFrame = z.object({
+  type: z.literal("terminal_exited"),
+  terminal_id: z.uuid(),
+  code: z.number().int().nullable(),
+  // 彈性：之後可能增加代碼，不認得的值當成 `exited`。
+  reason: z
+    .string()
+    .transform((v) =>
+      (TERMINAL_EXIT_REASONS as readonly string[]).includes(v)
+        ? (v as (typeof TERMINAL_EXIT_REASONS)[number])
+        : "exited",
+    ),
+  message: z.string().nullable(),
+}) satisfies z.ZodType<Extract<RunnerToServer, { type: "terminal_exited" }>, unknown>;
+
+export const RepoSpecCommitResultFrame = z.discriminatedUnion("outcome", [
+  z.object({
+    type: z.literal("repo_spec_commit_result"),
+    commit_id: z.uuid(),
+    outcome: z.literal("committed"),
+    commit_sha: z.string().regex(/^[0-9a-f]{40}$/),
+  }),
+  z.object({
+    type: z.literal("repo_spec_commit_result"),
+    commit_id: z.uuid(),
+    outcome: z.literal("unchanged"),
+    commit_sha: z.string().regex(/^[0-9a-f]{40}$/),
+  }),
+  z.object({
+    type: z.literal("repo_spec_commit_result"),
+    commit_id: z.uuid(),
+    outcome: z.literal("failed"),
+    reason: z
+      .string()
+      .transform((v) =>
+        (REPO_SPEC_COMMIT_FAILURES as readonly string[]).includes(v)
+          ? (v as (typeof REPO_SPEC_COMMIT_FAILURES)[number])
+          : "failed",
+      ),
+    message: z.string(),
+  }),
+]) satisfies z.ZodType<Extract<RunnerToServer, { type: "repo_spec_commit_result" }>, unknown>;
 
 /** 只確認是 `{ "type": "..." }` 形式的 JSON 物件；內容由各 frame 的 schema 驗證。 */
 const AnyFrame = z.looseObject({ type: z.string() });

@@ -3,6 +3,8 @@
 // - 通知依 id 排序：id 是 UUIDv7，與建立順序一致。
 // - 桌面 feed：Electron 第一次輪詢不帶 `after`，只拿 `cursor` 作為基準；之後以上一次的 `cursor` 取得新的
 //   `desktop = true` 通知（已套用個人設定與勿擾時段）。還沒有任何通知時 cursor 是 `NO_NOTIFICATIONS`。
+// - 列出時依目前的 Task 可見性（ADR-0012）濾掉看不到的 Task 的通知：Task 之後改成僅受邀成員、或人被移出
+//   Task 時，舊通知的標題與內容不再出現。分頁與 cursor 仍依原本的列，可能有某一頁比 limit 少。
 
 import {
   API_ROUTES,
@@ -11,14 +13,15 @@ import {
   type NotificationListResponse,
   NotificationPreferences,
 } from "@orbis/api-contract";
-import { and, asc, count, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { visibleTaskIds } from "../authz/task-access";
 import { notificationPreferences, notifications, tasks } from "../db/schema";
 import type { Executor } from "../db/tx";
 import { toNotification } from "../http/dto";
 import { readJson, readQuery } from "../http/errors";
-import type { AppEnv } from "../http/session";
+import type { Actor, AppEnv } from "../http/session";
 import type { Services } from "../services";
 
 const NO_NOTIFICATIONS = "none";
@@ -44,6 +47,20 @@ const toTime = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 type NotificationRow = typeof notifications.$inferSelect;
+
+/** 只留下沒有 Task、或 Actor 目前看得到那個 Task 的通知。 */
+async function visibleOnly<T extends { taskId: string | null }>(
+  db: Executor,
+  actor: Actor,
+  rows: T[],
+): Promise<T[]> {
+  const visible = await visibleTaskIds(
+    db,
+    actor,
+    rows.flatMap((r) => (r.taskId ? [r.taskId] : [])),
+  );
+  return rows.filter((r) => r.taskId === null || visible.has(r.taskId));
+}
 
 async function withTaskKeys(db: Executor, rows: NotificationRow[]) {
   const taskIds = [...new Set(rows.flatMap((r) => (r.taskId ? [r.taskId] : [])))];
@@ -79,7 +96,7 @@ export function createNotificationRoutes(s: Services): Hono<AppEnv> {
       .limit(query.limit + 1);
     const page = rows.slice(0, query.limit);
     const response: NotificationListResponse = {
-      items: await withTaskKeys(db, page),
+      items: await withTaskKeys(db, await visibleOnly(db, actor, page)),
       nextBefore: rows.length > query.limit ? (page.at(-1)?.id ?? null) : null,
     };
     return c.json(response);
@@ -87,11 +104,11 @@ export function createNotificationRoutes(s: Services): Hono<AppEnv> {
 
   app.get(API_ROUTES.notificationsUnreadCount, auth, async (c) => {
     const actor = c.get("actor");
-    const [row] = await db
-      .select({ n: count() })
+    const unread = await db
+      .select({ taskId: notifications.taskId })
       .from(notifications)
       .where(and(eq(notifications.memberId, actor.memberId), isNull(notifications.readAt)));
-    return c.json({ count: row?.n ?? 0 });
+    return c.json({ count: (await visibleOnly(db, actor, unread)).length });
   });
 
   app.post(API_ROUTES.notificationsRead, auth, async (c) => {
@@ -139,7 +156,7 @@ export function createNotificationRoutes(s: Services): Hono<AppEnv> {
       .orderBy(asc(notifications.id))
       .limit(100);
     const response: NotificationDesktopFeed = {
-      items: await withTaskKeys(db, rows),
+      items: await withTaskKeys(db, await visibleOnly(db, actor, rows)),
       cursor: rows.at(-1)?.id ?? after,
     };
     return c.json(response);

@@ -4,9 +4,10 @@ import type { Hono } from "hono";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import type { GitHubOAuth, GitHubUser } from "../src/auth/github-oauth";
+import { createGitHubOAuth } from "../src/auth/github-oauth";
 import { members, sessions, teams } from "../src/db/schema";
 import { createLogger } from "../src/logger";
-import { OAUTH_STATE_COOKIE, SESSION_COOKIE } from "../src/routes/auth";
+import { OAUTH_RETURN_COOKIE, OAUTH_STATE_COOKIE, SESSION_COOKIE } from "../src/routes/auth";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 
 const PUBLIC_URL = "http://localhost:5173";
@@ -28,6 +29,7 @@ const USERS: Record<string, GitHubUser> = {
     login: "teammate",
     name: "Team Mate",
     avatarUrl: "https://avatars.githubusercontent.com/u/3",
+    email: "teammate@example.com",
   },
 };
 
@@ -254,5 +256,94 @@ describe.skipIf(dbSkipReason !== null)("GitHub OAuth 登入", () => {
     expect(cookieFrom(response, SESSION_COOKIE)).toBe("");
     expect((await me(sessionToken)).status).toBe(401);
     expect(await database.db.select().from(sessions)).toHaveLength(0);
+  });
+
+  it("登入時把已驗證的 email 寫進這個帳號所有的 Member 紀錄與 session；沒有時為 null", async () => {
+    await login("code-owner");
+    const [team] = await database.db.select().from(teams);
+    const [other] = await database.db.insert(teams).values({ name: "Other" }).returning();
+    for (const teamId of [team?.id, other?.id]) {
+      await database.db
+        .insert(members)
+        .values({ teamId: teamId as string, githubUserId: 3, githubLogin: "old", role: "viewer" });
+    }
+    const callback = await login("code-member");
+    const rows = await database.db.select().from(members).where(eq(members.githubUserId, 3));
+    expect(rows.map((m) => m.email)).toEqual(["teammate@example.com", "teammate@example.com"]);
+    const token = cookieFrom(callback, SESSION_COOKIE);
+    const body = MeResponse.parse(await (await me(token)).json());
+    expect(body.member?.email).toBe("teammate@example.com");
+    const [session] = await database.db.select().from(sessions).where(eq(sessions.githubUserId, 3));
+    expect(session?.verifiedEmail).toBe("teammate@example.com");
+
+    // 沒有已驗證 email 的帳號：覆寫成 null
+    USERS["code-member"] = { ...(USERS["code-member"] as GitHubUser), email: null };
+    await login("code-member");
+    const after = await database.db.select().from(members).where(eq(members.githubUserId, 3));
+    expect(after.map((m) => m.email)).toEqual([null, null]);
+    USERS["code-member"] = {
+      ...(USERS["code-member"] as GitHubUser),
+      email: "teammate@example.com",
+    };
+  });
+
+  it("returnTo：登入完成後回到原本的路徑；不是同一個 origin 的路徑一律回首頁", async () => {
+    const start = await app.request("/api/auth/github/login?returnTo=%2Finvites%2Fabc");
+    const state = cookieFrom(start, OAUTH_STATE_COOKIE) as string;
+    const back = cookieFrom(start, OAUTH_RETURN_COOKIE) as string;
+    expect(decodeURIComponent(back)).toBe("/invites/abc");
+    const callback = await app.request(`/api/auth/github/callback?code=code-owner&state=${state}`, {
+      headers: { cookie: `${OAUTH_STATE_COOKIE}=${state}; ${OAUTH_RETURN_COOKIE}=${back}` },
+    });
+    expect(callback.headers.get("location")).toBe(`${PUBLIC_URL}/invites/abc`);
+
+    const evil = await app.request("/api/auth/github/login?returnTo=%2F%2Fevil.test");
+    expect(cookieFrom(evil, OAUTH_RETURN_COOKIE) ?? "").toBe("");
+  });
+
+  it("GitHub OAuth 請求 user:email，取主要且已驗證的 email", async () => {
+    const calls: string[] = [];
+    const oauth = createGitHubOAuth({
+      clientId: "id",
+      clientSecret: "secret",
+      fetch: async (input) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.endsWith("/user")) {
+          return Response.json({ id: 7, login: "x", name: null, avatar_url: null });
+        }
+        return Response.json([
+          { email: "old@example.com", primary: false, verified: true },
+          { email: "Me@Example.com", primary: true, verified: true },
+        ]);
+      },
+    });
+    expect(
+      new URL(oauth.authorizeUrl({ redirectUri: "http://x", state: "s" })).searchParams.get(
+        "scope",
+      ),
+    ).toBe("user:email");
+    const user = await oauth.fetchUser("token");
+    expect(user.email).toBe("me@example.com");
+    expect(calls).toContain("https://api.github.com/user/emails");
+
+    const unverified = createGitHubOAuth({
+      clientId: "id",
+      clientSecret: "secret",
+      fetch: async (input) =>
+        String(input).endsWith("/user")
+          ? Response.json({ id: 7, login: "x" })
+          : Response.json([{ email: "me@example.com", primary: true, verified: false }]),
+    });
+    expect((await unverified.fetchUser("token")).email).toBeNull();
+    const failing = createGitHubOAuth({
+      clientId: "id",
+      clientSecret: "secret",
+      fetch: async (input) =>
+        String(input).endsWith("/user")
+          ? Response.json({ id: 7, login: "x" })
+          : new Response("forbidden", { status: 403 }),
+    });
+    expect((await failing.fetchUser("token")).email).toBeNull();
   });
 });

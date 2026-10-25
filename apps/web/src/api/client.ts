@@ -27,6 +27,8 @@ export class ApiError extends Error {
     readonly issues: readonly ApiIssue[] = [],
     /** Task 進入 Ready 的條件不足時缺少的項目。 */
     readonly missing: readonly ReadyRequirement[] = [],
+    /** `repo_not_connected` 時安裝 GitHub App 的網址。 */
+    readonly installUrl: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -49,8 +51,8 @@ async function errorFromResponse(response: Response): Promise<ApiError> {
   }
   const body = ApiErrorBody.safeParse(json);
   if (!body.success) return new ApiError(response.status, null, `HTTP ${response.status}`);
-  const { error, message, issues = [], missing = [] } = body.data;
-  return new ApiError(response.status, error, message || error, issues, missing);
+  const { error, message, issues = [], missing = [], installUrl = null } = body.data;
+  return new ApiError(response.status, error, message || error, issues, missing, installUrl);
 }
 
 async function send(

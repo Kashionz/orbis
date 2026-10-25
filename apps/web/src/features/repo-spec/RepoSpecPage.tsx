@@ -12,6 +12,7 @@ import {
 import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { useT } from "../../i18n";
+import { repoDisplayName } from "../../lib/github";
 import { usePermissions } from "../auth/use-permissions";
 import { CollabEditor } from "../collab/CollabEditor";
 import { safeHref } from "../run/stream/safe-href";
@@ -57,7 +58,7 @@ export function RepoSpecPage({ repoSpecId }: { repoSpecId: string }) {
           <span>{t.repoSpec.projectFallback}</span>
         )}
         <span aria-hidden="true"> / </span>
-        <span>{repo ? `${repo.owner}/${repo.name}` : t.repoSpec.repoFallback}</span>
+        <span>{repo ? repoDisplayName(repo) : t.repoSpec.repoFallback}</span>
       </nav>
       <header className="page-header">
         <div>

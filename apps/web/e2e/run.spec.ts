@@ -183,6 +183,15 @@ test.describe("別人在自己電腦上派工的 Run", () => {
     await page.reload();
     await expect(permissionRow(page)).toContainText("等待有權限的成員回覆");
     await expect(permissionRow(page).locator(".st-option")).toHaveCount(0);
+
+    // 換 Permission Policy 與換 Agent 也只限擁有者；模型只能在目前的 Agent 中切換
+    const policyChip = page.getByRole("button", { name: /^權限策略/ });
+    await expect(policyChip).toHaveAttribute("aria-disabled", "true");
+    await expect(policyChip).toHaveAttribute("data-tip", "只有這台本機執行器的擁有者能切換");
+    await page.getByRole("button", { name: /^切換模型/ }).click();
+    const models = page.getByRole("menu", { name: "切換模型" });
+    await expect(models.getByRole("menuitemradio", { name: /Sonnet 5\.5/ })).toBeVisible();
+    await expect(models.getByRole("menuitemradio", { name: /GPT-5 Codex/ })).toHaveCount(0);
   });
 });
 
@@ -216,6 +225,10 @@ test.describe("Worktree 路徑選單", () => {
             calls.push(`terminal:${path}`);
             return { ok: false, message: "找不到設定的終端機" };
           },
+          revealWorktree: async (path: string) => {
+            calls.push(`reveal:${path}`);
+            return { ok: true };
+          },
           beforeLogout: async () => ({ proceed: true }),
         },
       });
@@ -228,14 +241,14 @@ test.describe("Worktree 路徑選單", () => {
     await open("在 VS Code 開啟");
     await open("在終端機開啟");
     await expect(page.getByText("找不到設定的終端機")).toBeVisible();
-    // TODO(backend, reveal-in-explorer)：bridge 還沒有在檔案總管開啟，項目停用
-    await page.getByRole("button", { name: /^工作樹/ }).click();
-    await expect(
-      page.getByRole("menu", { name: "工作樹" }).getByRole("menuitem", { name: "在檔案總管開啟" }),
-    ).toHaveAttribute("aria-disabled", "true");
+    await open("在檔案總管開啟");
     const calls = await page.evaluate(
       () => (window as unknown as { __bridgeCalls: string[] }).__bridgeCalls,
     );
-    expect(calls).toEqual(["editor:C:/wt/demo/run", "terminal:C:/wt/demo/run"]);
+    expect(calls).toEqual([
+      "editor:C:/wt/demo/run",
+      "terminal:C:/wt/demo/run",
+      "reveal:C:/wt/demo/run",
+    ]);
   });
 });

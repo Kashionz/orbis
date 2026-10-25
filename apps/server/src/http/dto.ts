@@ -19,11 +19,13 @@ import type {
   StoppedRunReason,
   Task,
   TaskNote,
+  TaskPullRequest,
   Team,
   Verification,
 } from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { taskAccess } from "../authz/capabilities";
 import {
   acceptanceCriteria,
   type draftTasks,
@@ -32,12 +34,15 @@ import {
   needsYouItems,
   type notifications,
   type projects,
+  pullRequests,
   repoSpecs,
   type repos,
   reviewComments,
+  runControls,
   type runEvents,
-  type runs,
+  runs,
   taskDependencies,
+  taskMembers,
   type taskNotes,
   type tasks,
   type teams,
@@ -125,10 +130,29 @@ export function toRepo(row: typeof repos.$inferSelect, installUrl: string | null
 
 type TaskRow = typeof tasks.$inferSelect;
 
-/** 一次查出多個 Task 的相依與 Spec 路徑，組成 API 回應。 */
-export async function toTasks(db: Executor, rows: TaskRow[]): Promise<Task[]> {
+/** 看 Task 的人：算出 `viewerAccess` 用（ADR-0012）。 */
+export interface TaskViewer {
+  memberId: string;
+  /** 在各 Project 的有效 Role。 */
+  projectRole: (projectId: string) => Role;
+}
+
+/** 一次查出多個 Task 的相依、Spec 路徑、PR 與登入者的有效權限，組成 API 回應。 */
+export async function toTasks(db: Executor, rows: TaskRow[], viewer: TaskViewer): Promise<Task[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((t) => t.id);
+  const shares = await db
+    .select({ taskId: taskMembers.taskId, role: taskMembers.role })
+    .from(taskMembers)
+    .where(and(inArray(taskMembers.taskId, ids), eq(taskMembers.memberId, viewer.memberId)));
+  const shareRole = new Map(shares.map((s) => [s.taskId, s.role]));
+  const prs = await db
+    .select()
+    .from(pullRequests)
+    .where(inArray(pullRequests.taskId, ids))
+    .orderBy(desc(pullRequests.createdAt));
+  const latestPr = new Map<string, (typeof prs)[number]>();
+  for (const pr of prs) if (!latestPr.has(pr.taskId)) latestPr.set(pr.taskId, pr);
   const deps = await db
     .select()
     .from(taskDependencies)
@@ -159,18 +183,36 @@ export async function toTasks(db: Executor, rows: TaskRow[]): Promise<Task[]> {
       .sort(),
     planGateEnabled: row.planGateEnabled,
     createdByMemberId: row.createdByMemberId,
-    // TODO(backend, task-pull-request)：從 pull_requests 查出 PR。
-    pullRequest: null,
+    pullRequest: toTaskPullRequest(latestPr.get(row.id)),
     generalAccess: row.generalAccess,
-    // TODO(backend, task-sharing)：依 Task 角色、一般存取與 Role 算出目前登入者的有效權限。
-    viewerAccess: "edit",
+    // 呼叫端只會傳入登入者看得到的 Task；萬一看不到時以最低的權限表示。
+    viewerAccess:
+      taskAccess({
+        role: viewer.projectRole(row.projectId),
+        taskRole: shareRole.get(row.id) ?? null,
+        generalAccess: row.generalAccess,
+      }) ?? "view",
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   }));
 }
 
-export async function toTask(db: Executor, row: TaskRow): Promise<Task> {
-  const [task] = await toTasks(db, [row]);
+function toTaskPullRequest(
+  row: typeof pullRequests.$inferSelect | undefined,
+): TaskPullRequest | null {
+  if (!row) return null;
+  return {
+    number: row.number,
+    url: row.url,
+    state: row.state,
+    runId: row.runId,
+    openedAt: iso(row.createdAt),
+    mergedAt: isoOrNull(row.mergedAt),
+  };
+}
+
+export async function toTask(db: Executor, row: TaskRow, viewer: TaskViewer): Promise<Task> {
+  const [task] = await toTasks(db, [row], viewer);
   if (!task) throw new Error("unreachable");
   return task;
 }
@@ -235,15 +277,56 @@ export function toRun(row: typeof runs.$inferSelect): Run {
   };
 }
 
-export function toRunEvent(row: typeof runEvents.$inferSelect): RunEvent {
-  return {
-    runId: row.runId,
-    seq: row.seq,
-    ts: iso(row.ts),
-    event: row.payload as RunEvent["event"],
-    // TODO(backend, event-actor)：依 Event 的 control_id 查出 run_controls.requested_by_member_id。
-    actorMemberId: null,
-  };
+/**
+ * 一批 Event 轉成 API 回應，並補上作者（`actorMemberId`）：依 Event 的 `control_id` 查出送出那個 RunControl 的
+ * Member；Run 第一則人送出的 prompt（沒有 control id、來源是 `user`）的作者是派工的人。其他為 null。
+ */
+export async function toRunEvents(
+  db: Executor,
+  rows: (typeof runEvents.$inferSelect)[],
+): Promise<RunEvent[]> {
+  if (rows.length === 0) return [];
+  const controlIds = [
+    ...new Set(
+      rows.flatMap((row) => {
+        const id = (row.payload as { control_id?: unknown }).control_id;
+        return typeof id === "string" ? [id] : [];
+      }),
+    ),
+  ];
+  const controls =
+    controlIds.length > 0
+      ? await db
+          .select({ id: runControls.controlId, memberId: runControls.requestedByMemberId })
+          .from(runControls)
+          .where(inArray(runControls.controlId, controlIds))
+      : [];
+  const authorOf = new Map(controls.map((c) => [c.id, c.memberId]));
+  const runIds = [...new Set(rows.map((row) => row.runId))];
+  const requesters = await db
+    .select({ id: runs.id, memberId: runs.requestedByMemberId })
+    .from(runs)
+    .where(inArray(runs.id, runIds));
+  const requesterOf = new Map(requesters.map((r) => [r.id, r.memberId]));
+  return rows.map((row) => {
+    const payload = row.payload as { kind: string; control_id?: unknown; source?: unknown };
+    let actorMemberId: string | null = null;
+    if (typeof payload.control_id === "string") {
+      actorMemberId = authorOf.get(payload.control_id) ?? null;
+    } else if (
+      payload.kind === "prompt_submitted" &&
+      (payload.source === undefined || payload.source === "user")
+    ) {
+      actorMemberId = requesterOf.get(row.runId) ?? null;
+    }
+    return {
+      runId: row.runId,
+      seq: row.seq,
+      ts: iso(row.ts),
+      event: row.payload as RunEvent["event"],
+      actorMemberId,
+    };
+  });
 }
 
 type GateRow = typeof gates.$inferSelect;
@@ -474,7 +557,6 @@ export function toNotification(
     title: row.title,
     body: row.body,
     url: row.url,
-    // TODO(backend, stopped-run-reason)：建立 run_stopped 通知時寫入 stopped_run。
     stoppedRun: (row.stoppedRun as StoppedRunInfo | null) ?? null,
     readAt: isoOrNull(row.readAt),
     createdAt: iso(row.createdAt),

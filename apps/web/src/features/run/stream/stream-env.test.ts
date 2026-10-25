@@ -3,34 +3,42 @@ import { agentAt, fileReference } from "./stream-env";
 
 describe("agentAt", () => {
   const run = { agent: "codex", model: "gpt-5" };
+  const change = {
+    actorMemberId: "me",
+    agent: null,
+    model: null,
+    effort: null,
+    permissionPolicy: null,
+    notApplied: [],
+  };
   const settings = {
-    initial: { agent: "claude-code", model: "sonnet-4.5" },
+    initial: {
+      agent: "claude-code",
+      model: "claude-sonnet-5-5",
+      effort: null,
+      permissionPolicy: "auto" as const,
+    },
     changes: [
+      { ...change, seq: 10, ts: "2026-10-25T08:05:00Z", model: "claude-opus-5-5" },
       {
+        ...change,
+        seq: 12,
         ts: "2026-10-25T08:10:00Z",
-        memberId: "me",
-        kind: "effort" as const,
-        agent: null,
-        model: null,
-        effort: "deep" as const,
-        permissionPolicy: null,
+        model: "claude-haiku-5-5",
+        notApplied: ["model" as const],
       },
-      {
-        ts: "2026-10-25T08:20:00Z",
-        memberId: "me",
-        kind: "model" as const,
-        agent: "codex",
-        model: "gpt-5",
-        effort: null,
-        permissionPolicy: null,
-      },
+      { ...change, seq: 20, ts: "2026-10-25T08:20:00Z", agent: "codex", model: "gpt-5" },
     ],
   };
 
-  it("切換之前用派工時的 Agent，之後用切換後的", () => {
+  it("依時間套用切換：換模型、換 Agent，沒有生效的不算", () => {
+    expect(agentAt("2026-10-25T08:00:00Z", run, settings)).toEqual({
+      agent: "claude-code",
+      model: "claude-sonnet-5-5",
+    });
     expect(agentAt("2026-10-25T08:15:00Z", run, settings)).toEqual({
       agent: "claude-code",
-      model: "sonnet-4.5",
+      model: "claude-opus-5-5",
     });
     expect(agentAt("2026-10-25T08:25:00Z", run, settings)).toEqual({
       agent: "codex",

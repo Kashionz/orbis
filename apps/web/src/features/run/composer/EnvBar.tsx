@@ -38,13 +38,15 @@ export function EnvBar({ run, usage, live, onOpenTerminalTab }: EnvBarProps) {
   const path = run.worktreePath;
 
   const openWith = useMutation({
-    mutationFn: async (target: "editor" | "terminal") => {
+    mutationFn: async (target: "editor" | "terminal" | "explorer") => {
       if (!bridge || !path) return;
       const result =
         target === "editor"
           ? await bridge.openWorktreeInEditor(path)
-          : await bridge.openWorktreeInTerminal(path);
-      if (!result.ok) throw new Error(result.message);
+          : target === "explorer"
+            ? await bridge.revealWorktree?.(path)
+            : await bridge.openWorktreeInTerminal(path);
+      if (result && !result.ok) throw new Error(result.message);
     },
     onError: (error) =>
       toast.show(`${c.openFailed}：${error instanceof Error ? error.message : ""}`),
@@ -74,7 +76,7 @@ export function EnvBar({ run, usage, live, onOpenTerminalTab }: EnvBarProps) {
         if (run.branch) copy(run.branch);
         return;
       case "explorer":
-        // TODO(backend, reveal-in-explorer)：Desktop bridge 還沒有在檔案總管開啟的方法
+        openWith.mutate("explorer");
         return;
     }
   }
@@ -84,16 +86,13 @@ export function EnvBar({ run, usage, live, onOpenTerminalTab }: EnvBarProps) {
       title: path ?? "",
       titleMono: true,
       items: [
-        // 一般瀏覽器開不了本機的檔案總管與編輯器
-        ...(bridge
+        // 一般瀏覽器開不了本機的檔案總管與編輯器；還沒有 revealWorktree 的舊版 Desktop 也不顯示
+        ...(bridge?.revealWorktree
           ? [
               {
                 value: "explorer" as const,
                 label: c.openInExplorer,
                 icon: <FolderOpen {...ICON} />,
-                // TODO(backend, reveal-in-explorer)：Desktop bridge 加上方法後開放
-                disabled: true,
-                disabledReason: t.common.notAvailableYet,
               },
             ]
           : []),

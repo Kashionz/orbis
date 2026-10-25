@@ -183,6 +183,7 @@ export async function handlePullRequestEvent(
           current.repoId,
           payload.sender.login,
           payload.sender.id,
+          task.id,
         ))
       ) {
         // PR 的狀態照實記錄，Task 維持原狀；由負責人決定要不要處理。
@@ -246,7 +247,14 @@ export async function handlePullRequestEvent(
         transitioned = result.ok;
       }
 
-      await ctx.store.savePullRequestLink({ ...current, state: nextState });
+      await ctx.store.savePullRequestLink({
+        ...current,
+        state: nextState,
+        // 事件串流的「已合併」依這個時間排序（Task.pullRequest.mergedAt）。
+        ...(merged && {
+          mergedAt: payload.pull_request.merged_at ?? ctx.now().toISOString(),
+        }),
+      });
       // 由 GitHub 觸發的轉換 Server 不會回呼 onTaskChanged，這裡自己同步 Issue 與摘要留言。
       // merge 需要寫入權限；關閉、重開在上面已經檢查過操作者的權限。
       await pushTask(ctx, task.id, {

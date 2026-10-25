@@ -6,10 +6,10 @@
 // - 等待權限回覆、權限回覆後的繼續執行等狀態不另外顯示一列（權限請求本身已經看得到）。
 // - 尾列（複製最後的回覆、時間、工作了多久）只在整個執行結束後顯示。
 
+import type { RunSettingsChange, TaskPullRequest } from "@orbis/api-contract";
 import type { GateKind, RunStatus, ToolKind, VerificationOutcome } from "@orbis/protocol";
 import { TERMINAL_RUN_STATUSES } from "@orbis/protocol";
 import type { TimelineItem } from "../timeline";
-import type { RunSettingsChange, TaskPullRequest } from "../types";
 
 type ItemOf<T extends TimelineItem["type"]> = Extract<TimelineItem, { type: T }>;
 
@@ -17,7 +17,14 @@ export type ToolCallItem = ItemOf<"tool_call">;
 export type VerificationResultItem = ItemOf<"verification_result">;
 
 /** 項目上方的頭像列：Agent（logo＋代號＋模型）或送出 prompt 的人。 */
-export type StreamHead = { actor: "agent" } | { actor: "user"; source: ItemOf<"prompt">["source"] };
+export type StreamHead =
+  | { actor: "agent" }
+  | {
+      actor: "user";
+      source: ItemOf<"prompt">["source"];
+      /** 送出的人（Event 的 actorMemberId）；不知道時為 null。 */
+      memberId: string | null;
+    };
 
 /** 工具群組的分類：摘要依分類計數。 */
 export type ToolBucket = "read" | "search" | "edit" | "execute" | "other";
@@ -33,6 +40,8 @@ interface Base {
 
 export type StreamItem =
   | (Base & { kind: "prompt"; item: ItemOf<"prompt"> })
+  /** 執行中排隊的訊息（回合結束後送出，可以收回）；送出後不顯示，收回後顯示成已收回。 */
+  | (Base & { kind: "queued_prompt"; item: ItemOf<"queued_prompt"> })
   | (Base & { kind: "message"; item: ItemOf<"message"> })
   | (Base & {
       kind: "thought";
@@ -88,11 +97,12 @@ export type StreamItem =
         | ItemOf<"preview_stopped">
         | ItemOf<"run_diff">
         | ItemOf<"child_merged">
-        | ItemOf<"verification_completed">;
+        | ItemOf<"verification_completed">
+        | ItemOf<"local_merged">;
     })
-  /** TODO(backend, run-settings)：執行中切換模型、推理強度、權限策略。 */
+  /** 執行中切換模型、推理強度、權限策略，或換 Agent（Run 的設定的切換紀錄）。 */
   | (Base & { kind: "switch"; change: RunSettingsChange })
-  /** TODO(backend, task-pull-request)：開出或合併 PR。 */
+  /** 開出或合併 PR（Task 的 pullRequest）。 */
   | (Base & { kind: "pull_request"; pr: TaskPullRequest; merged: boolean });
 
 export interface StreamContext {
@@ -266,6 +276,10 @@ export function buildStream(items: readonly TimelineItem[], context: StreamConte
       case "prompt":
         drafts.push({ kind: "prompt", key: item.key, item });
         break;
+      case "queued_prompt":
+        // 送出後由 prompt 項目顯示
+        if (!item.submitted) drafts.push({ kind: "queued_prompt", key: item.key, item });
+        break;
       case "message":
         drafts.push({ kind: "message", key: item.key, item });
         break;
@@ -342,7 +356,10 @@ export function buildStream(items: readonly TimelineItem[], context: StreamConte
     let head: StreamHead | null = null;
     if (draft.kind === "prompt") {
       actor = "user";
-      head = { actor: "user", source: draft.item.source };
+      head = { actor: "user", source: draft.item.source, memberId: draft.item.actorMemberId };
+    } else if (draft.kind === "queued_prompt") {
+      actor = "user";
+      head = { actor: "user", source: "user", memberId: draft.item.actorMemberId };
     } else if (AGENT_KINDS.has(draft.kind) && actor !== "agent") {
       actor = "agent";
       head = { actor: "agent" };
@@ -376,9 +393,9 @@ export function withExtras(
   changes: readonly RunSettingsChange[],
   pr: TaskPullRequest | null,
 ): StreamItem[] {
-  const extras: StreamItem[] = changes.map((change, index) => ({
+  const extras: StreamItem[] = changes.map((change) => ({
     kind: "switch",
-    key: `switch-${index}-${change.ts}`,
+    key: `switch-${change.seq}`,
     head: null,
     change,
   }));

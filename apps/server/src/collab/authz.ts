@@ -1,6 +1,7 @@
 // 共同編輯文件的權限（ARCHITECTURE §12.1、§12.2）：沿用 Role。
 // 能查看 Task（或 Repo 所屬的 Project）就能讀；能編輯 Task 才能寫。
 
+import type { Role } from "@orbis/api-contract";
 import { eq } from "drizzle-orm";
 import { authorize } from "../authz/capabilities";
 import { loadProjectScope, loadTaskScope, type ProjectScope } from "../authz/scope";
@@ -24,7 +25,8 @@ export async function collabAccess(
   const scope = await loadDocScope(db, actor, ref);
   const input = {
     memberId: actor.memberId,
-    role: scope.role,
+    // Task 的文件依 Task 上的 Role 判斷（Task 分享，ADR-0012）；Repo Spec 草稿依 Project 的 Role。
+    role: "taskRole" in scope ? (scope.taskRole as Role) : scope.role,
     project: {
       allowMemberTeamRunnerDispatch: scope.project.allowMemberTeamRunnerDispatch,
       forbidSelfApproval: scope.project.forbidSelfApproval,

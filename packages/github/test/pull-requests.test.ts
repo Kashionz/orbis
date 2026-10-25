@@ -164,7 +164,10 @@ describe("pull_request webhook", () => {
     ]);
     expect(w.domain.task(task.id).doneReason).toBe("completed");
     expect(w.notifier.sent).toMatchObject([{ memberId: w.alice.id, kind: "pr_merged" }]);
-    expect((await w.store.findPullRequestLink(w.repo.id, number))?.state).toBe("merged");
+    const merged = await w.store.findPullRequestLink(w.repo.id, number);
+    expect(merged?.state).toBe("merged");
+    // 事件串流的「已合併」用 merge 的時間（payload 沒有 merged_at 時用收到的時間）。
+    expect(merged?.mergedAt).toEqual(expect.any(String));
     const link = await w.store.getIssueLinkByTask(task.id);
     expect(w.github.issue(w.repo.id, link?.issueNumber ?? 0).state).toBe("closed");
   });

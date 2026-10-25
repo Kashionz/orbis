@@ -161,6 +161,56 @@ test.describe("Project 設定頁", () => {
   });
 });
 
+test.describe("本機 Repo（ADR-0013）", () => {
+  test("登記本機 Repo、建立任務時可以選；連接到 GitHub：App 沒有安裝時顯示安裝連結", async ({
+    page,
+  }) => {
+    await page.goto("/projects/project-1/settings");
+    const form = page.getByRole("form", { name: "登記儲存庫" });
+    await form.getByRole("radio", { name: "本機" }).click();
+    await expect(form).toContainText("本機儲存庫只有名稱");
+    await expect(form.getByLabel("帳號或組織")).toHaveCount(0);
+    await form.getByLabel("儲存庫名稱").fill("notes");
+    await form.getByRole("button", { name: "登記" }).click();
+    const notes = repoRow(page, "notes");
+    await expect(notes).toContainText("本機");
+    await expect(notes).toContainText("main");
+
+    // 同名的本機 Repo 不能重複登記
+    await form.getByRole("radio", { name: "本機" }).click();
+    await form.getByLabel("儲存庫名稱").fill("notes");
+    await form.getByRole("button", { name: "登記" }).click();
+    await expect(form.getByRole("alert")).toHaveText("本機 Repo notes 已經登記在這個 Project");
+
+    // 新增任務時可以選本機 Repo
+    await page.getByRole("link", { name: "核心產品" }).click();
+    const dialog = await openNewTask(page);
+    await dialog.getByRole("button", { name: /^儲存庫/ }).click();
+    await expect(
+      page.getByRole("menu", { name: "儲存庫" }).getByRole("menuitemradio", { name: "notes" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+
+    // 連接到 GitHub
+    await page.goto("/projects/project-1/settings");
+    await repoRow(page, "notes").getByRole("button", { name: "連接到 GitHub" }).click();
+    const connect = page.getByRole("form", { name: "連接到 GitHub" });
+    await expect(connect).toContainText("gh repo create notes --source . --push");
+    await connect.getByLabel("帳號或組織").fill("octocat");
+    await connect.getByRole("button", { name: "連接" }).click();
+    await expect(connect.getByRole("alert")).toHaveText("GitHub App 沒有安裝在這個 repo 上");
+    await expect(connect.getByRole("link", { name: "安裝 GitHub App" })).toHaveAttribute(
+      "href",
+      INSTALL_URL,
+    );
+    await connect.getByLabel("帳號或組織").fill("acme");
+    await connect.getByRole("button", { name: "連接" }).click();
+    await expect(repoRow(page, "acme/notes")).toContainText("已安裝");
+    await expect(repoRow(page, "notes")).toHaveCount(0);
+  });
+});
+
 test.describe("重新檢查 GitHub App 安裝狀態（#56）", () => {
   test.describe("登記之後才安裝 App", () => {
     test.use({ mock: { githubAppOwnersOnRefresh: ["acme", "octocat"] } });

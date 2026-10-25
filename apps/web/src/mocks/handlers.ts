@@ -41,7 +41,7 @@ import { HttpResponse, http, ws } from "msw";
 import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
 import { MockCollabServer } from "./collab";
-import { createPrototypeHandlers } from "./prototype-features";
+import { createShareHandlers } from "./share";
 import { createWorkspaceHandlers } from "./workspace";
 
 /** 重播時每則 `run_events` 最多帶幾筆 Event（同 Server）。 */
@@ -177,6 +177,7 @@ export function createHandlers(backend: MockBackend) {
     eventsHandler,
     collabHandler,
     ...createWorkspaceHandlers(backend),
+    ...createShareHandlers(backend),
 
     // 版本相容（ARCHITECTURE §16）：依設定回不同的版本
     http.get(API_ROUTES.health, () => {
@@ -644,17 +645,11 @@ export function createHandlers(backend: MockBackend) {
     ),
     http.patch(
       API_ROUTES.team,
-      // TODO(backend, preview-share, terminal)：mock 只處理 Team 名稱，兩個 Team 設定還沒有 UI。
-      handle(async (request) => {
-        const { name } = await parse(request, UpdateTeamInput);
-        return name === undefined ? backend.team() : backend.updateTeam(name);
-      }),
+      handle(async (request) => backend.updateTeamSettings(await parse(request, UpdateTeamInput))),
     ),
     http.get(
       API_ROUTES.needsYou,
       handle(() => backend.needsYou()),
     ),
-    // 原型中有、後端還沒有的功能（lib/features.ts）
-    ...createPrototypeHandlers(backend),
   ];
 }

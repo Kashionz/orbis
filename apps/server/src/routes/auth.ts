@@ -15,9 +15,12 @@ import {
 import { constantTimeEqual, randomToken } from "../crypto";
 import type { Database } from "../db/client";
 import type { Logger } from "../logger";
+import { safeReturnPath } from "../preview/domain";
 
 export const SESSION_COOKIE = `${NAMES.productSlug}_session`;
 export const OAUTH_STATE_COOKIE = `${NAMES.productSlug}_oauth_state`;
+/** 登入完成後要回到的路徑（例如邀請連結），和 state 一起保存。 */
+export const OAUTH_RETURN_COOKIE = `${NAMES.productSlug}_oauth_return`;
 const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 export interface AuthRouteDeps {
@@ -48,6 +51,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
 
   const app = new Hono();
 
+  /** 查詢參數 `returnTo`：登入後回到的路徑，只接受同一個 origin 內的路徑（邀請連結用）。 */
   app.get(API_ROUTES.authGithubLogin, (c) => {
     const state = randomToken();
     setCookie(c, OAUTH_STATE_COOKIE, state, {
@@ -55,12 +59,24 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
       path: stateCookiePath,
       maxAge: OAUTH_STATE_TTL_SECONDS,
     });
+    const returnTo = safeReturnPath(c.req.query("returnTo"));
+    if (returnTo !== "/") {
+      setCookie(c, OAUTH_RETURN_COOKIE, returnTo, {
+        ...baseCookie,
+        path: stateCookiePath,
+        maxAge: OAUTH_STATE_TTL_SECONDS,
+      });
+    } else {
+      deleteCookie(c, OAUTH_RETURN_COOKIE, { ...baseCookie, path: stateCookiePath });
+    }
     return c.redirect(githubOAuth.authorizeUrl({ redirectUri, state }));
   });
 
   app.get(API_ROUTES.authGithubCallback, async (c) => {
     const expectedState = getCookie(c, OAUTH_STATE_COOKIE);
     deleteCookie(c, OAUTH_STATE_COOKIE, { ...baseCookie, path: stateCookiePath });
+    const returnTo = safeReturnPath(getCookie(c, OAUTH_RETURN_COOKIE));
+    deleteCookie(c, OAUTH_RETURN_COOKIE, { ...baseCookie, path: stateCookiePath });
     const state = c.req.query("state");
     const code = c.req.query("code");
     if (!expectedState || !state || !constantTimeEqual(state, expectedState)) {
@@ -98,7 +114,7 @@ export function createAuthRoutes(deps: AuthRouteDeps): Hono {
       path: "/",
       maxAge: Math.floor(SESSION_TTL_MS / 1000),
     });
-    return c.redirect(`${publicUrl}/`);
+    return c.redirect(`${publicUrl}${returnTo}`);
   });
 
   app.get(API_ROUTES.authMe, async (c) => {

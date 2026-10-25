@@ -10,6 +10,7 @@ import type {
   AcceptanceCriterionResult,
   FeedbackFixStatus,
   FeedbackSource,
+  GeneralAccess,
   NotificationKind,
   PullRequestState,
   TaskDoneReason,
@@ -36,6 +37,8 @@ export interface TaskRecord {
   labels: string[];
   /** Repo 內 Spec 的路徑（以 `/` 分隔）；沒有時為 null。 */
   specPath: string | null;
+  /** 一般存取（ADR-0012）；`invited` 的 Task 不同步到 GitHub Issue。 */
+  generalAccess: GeneralAccess;
   updatedAt: Date;
 }
 
@@ -141,8 +144,11 @@ export interface DomainService {
   getMember(memberId: string): Promise<MemberRecord | null>;
   /** 在 Project 所屬的 Team 中，找出這個 GitHub 帳號對應的 Member。 */
   findMemberByGithubUserId(projectId: string, githubUserId: number): Promise<MemberRecord | null>;
-  /** 這位 Member 在這個 Project 能不能編輯 Task（考慮 Project 的 Role 覆寫；Viewer 不行）。 */
-  canEditTasks(projectId: string, memberId: string): Promise<boolean>;
+  /**
+   * 這位 Member 在這個 Project 能不能編輯 Task（考慮 Project 的 Role 覆寫；Viewer 不行）。
+   * 傳入 taskId 時判斷在那個 Task 上的權限（Task 分享，ADR-0012）。
+   */
+  canEditTasks(projectId: string, memberId: string, taskId?: string): Promise<boolean>;
   /**
    * Project 是否開啟「自動建立 Issue」（預設開啟）。關閉時不為 Task 建立新的 Issue，
    * 但已經對應的 Issue（包括匯入的）照常同步。
@@ -218,6 +224,8 @@ export interface PullRequestLink {
   headBranch: string;
   headSha: string;
   state: PullRequestState;
+  /** merge 的時間（ISO 8601），由 `pull_request.closed`（merged）寫入；還沒 merge 時為 null 或省略。 */
+  mergedAt?: string | null;
 }
 
 export type DeliveryClaim =

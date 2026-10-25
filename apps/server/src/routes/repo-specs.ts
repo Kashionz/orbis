@@ -11,15 +11,24 @@ import {
   RepoSpecCommitInput,
   type RepoSpecCommitResponse,
 } from "@orbis/api-contract";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { coAuthor, isCommittableSpecPath } from "@orbis/github";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { loadProjectScope, requireProjectCapability } from "../authz/scope";
 import { collabDocRef } from "../collab/doc-name";
-import { repoSpecPullRequests, repoSpecs, repos } from "../db/schema";
+import {
+  agentAvailabilities,
+  members,
+  repoSpecPullRequests,
+  repoSpecs,
+  repos,
+  runners,
+} from "../db/schema";
 import type { Executor } from "../db/tx";
 import { toRepo } from "../http/dto";
 import { ApiError, conflict, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
+import { mapsRepo } from "../runner/dispatcher";
 import type { Services } from "../services";
 
 type SpecRow = typeof repoSpecs.$inferSelect;
@@ -114,6 +123,10 @@ export function createRepoSpecRoutes(s: Services): Hono<AppEnv> {
     const { spec, scope } = await loadSpec(actor, readId(c, "repoSpecId", "Repo Spec"));
     requireProjectCapability(actor, scope, "edit_task");
     const input = await readJson(c, RepoSpecCommitInput);
+    const [repo] = await db.select().from(repos).where(eq(repos.id, spec.repoId));
+    if (repo?.kind === "local") {
+      return c.json(await commitLocalSpec(s, actor, spec, repo, input.message));
+    }
     if (!s.github.app) {
       throw new ApiError(409, "github_disabled", "Server 沒有設定 GitHub App，無法提交到 repo");
     }
@@ -140,7 +153,6 @@ export function createRepoSpecRoutes(s: Services): Hono<AppEnv> {
     }
     const response: RepoSpecCommitResponse = {
       pullRequest: result.pullRequest,
-      // TODO(backend, local-repo)：本機 Repo 經由 Local Runner 直接 commit（repo_spec_commit）。
       localCommit: null,
       created: result.created,
       overwritesUpstreamChanges: result.overwritesUpstreamChanges,
@@ -175,4 +187,75 @@ export function createRepoSpecRoutes(s: Services): Hono<AppEnv> {
   });
 
   return app;
+}
+
+/**
+ * 本機 Repo 的 Spec 提交（ADR-0013）：Server 碰不到本機 checkout，交給提交者自己、runner.toml 有對應這個
+ * Repo 的 Local Runner 直接 commit 到基準分支；內容有變才 commit，版本在 commit 時加 1。
+ */
+async function commitLocalSpec(
+  s: Services,
+  actor: Actor,
+  spec: typeof repoSpecs.$inferSelect,
+  repo: typeof repos.$inferSelect,
+  message: string | undefined,
+): Promise<RepoSpecCommitResponse> {
+  const { db } = s;
+  if (!isCommittableSpecPath(spec.path)) {
+    throw new ApiError(
+      422,
+      "invalid_input",
+      `只能提交 repo 內 .github/ 以外的 .md 檔：${spec.path}`,
+    );
+  }
+  const candidates = await db
+    .select({ id: runners.id })
+    .from(runners)
+    .innerJoin(agentAvailabilities, eq(agentAvailabilities.runnerId, runners.id))
+    .where(
+      and(
+        eq(runners.kind, "local"),
+        eq(runners.memberId, actor.memberId),
+        isNull(runners.revokedAt),
+        mapsRepo(repo.githubName),
+      ),
+    );
+  const runnerId = [...new Set(candidates.map((r) => r.id))].find((id) => s.hub.isOnline(id));
+  if (!runnerId) {
+    throw new ApiError(
+      409,
+      "runner_offline",
+      "需要你自己有對應這個本機 Repo 的 Local Runner 在線上，才能提交 Spec",
+    );
+  }
+  await s.collab.flush();
+  const content = await s.collab.markdown(collabDocRef("repo-spec-draft", spec.id));
+  const [member] = await db.select().from(members).where(eq(members.id, actor.memberId));
+  const subject = message?.trim() || `docs(spec): 更新 ${spec.path}`;
+  const result = await s.repoSpecCommits.request(runnerId, {
+    repo: repo.githubName,
+    base_branch: repo.defaultBranch ?? "main",
+    path: spec.path,
+    content,
+    message: member ? `${subject}\n\n${coAuthor(member)}` : subject,
+  });
+  if (!result.ok) {
+    throw new ApiError(409, "runner_offline", "Local Runner 沒有回應，請確認它在線上後再試一次");
+  }
+  const outcome = result.outcome;
+  if (outcome.outcome === "failed") {
+    throw conflict(`無法提交到本機 Repo：${outcome.message}`, { reason: outcome.reason });
+  }
+  if (outcome.outcome === "committed") {
+    await db
+      .update(repoSpecs)
+      .set({ version: sql`${repoSpecs.version} + 1`, committedSha: outcome.commit_sha })
+      .where(eq(repoSpecs.id, spec.id));
+  }
+  return {
+    pullRequest: null,
+    localCommit: { commitSha: outcome.commit_sha, changed: outcome.outcome === "committed" },
+    created: false,
+    overwritesUpstreamChanges: false,
+  };
 }

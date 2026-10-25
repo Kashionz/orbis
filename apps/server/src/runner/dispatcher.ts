@@ -21,7 +21,7 @@ import type {
   DispatchReject,
   RunResume,
 } from "@orbis/protocol";
-import { and, asc, count, eq, gt, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
 import {
@@ -42,6 +42,7 @@ import { planGateEnabled } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
 import { childSequence, runDepth } from "../runs/children";
 import type { EventStore } from "../runs/event-store";
+import { currentPermissionPolicy, ensureFirstSegment } from "../runs/run-settings";
 import {
   CREDENTIAL_OCCUPYING_STATUSES,
   type CredentialLoad,
@@ -256,11 +257,14 @@ export class Dispatcher {
   async placement(run: RunRow, now: Date): Promise<Placement> {
     if (run.target === "local" && !run.requestedByMemberId) return { reason: "no_runner" };
     const [owner] = await this.db
-      .select({ teamId: projects.teamId })
+      .select({ teamId: projects.teamId, repoKind: repos.kind, repoName: repos.githubName })
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .leftJoin(repos, eq(repos.id, tasks.repoId))
       .where(eq(tasks.id, run.taskId));
     if (!owner) return { reason: "no_runner" };
+    // 本機 Repo 只能派到 Local Runner（ADR-0013）。
+    if (owner.repoKind === "local" && run.target !== "local") return { reason: "no_runner" };
     // Child Run、讀別的 Run Worktree 的 consult Run、Feedback Loop 接續的 Run 只能派給那個 Run 所在的
     // Runner（要用同一個 Worktree）。那個 Run 不在任何 Runner 上時留在佇列。
     const pinned = run.parentRunId ?? run.consultOfRunId ?? run.resumesRunId;
@@ -295,6 +299,8 @@ export class Dispatcher {
           eligible,
           eq(agentAvailabilities.agent, run.agent),
           eq(agentAvailabilities.available, true),
+          // 本機 Repo：只派給 runner.toml 有對應這個 Repo 名稱的 Runner。
+          owner.repoKind === "local" && owner.repoName ? mapsRepo(owner.repoName) : undefined,
         ),
       )
       .orderBy(asc(runners.createdAt), asc(runners.id), asc(agentAvailabilities.credential));
@@ -382,18 +388,28 @@ export class Dispatcher {
       expires_at: expiresAt.toISOString(),
       task: { task_id: task.id, task_key: task.key, title: task.title },
       run_seq: await runSequence(this.db, run),
-      // TODO(backend, local-repo)：本機 Repo 送 `{ kind: "local", name, default_branch, base_ref }`。
-      repo: {
-        kind: "github",
-        name: repo.githubName,
-        clone_url: `https://github.com/${repo.githubOwner}/${repo.githubName}.git`,
-        default_branch: defaultBranch,
-        base_ref: `origin/${defaultBranch}`,
-      },
+      // 本機 Repo 沒有 clone URL，Runner 依 runner.toml 找 checkout，從基準分支本身開出 Worktree（ADR-0013）。
+      repo:
+        repo.kind === "local"
+          ? {
+              kind: "local",
+              name: repo.githubName,
+              default_branch: defaultBranch,
+              base_ref: defaultBranch,
+            }
+          : {
+              kind: "github",
+              name: repo.githubName,
+              clone_url: `https://github.com/${repo.githubOwner}/${repo.githubName}.git`,
+              default_branch: defaultBranch,
+              base_ref: `origin/${defaultBranch}`,
+            },
       branch: run.branch,
       agent: run.agent,
       model: run.model,
-      permission_policy: run.permissionPolicy,
+      // 執行中切換過時用目前的值（改派時沿用）。
+      permission_policy: await currentPermissionPolicy(this.db, run),
+      ...(run.effort && { effort: run.effort }),
       // Child Run、@agent、Feedback Loop 的 Run 有自己的 prompt；其他 Run 由 Task 組出。
       prompt: (run.prompt as ContentBlock[] | null) ?? (await buildPrompt(this.db, task)),
       ...(run.promptSource && { prompt_source: run.promptSource }),
@@ -457,10 +473,13 @@ export class Dispatcher {
         )
         .returning();
       if (!dispatch) return null;
-      await tx
+      const [started] = await tx
         .update(runs)
         .set({ status: "starting" })
-        .where(and(eq(runs.id, dispatch.runId), eq(runs.status, "dispatched")));
+        .where(and(eq(runs.id, dispatch.runId), eq(runs.status, "dispatched")))
+        .returning();
+      // 用量依 Agent 分段（ADR-0016）：第一次被接受時建立第一段。
+      if (started) await ensureFirstSegment(tx, started, now);
       return dispatch;
     });
     if (!accepted) {
@@ -586,4 +605,9 @@ export async function buildPrompt(
     if (spec) blocks.push({ type: "resource_link", uri: spec.path, name: spec.title ?? spec.path });
   }
   return blocks;
+}
+
+/** AgentAvailability 的 mapped_repos（存在 details.mappedRepos）含有這個本機 Repo 名稱。 */
+export function mapsRepo(name: string) {
+  return sql`coalesce(${agentAvailabilities.details} -> 'mappedRepos', '[]'::jsonb) @> ${JSON.stringify([name])}::jsonb`;
 }

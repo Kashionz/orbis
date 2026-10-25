@@ -23,7 +23,7 @@ import { Popover, useMenu } from "../../components/Popover";
 import { StatusDot } from "../../components/StatusDot";
 import { useToast } from "../../components/Toast";
 import { useT } from "../../i18n";
-import { isFeatureEnabled } from "../../lib/features";
+import { repoDisplayName } from "../../lib/github";
 import { meQueryOptions } from "../auth/api";
 import { useShell } from "../shell/shell-context";
 import { createTaskFromForm } from "./api";
@@ -82,7 +82,6 @@ function NewTaskFormBody({
   const { data: repos = [], isSuccess: reposLoaded } = useQuery(reposQuery(project.id));
   const { data: members = [] } = useQuery(membersQuery);
   const { data: tasks = [] } = useQuery(tasksQuery(project.id));
-  const allowNoRepo = isFeatureEnabled("taskWithoutRepo");
 
   const [form, setForm] = useState<NewTaskForm>(() => ({
     title: "",
@@ -174,7 +173,6 @@ function NewTaskFormBody({
           <RepoChip
             repos={repos}
             repo={repo ?? null}
-            allowNone={allowNoRepo}
             onChange={(id) => {
               setRepoTouched(true);
               update({ repoId: id });
@@ -272,17 +270,15 @@ function NewTaskFormBody({
 function RepoChip({
   repos,
   repo,
-  allowNone,
   onChange,
 }: {
   repos: Repo[];
   repo: Repo | null;
-  allowNone: boolean;
   onChange: (repoId: string | null) => void;
 }) {
   const t = useT();
   const menu = useMenu();
-  const label = repo ? `${repo.owner}/${repo.name}` : t.common.notSpecified;
+  const label = repo ? repoDisplayName(repo) : t.common.notSpecified;
   return (
     <>
       <button
@@ -307,7 +303,7 @@ function RepoChip({
             items: [
               ...repos.map((r) => ({
                 value: r.id as string | null,
-                label: `${r.owner}/${r.name}`,
+                label: repoDisplayName(r),
                 mono: true,
                 checked: r.id === repo?.id,
               })),
@@ -315,9 +311,6 @@ function RepoChip({
                 value: null,
                 label: t.common.notSpecified,
                 checked: repo === null,
-                // TODO(backend, task-without-repo)：建立 Task 時 Repo 必填
-                disabled: !allowNone,
-                disabledReason: t.common.notAvailableYet,
               },
             ],
           },

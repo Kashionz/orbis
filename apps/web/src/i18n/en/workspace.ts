@@ -83,6 +83,12 @@ export default {
     fromNextStep: " from the next step",
     effortSet: "Reasoning effort set to",
     policySet: "Permission policy set to",
+    notApplied: "not supported by the agent, not applied",
+    queued: "Queued message, sent when the turn ends",
+    withdraw: "Withdraw",
+    withdrawn: "Withdrawn",
+    localMerged: (base: string) => `Merged into local ${base}`,
+    localMergedPushed: " and pushed",
   },
 
   permissionOption: {
@@ -108,6 +114,10 @@ export default {
       prompt: "Send",
     },
     forbidden: "No permission",
+    notAccepting: "The agent isn't running, so messages can't be sent right now",
+    interruptSend: "Interrupt the current turn and send",
+    queuedHint: "Messages sent during a turn are queued and sent when the turn ends",
+    switchRequested: "Sent, takes effect before the next turn",
     switchModel: "Switch model",
     effort: "Reasoning effort",
     effortUnsupported: "This model doesn’t support adjusting reasoning effort",
@@ -143,6 +153,7 @@ export default {
     copyBranch: "Copy branch name",
     openFailed: "Couldn’t open",
     policyLocalOnly: "Local runner only",
+    runnerOwnerOnly: "Only the owner of this local runner can change this",
   },
 
   effort: {
@@ -175,6 +186,7 @@ export default {
     status: "Status",
     needsYou: "Needs You",
     repo: "Repo",
+    assignRepo: "Set the repo (can't be changed later)",
     assignee: "Assignee",
     dependsOn: "Depends on",
     dependsNone: "None",
@@ -253,6 +265,10 @@ export default {
     yoloWarning:
       "Allow all approves every agent action on this machine, except writes to the main branch",
     permissionGaps: "Actions this agent can’t be stopped from under the permission policy",
+    repoNotMapped:
+      "Your runner doesn't map this task's local repo. Add [repos.<name>] to the runner's runner.toml",
+    effort: "Reasoning effort",
+    effortUnsupported: "Not supported",
     noRunner:
       "No runner can take this dispatch. Pair a local runner in the desktop app, or ask an admin to set up a team runner.",
     loadingAgents: "Loading available agents",
@@ -320,6 +336,23 @@ export default {
     desktop: "Desktop",
     mobile: "Mobile",
     width: "Preview width",
+    invites: {
+      title: "Preview invites",
+      placeholder: "GitHub username or email",
+      duration: "Expires in",
+      durationOption: { "1h": "1 hour", "24h": "24 hours", "7d": "7 days" },
+      invite: "Invite",
+      disabled:
+        "Sharing previews outside the team is off. Admins can turn it on in Settings → Account.",
+      emailSent: "Invitation email sent. You can also copy the link:",
+      copyLink: "Copy the link and send it to them (shown only once):",
+      copyLinkButton: "Copy invite link",
+      status: { active: "Active", expired: "Expired", revoked: "Revoked" },
+      expiresAt: (time: string) => `Expires ${time}`,
+      lastOpened: (time: string) => `Last opened ${time}`,
+      neverOpened: "Not opened yet",
+      revoke: "Revoke",
+    },
     share: "Share with team",
     shareCopied: "Preview share link copied",
     notStarted: "Preview not started",
@@ -380,6 +413,22 @@ export default {
   },
 
   terminal: {
+    tabs: "Terminals",
+    agentCommands: "Agent commands",
+    session: (n: number) => `Terminal ${n}`,
+    newSession: "New terminal",
+    closeSession: (n: number) => `Close terminal ${n}`,
+    ended: (reason: string) => `Terminal ended (${reason})`,
+    exitReason: {
+      exited: "the shell exited",
+      closed: "closed",
+      idle_timeout: "closed after 30 minutes idle",
+      worktree_missing: "worktree not found",
+      spawn_failed: "couldn't start the shell",
+      limit_exceeded: "too many terminals open",
+      runner_shutdown: "the runner went offline",
+      disabled: "this runner doesn't allow terminals",
+    } as Record<string, string>,
     shell: "Shell",
     empty: "No output",
     running: "Running",

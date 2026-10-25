@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
   Brain,
+  Clock,
   Copy,
   FileDiff,
   GitBranch,
@@ -74,9 +75,7 @@ export function HeadRow({
       </div>
     );
   }
-  const memberId =
-    (seq !== null ? env.actors?.prompts[String(seq)] : undefined) ??
-    (head.source === "user" ? env.run.startedByMemberId : null);
+  const memberId = head.memberId ?? (head.source === "user" ? env.run.startedByMemberId : null);
   const member = memberId ? env.members.get(memberId) : undefined;
   return (
     <div className="st-head" data-user="true" data-first={first}>
@@ -126,6 +125,33 @@ export function PromptRow({ item }: { item: Of<"prompt"> }) {
         >
           <Pencil {...ICON} />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** 執行中排隊的訊息：回合結束後送出，送出前可以收回；收回後顯示成已收回。 */
+export function QueuedPromptRow({ item }: { item: Of<"queued_prompt"> }) {
+  const t = useT();
+  const w = t.workspace.stream;
+  const env = useStreamEnv();
+  const queued = item.item;
+  const text = blocksText(queued.blocks);
+  return (
+    <div className="st-prompt" data-queued={queued.withdrawn ? "withdrawn" : "true"}>
+      <div className="st-bubble">{text}</div>
+      <div className="st-queued-note">
+        <Clock {...ICON} />
+        <span>{queued.withdrawn ? w.withdrawn : w.queued}</span>
+        {!queued.withdrawn && env.withdrawPrompt && (
+          <button
+            type="button"
+            className="st-queued-withdraw"
+            onClick={() => env.withdrawPrompt?.(queued.controlId)}
+          >
+            {w.withdraw}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -337,7 +363,7 @@ export function PermissionRow({ item }: { item: Of<"permission"> }) {
   const selected = permission.options.find(
     (o) => o.option_id === permission.resolved?.selectedOptionId,
   );
-  const responderId = env.actors?.permissions[permission.requestId];
+  const responderId = permission.resolved?.byMemberId;
   const responder = responderId ? env.members.get(responderId) : undefined;
   const optionLabel = (option: PermissionOption) =>
     t.workspace.permissionOption[option.kind] ?? option.name;
@@ -552,42 +578,62 @@ export function SystemRow({ item }: { item: Of<"system"> }) {
           {w.verificationCompleted(event.attempt)} {t.labels.verificationOutcome[event.outcome]}
         </SystemLine>
       );
+    case "local_merged":
+      return (
+        <SystemLine icon={<GitMerge {...ICON} />}>
+          {w.localMerged(event.baseBranch)} <Code>{event.commitSha.slice(0, 7)}</Code>
+          {event.pushed && w.localMergedPushed}
+        </SystemLine>
+      );
   }
 }
 
-/** TODO(backend, run-settings)：執行中切換設定的系統事件。 */
+/** 執行中切換設定或換 Agent 的系統事件；要求了但 Agent 不支援的項目標示沒有套用。 */
 export function SwitchRow({ item }: { item: Of<"switch"> }) {
   const t = useT();
   const w = t.workspace.stream;
   const change = item.change;
-  if (change.kind === "model") {
-    return (
-      <SystemLine
-        icon={change.agent ? <AgentLogo agent={change.agent} size={14} /> : <Bot {...ICON} />}
-      >
-        {w.modelSwitched} <Code>{change.model ? modelDisplayName(change.model) : ""}</Code>
-        {w.fromNextStep}
-      </SystemLine>
-    );
-  }
-  if (change.kind === "effort") {
-    return (
-      <SystemLine icon={<Brain {...ICON} />}>
-        {w.effortSet} <Code>{change.effort ? t.workspace.effort[change.effort] : ""}</Code>
-      </SystemLine>
-    );
-  }
+  const skipped = (name: "model" | "effort" | "permission_policy") =>
+    change.notApplied.includes(name) ? (
+      <span className="st-sys-note">（{w.notApplied}）</span>
+    ) : null;
   return (
-    <SystemLine icon={<Shield {...ICON} />}>
-      {w.policySet}{" "}
-      <Code>
-        {change.permissionPolicy ? t.labels.permissionPolicy[change.permissionPolicy] : ""}
-      </Code>
-    </SystemLine>
+    <>
+      {change.agent ? (
+        <SystemLine icon={<AgentLogo agent={change.agent} size={14} />}>
+          {w.agentSwitched} <Code>{change.agent}</Code>
+          {change.model && (
+            <>
+              {" "}
+              {w.agentSwitchedWith} <Code>{modelDisplayName(change.model)}</Code>
+            </>
+          )}
+        </SystemLine>
+      ) : (
+        change.model && (
+          <SystemLine icon={<Bot {...ICON} />}>
+            {w.modelSwitched} <Code>{modelDisplayName(change.model)}</Code>
+            {change.notApplied.includes("model") ? skipped("model") : w.fromNextStep}
+          </SystemLine>
+        )
+      )}
+      {change.effort && (
+        <SystemLine icon={<Brain {...ICON} />}>
+          {w.effortSet} <Code>{t.workspace.effort[change.effort]}</Code>
+          {skipped("effort")}
+        </SystemLine>
+      )}
+      {change.permissionPolicy && (
+        <SystemLine icon={<Shield {...ICON} />}>
+          {w.policySet} <Code>{t.labels.permissionPolicy[change.permissionPolicy]}</Code>
+          {skipped("permission_policy")}
+        </SystemLine>
+      )}
+    </>
   );
 }
 
-/** TODO(backend, task-pull-request)：開出與合併 PR 的系統事件。 */
+/** 開出與合併 PR 的系統事件（Task 的 pullRequest）。 */
 export function PullRequestRow({ item }: { item: Of<"pull_request"> }) {
   const t = useT();
   const w = t.workspace.stream;

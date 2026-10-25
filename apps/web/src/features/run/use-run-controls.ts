@@ -6,7 +6,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys, respondToPermission } from "../../api/resources";
 import { canRespondToPermission } from "../../lib/permissions";
 import type { Permissions } from "../auth/use-permissions";
-import { workspaceKeys } from "./workspace-api";
 
 export interface RunControls {
   /** 可以回覆這種用途的權限請求嗎（依 Role 與 Runner 擁有者）。 */
@@ -26,7 +25,6 @@ export function useRunControls(
       respondToPermission(run.id, requestId, { optionId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.needsYou });
-      void queryClient.invalidateQueries({ queryKey: workspaceKeys.eventActors(run.id) });
     },
   });
   const controls: RunControls = {

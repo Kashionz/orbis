@@ -10,6 +10,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApiError } from "../../api/client";
 import {
+  connectRepoToGithub,
   createRepo,
   deleteRepo,
   projectQuery,
@@ -20,9 +21,10 @@ import {
 } from "../../api/resources";
 import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
+import { Segmented } from "../../components/Segmented";
 import { TextField } from "../../components/TextField";
 import { useT } from "../../i18n";
-import { appInstallUrl } from "../../lib/github";
+import { appInstallUrl, repoDisplayName } from "../../lib/github";
 import { type PolicyFormValues, policyFormValues, validatePolicyForm } from "../../lib/policy-form";
 import { type RepoFormValues, validateRepoForm } from "../../lib/project-forms";
 import { usePermissions } from "../auth/use-permissions";
@@ -161,8 +163,8 @@ function ReposSection({ project, canRegister }: { project: Project; canRegister:
           </thead>
           <tbody>
             {repos.map((repo) => (
-              <tr key={repo.id} data-repo={`${repo.owner}/${repo.name}`}>
-                <td>{repo.owner ? `${repo.owner}/${repo.name}` : repo.name}</td>
+              <tr key={repo.id} data-repo={repoDisplayName(repo)}>
+                <td>{repoDisplayName(repo)}</td>
                 <td>
                   <code>{repo.defaultBranch}</code>
                 </td>
@@ -203,8 +205,8 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
   });
   const mismatch = refresh.error instanceof ApiError && refresh.error.code === "repo_mismatch";
 
-  // TODO(backend, local-repo)：本機 Repo 沒有 GitHub App，改顯示「連接到 GitHub」。
-  if (!repo.github) return null;
+  // 本機 Repo 沒有 GitHub App：可以連接到 GitHub（只能單向，ADR-0013）
+  if (!repo.github) return <LocalRepoStatus repo={repo} canManage={canManage} />;
   if (repo.github.installed) return <>{t.project.installed}</>;
   return (
     <div className="repo-installation">
@@ -237,7 +239,7 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
       )}
       {mismatch ? (
         <div className="notice-inline" role="alert">
-          {t.project.repoMismatch(`${repo.owner}/${repo.name}`)}
+          {t.project.repoMismatch(repoDisplayName(repo))}
           {canManage && (
             <Button
               variant="danger-ghost"
@@ -256,20 +258,85 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
   );
 }
 
-const EMPTY_REPO_FORM: RepoFormValues = { owner: "", name: "", defaultBranch: "" };
+/** 本機 Repo：顯示「本機」，Admin 以上可以連接到 GitHub（填 owner 與 name，確認 GitHub App 已安裝）。 */
+function LocalRepoStatus({ repo, canManage }: { repo: Repo; canManage: boolean }) {
+  const t = useT();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [owner, setOwner] = useState("");
+  const [name, setName] = useState(repo.name);
+  const connect = useMutation({
+    mutationFn: () => connectRepoToGithub(repo.id, { owner: owner.trim(), name: name.trim() }),
+    onSuccess: async () => {
+      setOpen(false);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.repos(repo.projectId) });
+    },
+  });
+  const installUrl =
+    connect.error instanceof ApiError && connect.error.code === "repo_not_connected"
+      ? connect.error.installUrl
+      : null;
+  return (
+    <div className="repo-installation" data-local="true">
+      <span className="repo-kind-tag">{t.project.localRepo}</span>
+      {canManage && !open && (
+        <button type="button" className="link-button" onClick={() => setOpen(true)}>
+          {t.project.connectGithub}
+        </button>
+      )}
+      {open && (
+        <form
+          className="repo-connect"
+          aria-label={t.project.connectGithub}
+          onSubmit={(event) => {
+            event.preventDefault();
+            connect.mutate();
+          }}
+        >
+          <p className="hint">{t.project.connectGithubHint}</p>
+          <code className="repo-connect-command">{`gh repo create ${name.trim() || repo.name} --source . --push`}</code>
+          <div className="repo-form-fields">
+            <TextField label={t.project.owner} value={owner} onChange={setOwner} />
+            <TextField label={t.project.repoName} value={name} onChange={setName} />
+          </div>
+          {installUrl && (
+            <a href={installUrl} target="_blank" rel="noreferrer">
+              {t.project.installApp}
+            </a>
+          )}
+          <ErrorText error={connect.error} />
+          <div className="repo-connect-actions">
+            <Button type="button" onClick={() => setOpen(false)}>
+              {t.common.cancel}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={connect.isPending || owner.trim() === "" || name.trim() === ""}
+            >
+              {t.project.connect}
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+const EMPTY_REPO_FORM: RepoFormValues = { kind: "github", owner: "", name: "", defaultBranch: "" };
 
 function RegisterRepoForm({ project }: { project: Project }) {
   const t = useT();
   const queryClient = useQueryClient();
   const [values, setValues] = useState(EMPTY_REPO_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof RepoFormValues, string>>>({});
-  const set = (field: keyof RepoFormValues) => (value: string) =>
+  const set = (field: "owner" | "name" | "defaultBranch") => (value: string) =>
     setValues((current) => ({ ...current, [field]: value }));
 
   const mutation = useMutation({
     mutationFn: (input: Parameters<typeof createRepo>[1]) => createRepo(project.id, input),
     onSuccess: async () => {
-      setValues(EMPTY_REPO_FORM);
+      setValues((current) => ({ ...EMPTY_REPO_FORM, kind: current.kind }));
       await queryClient.invalidateQueries({ queryKey: queryKeys.repos(project.id) });
     },
   });
@@ -287,14 +354,26 @@ function RegisterRepoForm({ project }: { project: Project }) {
       }}
     >
       <h3 id="settings-register-repo">{t.project.registerRepo}</h3>
+      <Segmented<"github" | "local">
+        label={t.project.repoKind}
+        value={values.kind ?? "github"}
+        onChange={(kind) => setValues((current) => ({ ...current, kind }))}
+        options={[
+          { value: "github", label: t.project.repoKindGithub },
+          { value: "local", label: t.project.repoKindLocal },
+        ]}
+      />
+      {values.kind === "local" && <p className="hint">{t.project.localRepoHint}</p>}
       <div className="repo-form-fields">
-        <TextField
-          label={t.project.owner}
-          value={values.owner}
-          onChange={set("owner")}
-          error={errors.owner}
-          placeholder={t.project.ownerPlaceholder}
-        />
+        {values.kind !== "local" && (
+          <TextField
+            label={t.project.owner}
+            value={values.owner}
+            onChange={set("owner")}
+            error={errors.owner}
+            placeholder={t.project.ownerPlaceholder}
+          />
+        )}
         <TextField
           label={t.project.repoName}
           value={values.name}
@@ -369,6 +448,10 @@ function PolicySection({
           <dd>
             {policy.feedbackBotAllowlist.join(t.common.listSeparator) || t.project.noFeedbackBots}
           </dd>
+          <dt>{t.project.localMergeStrategy}</dt>
+          <dd>{t.project.localMergeStrategyOption[policy.localMergeStrategy]}</dd>
+          <dt>{t.project.localPushBase}</dt>
+          <dd>{yesNo(policy.localPushBase)}</dd>
         </dl>
       )}
     </section>
@@ -435,6 +518,19 @@ function OtherPoliciesForm({ project }: { project: Project }) {
         multiline
         hint={t.project.feedbackBotsHint}
       />
+      <label className="field">
+        <span>{t.project.localMergeStrategy}</span>
+        <select
+          value={values.localMergeStrategy}
+          onChange={(event) =>
+            set("localMergeStrategy", event.target.value === "merge" ? "merge" : "squash")
+          }
+        >
+          <option value="squash">{t.project.localMergeStrategyOption.squash}</option>
+          <option value="merge">{t.project.localMergeStrategyOption.merge}</option>
+        </select>
+      </label>
+      {checkbox("localPushBase", t.project.localPushBase)}
       <ErrorText error={update.error} />
       <Button type="submit" variant="primary" disabled={update.isPending}>
         {t.project.saveOtherPolicies}

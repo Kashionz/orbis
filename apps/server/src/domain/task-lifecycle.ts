@@ -48,9 +48,10 @@ export class TaskLifecycleService {
     if (task.status === "backlog" && to === "ready") {
       const missing = await readinessProblems(tx, task);
       if (missing.length > 0) {
+        // 沒有 Repo 的 Task 只能停在 Backlog（ADR-0011 的修訂），以專用代碼表示；其他條件不足沿用 invalid_transition。
         throw new ApiError(
           409,
-          "invalid_transition",
+          missing.includes("repo") ? "repo_required" : "invalid_transition",
           `還不能進入 Ready：${missing.map((m) => READY_REQUIREMENT_LABELS[m]).join("、")}`,
           {
             from: task.status,

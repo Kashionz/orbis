@@ -46,16 +46,28 @@ export function validateProjectForm(
 }
 
 export interface RepoFormValues {
+  /** GitHub Repo，或本機 Repo（只有名稱，ADR-0013）；省略時是 GitHub。 */
+  kind?: "github" | "local";
   owner: string;
   name: string;
   defaultBranch: string;
 }
 
-/** 登記 Repo 的表單。default branch 留空時不送，由 Server 依 GitHub App 的安裝狀態決定。 */
+/**
+ * 登記 Repo 的表單。default branch 留空時不送：GitHub Repo 由 Server 依 GitHub App 的安裝狀態決定，
+ * 本機 Repo 用 `main`。本機 Repo 不填 owner。
+ */
 export function validateRepoForm(
   values: RepoFormValues,
 ): FormResult<CreateRepoRequest, keyof RepoFormValues> {
   const defaultBranch = values.defaultBranch.trim();
+  if (values.kind === "local") {
+    return validate(CreateRepoInput, {
+      kind: "local",
+      name: values.name.trim(),
+      ...(defaultBranch !== "" && { defaultBranch }),
+    });
+  }
   return validate(CreateRepoInput, {
     owner: values.owner.trim(),
     name: values.name.trim(),

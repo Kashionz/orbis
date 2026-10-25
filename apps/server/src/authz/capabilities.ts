@@ -1,7 +1,13 @@
 // Role 授權（ARCHITECTURE §12.2）。純函式：給定 Role、Project 政策與 Task，判斷能不能做某件事。
 // 權限檢查只在 Server 端做；每個 API 在讀到資源後呼叫 authorize()。
 
-import type { Role, RunnerKind } from "@orbis/api-contract";
+import type {
+  GeneralAccess,
+  Role,
+  RunnerKind,
+  TaskAccess,
+  TaskShareRole,
+} from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
 
 /**
@@ -97,6 +103,56 @@ export function authorize(capability: Capability, input: AuthzInput): AuthzResul
     return { ok: false, reason: "這個 Project 不允許核准指派給自己的 Task" };
   }
   return { ok: true };
+}
+
+/** 在 Task 上判斷的能力（ADR-0012）：會受 Task 角色與一般存取影響。其他能力一律看 Team／Project 的 Role。 */
+export const TASK_CAPABILITIES: readonly Capability[] = [
+  "view",
+  "edit_task",
+  "dispatch_local",
+  "dispatch_team",
+  "approve_gate",
+];
+
+const ACCESS_RANK: Record<TaskAccess, number> = { view: 0, edit: 1, manage: 2 };
+
+export interface TaskAccessInput {
+  /** 在 Task 所屬 Project 的有效 Role。 */
+  role: Role;
+  /** 登入者在 Task 上的角色；不是 Task 成員時為 null。 */
+  taskRole: TaskShareRole | null;
+  generalAccess: GeneralAccess;
+}
+
+/**
+ * 登入者在某個 Task 上的有效權限（ADR-0012）；看不到這個 Task 時為 null。
+ * - Owner、Admin 永遠是 `manage`，不受 Task 分享影響。
+ * - 其他人取「Task 角色」與「一般存取限制後的 Role」中較高的一個：一般存取 `team_view` 把 Member 降到只能看，
+ *   `invited` 時不是 Task 成員就看不到。
+ */
+export function taskAccess(input: TaskAccessInput): TaskAccess | null {
+  if (roleAtLeast(input.role, "admin")) return "manage";
+  const fromRole: TaskAccess = input.role === "member" ? "edit" : "view";
+  const limited: TaskAccess | null =
+    input.generalAccess === "invited"
+      ? null
+      : input.generalAccess === "team_view"
+        ? "view"
+        : fromRole;
+  const fromTask: TaskAccess | null =
+    input.taskRole === null ? null : input.taskRole === "owner" ? "manage" : input.taskRole;
+  if (limited === null) return fromTask;
+  if (fromTask === null) return limited;
+  return ACCESS_RANK[fromTask] > ACCESS_RANK[limited] ? fromTask : limited;
+}
+
+/**
+ * Task 上的有效權限換算成判斷 Task 能力時用的 Role：Owner、Admin 不變；可以操作（含擁有者）的人當成 Member
+ * （Project 政策照樣套用，例如不能派工到 Team Runner、不能核准自己的 Task）；只能看的人當成 Viewer。
+ */
+export function roleOnTask(role: Role, access: TaskAccess): Role {
+  if (roleAtLeast(role, "admin")) return role;
+  return access === "view" ? "viewer" : "member";
 }
 
 export interface PermissionResponseAuthzInput {

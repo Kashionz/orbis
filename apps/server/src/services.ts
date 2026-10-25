@@ -21,18 +21,21 @@ import {
 } from "./github/integration";
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
+import { type Mailer, NO_MAILER } from "./mail/mailer";
 import { MentionService } from "./mentions/service";
 import { DesktopChannel, InAppChannel, WebPushHub } from "./notifications/channels";
 import { NotificationService } from "./notifications/service";
 import { createPreviewService, type PreviewService } from "./preview";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
+import { RepoSpecCommits } from "./runner/repo-spec-commits";
 import { ArchiveService } from "./runs/archive";
 import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
 import { FeedbackRunService } from "./runs/feedback";
 import { RunControlService } from "./runs/run-control";
 import { VerificationService } from "./runs/verification";
+import { TerminalHub } from "./terminal/hub";
 import { delegationToolHandlers } from "./tools/delegation-tools";
 import { RunWatch } from "./tools/run-watch";
 import { OrbisToolService } from "./tools/service";
@@ -76,6 +79,14 @@ export interface Services {
   heartbeatIntervalMs: number;
   /** Preview 網址的換票與登入保護（E 軌，src/preview/）。 */
   preview: PreviewService;
+  /** 寄信（Task 邀請、預覽邀請）；沒有設定 SMTP 時不寄。 */
+  mailer: Mailer;
+  /** Web 的 origin：邀請連結、信件中的網址。 */
+  publicUrl: string;
+  /** 互動式終端機的轉送。 */
+  terminals: TerminalHub;
+  /** 本機 Repo 的 Spec 提交（等 Local Runner 的結果）。 */
+  repoSpecCommits: RepoSpecCommits;
 }
 
 export interface ServicesOptions {
@@ -103,6 +114,8 @@ export interface ServicesOptions {
   collabStore?: CollabStore;
   /** 共同編輯文件修改後多久寫回（測試用）。 */
   collabPersistDebounceMs?: number;
+  /** 未提供時不寄信。 */
+  mailer?: Mailer;
 }
 
 export function createServices(options: ServicesOptions): Services {
@@ -191,6 +204,7 @@ export function createServices(options: ServicesOptions): Services {
       notify,
       clock,
       logger,
+      onPrimaryRunCompletedAfterDone: (taskId) => archive.archiveTask(taskId),
       onFeedbackRunEnded: async (runId) => {
         await githubApp?.app.onFeedbackRunEnded({ runId });
       },
@@ -222,5 +236,9 @@ export function createServices(options: ServicesOptions): Services {
       domain: options.previewDomain,
       publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
     }),
+    mailer: options.mailer ?? NO_MAILER,
+    terminals: new TerminalHub({ db, hub, clock, logger }),
+    repoSpecCommits: new RepoSpecCommits(hub),
+    publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
   };
 }

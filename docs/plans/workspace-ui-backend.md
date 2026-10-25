@@ -1,12 +1,12 @@
 # 新工作區介面的後端開發規劃
 
-新的 Web 工作區介面（`design_handoff_orbis_workspace` 原型，PR #88 與 #90）已經把原型中的功能完整做進 UI。其中有一部分功能後端還沒有，目前的處理方式：
+新的 Web 工作區介面（`design_handoff_orbis_workspace` 原型，PR #88 與 #90）已經把原型中的功能完整做進 UI。其中有一部分功能當時後端還沒有，開發期間的處理方式：
 
 - **mock 模式**（MSW）：功能完整可用。
-  - mock：`apps/web/src/mocks/prototype-features.ts`、`mocks/workspace.ts`、`mocks/backend.ts`
-- **真實模式**：由 feature flag 停用，入口顯示「尚未開放」，不會假裝成功。
-  - flag：`apps/web/src/lib/features.ts`
-- **程式碼標記**：`TODO(backend, <代號>)`。暫定型別放在各 feature 目錄，不在 `@orbis/api-contract`。
+- **真實模式**：由 feature flag（`apps/web/src/lib/features.ts`）停用，入口顯示「尚未開放」，不會假裝成功。
+- **程式碼標記**：以「TODO(後端缺口代號)」的形式標註，暫定型別放在各 feature 目錄，不在 `@orbis/api-contract`。
+
+這些缺口已經實作完成（契約 #92、#95、#96，Runner＋Desktop #97，Server＋Web 在第 1 波的 `feat/w1-server-web`）：flag、標記與暫定型別都已拿掉，mock 改成和真實 API 相同的形狀（`apps/web/src/mocks/workspace.ts`、`mocks/share.ts`、`mocks/backend.ts`）。
 
 這份文件記錄每個缺口**已經決定**的做法（2026-10-25 與使用者逐項確認），作為派工的依據。worker 照這份文件實作；和這裡不同的取捨要先提出來，不要直接改。
 
@@ -43,7 +43,7 @@
 
 ## 各項的決定
 
-每一項依序列出：行為、契約（協定、API、DB）、權限、錯誤情況、測試、完成條件。「完成條件」一律包含：拿掉對應的 flag、`TODO(backend, <代號>)` 與暫定型別，改用 `@orbis/api-contract` 的型別。
+每一項依序列出：行為、契約（協定、API、DB）、權限、錯誤情況、測試、完成條件。「完成條件」一律包含：拿掉對應的 flag、程式碼標記與暫定型別，改用 `@orbis/api-contract` 的型別。
 
 ### `run-prompt`：執行中傳訊息給 Agent
 
@@ -402,6 +402,6 @@ Agent 總數不超過 3 個（含協調者），每個 worker 一個獨立 Git w
 
 ## 全部完成之後
 
-- `apps/web/src/lib/features.ts` 中這份文件列出的 flag 都拿掉；`git grep "TODO(backend"` 沒有結果。
+- `apps/web/src/lib/features.ts` 中這份文件列出的 flag 都拿掉；搜尋後端缺口的程式碼標記（`TODO(` 加上 `backend`）沒有結果。
 - mock 改成和真實 API 相同的資料形狀，或刪除。
 - M3 驗收：`docs/releases/v0.1.0.md` 的檢查清單改成新介面的步驟，在 Windows Sandbox 走完，通過後在當時的 main 打 v0.1.0。

@@ -1,16 +1,19 @@
 // 事件串流各項目共用的資料與操作：展開狀態、成員、作者、目前時間、複製、開啟檔案等。
 
-import type { AcceptanceCriterion, Member, PermissionPolicy, Run } from "@orbis/api-contract";
+import type {
+  AcceptanceCriterion,
+  Member,
+  PermissionPolicy,
+  Run,
+  RunSettings,
+} from "@orbis/api-contract";
 import type { PermissionPurpose } from "@orbis/protocol";
 import { createContext, type ReactNode, useCallback, useContext, useState } from "react";
-import type { RunEventActors, RunSettings } from "../types";
 
 export interface StreamEnv {
   run: Run;
   members: ReadonlyMap<string, Member>;
-  /** TODO(backend, event-actor)：prompt 與權限回覆的作者；後端沒有時為 null。 */
-  actors: RunEventActors | null;
-  /** TODO(backend, run-settings)：執行中切換的紀錄；後端沒有時為 null。 */
+  /** 執行中切換的紀錄（Run 的設定）；還沒取得時為 null。 */
   settings: RunSettings | null;
   criteria: ReadonlyMap<string, AcceptanceCriterion>;
   /** 這個 Run 變更的檔案（訊息中的檔名連到差異分頁）。 */
@@ -31,6 +34,8 @@ export interface StreamEnv {
   copy: (text: string) => void;
   /** 把 prompt 的文字放進輸入框（編輯後重送）。 */
   editPrompt: (text: string) => void;
+  /** 收回還在排隊的訊息；不能操作時為 null。 */
+  withdrawPrompt: ((controlId: string) => void) | null;
 }
 
 const StreamContext = createContext<StreamEnv | null>(null);

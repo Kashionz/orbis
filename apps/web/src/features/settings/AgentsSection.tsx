@@ -8,16 +8,13 @@ import { Popover, useMenu } from "../../components/Popover";
 import { StatusDot } from "../../components/StatusDot";
 import { useToast } from "../../components/Toast";
 import { useT } from "../../i18n";
-import { isFeatureEnabled } from "../../lib/features";
 import { type AgentCatalogEntry, useAgentCatalog } from "../agents/catalog";
 import { useAgentDefaultModels } from "../agents/default-models";
-import { useShell } from "../shell/shell-context";
-import { useAgentRelogin } from "./api";
+import { canLoginInDesktop, useAgentLogin } from "./api";
 
 export function AgentsSection() {
   const t = useT();
-  const { project } = useShell();
-  const { data: catalog, error, isLoading } = useAgentCatalog(project?.id);
+  const { data: catalog, error, isLoading } = useAgentCatalog();
   return (
     <>
       <ErrorText error={error} />
@@ -38,9 +35,11 @@ function AgentRow({ entry }: { entry: AgentCatalogEntry }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const menu = useMenu();
-  const relogin = useAgentRelogin();
+  const relogin = useAgentLogin();
   const defaults = useAgentDefaultModels();
-  const reloginEnabled = isFeatureEnabled("agentRelogin");
+  const hint = entry.loginHint;
+  // `runner`：Desktop 在這台電腦上執行登入；其他（`cli`，或在瀏覽器中）顯示要執行的指令
+  const desktopLogin = hint?.kind === "runner" && canLoginInDesktop();
   const modelId = defaults.defaultModelOf(entry);
   const model = entry.models.find((m) => m.id === modelId);
 
@@ -51,16 +50,18 @@ function AgentRow({ entry }: { entry: AgentCatalogEntry }) {
       </span>
       <span className="setting-item-text">
         <span className="setting-mono setting-item-name">{entry.agentId}</span>
-        <span className="setting-status" data-tone={entry.signedIn ? undefined : "warn"}>
+        <span className="setting-status" data-tone={entry.signedIn === false ? "warn" : undefined}>
           <StatusDot color="currentColor" />
-          {entry.signedIn ? t.settings.signedIn : t.settings.needsSignIn}
+          {entry.signedIn === null
+            ? t.settings.signInUnknown
+            : entry.signedIn
+              ? t.settings.signedIn
+              : t.settings.needsSignIn}
         </span>
       </span>
-      {!entry.signedIn && (
-        // TODO(backend, agent-relogin)：Runner 還不能遠端觸發代理的登入流程
+      {hint && desktopLogin && (
         <Button
-          disabled={!reloginEnabled || relogin.isPending}
-          data-tip={reloginEnabled ? undefined : t.common.notAvailableYet}
+          disabled={relogin.isPending}
           onClick={() =>
             relogin.mutate(entry.agentId, {
               onSuccess: () => {
@@ -72,6 +73,20 @@ function AgentRow({ entry }: { entry: AgentCatalogEntry }) {
         >
           {t.settings.signIn}
         </Button>
+      )}
+      {hint && !desktopLogin && (
+        <button
+          type="button"
+          className="setting-login-command"
+          data-tip={t.settings.loginCommandTip}
+          onClick={() =>
+            void navigator.clipboard
+              ?.writeText(hint.command)
+              .then(() => toast.show(t.common.copied))
+          }
+        >
+          <code>{hint.command}</code>
+        </button>
       )}
       <button
         ref={menu.anchorRef}

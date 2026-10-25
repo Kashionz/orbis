@@ -1,14 +1,14 @@
 // 輸入框：執行環境列、待處理動作的 dock、文字框、chip 列與送出鍵。送出做什麼依 Run 的狀態決定
 // （composer-state.ts）。
 
-import type { Project, Run, Task } from "@orbis/api-contract";
+import type { Project, PromptDelivery, Run, Task } from "@orbis/api-contract";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Zap } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { decideGate, decideVerification, queryKeys } from "../../../api/resources";
 import { ErrorText } from "../../../components/ErrorText";
 import { useT } from "../../../i18n";
-import { isFeatureEnabled } from "../../../lib/features";
+import { isRunnerOwner } from "../../../lib/permissions";
 import { clearPreviewDrafts, loadPreviewDrafts } from "../../preview/preview-drafts";
 import { EMPTY_DRAFT, loadDraft, saveDraft, sortComments } from "../../review/review-drafts";
 import type { RunWorkspaceData } from "../workspace/use-run-workspace";
@@ -77,7 +77,6 @@ export function Composer({
   const send = sendStateFor(situation, {
     reject: permissions.can("gate.reject"),
     control: permissions.can("run.control"),
-    prompt: isFeatureEnabled("runPrompt"),
   });
 
   async function refresh() {
@@ -91,11 +90,19 @@ export function Composer({
   }
 
   const submit = useMutation({
-    mutationFn: async ({ action, message }: { action: SendAction; message: string }) => {
+    mutationFn: async ({
+      action,
+      message,
+      delivery = "queue",
+    }: {
+      action: SendAction;
+      message: string;
+      delivery?: PromptDelivery;
+    }) => {
       switch (action) {
         case "prompt":
-          // TODO(backend, run-prompt)：後端還沒有執行中傳訊息的 API
-          await submitRunPrompt(run.id, message);
+          // 回合中或等待權限回覆時排隊，回合結束後送出；interrupt 先中斷目前的回合
+          await submitRunPrompt(run.id, { text: message, delivery });
           return;
         case "plan_reject":
           if (!data.planGate) return;
@@ -134,15 +141,19 @@ export function Composer({
   const finished = send.blocker === "finished";
   const canSend = text.trim() !== "" && send.blocker === null && !submit.isPending;
   const sendTip =
-    send.blocker === "unavailable"
-      ? t.common.notAvailableYet
+    send.blocker === "not_accepting"
+      ? c.notAccepting
       : send.blocker === "forbidden"
         ? c.forbidden
-        : c.sendTooltip[send.action];
+        : send.action === "prompt" && data.status !== "starting"
+          ? c.queuedHint
+          : c.sendTooltip[send.action];
+  // 執行中可以選擇中斷目前的回合後送出
+  const canInterrupt = canSend && send.action === "prompt";
 
-  function doSend() {
+  function doSend(delivery: PromptDelivery = "queue") {
     if (!canSend) return;
-    submit.mutate({ action: send.action, message: text.trim() });
+    submit.mutate({ action: send.action, message: text.trim(), delivery });
   }
 
   return (
@@ -189,11 +200,23 @@ export function Composer({
           <div className="cp-toolbar">
             <ComposerChips
               run={run}
-              projectId={project.id}
               settings={data.settings}
               locked={finished || !permissions.can("run.control")}
+              runnerOwner={isRunnerOwner(run, permissions.ctx)}
               connected={!finished && data.connected}
             />
+            {send.action === "prompt" && !finished && (
+              <button
+                type="button"
+                className="cp-interrupt"
+                aria-label={c.interruptSend}
+                data-tip={c.interruptSend}
+                aria-disabled={!canInterrupt || undefined}
+                onClick={() => canInterrupt && doSend("interrupt")}
+              >
+                <Zap size={14} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               className="cp-send"
@@ -201,7 +224,7 @@ export function Composer({
               data-tip={sendTip}
               data-ready={canSend}
               aria-disabled={!canSend || undefined}
-              onClick={doSend}
+              onClick={() => doSend()}
             >
               <ArrowUp size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>

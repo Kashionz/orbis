@@ -29,6 +29,7 @@ import {
   type DelegationRejectReason,
   MAX_ACTIVE_CHILD_RUNS,
 } from "../runs/delegation-rules";
+import { currentPermissionPolicy } from "../runs/run-settings";
 import type { RunWatch } from "./run-watch";
 import { type ToolContext, ToolError, type ToolHandlers } from "./service";
 
@@ -125,7 +126,7 @@ export function delegationToolHandlers(deps: DelegationToolDeps): ToolHandlers {
         parent: {
           depth: await runDepth(db, caller),
           activeChildren: active,
-          permissionPolicy: caller.permissionPolicy,
+          permissionPolicy: await currentPermissionPolicy(db, caller),
           running: !isTerminalRunStatus(caller.status),
         },
         agent: call.agent,

@@ -13,6 +13,7 @@ import type { Database } from "../db/client";
 import type { Logger } from "../logger";
 import type { EventIngest } from "../runs/event-ingest";
 import type { RunControlService } from "../runs/run-control";
+import type { TerminalHub } from "../terminal/hub";
 import type { OrbisToolService } from "../tools/service";
 import type { UpgradeRouter } from "../ws-upgrade";
 import type { Dispatcher } from "./dispatcher";
@@ -24,9 +25,13 @@ import {
   HeartbeatFrame,
   HelloFrame,
   parseFrame,
+  RepoSpecCommitResultFrame,
   RunControlResultFrame,
+  TerminalExitedFrame,
+  TerminalOutputFrame,
 } from "./frames";
 import type { RunnerHub, RunnerLink } from "./hub";
+import type { RepoSpecCommits } from "./repo-spec-commits";
 import {
   type AuthenticatedRunner,
   pairRunner,
@@ -67,6 +72,10 @@ export interface RunnerEndpointOptions {
   /** 連線後等待 Hello 的時間。 */
   helloTimeoutMs?: number;
   preview?: RunnerPreviewChannel;
+  /** 互動式終端機的轉送（terminal/hub.ts）。 */
+  terminals?: TerminalHub;
+  /** 本機 Repo 的 Spec 提交結果（runner/repo-spec-commits.ts）。 */
+  repoSpecCommits?: RepoSpecCommits;
 }
 
 export interface RunnerEndpoint {
@@ -215,6 +224,25 @@ class RunnerConnection implements RunnerLink {
         await this.options.runControls.onResult(runner.id, result);
         return;
       }
+      case "terminal_output": {
+        const parsed = TerminalOutputFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        this.options.terminals?.onOutput(runner.id, parsed.data);
+        return;
+      }
+      case "terminal_exited": {
+        const parsed = TerminalExitedFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        await this.options.terminals?.onExited(runner.id, parsed.data);
+        return;
+      }
+      case "repo_spec_commit_result": {
+        const parsed = RepoSpecCommitResultFrame.safeParse(frame);
+        if (!parsed.success) return this.malformed(runner, frame);
+        const { type: _type, ...result } = parsed.data;
+        this.options.repoSpecCommits?.onResult(runner.id, result);
+        return;
+      }
       default:
         this.log.debug({ runnerId: runner.id, frameType: frame.type }, "忽略不認得的 Runner frame");
     }
@@ -329,6 +357,8 @@ class RunnerConnection implements RunnerLink {
       runner_token: runnerToken,
       heartbeat_interval_ms: this.options.heartbeatIntervalMs,
       resume,
+      // Runner 依種類決定 runner.toml 的預設值，例如 Team Runner 預設不允許終端機（ADR-0014）。
+      runner_kind: runner.kind,
     });
     hub.register(runner.id, this);
   }
@@ -351,6 +381,9 @@ class RunnerConnection implements RunnerLink {
       const wasCurrent = this.options.hub.isOnline(this.runner.id);
       this.options.hub.unregister(this.runner.id, this);
       this.options.preview?.onDisconnect(this.runner.id, this);
+      if (!this.options.hub.isOnline(this.runner.id)) {
+        void this.options.terminals?.onRunnerDisconnect(this.runner.id);
+      }
       if (wasCurrent && !this.options.hub.isOnline(this.runner.id)) {
         this.log.info(
           { runnerId: this.runner.id, runnerName: this.runner.name, code },

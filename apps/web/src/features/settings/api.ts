@@ -1,84 +1,47 @@
-// 設定對話框中後端還沒有的設定（暫定型別與路徑，不在 @orbis/api-contract 中，只有 mock 提供）。
+// 設定對話框中經由 Desktop bridge 的設定：代理的重新登入、桌面通知總開關。兩者都只在 Desktop 中有
+// （在一般瀏覽器中不顯示或改顯示指令）。
 
+import { getDesktopBridge } from "@orbis/desktop/bridge";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
-import { apiRequest, apiSend } from "../../api/client";
-import { isFeatureEnabled } from "../../lib/features";
+import { agentCatalogQuery } from "../agents/catalog";
 
-export const SETTINGS_ROUTES = {
-  /** TODO(backend, runner-long-paths)：Runner 的遠端設定（目前只有 Windows 長路徑）。 */
-  runnerSettings: "/api/runners/:runnerId/settings",
-  /** TODO(backend, agent-relogin)：請 Runner 重新執行代理的登入流程。 */
-  agentRelogin: "/api/agents/:agentId/relogin",
-  /** TODO(backend, desktop-notify-toggle)：桌面通知總開關。 */
-  desktopNotifications: "/api/notification-preferences/desktop",
-} as const;
-
-function path(template: string, params: Record<string, string>): string {
-  return template.replace(/:([A-Za-z]+)/g, (_, name: string) =>
-    encodeURIComponent(params[name] ?? ""),
-  );
-}
-
-export const RunnerSettings = z.object({ windowsLongPaths: z.boolean() });
-export type RunnerSettings = z.infer<typeof RunnerSettings>;
-
-export const DesktopNotificationSetting = z.object({ enabled: z.boolean() });
-export type DesktopNotificationSetting = z.infer<typeof DesktopNotificationSetting>;
-
-export function useRunnerSettings(runnerId: string | undefined) {
+/** Desktop 在這台電腦上執行 Runner 的登入子指令（`loginHint.kind` 是 `runner` 的代理）。 */
+export function useAgentLogin() {
   const queryClient = useQueryClient();
-  const key = ["runner-settings", runnerId] as const;
-  const query = useQuery({
-    queryKey: key,
-    queryFn: ({ signal }) =>
-      apiRequest(
-        path(SETTINGS_ROUTES.runnerSettings, { runnerId: runnerId ?? "" }),
-        RunnerSettings,
-        {
-          signal,
-        },
-      ),
-    enabled: isFeatureEnabled("runnerLongPaths") && runnerId !== undefined,
-  });
-  const update = useMutation({
-    mutationFn: (settings: RunnerSettings) =>
-      apiRequest(
-        path(SETTINGS_ROUTES.runnerSettings, { runnerId: runnerId ?? "" }),
-        RunnerSettings,
-        {
-          method: "PUT",
-          body: settings,
-        },
-      ),
-    onSuccess: (settings) => queryClient.setQueryData(key, settings),
-  });
-  return { query, update };
-}
-
-export function useAgentRelogin() {
   return useMutation({
-    mutationFn: (agentId: string) =>
-      apiSend(path(SETTINGS_ROUTES.agentRelogin, { agentId }), { method: "POST" }),
+    mutationFn: async (agentId: string) => {
+      const bridge = getDesktopBridge();
+      if (!bridge?.loginAgent) throw new Error("這個版本的 Desktop 不支援重新登入");
+      const result = await bridge.loginAgent(agentId);
+      if (!result.ok) throw new Error(result.message);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: agentCatalogQuery.queryKey }),
   });
 }
 
+/** 這台電腦的 Desktop 能不能在這裡重新登入代理。 */
+export function canLoginInDesktop(): boolean {
+  return getDesktopBridge()?.loginAgent !== undefined;
+}
+
+/** 桌面通知總開關（存在這台電腦的 Desktop 設定檔）；不在 Desktop 中時 `available` 為 false。 */
 export function useDesktopNotificationSetting() {
   const queryClient = useQueryClient();
+  const bridge = getDesktopBridge();
+  const available =
+    bridge?.getNotificationsEnabled !== undefined && bridge.setNotificationsEnabled !== undefined;
   const key = ["desktop-notifications"] as const;
   const query = useQuery({
     queryKey: key,
-    queryFn: ({ signal }) =>
-      apiRequest(SETTINGS_ROUTES.desktopNotifications, DesktopNotificationSetting, { signal }),
-    enabled: isFeatureEnabled("desktopNotifyToggle"),
+    queryFn: async () => (await bridge?.getNotificationsEnabled?.()) ?? true,
+    enabled: available,
   });
   const update = useMutation({
-    mutationFn: (enabled: boolean) =>
-      apiRequest(SETTINGS_ROUTES.desktopNotifications, DesktopNotificationSetting, {
-        method: "PUT",
-        body: { enabled },
-      }),
-    onSuccess: (setting) => queryClient.setQueryData(key, setting),
+    mutationFn: async (enabled: boolean) => {
+      await bridge?.setNotificationsEnabled?.(enabled);
+      return enabled;
+    },
+    onSuccess: (enabled) => queryClient.setQueryData(key, enabled),
   });
-  return { query, update };
+  return { available, query, update };
 }

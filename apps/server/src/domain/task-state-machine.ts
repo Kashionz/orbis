@@ -26,6 +26,8 @@ export const TRANSITION_TRIGGERS = [
   "issue",
   /** Feedback Loop 的修正 Run（ARCHITECTURE §5.2）。 */
   "feedback_loop",
+  /** 本機 Repo 核准後，Runner 把 Run 的分支合併到本機 checkout 的基準分支（`local_merged`，ADR-0013）。 */
+  "local_merge",
 ] as const;
 export type TransitionTrigger = (typeof TRANSITION_TRIGGERS)[number];
 
@@ -90,6 +92,12 @@ export const TASK_TRANSITIONS: readonly TaskTransition[] = [
     to: "done",
     trigger: "gate",
     description: "Review Gate 結束（沒有變更）：diff 為空，不 push、不開 PR",
+  },
+  {
+    from: "review_gate",
+    to: "done",
+    trigger: "local_merge",
+    description: "本機 Repo 的本機合併完成（不 push、不開 PR）",
   },
   {
     from: "pr_open",

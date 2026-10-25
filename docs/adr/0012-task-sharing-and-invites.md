@@ -17,3 +17,4 @@
 - `authorize()` 要多一層 Task：需要 Task 的能力（`edit_task`、派工、核准關卡、`view`）時一併傳入 Task；看板、待我處理、搜尋等列表要濾掉看不到的 Task。
 - GitHub OAuth 要請求 `user:email`，並在每次登入時寫入 Member 的已驗證 email；成員清單會顯示 email（小團隊內彼此可見）。
 - 既有的 Task 在 migration 時以建立者為擁有者；建立者已被移除的 Task 沒有擁有者，由 Admin 管理分享。
+- 一般存取是「僅受邀成員」的 Task 不寫到 GitHub Issue（Issue 在 repo 上看得到，會洩漏 Task 內容）：不自動建立 Issue；已有 Issue 的 Task 之後改成僅受邀成員時保留原 Issue，但不再更新它與狀態摘要留言；改回 Team 可檢視／可操作後恢復同步，補寫期間的變更，沒有 Issue 的那時建立。GitHub→Orbis 的回寫與 Issue 匯入不受影響。（2026-10-26 使用者決定）

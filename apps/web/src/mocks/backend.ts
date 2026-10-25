@@ -8,12 +8,15 @@ import {
   type AcceptanceCriterion,
   type AddMemberInput,
   type ApiError,
+  type BoardSummaryResponse,
   type CollabMentionAttrs,
+  type ConnectRepoToGithubInput,
   type CreateAcceptanceCriterionInput,
   type CreateProjectInput,
   type CreateRepoInput,
   type CreateRepoSpecInput,
   type CreateRunInput,
+  type CreateRunPromptInput,
   type CreateTaskInput,
   type CredentialStatus,
   canTransitionManually,
@@ -53,16 +56,23 @@ import {
   type RunEvent,
   type Runner,
   type RunnerKind,
+  type RunSettings,
+  type RunSettingsChange,
+  type RunSettingsSnapshot,
   type RunUsage,
+  type SwitchAgentInput,
   type Task,
   type TaskComment,
+  type TaskPullRequest,
   type TaskStatus,
   type Team,
   type TeamRunnerQueueItem,
   type UpdateAcceptanceCriterionInput,
   type UpdateDraftTaskInput,
   type UpdateProjectInput,
+  type UpdateRunSettingsInput,
   type UpdateTaskInput,
+  type UpdateTeamInput,
   type Verification,
   type VerificationDecisionInput,
 } from "@orbis/api-contract";
@@ -75,14 +85,7 @@ import type {
   TextBody,
   VerificationEvidence,
 } from "@orbis/protocol";
-import type { BoardSummaryItem } from "../features/board/types";
-import type {
-  RunEffort,
-  RunEventActors,
-  RunSettings,
-  TaskPullRequest,
-  UpdateRunSettingsInput,
-} from "../features/run/types";
+import { MOCK_AGENT_CATALOG } from "./agent-catalog";
 import { MOCK_STATE_STORAGE_KEY, type MockConfig, mockConfig } from "./config";
 import {
   BASE_COMMIT,
@@ -152,10 +155,14 @@ export interface MockState {
   /** Credential 並行上限的覆寫，key 是 `<runnerId>/<credential>`。 */
   credentialOverrides: Record<string, number>;
   projectRoles: ProjectMemberRole[];
-  /** 工作區的後端缺口（U2）：執行中切換的設定，依 Run。 */
-  runSettings: Record<string, RunSettings>;
-  /** 工作區的後端缺口（U2）：執行中傳訊息的作者，依 Run 再依 seq。 */
-  promptAuthors: Record<string, Record<string, string>>;
+  /** 執行中切換的設定與換 Agent（run_settings_changed、agent_switched），依 Run。 */
+  settingsChanges: Record<string, RunSettingsChange[]>;
+  /** 派工時的設定（換 Agent 前），依 Run。 */
+  initialSettings: Record<string, RunSettingsSnapshot>;
+  /** 執行中排隊、還沒送出的訊息，依 Run。 */
+  queuedPrompts: Record<string, { controlId: string; text: string }[]>;
+  /** Team 的兩個分享設定（PATCH /api/team）。 */
+  teamSettings?: { allowExternalPreview: boolean; allowTeamRunnerTerminal: boolean };
 }
 
 /** 1×1 的 PNG，當作 browser 類型條件的截圖。 */
@@ -168,7 +175,7 @@ export class MockError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
-    readonly details: Pick<ApiError, "issues" | "missing"> = {},
+    readonly details: Pick<ApiError, "issues" | "missing" | "installUrl"> = {},
   ) {
     super(message);
   }
@@ -246,8 +253,10 @@ export class MockBackend {
     this.state.repoSpecDrafts ??= {};
     this.state.credentialOverrides ??= {};
     this.state.projectRoles ??= [];
-    this.state.runSettings ??= {};
-    this.state.promptAuthors ??= {};
+    this.state.settingsChanges ??= {};
+    this.state.initialSettings ??= {};
+    this.state.queuedPrompts ??= {};
+    this.syncPullRequests();
     this.save();
   }
 
@@ -289,13 +298,22 @@ export class MockBackend {
           step.event.kind === "status_changed" &&
           step.event.status === "awaiting_gate" &&
           step.event.gate === "review";
-        const diff: EventKind[] = enteringReview
-          ? [
-              { kind: "final_message", text: { type: "inline", text: this.turnText(runId) } },
-              { kind: "run_diff", ...this.computeDiff(runId) },
-            ]
-          : [];
-        this.append(runId, [...diff, step.event]);
+        // 回合結束前送出排隊的訊息（Runner 不進入 Gate，直接開始下一個回合）
+        if (enteringReview && this.flushQueuedPrompts(runId, step)) continue;
+        if (enteringReview) {
+          this.append(runId, [
+            { kind: "final_message", text: { type: "inline", text: this.turnText(runId) } },
+            { kind: "run_diff", ...this.computeDiff(runId) },
+          ]);
+        }
+        // 派工的第一個 prompt 是派工的人送的；其他依劇本步驟記下的作者
+        const run = this.run(runId);
+        const actor =
+          step.actorMemberId ??
+          (step.event.kind === "prompt_submitted" && step.event.source === "user"
+            ? run.startedByMemberId
+            : null);
+        this.append(runId, [step.event], actor);
       } else {
         simulation.waiting = step;
         this.append(runId, [
@@ -460,8 +478,9 @@ export class MockBackend {
       repoSpecDrafts: { "spec-1": "# 登入\n\n使用 GitHub 帳號登入。" },
       credentialOverrides: {},
       projectRoles: [{ projectId: "project-1", memberId: "member-bob", role: "viewer" }],
-      runSettings: {},
-      promptAuthors: {},
+      settingsChanges: {},
+      initialSettings: {},
+      queuedPrompts: {},
     };
 
     const seedTask = (title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -628,14 +647,33 @@ export class MockBackend {
   }
 
   team(): Team {
+    const settings = this.state.teamSettings ?? {
+      // mock 預設打開對外分享預覽，方便看到預覽邀請；終端機的 Team 設定同真實預設關閉
+      allowExternalPreview: this.config.allowExternalPreview ?? true,
+      allowTeamRunnerTerminal: false,
+    };
     return {
       id: "team-1",
       name: this.teamName(),
-      allowExternalPreview: false,
-      allowTeamRunnerTerminal: false,
+      ...settings,
       createdAt: SEED_TIME,
       updatedAt: SEED_TIME,
     };
+  }
+
+  /** 修改 Team 的設定（名稱、兩個分享設定）：Admin 以上，只改有送的欄位。 */
+  updateTeamSettings(input: UpdateTeamInput): Team {
+    if (!roleAtLeast(this.role, "admin")) {
+      throw new MockError(403, "forbidden", "只有 Admin 以上可以修改 Team 設定");
+    }
+    const current = this.team();
+    if (input.name !== undefined) this.state.teamName = input.name;
+    this.state.teamSettings = {
+      allowExternalPreview: input.allowExternalPreview ?? current.allowExternalPreview,
+      allowTeamRunnerTerminal: input.allowTeamRunnerTerminal ?? current.allowTeamRunnerTerminal,
+    };
+    this.save();
+    return this.team();
   }
 
   /** 修改 Team 名稱：Admin 以上。 */
@@ -677,18 +715,37 @@ export class MockBackend {
 
   tasks(projectId: string): Task[] {
     this.project(projectId);
-    return this.state.tasks.filter((t) => t.projectId === projectId);
+    return this.state.tasks.filter((t) => t.projectId === projectId).map((t) => this.withAccess(t));
   }
 
   task(taskId: string): Task {
     const task = this.state.tasks.find((t) => t.id === taskId);
     if (!task) throw new MockError(404, "not_found", "找不到這個 Task");
-    return task;
+    return this.withAccess(task);
   }
 
   taskByKey(key: string): Task {
     const task = this.state.tasks.find((t) => t.key === key);
     if (!task) throw new MockError(404, "not_found", `找不到 Task ${key}`);
+    return this.withAccess(task);
+  }
+
+  /**
+   * 目前登入者在 Task 上的有效權限（ADR-0012，同 Server 的 taskAccess）：Owner、Admin 可以管理；
+   * Task 的擁有者可以管理；其他人依一般存取，Viewer 只能檢視。mock 沒有把自己加為 Task 成員的情境。
+   */
+  private withAccess(task: Task): Task {
+    const role = this.project(task.projectId).viewerRole;
+    task.viewerAccess =
+      role === "owner" || role === "admin"
+        ? "manage"
+        : role === "viewer"
+          ? "view"
+          : task.createdByMemberId === ME_ID
+            ? "manage"
+            : task.generalAccess === "team_edit"
+              ? "edit"
+              : "view";
     return task;
   }
 
@@ -1003,9 +1060,30 @@ export class MockBackend {
   createRepo(projectId: string, input: CreateRepoInput): Repo {
     const project = this.project(projectId);
     this.requireProjectAdmin(project);
-    // TODO(backend, local-repo)：mock 也還不支援本機 Repo。
     if (input.kind === "local") {
-      throw new MockError(400, "invalid_input", "還不支援本機 Repo");
+      // 本機 Repo（ADR-0013）：只有名稱，沒有 GitHub 的安裝狀態
+      if (
+        this.state.repos.some(
+          (r) => r.projectId === projectId && r.kind === "local" && r.name === input.name,
+        )
+      ) {
+        throw new MockError(409, "repo_exists", `本機 Repo ${input.name} 已經登記在這個 Project`);
+      }
+      const time = now();
+      const local: Repo = {
+        id: this.newId("repo"),
+        projectId,
+        kind: "local",
+        owner: null,
+        name: input.name,
+        defaultBranch: input.defaultBranch ?? "main",
+        github: null,
+        createdAt: time,
+        updatedAt: time,
+      };
+      this.state.repos.push(local);
+      this.save();
+      return local;
     }
     const duplicate = this.state.repos.some(
       (r) => r.projectId === projectId && r.owner === input.owner && r.name === input.name,
@@ -1047,6 +1125,38 @@ export class MockBackend {
     const installed = repo.owner !== null && owners.includes(repo.owner);
     repo.github = { installed, installUrl: installed ? null : GITHUB_APP_INSTALL_URL };
     repo.updatedAt = now();
+    this.save();
+    return repo;
+  }
+
+  /** 本機 Repo 連接到 GitHub（只能單向）：GitHub App 已安裝的 owner 才成功。 */
+  connectRepoToGithub(repoId: string, input: ConnectRepoToGithubInput): Repo {
+    const repo = this.repo(repoId);
+    this.requireProjectAdmin(this.project(repo.projectId));
+    if (repo.kind !== "local") throw new MockError(409, "conflict", "這個 Repo 已經是 GitHub Repo");
+    if (
+      this.state.repos.some(
+        (r) => r.projectId === repo.projectId && r.owner === input.owner && r.name === input.name,
+      )
+    ) {
+      throw new MockError(
+        409,
+        "repo_exists",
+        `${input.owner}/${input.name} 已經登記在這個 Project`,
+      );
+    }
+    if (!GITHUB_APP_OWNERS.includes(input.owner)) {
+      throw new MockError(409, "repo_not_connected", "GitHub App 沒有安裝在這個 repo 上", {
+        installUrl: GITHUB_APP_INSTALL_URL,
+      });
+    }
+    Object.assign(repo, {
+      kind: "github",
+      owner: input.owner,
+      name: input.name,
+      github: { installed: true, installUrl: null },
+      updatedAt: now(),
+    });
     this.save();
     return repo;
   }
@@ -1104,6 +1214,13 @@ export class MockBackend {
   updateTask(taskId: string, input: UpdateTaskInput): Task {
     this.requireEditor();
     const task = this.task(taskId);
+    // Repo 只能從沒有補指定一次（ADR-0011 的修訂）
+    if (input.repoId !== undefined && input.repoId !== task.repoId) {
+      if (task.repoId !== null) {
+        throw new MockError(409, "repo_already_set", "Task 已經指定 Repo，不能更換");
+      }
+      this.repo(input.repoId ?? "");
+    }
     Object.assign(task, input, { updatedAt: now() });
     this.save();
     return task;
@@ -1124,7 +1241,12 @@ export class MockBackend {
       };
       const missing = READY_REQUIREMENTS.filter((r) => !satisfied[r]);
       if (missing.length > 0) {
-        throw new MockError(409, "invalid_transition", "還不能進入 Ready", { missing });
+        throw new MockError(
+          409,
+          missing.includes("repo") ? "repo_required" : "invalid_transition",
+          "還不能進入 Ready",
+          { missing },
+        );
       }
     }
     task.status = status;
@@ -1241,6 +1363,10 @@ export class MockBackend {
     if (permissionPolicy === "yolo" && input.runnerKind === "team") {
       throw new MockError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
     }
+    const repo = task.repoId ? this.state.repos.find((r) => r.id === task.repoId) : undefined;
+    if (repo?.kind === "local" && input.runnerKind === "team") {
+      throw new MockError(422, "invalid_input", "本機 Repo 只能派工到 Local Runner");
+    }
     const run = this.newRun(taskId, this.newId("run"), { ...input, permissionPolicy });
     run.runnerId = input.runnerKind === "local" ? "runner-local" : "runner-team";
     this.state.runs.push(run);
@@ -1276,10 +1402,12 @@ export class MockBackend {
     const option = waiting.request.options.find((o) => o.option_id === optionId);
     if (!option) throw new MockError(400, "invalid_input", "沒有這個選項");
     simulation.waiting = null;
-    this.append(runId, [
-      { kind: "permission_resolved", request_id: requestId, selected_option_id: optionId },
-      { kind: "status_changed", status: "running", gate: null, message: null },
-    ]);
+    this.append(
+      runId,
+      [{ kind: "permission_resolved", request_id: requestId, selected_option_id: optionId }],
+      ME_ID,
+    );
+    this.append(runId, [{ kind: "status_changed", status: "running", gate: null, message: null }]);
     simulation.queue.unshift(...(option.kind.startsWith("allow") ? waiting.allow : waiting.reject));
     this.save();
   }
@@ -1390,6 +1518,7 @@ export class MockBackend {
     const prompt = (source: "plan_gate" | "review_gate", text: string): ScriptStep => ({
       type: "event",
       event: { kind: "prompt_submitted", source, prompt: [{ type: "text", text }] },
+      actorMemberId: ME_ID,
     });
     if (gate.kind === "plan" && input.action !== "abort") {
       const approved = input.action === "approve";
@@ -1416,10 +1545,27 @@ export class MockBackend {
       };
       task.status = "running";
     } else if (input.action === "approve") {
-      this.append(runId, [
-        { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
-      ]);
-      task.status = "pr_open";
+      const repo = task.repoId ? this.state.repos.find((r) => r.id === task.repoId) : undefined;
+      if (repo?.kind === "local") {
+        // 本機 Repo（ADR-0013）：Runner 合併到本機 checkout 的基準分支，Task 直接轉 Done
+        this.append(runId, [
+          {
+            kind: "local_merged",
+            commit_sha: "c".repeat(40),
+            base_branch: repo.defaultBranch,
+            pushed: this.project(task.projectId).policy.localPushBase,
+          },
+          { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
+        ]);
+        task.status = "done";
+        task.doneReason = "completed";
+      } else {
+        this.append(runId, [
+          { kind: "status_changed", status: "completed", gate: null, message: "Review Gate 核准" },
+        ]);
+        task.status = "pr_open";
+        task.pullRequest = this.pullRequestFor(task);
+      }
     } else if (input.action === "finish_without_changes") {
       // 不 push、不開 PR：Run 以 cancel 結束，Task 轉 Done（關閉原因 completed）
       this.cancelRun(runId);
@@ -2692,168 +2838,380 @@ export class MockBackend {
 
   // ---------- Event 的副作用（真實系統中由 Server 處理） ----------
 
-  // ---------- 工作區的後端缺口（U2，見 features/run/types.ts 的 TODO(backend, …)） ----------
+  // ---------- 執行中的 Run 操作（ARCHITECTURE §7） ----------
 
-  /** TODO(backend, run-prompt)：執行中傳訊息給 Agent，Agent 回覆後繼續原本的工作。 */
-  submitPrompt(runId: string, text: string): void {
+  /** 執行中傳訊息給 Agent：回合中排隊，回合結束前送出；interrupt 立即送出。 */
+  submitPrompt(runId: string, input: CreateRunPromptInput): { controlId: string } {
     this.requireEditor();
     const run = this.run(runId);
     if (["completed", "failed", "canceled"].includes(run.status)) {
-      throw new MockError(409, "conflict", "Run 已經結束");
+      throw new MockError(409, "run_finished", "Run 已經結束");
     }
+    if (["queued", "dispatched", "verifying", "awaiting_gate"].includes(run.status)) {
+      throw new MockError(409, "run_not_accepting_prompts", "Run 目前不接受執行中的訊息");
+    }
+    const controlId = this.newId("control");
+    const prompt = [{ type: "text" as const, text: input.text }];
     const simulation = this.state.simulations[runId] ?? { queue: [], waiting: null };
     this.state.simulations[runId] = simulation;
-    this.append(runId, [
-      { kind: "prompt_submitted", source: "user", prompt: [{ type: "text", text }] },
-    ]);
-    const seq = String(this.state.events[runId]?.length ?? 0);
-    this.state.promptAuthors[runId] = { ...this.state.promptAuthors[runId], [seq]: ME_ID };
-    simulation.queue.unshift({
-      type: "event",
-      event: {
-        kind: "message_chunk",
-        content: { type: "text", text: "收到，下一步照這個方向處理。" },
-      },
-    });
+    if (input.delivery === "interrupt") {
+      // 中斷目前的回合後立即送出
+      this.append(
+        runId,
+        [{ kind: "prompt_submitted", source: "user", prompt, control_id: controlId }],
+        ME_ID,
+      );
+      simulation.queue.unshift({
+        type: "event",
+        event: {
+          kind: "message_chunk",
+          content: { type: "text", text: "收到，改照這個方向處理。" },
+        },
+      });
+    } else {
+      this.append(runId, [{ kind: "prompt_queued", control_id: controlId, prompt }], ME_ID);
+      const queued = this.state.queuedPrompts[runId] ?? [];
+      queued.push({ controlId, text: input.text });
+      this.state.queuedPrompts[runId] = queued;
+    }
+    this.save();
+    return { controlId };
+  }
+
+  /** 收回還在排隊的訊息。 */
+  withdrawPrompt(runId: string, controlId: string): void {
+    this.requireEditor();
+    const queued = this.state.queuedPrompts[runId] ?? [];
+    if (!queued.some((q) => q.controlId === controlId)) {
+      throw new MockError(409, "prompt_already_submitted", "這則訊息已經交給 Agent 或已經收回");
+    }
+    this.state.queuedPrompts[runId] = queued.filter((q) => q.controlId !== controlId);
+    this.append(runId, [{ kind: "prompt_withdrawn", control_id: controlId }], ME_ID);
     this.save();
   }
 
-  /** TODO(backend, run-settings)：目前的推理強度與切換紀錄。 */
-  runSettings(runId: string): RunSettings {
-    const run = this.run(runId);
-    return (
-      this.state.runSettings[runId] ?? {
-        initial: { agent: run.agent, model: run.model },
-        effort: "std",
-        changes: [],
-      }
+  /**
+   * 回合結束（進入 Review Gate）前有排隊的訊息：每則各送一筆 prompt_submitted，Agent 回覆後才進入 Gate。
+   * 有送出時回傳 true（這一步的 Event 留到下一輪）。
+   */
+  private flushQueuedPrompts(runId: string, step: ScriptStep): boolean {
+    const queued = this.state.queuedPrompts[runId] ?? [];
+    if (queued.length === 0) return false;
+    this.state.queuedPrompts[runId] = [];
+    for (const entry of queued) {
+      this.append(
+        runId,
+        [
+          {
+            kind: "prompt_submitted",
+            source: "user",
+            prompt: [{ type: "text", text: entry.text }],
+            control_id: entry.controlId,
+          },
+        ],
+        ME_ID,
+      );
+    }
+    this.state.simulations[runId]?.queue.unshift(
+      {
+        type: "event",
+        event: {
+          kind: "message_chunk",
+          content: { type: "text", text: "收到，已經照這個方向補上。" },
+        },
+      },
+      step,
     );
+    return true;
   }
 
-  /** TODO(backend, run-settings)：執行中切換模型（可以換 Agent）、推理強度、權限策略。 */
-  updateRunSettings(runId: string, input: UpdateRunSettingsInput): RunSettings {
+  /** 派工時的設定、目前的設定與切換紀錄（同 Server 的 GET runSettings）。 */
+  runSettings(runId: string): RunSettings {
+    const run = this.run(runId);
+    const initial = this.state.initialSettings[runId] ?? {
+      agent: run.agent,
+      model: run.model,
+      effort: run.effort,
+      permissionPolicy: run.permissionPolicy,
+    };
+    const changes = this.state.settingsChanges[runId] ?? [];
+    const current = { ...initial };
+    for (const change of changes) {
+      if (change.agent) {
+        current.agent = change.agent;
+        current.model = change.model;
+        current.effort = change.effort;
+        continue;
+      }
+      if (change.model && !change.notApplied.includes("model")) current.model = change.model;
+      if (change.effort && !change.notApplied.includes("effort")) current.effort = change.effort;
+      if (change.permissionPolicy) current.permissionPolicy = change.permissionPolicy;
+    }
+    return { initial, current, changes };
+  }
+
+  private recordSettingsChange(runId: string, change: Omit<RunSettingsChange, "seq" | "ts">) {
+    const run = this.run(runId);
+    this.state.initialSettings[runId] ??= {
+      agent: run.agent,
+      model: run.model,
+      effort: run.effort,
+      permissionPolicy: run.permissionPolicy,
+    };
+    const events = this.state.events[runId] ?? [];
+    const last = events.at(-1);
+    const list = this.state.settingsChanges[runId] ?? [];
+    list.push({ ...change, seq: last?.seq ?? 1, ts: last?.ts ?? now() });
+    this.state.settingsChanges[runId] = list;
+  }
+
+  /** Local Runner 上的 Run：換 Permission Policy、換 Agent 只限那台 Runner 的擁有者（同 Server）。 */
+  private requireRunnerOwner(run: Run, what: string): void {
+    if (run.runnerKind === "local" && run.startedByMemberId !== ME_ID) {
+      throw new MockError(403, "forbidden", `只有這台 Local Runner 的擁有者能${what}`);
+    }
+  }
+
+  private requireRunning(runId: string): Run {
     this.requireEditor();
     const run = this.run(runId);
     if (["completed", "failed", "canceled"].includes(run.status)) {
-      throw new MockError(409, "conflict", "Run 已經結束");
+      throw new MockError(409, "run_finished", "Run 已經結束");
     }
+    return run;
+  }
+
+  /** 執行中切換模型、推理強度、權限策略（模型目錄檢查同 Server）。 */
+  updateRunSettings(runId: string, input: UpdateRunSettingsInput): { controlIds: string[] } {
+    const run = this.requireRunning(runId);
+    if (input.permissionPolicy !== undefined)
+      this.requireRunnerOwner(run, "改變 Permission Policy");
     if (input.permissionPolicy === "yolo" && run.runnerKind === "team") {
       throw new MockError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
     }
-    const settings = this.runSettings(runId);
-    const change = {
-      ts: now(),
-      memberId: ME_ID,
-      agent: null,
-      model: null,
-      effort: null,
-      permissionPolicy: null,
-    };
-    const changes = [...settings.changes];
-    let effort: RunEffort | null = settings.effort;
-    if (input.model !== undefined || input.agent !== undefined) {
-      run.agent = input.agent ?? run.agent;
-      run.model = input.model ?? run.model;
-      changes.push({ ...change, kind: "model", agent: run.agent, model: run.model });
+    const current = this.runSettings(runId).current;
+    const models = MOCK_AGENT_CATALOG.find((a) => a.agentId === current.agent)?.models ?? [];
+    const model = input.model ?? current.model;
+    const info = models.find((m) => m.id === model);
+    if (input.model && !info) {
+      throw new MockError(422, "option_unsupported", `這個 Agent 沒有 ${input.model} 這個 model`);
     }
-    if (input.effort !== undefined) {
-      effort = input.effort;
-      changes.push({ ...change, kind: "effort", effort });
+    if (input.effort && info && info.effort.kind !== "adjustable") {
+      throw new MockError(422, "option_unsupported", `${info.name} 不支援調整推理強度`);
+    }
+    const controlIds: string[] = [];
+    if (input.model !== undefined || input.effort !== undefined) {
+      const controlId = this.newId("control");
+      controlIds.push(controlId);
+      this.append(
+        runId,
+        [
+          {
+            kind: "run_settings_changed",
+            control_id: controlId,
+            model: input.model ?? null,
+            effort: input.effort ?? null,
+            permission_policy: null,
+            not_applied: [],
+            message: null,
+          },
+        ],
+        ME_ID,
+      );
+      this.recordSettingsChange(runId, {
+        actorMemberId: ME_ID,
+        agent: null,
+        model: input.model ?? null,
+        effort: input.effort ?? null,
+        permissionPolicy: null,
+        notApplied: [],
+      });
+      if (input.model) run.model = input.model;
+      if (input.effort) run.effort = input.effort;
     }
     if (input.permissionPolicy !== undefined) {
-      run.permissionPolicy = input.permissionPolicy;
-      changes.push({ ...change, kind: "policy", permissionPolicy: input.permissionPolicy });
+      const controlId = this.newId("control");
+      controlIds.push(controlId);
+      this.append(
+        runId,
+        [
+          {
+            kind: "run_settings_changed",
+            control_id: controlId,
+            model: null,
+            effort: null,
+            permission_policy: input.permissionPolicy,
+            not_applied: [],
+            message: null,
+          },
+        ],
+        ME_ID,
+      );
+      this.recordSettingsChange(runId, {
+        actorMemberId: ME_ID,
+        agent: null,
+        model: null,
+        effort: null,
+        permissionPolicy: input.permissionPolicy,
+        notApplied: [],
+      });
     }
     run.updatedAt = now();
-    const next = { initial: settings.initial, effort, changes };
-    this.state.runSettings[runId] = next;
     this.save();
-    return next;
+    return { controlIds };
   }
 
-  /** TODO(backend, event-actor)：prompt 是誰送的、權限請求是誰回覆的。 */
-  eventActors(runId: string): RunEventActors {
-    const run = this.run(runId);
-    const events = this.state.events[runId] ?? [];
-    const prompts: Record<string, string> = { ...this.state.promptAuthors[runId] };
-    const rejected = this.state.gates.filter(
-      (g) => g.runId === runId && g.decision === "rejected" && g.decidedByMemberId !== null,
+  /** 換成同一台 Runner 上的另一個 Agent（同一個 Run 與 Worktree）。 */
+  switchAgent(runId: string, input: SwitchAgentInput): { controlId: string } {
+    const run = this.requireRunning(runId);
+    this.requireRunnerOwner(run, "換 Agent");
+    const entry = MOCK_AGENT_CATALOG.find((a) => a.agentId === input.agent);
+    if (!entry || entry.signedIn === false) {
+      throw new MockError(422, "agent_unavailable", `這台 Runner 上沒有可以用的 ${input.agent}`);
+    }
+    if (input.model && !entry.models.some((m) => m.id === input.model)) {
+      throw new MockError(
+        422,
+        "option_unsupported",
+        `${input.agent} 沒有 ${input.model} 這個 model`,
+      );
+    }
+    const controlId = this.newId("control");
+    const from = run.agent;
+    this.append(
+      runId,
+      [
+        {
+          kind: "agent_switched",
+          from,
+          to: input.agent,
+          model: input.model ?? null,
+          control_id: controlId,
+        },
+      ],
+      ME_ID,
     );
-    const counters: Record<string, number> = {};
-    const permissions: Record<string, string> = {};
-    for (const { seq, event } of events) {
-      if (event.kind === "prompt_submitted") {
-        const key = String(seq);
-        if (prompts[key]) continue;
-        if (event.source === "user" && run.startedByMemberId) prompts[key] = run.startedByMemberId;
-        if (event.source === "plan_gate" || event.source === "review_gate") {
-          const kind = event.source === "plan_gate" ? "plan" : "review";
-          const index = counters[kind] ?? 0;
-          counters[kind] = index + 1;
-          const gate = rejected.filter((g) => g.kind === kind)[index];
-          if (gate?.decidedByMemberId) prompts[key] = gate.decidedByMemberId;
-        }
-      }
-      // 假後端只有目前的使用者會回覆權限請求
-      if (event.kind === "permission_resolved" && event.selected_option_id !== null) {
-        permissions[event.request_id] = ME_ID;
-      }
-    }
-    return { prompts, permissions };
+    this.recordSettingsChange(runId, {
+      actorMemberId: ME_ID,
+      agent: input.agent,
+      model: input.model ?? null,
+      effort: input.effort ?? null,
+      permissionPolicy: null,
+      notApplied: [],
+    });
+    run.agent = input.agent;
+    run.model = input.model ?? null;
+    run.effort = input.effort ?? null;
+    run.updatedAt = now();
+    this.save();
+    return { controlId };
   }
 
-  /** TODO(backend, task-pull-request)：Review Gate 核准後開出的 PR。 */
-  taskPullRequest(taskId: string): TaskPullRequest | null {
-    const task = this.task(taskId);
-    if (task.status !== "pr_open" && !(task.status === "done" && task.doneReason === "completed")) {
-      return null;
+  /** 本機合併被擋下後重試（ADR-0013）：mock 一律成功。 */
+  retryLocalMerge(runId: string): { controlId: string } {
+    this.requireEditor();
+    const run = this.run(runId);
+    const task = this.task(run.taskId);
+    const repo = task.repoId ? this.state.repos.find((r) => r.id === task.repoId) : undefined;
+    if (repo?.kind !== "local")
+      throw new MockError(409, "conflict", "這個 Run 不是本機 Repo 的 Run");
+    const controlId = this.newId("control");
+    this.append(
+      runId,
+      [
+        {
+          kind: "local_merged",
+          commit_sha: "d".repeat(40),
+          base_branch: repo.defaultBranch,
+          pushed: this.project(task.projectId).policy.localPushBase,
+        },
+      ],
+      ME_ID,
+    );
+    task.status = "done";
+    task.doneReason = "completed";
+    task.updatedAt = now();
+    this.save();
+    return { controlId };
+  }
+
+  /** 開互動式終端機前的檢查（ADR-0014）：Run 的 Worktree 還在、是 Local Runner 或 Team 設定打開。 */
+  requireTerminal(runId: string): void {
+    this.requireEditor();
+    const run = this.run(runId);
+    if (this.task(run.taskId).status === "done") {
+      throw new MockError(409, "worktree_archived", "工作樹已經封存");
     }
+    if (run.runnerKind === "team" && !this.team().allowTeamRunnerTerminal) {
+      throw new MockError(403, "forbidden", "Team 設定沒有打開 Team Runner 的終端機");
+    }
+  }
+
+  /** Review Gate 核准後開出的 PR（Task 的 pullRequest）；PR merge 後是 merged。 */
+  private pullRequestFor(task: Task): TaskPullRequest | null {
     const run = this.state.runs
-      .filter((r) => r.taskId === taskId && r.parentRunId === null && r.status === "completed")
+      .filter((r) => r.taskId === task.id && r.parentRunId === null && r.status === "completed")
       .at(-1);
     if (!run) return null;
     const number = 100 + (Number(task.key.split("-")[1]) || 0);
+    const merged = task.status === "done" && task.doneReason === "completed";
     return {
       number,
       url: `https://github.com/acme/demo/pull/${number}`,
-      state: task.status === "done" ? "merged" : "open",
+      state: merged ? "merged" : "open",
       runId: run.id,
       openedAt: run.endedAt ?? run.updatedAt,
-      mergedAt: task.status === "done" ? task.updatedAt : null,
+      mergedAt: merged ? task.updatedAt : null,
     };
   }
 
-  /** TODO(backend, board-summary)：看板每列的最新主 Run 與驗收進度。 */
-  boardSummary(projectId: string): BoardSummaryItem[] {
-    return this.tasks(projectId).map((task) => {
-      const run = this.state.runs
-        .filter((r) => r.taskId === task.id && r.parentRunId === null && r.origin !== "mention")
-        .at(-1);
-      const criteria = this.acceptanceCriteria(task.id);
-      const gate = run
-        ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "status_changed")
-            ?.event as Extract<EventKind, { kind: "status_changed" }> | undefined)
-        : undefined;
-      return {
-        taskId: task.id,
-        latestRun: run
-          ? {
-              id: run.id,
-              status: run.status,
-              gate: run.status === "awaiting_gate" ? (gate?.gate ?? null) : null,
-              agent: run.agent,
-            }
-          : null,
-        acceptance: {
-          passed: criteria.filter((c) => c.result === "passed").length,
-          failed: criteria.filter((c) => c.result === "failed").length,
-          total: criteria.length,
-        },
-      };
-    });
+  /** 種子資料中已經開出或合併 PR 的 Task 補上 pullRequest。 */
+  private syncPullRequests(): void {
+    for (const task of this.state.tasks) {
+      if (task.pullRequest) continue;
+      if (
+        task.status === "pr_open" ||
+        (task.status === "done" && task.doneReason === "completed")
+      ) {
+        task.pullRequest = this.pullRequestFor(task);
+      }
+    }
   }
 
-  private append(runId: string, kinds: EventKind[]): void {
+  /** 看板每列的最新主 Run 與驗收進度。 */
+  boardSummary(projectId: string): BoardSummaryResponse {
+    return {
+      tasks: this.tasks(projectId).map((task) => {
+        const run = this.state.runs
+          .filter((r) => r.taskId === task.id && r.parentRunId === null && r.origin !== "mention")
+          .at(-1);
+        const criteria = this.acceptanceCriteria(task.id);
+        const gate = run
+          ? ((this.state.events[run.id] ?? []).findLast((e) => e.event.kind === "status_changed")
+              ?.event as Extract<EventKind, { kind: "status_changed" }> | undefined)
+          : undefined;
+        return {
+          taskId: task.id,
+          latestRun: run
+            ? {
+                id: run.id,
+                status: run.status,
+                gate: run.status === "awaiting_gate" ? (gate?.gate ?? null) : null,
+                agent: run.agent,
+              }
+            : null,
+          acceptance: {
+            passed: criteria.filter((c) => c.result === "passed").length,
+            failed: criteria.filter((c) => c.result === "failed").length,
+            total: criteria.length,
+          },
+        };
+      }),
+    };
+  }
+
+  /** 加上 Event；`actorMemberId` 是觸發它的人（同 Server 依 control id 補上的作者）。 */
+  private append(runId: string, kinds: EventKind[], actorMemberId: string | null = null): void {
     const list = this.state.events[runId] ?? [];
     this.state.events[runId] = list;
     const run = this.run(runId);
@@ -2863,7 +3221,7 @@ export class MockBackend {
         seq: list.length + 1,
         ts: now(),
         event,
-        actorMemberId: null,
+        actorMemberId,
       };
       list.push(runEvent);
       this.applySideEffects(run, event);
@@ -2996,7 +3354,7 @@ function member(id: string, githubUserId: number, login: string, name: string, r
     githubLogin: login,
     name,
     avatarUrl: null,
-    email: null,
+    email: `${login}@example.com`,
     role,
     createdAt: SEED_TIME,
     updatedAt: SEED_TIME,

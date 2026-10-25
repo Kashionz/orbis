@@ -15,6 +15,7 @@ import {
   API_ROUTES,
   CheckAcceptanceCriterionInput,
   GateDecisionInput,
+  type LocalMergeRetryRequested,
   type NeedsYouItem,
   type NeedsYouListResponse,
   PermissionResponseInput,
@@ -31,12 +32,17 @@ import type {
 import { and, asc, count, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { z } from "zod";
-import { authorize, authorizePermissionResponse } from "../authz/capabilities";
+import {
+  authorize,
+  authorizePermissionResponse,
+  roleOnTask,
+  taskAccess,
+} from "../authz/capabilities";
+import { requirePermissionResponder, runnerOwnerOf } from "../authz/runner-owner";
 import {
   actorProjectRoles,
   loadRunScope,
   loadTaskScope,
-  type RunScope,
   requireProjectCapability,
 } from "../authz/scope";
 import {
@@ -46,16 +52,19 @@ import {
   gates,
   needsYouItems,
   projects,
+  repos,
   reviewComments,
   runEvents,
   runners,
   runs,
+  taskMembers,
   tasks,
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
+import { isTerminalRunStatus } from "../domain/run-status";
 import { toAcceptanceCriterion, toGates, toNeedsYou } from "../http/dto";
-import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
-import type { Actor, AppEnv } from "../http/session";
+import { ApiError, conflict, notFound, readId, readJson } from "../http/errors";
+import type { AppEnv } from "../http/session";
 import { type PreviewDomain, runIdFromHost } from "../preview/domain";
 import { type GateSubject, RUN_DIFF_EVENT_KIND } from "../runs/gates";
 import type { Services } from "../services";
@@ -73,14 +82,6 @@ const purposeOf = (payload: unknown): PermissionPurpose =>
   (payload as PermissionRequestPayload).purpose ?? "tool";
 
 /** Run 所在 Runner 的擁有者：Local Run 一律交給派工者自己的 Local Runner。 */
-function runnerOwnerOf(
-  run: { target: "local" | "team"; requestedByMemberId: string | null },
-  runnerMemberId: string | null | undefined,
-): string | null {
-  if (run.target !== "local") return null;
-  return runnerMemberId ?? run.requestedByMemberId;
-}
-
 export function createReviewRoutes(s: Services): Hono<AppEnv> {
   const { db, auth } = s;
   const app = new Hono<AppEnv>();
@@ -103,6 +104,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         gateAssignee: gates.assigneeMemberIdAtCreation,
         run: runs,
         runnerMemberId: runners.memberId,
+        shareRole: taskMembers.role,
       })
       .from(needsYouItems)
       .innerJoin(projects, eq(projects.id, needsYouItems.projectId))
@@ -110,6 +112,10 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
       .leftJoin(gates, eq(gates.id, needsYouItems.gateId))
       .leftJoin(runs, eq(runs.id, needsYouItems.runId))
       .leftJoin(runners, eq(runners.id, runs.runnerId))
+      .leftJoin(
+        taskMembers,
+        and(eq(taskMembers.taskId, tasks.id), eq(taskMembers.memberId, actor.memberId)),
+      )
       .where(
         and(
           eq(projects.teamId, actor.teamId),
@@ -126,7 +132,15 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     const roles = await actorProjectRoles(db, actor);
     const items: NeedsYouListResponse = [];
     for (const r of rows) {
-      const role = roles(r.project.id);
+      // 看不到的 Task 不出現（Task 分享，ADR-0012）；能不能處理依 Task 上的 Role 判斷。
+      const projectRole = roles(r.project.id);
+      const access = taskAccess({
+        role: projectRole,
+        taskRole: r.shareRole,
+        generalAccess: r.task.generalAccess,
+      });
+      if (access === null) continue;
+      const role = roleOnTask(projectRole, access);
       if (r.item.kind === "permission_request") {
         if (!r.run) continue;
         const allowed = authorizePermissionResponse({
@@ -375,6 +389,11 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         if (gate.kind === "plan") {
           await s.lifecycle.transition(uow, gate.taskId, "running", "gate", actedBy);
           await send({ action: "gate_result", gate: "plan", decision: "approved" });
+        } else if (await isLocalRepoTask(tx, scope.task.repoId)) {
+          // 本機 Repo（ADR-0013）：Runner 把分支合併到本機 checkout 的基準分支，合併完成（local_merged）時
+          // Task 才轉 Done；這段期間 Task 留在 Review Gate（Gate 已核准）。
+          await send({ action: "gate_result", gate: "review", decision: "approved" });
+          await send(localMergeAction(scope.project));
         } else {
           await s.lifecycle.transition(uow, gate.taskId, "pr_open", "gate", actedBy);
           await send({ action: "gate_result", gate: "review", decision: "approved" });
@@ -496,6 +515,47 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     return c.json(toAcceptanceCriterion(updated));
   });
 
+  /**
+   * 本機合併被擋下（`local_merge_blocked`）後重試（ADR-0013）：權限同核准 Review Gate，以 Project 目前的
+   * 設定重送 `merge_local`，原本的「停下來的 Run」標示為已處理。
+   */
+  app.post(API_ROUTES.runMergeLocal, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
+    requireProjectCapability(actor, scope, "approve_gate");
+    if (isTerminalRunStatus(scope.run.status)) {
+      throw new ApiError(409, "run_finished", "Run 已經結束");
+    }
+    const controlId = await inTransaction(db, async (uow) => {
+      const now = s.clock.now();
+      const [blocked] = await uow.tx
+        .update(needsYouItems)
+        .set({
+          resolvedAt: now,
+          resolvedByMemberId: actor.memberId,
+          resolution: { action: "retry" },
+        })
+        .where(
+          and(
+            eq(needsYouItems.runId, scope.run.id),
+            eq(needsYouItems.kind, "stopped_run"),
+            isNull(needsYouItems.resolvedAt),
+            sql`${needsYouItems.payload}->>'reasonCode' = 'local_merge_blocked'`,
+          ),
+        )
+        .returning({ id: needsYouItems.id });
+      if (!blocked) throw conflict("這個 Run 沒有被擋下、等待重試的本機合併");
+      return s.runControls.send(
+        uow.tx,
+        scope.run.id,
+        localMergeAction(scope.project),
+        uow,
+        actor.memberId,
+      );
+    });
+    return c.json({ controlId } satisfies LocalMergeRetryRequested, 202);
+  });
+
   return app;
 }
 
@@ -609,25 +669,21 @@ export function rejectionPrompt(
   return blocks;
 }
 
-/** 確認 Actor 可以回覆這個 Run 的權限請求；不行時丟出 403。 */
-async function requirePermissionResponder(
-  db: Executor,
-  actor: Actor,
-  scope: RunScope,
-  purpose: PermissionPurpose,
-): Promise<void> {
-  const [runner] = scope.run.runnerId
-    ? await db
-        .select({ memberId: runners.memberId })
-        .from(runners)
-        .where(eq(runners.id, scope.run.runnerId))
-    : [];
-  const result = authorizePermissionResponse({
-    memberId: actor.memberId,
-    role: scope.role,
-    runnerKind: scope.run.target,
-    runnerOwnerMemberId: runnerOwnerOf(scope.run, runner?.memberId),
-    purpose,
-  });
-  if (!result.ok) throw forbidden(result.reason);
+/** Task 的 Repo 是不是本機 Repo（核准後改走本機合併）。 */
+export async function isLocalRepoTask(tx: Executor, repoId: string | null): Promise<boolean> {
+  if (!repoId) return false;
+  const [repo] = await tx.select({ kind: repos.kind }).from(repos).where(eq(repos.id, repoId));
+  return repo?.kind === "local";
+}
+
+/** 依 Project 目前的設定組出 `merge_local`（合併方式、合併後是否 push 基準分支）。 */
+export function localMergeAction(project: {
+  localMergeStrategy: "squash" | "merge";
+  localPushBase: boolean;
+}): RunControlAction {
+  return {
+    action: "merge_local",
+    strategy: project.localMergeStrategy,
+    push_base: project.localPushBase,
+  };
 }

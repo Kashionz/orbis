@@ -120,8 +120,8 @@ function ProfileMenu({
         <Avatar person={{ name: displayName(me), avatarUrl: me.avatarUrl }} size={32} />
         <div className="profile-menu-identity">
           <span className="profile-menu-name">{displayName(me)}</span>
-          {/* TODO(backend, member-email)：/api/auth/me 沒有 email，先顯示 GitHub login */}
-          <span className="profile-menu-sub">@{me.githubLogin}</span>
+          {/* GitHub 帳號主要且已驗證的 email；沒有時顯示 GitHub login */}
+          <span className="profile-menu-sub">{me.member?.email ?? `@${me.githubLogin}`}</span>
         </div>
         {me.member && (
           <span className="profile-menu-role" data-testid="member-role">

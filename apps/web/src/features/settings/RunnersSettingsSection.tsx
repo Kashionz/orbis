@@ -12,13 +12,11 @@ import { Segmented } from "../../components/Segmented";
 import { StatusDot } from "../../components/StatusDot";
 import { Switch } from "../../components/Switch";
 import { useT } from "../../i18n";
-import { isFeatureEnabled } from "../../lib/features";
 import { formatTime } from "../../lib/format";
 import { TERMINAL_SHELLS, type TerminalShell, usePreferences } from "../../lib/preferences";
 import { meQueryOptions } from "../auth/api";
 import { usePermissions } from "../auth/use-permissions";
 import { localRunnerOf } from "../shell/ProfileMenu";
-import { useRunnerSettings } from "./api";
 import { SettingRow } from "./SettingsDialog";
 
 /** 終端機的名稱（專有名詞，不翻譯）。 */
@@ -55,7 +53,7 @@ export function RunnersSettingsSection() {
           }))}
         />
       </SettingRow>
-      <LongPathsRow runner={local} />
+      <LongPathsRow />
       <PairRunner />
     </>
   );
@@ -89,21 +87,15 @@ function RunnerRow({ runner }: { runner: Runner }) {
   );
 }
 
-function LongPathsRow({ runner }: { runner: Runner | null }) {
+/** Windows 長路徑：Runner 在 Windows 上一律開啟 `core.longpaths`（#84），只顯示狀態。 */
+function LongPathsRow() {
   const t = useT();
-  const enabled = isFeatureEnabled("runnerLongPaths");
-  const { query, update } = useRunnerSettings(runner?.id);
-  const checked = update.variables?.windowsLongPaths ?? query.data?.windowsLongPaths ?? false;
   return (
     <SettingRow label={t.settings.windowsLongPaths}>
-      {/* TODO(backend, runner-long-paths)：Runner 還沒有遠端設定 */}
-      <Switch
-        label={t.settings.windowsLongPaths}
-        checked={enabled ? checked : false}
-        disabled={!enabled || runner === null || query.isPending || update.isPending}
-        tooltip={enabled ? undefined : t.common.notAvailableYet}
-        onChange={(value) => update.mutate({ windowsLongPaths: value })}
-      />
+      <span className="setting-status" data-tip={t.settings.windowsLongPathsAlwaysOn}>
+        <StatusDot color="currentColor" />
+        {t.settings.alwaysOn}
+      </span>
     </SettingRow>
   );
 }

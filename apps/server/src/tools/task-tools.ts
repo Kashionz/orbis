@@ -1,10 +1,13 @@
 // 與 Task 有關的 Orbis MCP 工具（ARCHITECTURE §9）：
 // - `propose_tasks`：提出 Draft Task（同一次呼叫一批），經人確認後才進入 Backlog。
-// - `update_task_note`：在 Task 上留下進度或決策紀錄（記下來源 Run）。
+// - `update_task_note`：在 Task 上留下進度或決策紀錄（記下來源 Run）；寫在其他 Task 時依派工的人在那個
+//   Task 上的權限。
 // 兩者都不會改動既有 Task 的狀態、指派對象與 Acceptance Criterion。
 
 import { and, eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
+import { roleAtLeast } from "../authz/capabilities";
+import { memberOnTask } from "../authz/task-access";
 import type { Database } from "../db/client";
 import { draftTasks, taskNotes, tasks } from "../db/schema";
 import { ToolError, type ToolHandlers } from "./service";
@@ -56,12 +59,20 @@ export function taskToolHandlers(db: Database): ToolHandlers {
     update_task_note: async (context, call) => {
       let taskId = context.task.id;
       if (call.task !== null && call.task !== context.task.key) {
-        // 只能寫在同一個 Project 的 Task 上。
+        // 只能寫在同一個 Project、派工的人在上面能操作的 Task 上（ADR-0012）。派工的人看不到的 Task
+        // 和不存在的 Task 一樣回 not_found，不透露它是否存在。
+        const notFound = new ToolError("not_found", `這個 Project 沒有 Task ${call.task}`);
         const [other] = await db
           .select({ id: tasks.id })
           .from(tasks)
           .where(and(eq(tasks.projectId, context.task.projectId), eq(tasks.key, call.task)));
-        if (!other) throw new ToolError("not_found", `這個 Project 沒有 Task ${call.task}`);
+        const requester = context.caller.requestedByMemberId;
+        if (!other || !requester) throw notFound;
+        const access = await memberOnTask(db, other.id, requester);
+        if (!access) throw notFound;
+        if (!roleAtLeast(access.taskRole, "member")) {
+          throw new ToolError("invalid_state", `派工的人在 Task ${call.task} 上只能檢視，不能寫入`);
+        }
         taskId = other.id;
       }
       const [note] = await db

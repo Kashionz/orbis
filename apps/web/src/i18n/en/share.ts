@@ -40,7 +40,12 @@ export default {
   invitedOne: (name: string) => `Invited ${name}`,
   invitedMany: (count: number) => `Invited ${count} people`,
   addedTo: (task: string) => `to “${task}”`,
-  emailInvite: "Email invite",
   inviteMore: "Invite more",
   done: "Done",
+  readOnly: "Only the task owner and admins can change sharing",
+  transferOwner: "Transfer ownership",
+  transferOwnerSub: "The current owner becomes Can edit",
+  emailSent: "Invitation email sent",
+  copyLinkToSend: "Copy the link and send it to them",
+  copyInviteLink: "Copy invite link",
 } satisfies Messages["share"];

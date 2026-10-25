@@ -82,17 +82,3 @@ test.describe("不指定儲存庫", () => {
     await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
   });
 });
-
-test.describe("後端還不支援不指定儲存庫", () => {
-  test.use({ mock: { features: { taskWithoutRepo: false } } });
-
-  test("「尚未指定」停用並顯示尚未開放", async ({ page }) => {
-    await page.goto("/board");
-    const dialog = await openNewTask(page);
-    await dialog.getByRole("button", { name: /^儲存庫/ }).click();
-    const none = page.getByRole("menuitemradio", { name: "尚未指定" });
-    await expect(none).toHaveAttribute("aria-disabled", "true");
-    await none.hover();
-    await expect(page.getByRole("tooltip")).toHaveText("尚未開放");
-  });
-});

@@ -1,6 +1,7 @@
 // API 的錯誤格式（契約的 ApiError）：一律回 `{ error, message }`，驗證失敗另外附上 `issues`，
 // Task 進入 Ready 的條件不足時附上 `missing`。
 
+import type { ApiErrorCode as ContractErrorCode } from "@orbis/api-contract";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
@@ -19,7 +20,9 @@ export type ApiErrorCode =
   | "github_disabled"
   | "repo_not_connected"
   | "repo_mismatch"
-  | "github_error";
+  | "github_error"
+  /** 契約集中列出的代碼（API 版本 2 起新增的）。 */
+  | ContractErrorCode;
 
 export class ApiError extends Error {
   override name = "ApiError";

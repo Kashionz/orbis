@@ -4,8 +4,14 @@
 import { DraftTaskListResponse, Task, TaskNoteListResponse } from "@orbis/api-contract";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { acceptanceCriteria, draftTasks, taskDependencies, tasks } from "../src/db/schema";
-import { expectContract, resetDatabase } from "./helpers/api";
+import {
+  acceptanceCriteria,
+  draftTasks,
+  taskDependencies,
+  taskNotes,
+  tasks,
+} from "../src/db/schema";
+import { expectContract, resetDatabase, seedReadyTask } from "./helpers/api";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 import { type Flow, type StartedRun, startFlow, startRun, taskRow } from "./helpers/flow";
 
@@ -194,6 +200,32 @@ describe.skipIf(dbSkipReason !== null)("Draft Task 與 Task note", () => {
     it("可以指定同一個 Project 的其他 Task；別的 Project 的 Task 回 not_found", async () => {
       const { result } = await call({ tool: "update_task_note", task: "XYZ-1", note: "x" });
       expect(result).toMatchObject({ outcome: "error", code: "not_found" });
+    });
+
+    it("其他 Task 依派工的人在上面的權限：看不到和不存在一樣回 not_found，只能檢視時不能寫", async () => {
+      const other = await seedReadyTask(flow.db, flow.project, flow.repoId, {
+        createdByMemberId: flow.team.members.admin.id,
+      });
+      const setAccess = (generalAccess: "invited" | "team_view" | "team_edit") =>
+        flow.db.update(tasks).set({ generalAccess }).where(eq(tasks.id, other.id));
+      const write = () => call({ tool: "update_task_note", task: other.key, note: "x" });
+
+      await setAccess("invited");
+      const hidden = (await write()).result;
+      const missing = (await call({ tool: "update_task_note", task: "ORB-999", note: "x" })).result;
+      expect(hidden).toMatchObject({ outcome: "error", code: "not_found" });
+      expect(missing).toMatchObject({ outcome: "error", code: "not_found" });
+      expect((hidden as { message: string }).message).toBe(
+        (missing as { message: string }).message.replace("ORB-999", other.key),
+      );
+
+      await setAccess("team_view");
+      expect((await write()).result).toMatchObject({ outcome: "error", code: "invalid_state" });
+
+      await setAccess("team_edit");
+      expect((await write()).result).toMatchObject({ outcome: "ok" });
+      const notes = await flow.db.select().from(taskNotes).where(eq(taskNotes.taskId, other.id));
+      expect(notes).toHaveLength(1);
     });
   });
 

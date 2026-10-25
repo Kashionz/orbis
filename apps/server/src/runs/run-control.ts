@@ -265,6 +265,20 @@ export class RunControlService {
     }
     const log = { runnerId, runId: control.runId, action: control.action };
 
+    if (control.action === "merge_local") {
+      // 本機合併被擋下（工作目錄有未 commit 的變更或合併衝突）：Run 停下，處理後重試（ADR-0013）。
+      if (result.outcome === "rejected") {
+        this.logger.warn({ ...log, reason: result.reason }, "本機合併被擋下");
+        await this.stopRun(
+          control.runId,
+          `本機合併被擋下：${result.message}`,
+          "local_merge_blocked",
+          result.message,
+        );
+      }
+      return;
+    }
+
     if (control.action !== "push_branch") {
       if (result.outcome === "rejected") {
         this.logger.warn(
@@ -341,6 +355,7 @@ export class RunControlService {
       runId,
       title: `${row.task.key} 停下來了`,
       body: reason,
+      stoppedRun: { reasonCode, attempt: null, detail },
     });
   }
 }

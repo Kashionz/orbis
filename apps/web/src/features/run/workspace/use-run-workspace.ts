@@ -1,4 +1,4 @@
-// 工作區中一個 Run 的資料：即時時間軸、Gate、Verification、review diff、後端缺口的資料，
+// 工作區中一個 Run 的資料：即時時間軸、Gate、Verification、review diff、Run 的設定與 PR，
 // 以及狀態改變時要重新取得的資料。
 
 import type { Gate, Project, Run, Task } from "@orbis/api-contract";
@@ -10,17 +10,12 @@ import {
   taskGatesQuery,
   verificationsQuery,
 } from "../../../api/resources";
-import { isFeatureEnabled } from "../../../lib/features";
 import { toRunUsage } from "../../../lib/format";
 import { usePermissions } from "../../auth/use-permissions";
+import { boardSummaryKey } from "../../board/api";
 import { useRunControls } from "../use-run-controls";
 import { useRunTimeline } from "../use-run-timeline";
-import {
-  eventActorsQuery,
-  runSettingsQuery,
-  taskPullRequestQuery,
-  workspaceKeys,
-} from "../workspace-api";
+import { runSettingsQuery, workspaceKeys } from "../workspace-api";
 
 function pendingGate(gates: readonly Gate[], runId: string, kind: Gate["kind"]): Gate | null {
   return gates.find((g) => g.runId === runId && g.kind === kind && g.decision === null) ?? null;
@@ -60,26 +55,10 @@ export function useRunWorkspace(run: Run, task: Task, project: Project) {
   const diffEvents = timeline.items.filter((i) => i.type === "run_diff").length;
   const reviewDiff = useQuery({ ...reviewDiffQuery(run.id), enabled: diffEvents > 0 });
 
-  // TODO(backend, run-settings／event-actor／task-pull-request)：後端有 API 之前真實模式不取得
-  const settings = useQuery({
-    ...runSettingsQuery(run.id),
-    enabled: isFeatureEnabled("runSettings"),
-  });
-  const actors = useQuery({
-    ...eventActorsQuery(run.id),
-    enabled: isFeatureEnabled("eventActors"),
-  });
-  const pullRequest = useQuery({
-    ...taskPullRequestQuery(task.id),
-    enabled:
-      isFeatureEnabled("taskPullRequest") && (task.status === "pr_open" || task.status === "done"),
-  });
+  const settings = useQuery(runSettingsQuery(run.id));
 
   const verificationEvents = timeline.items.filter(
     (i) => i.type === "verification_result" || i.type === "verification_completed",
-  ).length;
-  const promptEvents = timeline.items.filter(
-    (i) => i.type === "prompt" || (i.type === "permission" && i.resolved !== null),
   ).length;
 
   // 每收到一筆 Verification 的 Event，就重新取得保存的結果
@@ -87,7 +66,8 @@ export function useRunWorkspace(run: Run, task: Task, project: Project) {
     if (verificationEvents === 0) return;
     void queryClient.invalidateQueries({ queryKey: queryKeys.verifications(run.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.acceptanceCriteria(task.id) });
-  }, [verificationEvents, queryClient, run.id, task.id]);
+    void queryClient.invalidateQueries({ queryKey: boardSummaryKey(task.projectId) });
+  }, [verificationEvents, queryClient, run.id, task.id, task.projectId]);
 
   // 新的 run_diff：review diff 換成最新的一份
   useEffect(() => {
@@ -95,10 +75,13 @@ export function useRunWorkspace(run: Run, task: Task, project: Project) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.reviewDiff(run.id) });
   }, [diffEvents, queryClient, run.id]);
 
+  // 模型、推理強度、權限策略的切換或換 Agent 生效：重新取得 Run 的設定（與 Run 的 Agent、模型）
+  const settingsVersion = timeline.settingsVersion;
   useEffect(() => {
-    if (promptEvents === 0 || !isFeatureEnabled("eventActors")) return;
-    void queryClient.invalidateQueries({ queryKey: workspaceKeys.eventActors(run.id) });
-  }, [promptEvents, queryClient, run.id]);
+    if (settingsVersion === 0) return;
+    void queryClient.invalidateQueries({ queryKey: workspaceKeys.runSettings(run.id) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.run(run.id) });
+  }, [settingsVersion, queryClient, run.id]);
 
   // 狀態（含等待的 Gate）改變時，Run、Task、Gate 與待我處理的資料也跟著變了
   const statusKey = timeline.status === null ? null : `${timeline.status}:${timeline.gate ?? ""}`;
@@ -109,6 +92,7 @@ export function useRunWorkspace(run: Run, task: Task, project: Project) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.taskGates(task.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.needsYou });
     void queryClient.invalidateQueries({ queryKey: ["projects", task.projectId, "tasks"] });
+    void queryClient.invalidateQueries({ queryKey: boardSummaryKey(task.projectId) });
   }, [statusKey, queryClient, run.id, task.id, task.projectId]);
 
   return {
@@ -126,8 +110,7 @@ export function useRunWorkspace(run: Run, task: Task, project: Project) {
     verificationAwaitingDecision,
     reviewDiff: reviewDiff.data ?? null,
     settings: settings.data ?? null,
-    actors: actors.data ?? null,
-    pullRequest: pullRequest.data ?? null,
+    pullRequest: task.pullRequest,
     error: streamError ?? respondError ?? reviewDiff.error ?? null,
   };
 }

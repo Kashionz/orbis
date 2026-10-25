@@ -17,7 +17,6 @@ import {
 import { ErrorText } from "../../components/ErrorText";
 import { Switch } from "../../components/Switch";
 import { useT } from "../../i18n";
-import { isFeatureEnabled } from "../../lib/features";
 import { useDesktopNotificationSetting } from "./api";
 import { SettingRow } from "./SettingsDialog";
 
@@ -153,19 +152,18 @@ function QuietHoursFields({
   );
 }
 
+/** 桌面通知總開關：每台電腦各自決定，存在 Desktop 的設定檔；Web 版不顯示。 */
 function DesktopNotificationsRow() {
   const t = useT();
-  const enabled = isFeatureEnabled("desktopNotifyToggle");
-  const { query, update } = useDesktopNotificationSetting();
-  const checked = update.variables ?? query.data?.enabled ?? true;
+  const { available, query, update } = useDesktopNotificationSetting();
+  if (!available) return null;
+  const checked = update.variables ?? query.data ?? true;
   return (
     <SettingRow label={t.settings.desktopNotifications}>
-      {/* TODO(backend, desktop-notify-toggle)：通知偏好還沒有桌面通知總開關 */}
       <Switch
         label={t.settings.desktopNotifications}
         checked={checked}
-        disabled={!enabled || update.isPending}
-        tooltip={enabled ? undefined : t.common.notAvailableYet}
+        disabled={query.isPending || update.isPending}
         onChange={(value) => update.mutate(value)}
       />
     </SettingRow>

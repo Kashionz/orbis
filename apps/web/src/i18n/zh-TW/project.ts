@@ -66,4 +66,17 @@ export default {
   createProject: "新增專案",
   keyPrefixHint:
     "例如 ORB，任務編號會是 ORB-1、ORB-2。2–10 個大寫英文字母或數字，以字母開頭，建立後不能修改。",
+  repoKind: "儲存庫種類",
+  repoKindGithub: "GitHub",
+  repoKindLocal: "本機",
+  localRepo: "本機",
+  localRepoHint:
+    "本機儲存庫只有名稱，路徑由各台電腦執行器的 runner.toml 對應；核准後合併到本機，不開合併請求。",
+  connectGithub: "連接到 GitHub",
+  connectGithubHint:
+    "先讓本機 checkout 的 origin 指向 GitHub 上的儲存庫並推送基準分支，例如在 checkout 中執行：",
+  connect: "連接",
+  localMergeStrategy: "本機儲存庫的合併方式",
+  localMergeStrategyOption: { squash: "Squash", merge: "Merge commit" },
+  localPushBase: "本機合併後推送基準分支",
 };

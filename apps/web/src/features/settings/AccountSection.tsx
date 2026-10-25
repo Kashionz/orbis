@@ -4,10 +4,11 @@ import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tansta
 import { Link, useNavigate } from "@tanstack/react-router";
 import { LogOut } from "lucide-react";
 import { useState } from "react";
-import { membersQuery, updateTeam } from "../../api/resources";
+import { membersQuery, teamQuery, updateTeam, updateTeamSettings } from "../../api/resources";
 import { Avatar, AvatarStack } from "../../components/Avatar";
 import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
+import { Switch } from "../../components/Switch";
 import { useT } from "../../i18n";
 import { meQueryOptions } from "../auth/api";
 import { logout } from "../auth/logout";
@@ -40,11 +41,12 @@ export function AccountSection({ onLeave }: { onLeave: () => void }) {
         <Avatar person={{ name: displayName(me), avatarUrl: me.avatarUrl }} size={48} />
         <div className="settings-account-text">
           <span className="settings-account-name">{displayName(me)}</span>
-          {/* TODO(backend, member-email)：/api/auth/me 沒有 email，先顯示 GitHub login */}
-          <span className="setting-sub">@{me.githubLogin}</span>
+          {/* GitHub 帳號主要且已驗證的 email；沒有時顯示 GitHub login */}
+          <span className="setting-sub">{me.member?.email ?? `@${me.githubLogin}`}</span>
         </div>
       </div>
       <TeamNameRow current={me.member?.teamName ?? ""} editable={permissions.can("team.manage")} />
+      {permissions.can("team.manage") && <TeamSharingRows />}
       <SettingRow label={t.settings.members}>
         <span className="settings-members">
           <AvatarStack
@@ -76,6 +78,46 @@ export function AccountSection({ onLeave }: { onLeave: () => void }) {
 }
 
 /** 團隊名稱：Enter 或離開欄位時儲存，Esc 還原。 */
+/**
+ * Team 的兩個分享設定（Admin 以上）：允許對外分享預覽（ADR-0015）、允許 Team Runner 的終端機（ADR-0014），
+ * 預設都關閉。
+ */
+function TeamSharingRows() {
+  const t = useT();
+  const queryClient = useQueryClient();
+  const { data: team } = useQuery(teamQuery);
+  const save = useMutation({
+    mutationFn: updateTeamSettings,
+    onSuccess: (updated) => queryClient.setQueryData(teamQuery.queryKey, updated),
+  });
+  return (
+    <>
+      <SettingRow label={t.settings.allowExternalPreview} sub={t.settings.allowExternalPreviewSub}>
+        <Switch
+          label={t.settings.allowExternalPreview}
+          checked={save.variables?.allowExternalPreview ?? team?.allowExternalPreview ?? false}
+          disabled={!team || save.isPending}
+          onChange={(value) => save.mutate({ allowExternalPreview: value })}
+        />
+      </SettingRow>
+      <SettingRow
+        label={t.settings.allowTeamRunnerTerminal}
+        sub={t.settings.allowTeamRunnerTerminalSub}
+      >
+        <Switch
+          label={t.settings.allowTeamRunnerTerminal}
+          checked={
+            save.variables?.allowTeamRunnerTerminal ?? team?.allowTeamRunnerTerminal ?? false
+          }
+          disabled={!team || save.isPending}
+          onChange={(value) => save.mutate({ allowTeamRunnerTerminal: value })}
+        />
+      </SettingRow>
+      <ErrorText error={save.error} />
+    </>
+  );
+}
+
 function TeamNameRow({ current, editable }: { current: string; editable: boolean }) {
   const t = useT();
   const queryClient = useQueryClient();

@@ -109,6 +109,7 @@ pnpm --filter @orbis/github app:create --public-url https://orbis.example.com --
 - `ORBIS_DEPLOY_BIND`／`ORBIS_DEPLOY_PORT`：Server 對外綁的位址與 port。預設 `127.0.0.1:4000`，由同一台機器上的反向代理轉送；要讓區域網路直接連（例如 Windows Sandbox）改成 `0.0.0.0`，並在主機防火牆放行這個 port。
 - `ORBIS_API_ORIGIN`：Runner 連的網址。Web 與 API 在同一個 origin，留空等於 `ORBIS_PUBLIC_URL`。
 - `ORBIS_PREVIEW_DOMAIN`：Preview 網域（§1）。
+- `ORBIS_SMTP_URL`、`ORBIS_SMTP_FROM`：寄出 Task 邀請與預覽邀請的信件（`smtp://` 或 `smtps://` 網址與寄件者）。兩個都設定才會寄；留空時由邀請人複製連結。
 - Postgres 的連線字串、容器內的 port、blob 與 Web 靜態檔的目錄由 compose 固定，不用填。
 - 這個檔案含有 secret，權限只開給部署的帳號；`deploy/.env` 已在 `.gitignore` 中。
 

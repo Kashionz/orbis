@@ -15,13 +15,19 @@ import {
 } from "@orbis/api-contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { Hono } from "hono";
-import { loadProjectScope, loadTaskScope, requireProjectCapability } from "../authz/scope";
+import {
+  loadProjectScope,
+  loadTaskScope,
+  requireProjectCapability,
+  taskViewer,
+} from "../authz/scope";
 import {
   acceptanceCriteria,
   draftTasks,
   projects,
   repos,
   taskDependencies,
+  taskMembers,
   taskNotes,
   tasks,
 } from "../db/schema";
@@ -94,7 +100,7 @@ export function createDraftRoutes(s: Services): Hono<AppEnv> {
     requireProjectCapability(actor, scope, "edit_task");
     const [created] = await inTransaction(db, (uow) => confirmDrafts(uow, actor, [draft.id]));
     if (!created) throw notFound("Draft Task");
-    return c.json(await toTask(db, created.task), 201);
+    return c.json(await toTask(db, created.task, taskViewer(actor, scope)), 201);
   });
 
   app.post(API_ROUTES.projectDraftTasksConfirm, auth, async (c) => {
@@ -110,7 +116,8 @@ export function createDraftRoutes(s: Services): Hono<AppEnv> {
     const response: ConfirmDraftTasksResponse = [];
     for (const id of ids) {
       const task = byDraft.get(id);
-      if (task) response.push({ draftTaskId: id, task: await toTask(db, task) });
+      if (task)
+        response.push({ draftTaskId: id, task: await toTask(db, task, taskViewer(actor, scope)) });
     }
     return c.json(response, 201);
   });
@@ -235,6 +242,10 @@ export function createDraftRoutes(s: Services): Hono<AppEnv> {
       })
       .returning();
     if (!task) throw new Error("建立 Task 失敗");
+    // 確認的人是 Task 的擁有者（ADR-0012）。
+    await tx
+      .insert(taskMembers)
+      .values({ taskId: task.id, memberId: actor.memberId, role: "owner" });
     const criteria = draft.acceptanceCriteria as DraftCriterion[];
     if (criteria.length > 0) {
       await tx.insert(acceptanceCriteria).values(

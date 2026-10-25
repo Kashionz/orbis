@@ -1,4 +1,4 @@
-// 工作區的預覽分頁（PreviewPanel）與差異分頁的預覽留言：退回時和行內留言一起送出。
+// 工作區的預覽分頁（PreviewPanel）與差異分頁的預覽留言：退回時和行內留言一起送出；預覽邀請（ADR-0015）。
 
 import type { GateDecisionInput } from "@orbis/api-contract";
 import type { Page } from "@playwright/test";
@@ -95,5 +95,52 @@ test.describe("Preview 已就緒", () => {
     await page.getByRole("button", { name: "刪除預覽留言" }).click();
     await expect(page.getByRole("region", { name: /預覽留言/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "退回（0）" })).toBeDisabled();
+  });
+
+  test("預覽邀請：邀請 GitHub 帳號與 Email，連結只顯示一次，可以撤銷", async ({ page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openReviewRun(page);
+    await previewTab(page).click();
+    const invites = page.getByRole("region", { name: "邀請檢視預覽" });
+    const who = invites.getByRole("textbox", { name: "GitHub 帳號或 Email" });
+
+    // 找不到的 GitHub 帳號顯示 Server 的錯誤
+    await who.fill("nobody-here");
+    await invites.getByRole("button", { name: "邀請", exact: true }).click();
+    await expect(invites.getByRole("alert")).toHaveText("找不到 GitHub 帳號 nobody-here");
+
+    await who.fill("@client-reviewer");
+    await invites.getByRole("combobox", { name: "期限" }).selectOption("7d");
+    await invites.getByRole("button", { name: "邀請", exact: true }).click();
+    const created = invites.getByRole("status");
+    await expect(created).toContainText("請複製連結傳給對方（只會顯示這一次）");
+    await created.getByRole("button", { name: "複製邀請連結" }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(
+      /\/preview-invites\/[0-9a-f]{32}$/,
+    );
+
+    await who.fill("guest@example.com");
+    await invites.getByRole("button", { name: "邀請", exact: true }).click();
+    const rows = invites.getByRole("listitem");
+    await expect(rows).toHaveCount(2);
+    const reviewer = rows.filter({ hasText: "@client-reviewer" });
+    await expect(reviewer).toContainText("有效");
+    await expect(reviewer).toContainText("還沒開啟");
+    await reviewer.getByRole("button", { name: "撤銷" }).click();
+    await expect(reviewer).toContainText("已撤銷");
+    await expect(reviewer.getByRole("button", { name: "撤銷" })).toHaveCount(0);
+    await expect(rows.filter({ hasText: "guest@example.com" })).toContainText("有效");
+  });
+});
+
+test.describe("Team 沒有開放對外分享預覽", () => {
+  test.use({ mock: { preview: true, allowExternalPreview: false } });
+
+  test("預覽邀請只顯示說明", async ({ page }) => {
+    await openReviewRun(page);
+    await previewTab(page).click();
+    const invites = page.getByRole("region", { name: "邀請檢視預覽" });
+    await expect(invites).toContainText("團隊設定沒有開放對外分享預覽");
+    await expect(invites.getByRole("textbox")).toHaveCount(0);
   });
 });

@@ -9,10 +9,12 @@ import { attachCollabEndpoint, type CollabEndpoint } from "./collab/endpoint";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
+import { createSmtpMailer } from "./mail/mailer";
 import { createPreviewHost } from "./preview/host";
 import { PreviewRelayService } from "./preview/relay";
 import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
 import { createServices, type Services, type ServicesOptions } from "./services";
+import { attachTerminalEndpoint } from "./terminal/endpoint";
 import { attachWebEndpoint, type WebEndpoint } from "./web/ws";
 import { UpgradeRouter } from "./ws-upgrade";
 
@@ -25,7 +27,7 @@ export interface ServerDeps {
     | "devPairingToken"
     | "runnerHeartbeatIntervalMs"
   > &
-    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain" | "webDir">>;
+    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain" | "webDir" | "smtp">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
@@ -41,6 +43,8 @@ export interface ServerDeps {
   dispatcherIntervalMs?: number;
   /** 測試用：共同編輯重新檢查權限的間隔。 */
   collabAuthzRecheckMs?: number;
+  /** 測試用：終端機連線期間重新檢查權限的間隔。 */
+  terminalAuthzRecheckMs?: number;
 }
 
 export interface RunningServer {
@@ -63,6 +67,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       blobDir: deps.config.blobDir,
       publicUrl: deps.config.publicUrl,
       previewDomain: deps.config.previewDomain,
+      ...(deps.config.smtp && { mailer: createSmtpMailer(deps.config.smtp, deps.logger) }),
       ...(deps.github && { github: deps.github }),
     });
   const app = createApp({ ...deps, services });
@@ -106,7 +111,15 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
     preview: previewRelay,
+    terminals: services.terminals,
+    repoSpecCommits: services.repoSpecCommits,
   });
+  const terminalEndpoint = attachTerminalEndpoint(router, services, {
+    publicUrl: deps.config.publicUrl,
+    authzRecheckMs: deps.terminalAuthzRecheckMs,
+  });
+  // 上次沒有關閉的終端機紀錄一律結束（連線都已不存在）。
+  await services.terminals.closeStale();
   const webEndpoint = attachWebEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,
     authzRecheckMs: deps.webAuthzRecheckMs,
@@ -153,6 +166,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       await runnerEndpoint.close();
       await webEndpoint.close();
       await collabEndpoint.close();
+      await terminalEndpoint.close();
       await services.collab.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

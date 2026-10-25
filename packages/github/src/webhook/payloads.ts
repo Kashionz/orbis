@@ -46,6 +46,8 @@ export const PullRequestPayload = z.object({
     number: z.number(),
     html_url: z.string(),
     merged: z.boolean().nullable().optional(),
+    /** merge 的時間（ISO 8601）。 */
+    merged_at: z.string().nullable().optional(),
     /** merge 之後 base 分支上的 commit。 */
     merge_commit_sha: z.string().nullable().optional(),
     head: z.object({ ref: z.string(), sha: z.string() }),

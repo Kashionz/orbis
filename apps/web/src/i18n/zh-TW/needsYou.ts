@@ -34,4 +34,5 @@ export default {
   answer: "回答",
   answerLabel: (key: string) => `回答 ${key} 的子執行`,
   answerPlaceholder: "回答子執行的問題",
+  retryLocalMerge: "重試合併",
 };
