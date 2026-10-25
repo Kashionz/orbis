@@ -180,7 +180,7 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   await expect(page.locator(`[data-status="ready"] [data-task-key="${taskKey}"]`)).toBeVisible();
   await dragCard(page, taskKey, "running");
   const dispatch = page.getByRole("dialog", { name: `派工 ${taskKey}` });
-  await expect(dispatch.getByRole("radio", { name: /^本機/ })).toHaveAttribute(
+  await expect(dispatch.getByRole("radio", { name: /^我的電腦/ })).toHaveAttribute(
     "aria-checked",
     "true",
   );

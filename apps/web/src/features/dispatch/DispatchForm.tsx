@@ -188,7 +188,9 @@ function DispatchFields({
                   setModel("");
                 }}
               >
-                <span className="df-mark">{selected ? "●" : "○"}</span>
+                <span className="df-mark" aria-hidden="true">
+                  {selected ? "●" : "○"}
+                </span>
                 <span className="df-agent-logo" data-off={!option.available}>
                   <AgentLogo agent={option.id} size={16} />
                 </span>

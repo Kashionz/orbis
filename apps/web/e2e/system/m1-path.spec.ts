@@ -43,7 +43,7 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   await create.getByRole("textbox", { name: "任務標題" }).fill("M1：新增 m1.txt");
   await create.getByRole("textbox", { name: "描述要做什麼" }).fill("新增 `m1.txt`。");
   await create.getByRole("button", { name: /^建立並開啟/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/tasks/${stack.projectKey}-d+$`));
+  await expect(page).toHaveURL(new RegExp(`/tasks/${stack.projectKey}-[0-9]+$`));
   const taskKey = page.url().split("/").pop() ?? "";
 
   // 在任務分頁的內嵌編輯新增一條人工確認的條件
@@ -63,7 +63,7 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   await expect(page.locator(`[data-status="ready"] [data-task-key="${taskKey}"]`)).toBeVisible();
   await dragCard(page, taskKey, "running");
   const dispatch = page.getByRole("dialog", { name: `派工 ${taskKey}` });
-  await expect(dispatch.getByRole("radio", { name: /^本機/ })).toHaveAttribute(
+  await expect(dispatch.getByRole("radio", { name: /^我的電腦/ })).toHaveAttribute(
     "aria-checked",
     "true",
   );
