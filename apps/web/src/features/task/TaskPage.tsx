@@ -15,8 +15,8 @@ import {
 } from "../../api/resources";
 import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { unfinishedDependencies } from "../../lib/dependencies";
-import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { CollabEditor } from "../collab/CollabEditor";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
@@ -47,6 +47,7 @@ function useUpdateTask(task: Task) {
 }
 
 function TaskDetail({ task, project }: { task: Task; project: Project }) {
+  const t = useT();
   const navigate = useNavigate();
   const permissions = usePermissions(project, task);
   const update = useUpdateTask(task);
@@ -76,7 +77,7 @@ function TaskDetail({ task, project }: { task: Task; project: Project }) {
       <header className="page-header">
         <TitleField task={task} canEdit={canEdit} onSave={(title) => update.mutate({ title })} />
         <span className="status-badge" data-status={task.status}>
-          {TASK_STATUS_LABELS[task.status]}
+          {t.labels.taskStatus[task.status]}
         </span>
         <DoneReasonBadge task={task} />
         <span className="spacer" />

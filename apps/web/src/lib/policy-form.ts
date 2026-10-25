@@ -2,6 +2,7 @@
 // 規則取自契約的 ProjectPolicy schema；Server 仍會再驗證一次。
 
 import { ProjectPolicy } from "@orbis/api-contract";
+import { getMessages } from "../i18n";
 
 /** 表單上的值：清單欄位以文字輸入（逗號或換行分隔）。 */
 export interface PolicyFormValues {
@@ -64,7 +65,7 @@ export function validatePolicyForm(values: PolicyFormValues): PolicyFormResult {
   for (const issue of result.error.issues) {
     const field = String(issue.path[0] ?? "") as keyof PolicyFormValues;
     errors[field] ??=
-      field === "verificationMaxRetries" ? "重試上限必須是 1–10 的整數" : issue.message;
+      field === "verificationMaxRetries" ? getMessages().project.retryLimitInvalid : issue.message;
   }
   return { ok: false, errors };
 }

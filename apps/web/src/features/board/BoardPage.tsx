@@ -30,13 +30,13 @@ import {
 } from "../../api/resources";
 import { DoneReasonBadge } from "../../components/DoneReasonBadge";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { unfinishedDependencies } from "../../lib/dependencies";
-import { TASK_STATUS_LABELS } from "../../lib/labels";
 import { matchesTaskKey, parseTaskKeyQuery } from "../../lib/task-key-search";
 import { type Permissions, usePermissions } from "../auth/use-permissions";
 import { DispatchDialog } from "../dispatch/DispatchDialog";
 import { CreateProjectDialog } from "../project/CreateProjectDialog";
-import { CreateTaskDialog } from "./CreateTaskDialog";
+import { useShell } from "../shell/shell-context";
 
 /**
  * 可以把 Task 放到 `to` 欄嗎？拖到 Running 代表派工：Task 要是 Ready，
@@ -90,6 +90,7 @@ function NoProjects() {
 }
 
 function Board({ project, projects }: { project: Project; projects: Project[] }) {
+  const { openNewTask } = useShell();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const permissions = usePermissions(project);
@@ -100,7 +101,6 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState<Task | null>(null);
   const [dispatching, setDispatching] = useState<Task | null>(null);
-  const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
 
   const query = parseTaskKeyQuery(search);
@@ -195,7 +195,11 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
         />
         <span className="spacer" />
         {permissions.can("task.edit") && (
-          <button type="button" className="primary" onClick={() => setCreating(true)}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => openNewTask({ projectId: project.id })}
+          >
             新增 Task
           </button>
         )}
@@ -232,7 +236,6 @@ function Board({ project, projects }: { project: Project; projects: Project[] })
           onDispatched={(run) => void navigate({ to: "/runs/$runId", params: { runId: run.id } })}
         />
       )}
-      <CreateTaskDialog project={project} open={creating} onClose={() => setCreating(false)} />
       <CreateProjectDialog open={creatingProject} onClose={() => setCreatingProject(false)} />
     </main>
   );
@@ -250,6 +253,7 @@ interface ColumnProps {
 }
 
 function Column({ status, tasks, allTasks, members, permissions, dropAllowed }: ColumnProps) {
+  const t = useT();
   const { setNodeRef, isOver } = useDroppable({ id: status, disabled: dropAllowed === false });
   return (
     <section
@@ -261,7 +265,7 @@ function Column({ status, tasks, allTasks, members, permissions, dropAllowed }: 
       aria-labelledby={`column-${status}`}
     >
       <h2 id={`column-${status}`}>
-        {TASK_STATUS_LABELS[status]} <span className="count">{tasks.length}</span>
+        {t.labels.taskStatus[status]} <span className="count">{tasks.length}</span>
       </h2>
       {tasks.length === 0 && <p className="empty">沒有 Task</p>}
       {tasks.map((task) => (

@@ -1,4 +1,4 @@
-import { card, column, dragTo, drop, expect, test } from "./fixtures";
+import { card, column, createTask, dragTo, drop, expect, test } from "./fixtures";
 
 test.describe("看板", () => {
   test("依狀態分欄顯示 Task，卡片連到 Task 頁", async ({ page }) => {
@@ -77,11 +77,7 @@ test.describe("看板", () => {
 
   test("新增 Task 後進入 Task 頁，看板出現在 Backlog", async ({ page }) => {
     await page.goto("/board");
-    await page.getByRole("button", { name: "新增 Task" }).click();
-    const dialog = page.getByRole("dialog", { name: "新增 Task" });
-    await dialog.getByLabel("標題").fill("修正登入頁的錯字");
-    await dialog.getByLabel("描述（markdown）").fill("把「登人」改成「登入」。");
-    await dialog.getByRole("button", { name: "建立" }).click();
+    await createTask(page, { title: "修正登入頁的錯字", description: "把「登人」改成「登入」。" });
     await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
     await expect(page.getByRole("heading", { name: /修正登入頁的錯字/ })).toBeVisible();
 
@@ -92,10 +88,7 @@ test.describe("看板", () => {
 
 test("不符合進入 Ready 的條件時顯示 Server 的錯誤並還原", async ({ page }) => {
   await page.goto("/board");
-  await page.getByRole("button", { name: "新增 Task" }).click();
-  const dialog = page.getByRole("dialog", { name: "新增 Task" });
-  await dialog.getByLabel("標題").fill("還沒寫好的 Task");
-  await dialog.getByRole("button", { name: "建立" }).click();
+  await createTask(page, { title: "還沒寫好的 Task" });
   await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
   await page.getByRole("link", { name: "核心產品" }).click();
 
@@ -103,7 +96,7 @@ test("不符合進入 Ready 的條件時顯示 Server 的錯誤並還原", async
   await drop(page);
   // 依 Server 回的 missing 列出缺少的項目
   await expect(page.getByRole("alert")).toContainText(
-    "還不能進入 Ready，缺少：描述或 Spec、至少一條 Acceptance Criterion",
+    "還不能進入就緒，缺少：描述或規格、至少一條驗收條件",
   );
   await expect(column(page, "backlog").locator('[data-task-key="ORB-8"]')).toBeVisible();
 });

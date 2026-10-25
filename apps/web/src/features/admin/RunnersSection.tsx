@@ -17,41 +17,39 @@ import {
   runnersQuery,
   updateProject,
 } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import { PERMISSION_POLICY_LABELS, RUNNER_KIND_LABELS } from "../../lib/labels";
 
 /**
  * Team Runner 與 Pairing token（ARCHITECTURE §6.1、§7，Admin 以上）。Team Runner 共用一個 Claude 訂閱，
  * 依 ADR-0005 在這裡清楚顯示條款風險。
  */
 export function RunnersSection() {
+  const t = useT();
   const { data: runners = [], error } = useQuery(runnersQuery);
   const [token, setToken] = useState<PairingTokenCreated | null>(null);
   const create = useMutation({ mutationFn: () => createPairingToken("team"), onSuccess: setToken });
 
   return (
     <section className="section" aria-labelledby="admin-runners">
-      <h2 id="admin-runners">Runner</h2>
-      <div className="notice-inline terms-warning" role="note" aria-label="共用訂閱的條款風險">
-        <strong>條款風險：Team Runner 共用一個 Claude 訂閱。</strong>
-        根據第三方整理（非官方條文），Consumer Terms 禁止共用帳號登入或憑證，訂閱的 OAuth token
-        限定用在 Claude Code 與 claude.ai，訂閱額度以一般個人使用為前提。最壞情況是帳號被停權，
-        整個團隊的 Agent 會同時停擺。建議向 Anthropic 確認條款，必要時改用 API key 或團隊方案。
-        Local Runner 不受影響，每個人仍使用自己的登入。
+      <h2 id="admin-runners">{t.admin.runners}</h2>
+      <div className="notice-inline terms-warning" role="note" aria-label={t.admin.termsRiskLabel}>
+        <strong>{t.admin.termsRiskTitle}</strong> {t.admin.termsRiskBody}
       </div>
       <ErrorText error={error} />
       {runners.length === 0 ? (
-        <p className="empty">還沒有任何 Runner 完成 Pairing。</p>
+        <p className="empty">{t.admin.noRunners}</p>
       ) : (
         <table className="run-table runner-table">
           <thead>
             <tr>
-              <th scope="col">Runner</th>
-              <th scope="col">種類</th>
-              <th scope="col">狀態</th>
-              <th scope="col">Agent</th>
-              <th scope="col">最後心跳</th>
+              <th scope="col">{t.admin.runnerColumns.runner}</th>
+              <th scope="col">{t.admin.runnerColumns.kind}</th>
+              <th scope="col">{t.admin.runnerColumns.status}</th>
+              <th scope="col">{t.admin.runnerColumns.agents}</th>
+              <th scope="col">{t.admin.runnerColumns.lastHeartbeat}</th>
             </tr>
           </thead>
           <tbody>
@@ -61,21 +59,21 @@ export function RunnersSection() {
                   {runner.name}
                   <span className="hint">
                     {" "}
-                    {runner.os}/{runner.arch} v{runner.runnerVersion}
+                    {t.admin.runnerMeta(runner.os, runner.arch, runner.runnerVersion)}
                   </span>
                 </td>
-                <td>{RUNNER_KIND_LABELS[runner.kind]}</td>
+                <td>{t.labels.runnerKind[runner.kind]}</td>
                 <td>
                   {runner.online
                     ? runner.acceptingDispatches
-                      ? "在線"
-                      : "在線（暫停領取）"
-                    : "離線"}
+                      ? t.admin.runnerOnline
+                      : t.admin.runnerOnlinePaused
+                    : t.admin.runnerOffline}
                 </td>
                 <td>
                   {runner.agents
-                    .map((a) => `${a.agent}${a.available ? "" : "（無法使用）"}`)
-                    .join("、")}
+                    .map((a) => (a.available ? a.agent : t.admin.agentUnavailable(a.agent)))
+                    .join(t.common.listSeparator)}
                 </td>
                 <td>{runner.lastHeartbeatAt ? formatTime(runner.lastHeartbeatAt) : "—"}</td>
               </tr>
@@ -83,21 +81,20 @@ export function RunnersSection() {
           </tbody>
         </table>
       )}
-      <h3>新增 Team Runner</h3>
-      <p className="hint">
-        產生一次性的 Pairing token（24 小時內有效），在 Team Runner 的容器中設定後啟動。
-      </p>
-      <button type="button" disabled={create.isPending} onClick={() => create.mutate()}>
-        產生 Team Runner 的 Pairing token
-      </button>
+      <h3>{t.admin.addTeamRunner}</h3>
+      <p className="hint">{t.admin.addTeamRunnerHint}</p>
+      <Button disabled={create.isPending} onClick={() => create.mutate()}>
+        {t.admin.createTeamToken}
+      </Button>
       <ErrorText error={create.error} />
       {token && (
         <div className="pairing-token" role="status">
-          <p>Pairing token（只會顯示這一次，{formatTime(token.expiresAt)} 前有效）：</p>
+          <p>{t.admin.tokenOnce(formatTime(token.expiresAt))}</p>
           <code data-testid="pairing-token">{token.token}</code>
           <p className="hint">
-            在容器的環境變數設定 <code>{NAMES.runnerEnv.pairingToken}</code>（這個 token）與{" "}
-            <code>{NAMES.runnerEnv.serverUrl}</code>（{window.location.origin}）後啟動 Runner。
+            {t.admin.tokenEnvBefore} <code>{NAMES.runnerEnv.pairingToken}</code>
+            {t.admin.tokenEnvToken} <code>{NAMES.runnerEnv.serverUrl}</code>
+            {t.admin.tokenEnvAfter(window.location.origin)}
           </p>
         </div>
       )}
@@ -110,6 +107,7 @@ export function RunnersSection() {
  * Permission Policy，以及等待核准的 Repo 設定檔信任請求。
  */
 export function PolicySection({ projects }: { projects: readonly Project[] }) {
+  const t = useT();
   const { data: needsYou = [] } = useQuery(needsYouQuery);
   const trust = needsYou.filter(
     (item): item is NeedsYouItem & { kind: "permission_request" } =>
@@ -117,12 +115,12 @@ export function PolicySection({ projects }: { projects: readonly Project[] }) {
   );
   return (
     <section className="section" aria-labelledby="admin-policy">
-      <h2 id="admin-policy">Permission Policy 與設定的信任核准</h2>
+      <h2 id="admin-policy">{t.admin.policy}</h2>
       <table className="run-table policy-table">
         <thead>
           <tr>
-            <th scope="col">Project</th>
-            <th scope="col">預設 Permission Policy</th>
+            <th scope="col">{t.admin.policyColumns.project}</th>
+            <th scope="col">{t.admin.policyColumns.defaultPolicy}</th>
           </tr>
         </thead>
         <tbody>
@@ -131,11 +129,9 @@ export function PolicySection({ projects }: { projects: readonly Project[] }) {
           ))}
         </tbody>
       </table>
-      <h3>
-        等待核准的 <code>{`${NAMES.configDir}/${NAMES.configFile}`}</code> 信任請求
-      </h3>
+      <h3>{t.admin.trustRequests(`${NAMES.configDir}/${NAMES.configFile}`)}</h3>
       {trust.length === 0 ? (
-        <p className="empty">沒有等待核准的請求。</p>
+        <p className="empty">{t.admin.noTrustRequests}</p>
       ) : (
         <ul className="trust-requests">
           {trust.map((item) => (
@@ -148,6 +144,7 @@ export function PolicySection({ projects }: { projects: readonly Project[] }) {
 }
 
 function ProjectPolicyRow({ project }: { project: Project }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [value, setValue] = useState<PermissionPolicy>(project.policy.defaultPermissionPolicy);
   const save = useMutation({
@@ -159,23 +156,22 @@ function ProjectPolicyRow({ project }: { project: Project }) {
       <td>{project.name}</td>
       <td>
         <select
-          aria-label={`${project.name} 的預設 Permission Policy`}
+          aria-label={t.admin.defaultPolicyOf(project.name)}
           value={value}
           onChange={(event) => setValue(event.target.value as PermissionPolicy)}
         >
           {PERMISSION_POLICIES.map((p) => (
             <option key={p} value={p}>
-              {PERMISSION_POLICY_LABELS[p]}
+              {t.labels.permissionPolicy[p]}
             </option>
           ))}
         </select>{" "}
-        <button
-          type="button"
+        <Button
           disabled={value === project.policy.defaultPermissionPolicy || save.isPending}
           onClick={() => save.mutate()}
         >
-          儲存
-        </button>
+          {t.common.save}
+        </Button>
         <ErrorText error={save.error} />
       </td>
     </tr>
@@ -197,15 +193,14 @@ function TrustRequest({ item }: { item: NeedsYouItem & { kind: "permission_reque
       {item.title}
       <span className="form-actions">
         {item.options.map((option) => (
-          <button
+          <Button
             key={option.optionId}
-            type="button"
-            className={option.kind.startsWith("allow") ? "primary" : "danger"}
+            variant={option.kind.startsWith("allow") ? "primary" : "danger-ghost"}
             disabled={respond.isPending}
             onClick={() => respond.mutate(option.optionId)}
           >
             {option.name}
-          </button>
+          </Button>
         ))}
       </span>
       <ErrorText error={respond.error} />

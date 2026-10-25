@@ -8,7 +8,7 @@ import {
   verificationsQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
-import { AC_KIND_LABELS, AC_RESULT_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 
 /** 還沒打勾的 `manual` 條件（全部打勾後才能核准 Review Gate，§5.1）。 */
 export function uncheckedManualCriteria(
@@ -30,6 +30,7 @@ export function ReviewCriteria({
   runId: string;
   canCheck: boolean;
 }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: criteria = [], error } = useQuery(acceptanceCriteriaQuery(taskId));
   const { data: verifications = [] } = useQuery(verificationsQuery(runId));
@@ -83,12 +84,12 @@ export function ReviewCriteria({
             ) : (
               <>
                 <span className="status-badge" data-status={criterion.result}>
-                  {AC_RESULT_LABELS[criterion.result]}
+                  {t.labels.acResult[criterion.result]}
                 </span>{" "}
                 {criterion.description}
               </>
             )}
-            <span className="tag">{AC_KIND_LABELS[criterion.kind]}</span>
+            <span className="tag">{t.labels.acKind[criterion.kind]}</span>
             {criterion.kind !== "manual" && criterion.resultSummary && (
               <span className="hint"> {criterion.resultSummary}</span>
             )}

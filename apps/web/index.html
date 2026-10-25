@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- 產品名稱由 vite.config.ts 從 NAMES.productName 填入 -->
     <title>%PRODUCT_NAME%</title>
+    <!-- 第一次繪製前套用主題與語言，避免淺色主題閃一下深色（key 同 src/lib/preferences.ts） -->
+    <script>
+      (() => {
+        try {
+          const stored = localStorage.getItem("%PRODUCT_SLUG%-theme");
+          const light =
+            stored === "light" ||
+            (stored === "system" && matchMedia("(prefers-color-scheme: light)").matches);
+          document.documentElement.dataset.theme = light ? "light" : "dark";
+          if (localStorage.getItem("%PRODUCT_SLUG%-lang") === "en") document.documentElement.lang = "en";
+        } catch {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,0 +1,25 @@
+// 新增任務對話框（README §7）。
+
+export default {
+  title: "新增任務",
+  titlePlaceholder: "任務標題",
+  descriptionPlaceholder: "描述要做什麼",
+  repo: "儲存庫",
+  assignee: "指派對象",
+  dependsOn: "依賴",
+  acceptanceCriteria: "驗收條件",
+  criterionPlaceholder: "條件描述",
+  commandPlaceholder: "指令",
+  criterionKind: "條件類型",
+  removeCriterion: "移除",
+  addCriterion: "新增條件",
+  ready: "就緒",
+  backlog: "待辦",
+  missing: "缺少",
+  create: "建立",
+  createAndOpen: "建立並開啟",
+  created: (key: string) => `已建立 ${key}`,
+  noProject: "還沒有任何專案",
+  noRepos: "這個專案還沒有登記儲存庫",
+  projectSettings: "專案設定",
+};

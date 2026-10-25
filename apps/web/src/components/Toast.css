@@ -1,0 +1,15 @@
+.o-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--o2a2d33);
+  color: var(--oe8e9eb);
+  font-size: 12px;
+  box-shadow: 0 8px 24px var(--osh);
+  animation: o-fade var(--dur-hover) ease-out both;
+}

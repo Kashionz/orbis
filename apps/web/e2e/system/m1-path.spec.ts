@@ -30,11 +30,14 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
 }) => {
   // 建立 Task（描述與 Acceptance Criterion 是進入 Ready 的條件）
   await page.goto("/board");
-  await page.getByRole("button", { name: "新增 Task" }).click();
-  const create = page.getByRole("dialog", { name: "新增 Task" });
-  await create.getByLabel("標題").fill("M1：新增 m1.txt");
-  await create.getByLabel("描述（markdown）").fill("新增 `m1.txt`。");
-  await create.getByRole("button", { name: "建立" }).click();
+  await page
+    .getByRole("button", { name: /^新增(任務| Task)$/ })
+    .first()
+    .click();
+  const create = page.getByRole("dialog", { name: "新增任務" });
+  await create.getByRole("textbox", { name: "任務標題" }).fill("M1：新增 m1.txt");
+  await create.getByRole("textbox", { name: "描述要做什麼" }).fill("新增 `m1.txt`。");
+  await create.getByRole("button", { name: /^建立並開啟/ }).click();
   await expect(page).toHaveURL(new RegExp(`/tasks/${stack.projectKey}-\\d+$`));
   const taskKey = page.url().split("/").pop() ?? "";
 
@@ -50,10 +53,10 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   await expect(page.locator(`[data-status="ready"] [data-task-key="${taskKey}"]`)).toBeVisible();
   await dragCard(page, taskKey, "running");
   const dispatch = page.getByRole("dialog", { name: `派工 ${taskKey}` });
-  await expect(dispatch.getByRole("radio", { name: "我的電腦" })).toBeChecked();
+  await expect(dispatch.getByRole("radio", { name: "本機" })).toBeChecked();
   await expect(dispatch.getByRole("radio", { name: /^claude-code/ })).toBeChecked();
   // Project 的預設政策是 manual
-  await expect(dispatch.getByRole("radio", { name: /^manual/ })).toBeChecked();
+  await expect(dispatch.getByRole("radio", { name: /^逐一確認/ })).toBeChecked();
   await dispatch.getByRole("button", { name: "派工" }).click();
   await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
   const runId = page.url().split("/").pop() ?? "";
@@ -70,7 +73,7 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   await expect(timeline).toContainText("已新增 m1.txt。");
 
   // 第一回合結束，進入 Review Gate
-  await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+  await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
   await expect(timeline).toContainText("已產生 review diff");
   await page.getByRole("link", { name: "Diff review" }).click();
   await page
@@ -88,7 +91,7 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
 
   // 同一個 session 繼續：第二回合結束後再次進入 Review Gate
   await expect(timeline).toContainText("已改成第二版。");
-  await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+  await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
   await page.getByRole("link", { name: "Diff review" }).click();
   await page
     .locator(".file-list")
@@ -118,7 +121,7 @@ test("M1 路徑：建立 Task → 派工到我的電腦 → 即時 Event → 回
   expect(pushed).toBe("version 2\n");
 
   await page.getByRole("link", { name: new RegExp(taskKey) }).click();
-  await expect(page.locator(".page-header .status-badge")).toHaveText("PR Open");
+  await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
   await page.goto("/board");
   await expect(page.locator(`[data-status="pr_open"] [data-task-key="${taskKey}"]`)).toBeVisible();
 });

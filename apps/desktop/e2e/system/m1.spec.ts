@@ -152,11 +152,14 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
 
   // ---- 建立 Task（描述與 Acceptance Criterion 是進入 Ready 的條件）
   await page.goto(`${webOrigin}/board`);
-  await page.getByRole("button", { name: "新增 Task" }).click();
-  const create = page.getByRole("dialog", { name: "新增 Task" });
-  await create.getByLabel("標題").fill("M1：新增 m1.txt（Desktop）");
-  await create.getByLabel("描述（markdown）").fill("新增 `m1.txt`。");
-  await create.getByRole("button", { name: "建立" }).click();
+  await page
+    .getByRole("button", { name: /^新增(任務| Task)$/ })
+    .first()
+    .click();
+  const create = page.getByRole("dialog", { name: "新增任務" });
+  await create.getByRole("textbox", { name: "任務標題" }).fill("M1：新增 m1.txt（Desktop）");
+  await create.getByRole("textbox", { name: "描述要做什麼" }).fill("新增 `m1.txt`。");
+  await create.getByRole("button", { name: /^建立並開啟/ }).click();
   await expect(page).toHaveURL(new RegExp(`/tasks/${ready.projectKey}-\\d+$`));
   const taskKey = page.url().split("/").pop() ?? "";
 
@@ -172,10 +175,10 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   await expect(page.locator(`[data-status="ready"] [data-task-key="${taskKey}"]`)).toBeVisible();
   await dragCard(page, taskKey, "running");
   const dispatch = page.getByRole("dialog", { name: `派工 ${taskKey}` });
-  await expect(dispatch.getByRole("radio", { name: "我的電腦" })).toBeChecked();
+  await expect(dispatch.getByRole("radio", { name: "本機" })).toBeChecked();
   await expect(dispatch.getByRole("radio", { name: /^claude-code/ })).toBeChecked();
   // Project 的預設政策是 manual，寫檔權限請求一定會出現
-  await expect(dispatch.getByRole("radio", { name: /^manual/ })).toBeChecked();
+  await expect(dispatch.getByRole("radio", { name: /^逐一確認/ })).toBeChecked();
   await dispatch.getByRole("button", { name: "派工" }).click();
   await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
   const runId = page.url().split("/").pop() ?? "";
@@ -197,7 +200,7 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
   await expect(timeline).toContainText("已新增 m1.txt。");
 
   // ---- 第一回合結束，進入 Review Gate；在 diff 上留言退回
-  await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+  await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
   await expect(timeline).toContainText("已產生 review diff");
   await page.getByRole("link", { name: "Diff review" }).click();
   await page
@@ -214,7 +217,7 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
 
   // ---- 第二回合跑完後核准
   await expect(timeline).toContainText("已改成第二版。");
-  await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+  await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
   recordProcesses();
   await page.getByRole("link", { name: "Diff review" }).click();
   await page
@@ -244,7 +247,7 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
 
   // ---- PR Open
   await page.getByRole("link", { name: new RegExp(taskKey) }).click();
-  await expect(page.locator(".page-header .status-badge")).toHaveText("PR Open");
+  await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
   await page.goto(`${webOrigin}/board`);
   await expect(page.locator(`[data-status="pr_open"] [data-task-key="${taskKey}"]`)).toBeVisible();
 
@@ -258,6 +261,6 @@ test("Electron 中走完 M1：登入 → 自動 Pairing → 派工到我的電�
     });
   }).toPass({ timeout: 30_000 });
   await page.goto(`${webOrigin}/tasks/${taskKey}`);
-  await expect(page.locator(".page-header .status-badge")).toHaveText("Done");
+  await expect(page.locator(".page-header .status-badge")).toHaveText("完成");
   recordProcesses();
 });

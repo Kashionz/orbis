@@ -57,6 +57,7 @@ import {
   type Task,
   type TaskComment,
   type TaskStatus,
+  type Team,
   type TeamRunnerQueueItem,
   type UpdateAcceptanceCriterionInput,
   type UpdateDraftTaskInput,
@@ -102,6 +103,8 @@ interface Simulation {
 }
 
 export interface MockState {
+  /** Team 名稱（PATCH /api/team）；舊的 sessionStorage 狀態沒有這個欄位。 */
+  teamName?: string;
   members: Member[];
   projects: Project[];
   repos: Repo[];
@@ -594,8 +597,26 @@ export class MockBackend {
       member:
         this.config.session === "no-team"
           ? null
-          : { id: ME_ID, teamId: "team-1", teamName: "核心團隊", role },
+          : { id: ME_ID, teamId: "team-1", teamName: this.teamName(), role },
     };
+  }
+
+  private teamName(): string {
+    return this.state.teamName ?? "核心團隊";
+  }
+
+  team(): Team {
+    return { id: "team-1", name: this.teamName(), createdAt: SEED_TIME, updatedAt: SEED_TIME };
+  }
+
+  /** 修改 Team 名稱：Admin 以上。 */
+  updateTeam(name: string): Team {
+    if (!roleAtLeast(this.role, "admin")) {
+      throw new MockError(403, "forbidden", "只有 Admin 以上可以修改 Team 名稱");
+    }
+    this.state.teamName = name;
+    this.save();
+    return this.team();
   }
 
   get snapshot(): Readonly<MockState> {

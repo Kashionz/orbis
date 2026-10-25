@@ -1,0 +1,40 @@
+.o-splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: var(--z-splitter);
+  display: flex;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.o-splitter[data-edge="right"] {
+  right: -4px;
+}
+
+.o-splitter[data-edge="left"] {
+  left: -4px;
+}
+
+.o-splitter-line {
+  display: block;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background-color 120ms ease-out;
+}
+
+.o-splitter:hover .o-splitter-line,
+.o-splitter:focus-visible .o-splitter-line {
+  background: var(--o34373d);
+}
+
+.o-splitter[data-dragging="true"] .o-splitter-line {
+  background: var(--o7fb0fa);
+}
+
+.o-splitter:focus-visible {
+  outline: none;
+}

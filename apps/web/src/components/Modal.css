@@ -1,0 +1,40 @@
+.o-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  background: var(--oscrim);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: o-fade var(--dur-panel) ease-out both;
+}
+
+.o-modal-scrim[data-placement="top"] {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 24px 24px;
+}
+
+.o-modal {
+  max-width: 100%;
+  max-height: 100%;
+  background: var(--opop);
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-dialog);
+  box-shadow: var(--sh-dialog);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.o-modal:focus-visible {
+  outline: none;
+}
+
+@media (max-width: 480px) {
+  .o-modal-scrim,
+  .o-modal-scrim[data-placement="top"] {
+    padding: 16px;
+  }
+}

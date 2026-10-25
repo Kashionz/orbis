@@ -16,7 +16,7 @@ test.describe("瀏覽器快取了舊的 Web", () => {
   test("提示重新整理，按鈕會重新載入頁面", async ({ page }) => {
     await page.goto("/board");
     const banner = page.getByTestId("version-banner");
-    await expect(banner).toContainText("Web UI 有新版本，請重新整理");
+    await expect(banner).toContainText("介面有新版本，請重新整理");
     await expect(banner).toHaveAttribute("data-kind", "reload");
     const reloaded = page.waitForEvent("load");
     await banner.getByRole("button", { name: "重新整理" }).click();
@@ -30,17 +30,17 @@ test.describe("Server 比 Web 舊", () => {
   test("提示更新 Server，沒有重新整理的按鈕", async ({ page }) => {
     await page.goto("/board");
     const banner = page.getByTestId("version-banner");
-    await expect(banner).toContainText("Server 版本過舊，請更新 Server");
+    await expect(banner).toContainText("伺服器版本過舊，請更新伺服器");
     await expect(banner).toHaveAttribute("data-kind", "update_server");
     await expect(banner.getByRole("button")).toHaveCount(0);
   });
 });
 
-test.describe("Server 沒有回報版本", () => {
+test.describe("伺服器沒有回報版本", () => {
   test.use({ mock: { health: "no-versions" } });
 
   test("視為 Server 過舊", async ({ page }) => {
     await page.goto("/board");
-    await expect(page.getByTestId("version-banner")).toContainText("Server 沒有回報版本");
+    await expect(page.getByTestId("version-banner")).toContainText("伺服器沒有回報版本");
   });
 });

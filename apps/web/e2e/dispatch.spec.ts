@@ -7,9 +7,9 @@ test.describe("派工對話框", () => {
     const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
 
     // 預設：我的電腦、第一個可用的 Agent、auto
-    await expect(dialog.getByRole("radio", { name: "我的電腦" })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: "本機" })).toBeChecked();
     await expect(dialog.getByRole("radio", { name: /^claude-code/ })).toBeChecked();
-    await expect(dialog.getByRole("radio", { name: /^auto/ })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: /^自動/ })).toBeChecked();
 
     // 不可用的 Agent 顯示原因並停用
     await expect(dialog.getByRole("radio", { name: /^codex/ })).toBeDisabled();
@@ -21,7 +21,7 @@ test.describe("派工對話框", () => {
 
     await dialog.getByRole("radio", { name: /^claude-code/ }).check();
     await dialog.getByLabel("Model").selectOption("claude-sonnet-5-5");
-    await dialog.getByRole("radio", { name: /^manual/ }).check();
+    await dialog.getByRole("radio", { name: /^逐一確認/ }).check();
     await dialog.getByRole("button", { name: "派工" }).click();
 
     await expect(page).toHaveURL(/\/runs\/run-\d+$/);
@@ -34,13 +34,13 @@ test.describe("派工對話框", () => {
     await page.getByRole("button", { name: "派工" }).click();
     const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
 
-    await dialog.getByRole("radio", { name: /^yolo/ }).check();
+    await dialog.getByRole("radio", { name: /^全部允許/ }).check();
     await expect(dialog.getByRole("alert")).toContainText("yolo 會自動允許");
 
     // 換到 Team Runner：沒有 yolo，政策回到預設 auto
-    await dialog.getByRole("radio", { name: "Team Runner" }).check();
-    await expect(dialog.getByRole("radio", { name: /^yolo/ })).toHaveCount(0);
-    await expect(dialog.getByRole("radio", { name: /^auto/ })).toBeChecked();
+    await dialog.getByRole("radio", { name: "團隊" }).check();
+    await expect(dialog.getByRole("radio", { name: /^全部允許/ })).toHaveCount(0);
+    await expect(dialog.getByRole("radio", { name: /^自動/ })).toBeChecked();
     await expect(dialog.getByRole("radio", { name: /^codex/ })).toBeEnabled();
   });
 
@@ -51,8 +51,8 @@ test.describe("派工對話框", () => {
       await page.goto("/tasks/ORB-2");
       await page.getByRole("button", { name: "派工" }).click();
       const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
-      await expect(dialog.getByRole("radio", { name: "我的電腦" })).toBeVisible();
-      await expect(dialog.getByRole("radio", { name: "Team Runner" })).toHaveCount(0);
+      await expect(dialog.getByRole("radio", { name: "本機" })).toBeVisible();
+      await expect(dialog.getByRole("radio", { name: "團隊" })).toHaveCount(0);
     });
   });
 
@@ -98,7 +98,7 @@ test.describe("派工對話框", () => {
       await page.goto("/tasks/ORB-2");
       await page.getByRole("button", { name: "派工" }).click();
       const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
-      await expect(dialog.getByRole("radio", { name: /^manual/ })).toBeChecked();
+      await expect(dialog.getByRole("radio", { name: /^逐一確認/ })).toBeChecked();
       await expect(dialog.getByText("（Project 預設）")).toBeVisible();
       await dialog.getByRole("button", { name: "派工" }).click();
       await expect(page.locator(".run-meta")).toContainText("manual");
@@ -112,14 +112,12 @@ test.describe("派工對話框", () => {
       await page.goto("/tasks/ORB-2");
       await page.getByRole("button", { name: "派工" }).click();
       const dialog = page.getByRole("dialog", { name: "派工 ORB-2" });
-      await expect(dialog.getByRole("radio", { name: /^yolo/ })).toBeChecked();
+      await expect(dialog.getByRole("radio", { name: /^全部允許/ })).toBeChecked();
       await expect(dialog.getByRole("alert")).toContainText("yolo 會自動允許");
 
-      await dialog.getByRole("radio", { name: "Team Runner" }).check();
-      await expect(dialog.getByRole("radio", { name: /^auto/ })).toBeChecked();
-      await expect(dialog.getByRole("note")).toContainText(
-        "Project 預設是 yolo，但Team Runner不提供",
-      );
+      await dialog.getByRole("radio", { name: "團隊" }).check();
+      await expect(dialog.getByRole("radio", { name: /^自動/ })).toBeChecked();
+      await expect(dialog.getByRole("note")).toContainText("Project 預設是 yolo，但團隊不提供");
     });
   });
 });

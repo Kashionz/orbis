@@ -261,7 +261,7 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
 
   // ---- 第一回合結束：Review Gate
   await page.goto(`${webOrigin}/runs/${runId}`);
-  await expect(page.getByTestId("run-status")).toHaveText("等待 Gate", { timeout: 120_000 });
+  await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 120_000 });
 
   // ---- Preview 分頁：內嵌瀏覽器開 localhost；選取 #app 留言，留言的網址換成 Preview 網址
   await page.getByRole("tab", { name: "Preview" }).click();
@@ -307,6 +307,6 @@ test("在 Electron 的內嵌瀏覽器選取元素留言 → Review Gate 退回 �
   // 截圖：Agent 宣告支援圖片時以 ACP image 區塊送出；Fake Agent 沒有宣告，Runner 改送說明文字（A2 的設計）
   expect(reported).toMatch(/image:image\/png:[A-Za-z0-9+/=]{100,}|\[圖片 [^\]]*image\/png[^\]]*\]/);
   // 第二回合結束，再次進入 Review Gate
-  await expect(page.getByTestId("run-status")).toHaveText("等待 Gate", { timeout: 60_000 });
+  await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 60_000 });
   recordProcesses();
 });

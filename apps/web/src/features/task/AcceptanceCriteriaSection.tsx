@@ -15,7 +15,7 @@ import {
   updateAcceptanceCriterion,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
-import { AC_KIND_LABELS, AC_RESULT_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 import { CollabEditor } from "../collab/CollabEditor";
 
 interface Draft {
@@ -140,6 +140,7 @@ function CriterionRow({
   onDelete,
   onSave,
 }: CriterionRowProps) {
+  const t = useT();
   const [editing, setEditing] = useState<Draft | null>(null);
   const [collab, setCollab] = useState(false);
 
@@ -181,7 +182,7 @@ function CriterionRow({
         <code className="ac-command">{criterion.command ?? "（沿用 Repo 設定的 verify）"}</code>
       )}
       <span className="ac-result" data-result={criterion.result}>
-        {AC_RESULT_LABELS[criterion.result]}
+        {t.labels.acResult[criterion.result]}
       </span>
       {canEdit && (
         <span className="row-actions">
@@ -250,6 +251,7 @@ function CriterionForm({
   onSubmit,
   onCancel,
 }: CriterionFormProps) {
+  const t = useT();
   return (
     <form
       className="ac-form"
@@ -268,7 +270,7 @@ function CriterionForm({
         >
           {ACCEPTANCE_CRITERION_KINDS.map((kind) => (
             <option key={kind} value={kind}>
-              {AC_KIND_LABELS[kind]}
+              {t.labels.acKind[kind]}
             </option>
           ))}
         </select>

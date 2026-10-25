@@ -1,5 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { projectsQuery } from "../../api/resources";
+import { useT } from "../../i18n";
 import { usePermissions } from "../auth/use-permissions";
 import { CredentialsSection, TeamRunnerQueueSection } from "./CredentialsSection";
 import { MembersSection, ProjectRolesSection } from "./MembersSection";
@@ -11,6 +12,7 @@ import { PolicySection, RunnersSection } from "./RunnersSection";
  * 只有 Admin 以上看得到。UI 只負責隱藏，權限以 Server 為準。
  */
 export function AdminPage() {
+  const t = useT();
   const permissions = usePermissions();
   const { data: projects } = useSuspenseQuery(projectsQuery);
   const isAdmin = permissions.can("team.manage");
@@ -20,8 +22,8 @@ export function AdminPage() {
   if (!permissions.can("task.edit")) {
     return (
       <main className="notice">
-        <h1>沒有權限</h1>
-        <p>管理頁需要 Member 以上的 Role。</p>
+        <h1>{t.admin.noPermissionTitle}</h1>
+        <p>{t.admin.noPermissionBody(t.labels.role.member)}</p>
       </main>
     );
   }
@@ -29,7 +31,7 @@ export function AdminPage() {
   return (
     <main className="admin-page">
       <header className="page-header">
-        <h1>管理</h1>
+        <h1>{t.admin.title}</h1>
       </header>
       <CredentialsSection canOverride={isAdmin} />
       <TeamRunnerQueueSection />

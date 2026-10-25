@@ -89,13 +89,13 @@ test.describe("Delegation（完整系統）", () => {
     await expect(tree.locator(".run-node")).toHaveCount(3, { timeout: 120_000 });
     const children = tree.locator(`[data-run-id="${parent.id}"] .run-node[data-depth="1"]`);
     await expect(children).toHaveCount(2);
-    const consult = children.filter({ hasText: "consult（唯讀）" });
-    const branch = children.filter({ hasText: "branch（子分支）" });
+    const consult = children.filter({ hasText: "諮詢（唯讀）" });
+    const branch = children.filter({ hasText: "分支（子分支）" });
     await expect(consult).toHaveCount(1);
     await expect(branch).toHaveCount(1);
     for (const child of [consult, branch]) {
       await expect(child.locator("> .run-node-row")).toContainText("fake-child");
-      await expect(child.locator("> .run-node-row")).toContainText("Delegation");
+      await expect(child.locator("> .run-node-row")).toContainText("委派");
       // Child Run 不經過 Review Gate，回合結束就完成
       await expect(child.locator("> .run-node-row .status-badge")).toHaveText("已完成", {
         timeout: 120_000,
@@ -104,8 +104,8 @@ test.describe("Delegation（完整系統）", () => {
     // 父 Run 結束回合後進入 Review Gate；Child Run 的狀態不會改變 Task 的狀態
     await expect(
       tree.locator(`[data-run-id="${parent.id}"] > .run-node-row .status-badge`),
-    ).toHaveText("等待 Gate", { timeout: 120_000 });
-    await expect(page.locator(".page-header .status-badge")).toHaveText("Review Gate");
+    ).toHaveText("等待關卡", { timeout: 120_000 });
+    await expect(page.locator(".page-header .status-badge")).toHaveText("審查關卡");
 
     // 點 consult 的節點：即時檢視顯示 Child Run 的回覆
     const consultId = (await consult.getAttribute("data-run-id")) ?? "";

@@ -21,11 +21,14 @@ function serverPort(): number {
   return port;
 }
 
-/** 把 index.html 中的 `%PRODUCT_NAME%` 換成產品名稱，避免在 HTML 中寫死。 */
+/** 把 index.html 中的 `%PRODUCT_NAME%`、`%PRODUCT_SLUG%` 換成名稱常數，避免在 HTML 中寫死。 */
 function productNameInHtml(): Plugin {
   return {
     name: "product-name-in-html",
-    transformIndexHtml: (html) => html.replaceAll("%PRODUCT_NAME%", NAMES.productName),
+    transformIndexHtml: (html) =>
+      html
+        .replaceAll("%PRODUCT_NAME%", NAMES.productName)
+        .replaceAll("%PRODUCT_SLUG%", NAMES.productSlug),
   };
 }
 

@@ -11,7 +11,7 @@ export interface Permissions {
 }
 
 /**
- * 只能在 AuthedLayout 底下使用：那裡已經確認登入者是 Team 的 Member。
+ * 只能在 AppShell 底下使用：那裡已經確認登入者是 Team 的 Member。
  * `project`、`task` 提供操作所在的 Project（有效 Role 與政策）與 Task。
  * 有 Project 時用它的 `viewerRole`（含 Project 的 Role 覆寫），否則用 Team 的 Role。
  */

@@ -12,14 +12,8 @@ import {
   taskQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatUsage, toRunUsage } from "../../lib/format";
-import {
-  DELEGATION_MODE_LABELS,
-  PERMISSION_POLICY_LABELS,
-  RUN_ORIGIN_LABELS,
-  RUN_STATUS_LABELS,
-  RUNNER_KIND_LABELS,
-} from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
 import { PlanGatePanel } from "../gate/PlanGatePanel";
 import { PreviewPanel } from "../preview/PreviewPanel";
@@ -48,6 +42,7 @@ export function RunPage({
   focus: string | undefined;
   initialTab?: RunTab;
 }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: run } = useSuspenseQuery(runQuery(runId));
   const { data: task } = useQuery(taskQuery(run.taskId));
@@ -106,10 +101,10 @@ export function RunPage({
           </h1>
           <div className="run-meta">
             {run.origin !== "dispatch" && (
-              <span className="tag">{RUN_ORIGIN_LABELS[run.origin]}</span>
+              <span className="tag">{t.labels.runOrigin[run.origin]}</span>
             )}
             {run.delegationMode && (
-              <span className="tag">{DELEGATION_MODE_LABELS[run.delegationMode]}</span>
+              <span className="tag">{t.labels.delegationMode[run.delegationMode]}</span>
             )}
             {run.parentRunId && (
               <Link to="/runs/$runId" params={{ runId: run.parentRunId }}>
@@ -118,8 +113,8 @@ export function RunPage({
             )}
             <span>{run.agent}</span>
             {run.model && <span>{run.model}</span>}
-            <span>{RUNNER_KIND_LABELS[run.runnerKind]}</span>
-            <span title={PERMISSION_POLICY_LABELS[run.permissionPolicy]}>
+            <span>{t.labels.runnerKind[run.runnerKind]}</span>
+            <span title={t.labels.permissionPolicy[run.permissionPolicy]}>
               {run.permissionPolicy}
             </span>
             {run.branch && <code>{run.branch}</code>}
@@ -128,7 +123,7 @@ export function RunPage({
         <span className="spacer" />
         <div className="run-status">
           <span className="status-badge" data-status={status} data-testid="run-status">
-            {RUN_STATUS_LABELS[status]}
+            {t.labels.runStatus[status]}
           </span>
           <span className="usage" data-testid="run-usage">
             {formatUsage(usage)}

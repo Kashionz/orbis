@@ -1,0 +1,590 @@
+.share-cluster {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-faces {
+  display: flex;
+  padding-right: 2px;
+  --ring-color: var(--o16171a);
+}
+
+.share-button {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--oe8e9eb);
+  font: inherit;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.share-button:hover,
+.share-button[aria-expanded="true"] {
+  background: var(--o22242a);
+}
+
+.share-button:active:not([aria-disabled="true"]) {
+  transform: scale(var(--press-scale));
+}
+
+.share-button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.share-button[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+/* ---------- 分享卡 ---------- */
+
+.share-card {
+  z-index: var(--z-share);
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--opop);
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-share);
+  box-shadow: var(--sh-share);
+  animation: o-fade var(--dur-hover) ease-out both;
+  outline: none;
+}
+
+.share-card-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.share-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 10px 12px 16px;
+}
+
+.share-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-card-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 0 16px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.share-access {
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-pop);
+  display: flex;
+  flex-direction: column;
+}
+
+.share-link-row {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 12px;
+}
+
+.share-muted-icon {
+  display: flex;
+  flex: none;
+  color: var(--o8b9098);
+}
+
+.share-link {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-copy,
+.share-text-button,
+.share-invite-role {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  flex: none;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.share-copy {
+  height: 30px;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: 6px;
+  color: var(--o8b9098);
+  font-size: 12px;
+}
+
+.share-copy:hover {
+  background: var(--o22242a);
+  color: var(--oe8e9eb);
+}
+
+.share-divider {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--o26292e);
+}
+
+.share-general {
+  appearance: none;
+  min-height: 52px;
+  border: 0;
+  padding: 6px 10px 6px 12px;
+  border-radius: 0 0 9px 9px;
+  background: transparent;
+  color: var(--oe8e9eb);
+  font: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-hover) ease-out;
+}
+
+.share-general:hover,
+.share-general[aria-expanded="true"] {
+  background: var(--o1c1e22);
+}
+
+.share-general-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 18px;
+  font-size: 13px;
+}
+
+.share-chevron-down {
+  flex: none;
+  transform: rotate(90deg);
+  color: var(--o8b9098);
+}
+
+.share-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.share-add {
+  gap: 8px;
+}
+
+.share-section-title {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.share-person {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.share-person-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-muted {
+  color: var(--o8b9098);
+}
+
+.share-ellipsis {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-invited {
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.share-owner {
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.share-text-button {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 5px;
+  color: var(--o8b9098);
+  font-size: 12px;
+}
+
+.share-text-button:hover,
+.share-text-button[aria-expanded="true"] {
+  background: var(--o22242a);
+  color: var(--oe8e9eb);
+}
+
+.share-text-button[data-danger="true"]:hover {
+  color: var(--oef6b62);
+}
+
+.share-role {
+  padding: 0 6px 0 8px;
+  gap: 2px;
+}
+
+.share-search {
+  height: 36px;
+  min-height: 0;
+  padding: 0 12px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--o26292e);
+  background: transparent;
+  color: var(--oe8e9eb);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: background-color var(--dur-hover) ease-out;
+}
+
+.share-search:focus {
+  border-color: var(--o34373d);
+  background: var(--o16171a);
+}
+
+.share-search:focus-visible {
+  outline: none;
+}
+
+.share-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.share-tile {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  width: 72px;
+  padding: 8px 4px 6px;
+  border-radius: var(--r-pop);
+  background: transparent;
+  color: var(--oe8e9eb);
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.share-tile:hover {
+  background: var(--o1c1e22);
+}
+
+.share-tile:active {
+  transform: scale(var(--press-scale));
+}
+
+.share-tile-avatar {
+  position: relative;
+  display: flex;
+  border-radius: 50%;
+}
+
+.share-tile-avatar[data-selected="true"] {
+  box-shadow: 0 0 0 2px var(--o7fb0fa);
+}
+
+.share-tile-avatar .o-avatar {
+  font-size: 15px;
+}
+
+.share-tile-check {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--o7fb0fa);
+  color: var(--on-accent);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px var(--opop);
+}
+
+.share-tile-label {
+  max-width: 100%;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-empty {
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.share-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 16px;
+}
+
+.share-invite-role {
+  height: 36px;
+  padding: 0 6px 0 8px;
+  margin-left: -8px;
+  border-radius: 6px;
+  color: var(--oe8e9eb);
+  font-size: 13px;
+  gap: 2px;
+}
+
+.share-invite-role:hover,
+.share-invite-role[aria-expanded="true"] {
+  background: var(--o22242a);
+}
+
+.share-submit,
+.share-secondary {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  flex: 1;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--r-card);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.share-submit {
+  background: var(--obtn);
+  color: var(--obtnfg);
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.share-submit:hover:not(:disabled) {
+  background: var(--obtnh);
+}
+
+.share-submit:disabled {
+  background: var(--o22242a);
+  color: var(--o8b9098);
+  cursor: default;
+}
+
+.share-secondary {
+  background: var(--o22242a);
+  color: var(--oe8e9eb);
+}
+
+.share-secondary:hover {
+  background: var(--o2b2e34);
+}
+
+.share-submit:active:not(:disabled),
+.share-secondary:active {
+  transform: scale(0.98);
+}
+
+/* ---------- 邀請成功卡 ---------- */
+
+.invite-done {
+  z-index: var(--z-share);
+  overflow-y: auto;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  padding: 24px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: var(--opop);
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-share);
+  box-shadow: var(--sh-dialog);
+  animation: o-fade var(--dur-panel) ease-out both;
+  outline: none;
+  --ring-color: var(--opop);
+}
+
+.invite-done-faces {
+  position: relative;
+  display: flex;
+  padding-right: 4px;
+}
+
+.invite-done-faces .o-avatar {
+  font-size: 19px;
+  box-shadow: 0 0 0 3px var(--opop);
+}
+
+.invite-done-check {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  z-index: 9;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--o4fb86a);
+  color: var(--on-accent);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 3px var(--opop);
+}
+
+.invite-done-text {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.invite-done-title {
+  font-size: 16px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  text-wrap: balance;
+}
+
+.invite-done-sub {
+  max-width: 100%;
+  font-size: 13px;
+  color: var(--o8b9098);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invite-done-list {
+  width: 100%;
+  padding: 4px 12px;
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-pop);
+  display: flex;
+  flex-direction: column;
+}
+
+.invite-done-row {
+  height: 40px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.invite-done-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 16px;
+  font-size: 13px;
+}
+
+.invite-done-name > span:first-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invite-done-email {
+  font-size: 11px;
+  color: var(--o8b9098);
+}
+
+.invite-done-role {
+  flex: none;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.invite-done-more {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.invite-done-actions {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+}

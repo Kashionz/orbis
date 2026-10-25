@@ -1,7 +1,7 @@
 import { NAMES, TASK_STATUSES } from "@orbis/api-contract";
 import { DESKTOP_BRIDGE_KEY } from "@orbis/desktop/bridge";
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, openProfileMenuItem, test } from "./fixtures";
 
 /** 模擬 Desktop 的 bridge：記錄 beforeLogout() 的呼叫，回傳指定的結果。 */
 async function installBridge(page: Page, proceed: boolean): Promise<void> {
@@ -59,7 +59,7 @@ test.describe("未登入", () => {
 test("已登入時首頁導向看板，看到所有狀態欄位", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/board$/);
-  await expect(page.getByText("octocat", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "個人選單" })).toContainText("The Octocat");
 
   const columns = page.locator(".board-column");
   await expect(columns).toHaveCount(TASK_STATUSES.length);
@@ -67,16 +67,16 @@ test("已登入時首頁導向看板，看到所有狀態欄位", async ({ page 
     await expect(columns.nth(index)).toHaveAttribute("data-status", status);
     await expect(columns.nth(index).getByRole("heading")).toBeVisible();
   }
-  await expect(page.getByRole("heading", { name: /^Plan Gate/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^PR Open/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^計畫關卡/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^合併請求已開啟/ })).toBeVisible();
 });
 
 test.describe("還不是任何 Team 的 Member", () => {
   test.use({ mock: { session: "no-team" } });
 
-  test("顯示「尚未加入 Team」", async ({ page }) => {
+  test("顯示「尚未加入團隊」", async ({ page }) => {
     await page.goto("/board");
-    await expect(page.getByRole("heading", { name: "尚未加入 Team" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "尚未加入團隊" })).toBeVisible();
     await expect(page.locator(".board-column")).toHaveCount(0);
   });
 });
@@ -96,7 +96,7 @@ test.describe("登入狀態取得失敗", () => {
 test.describe("登出", () => {
   test("一般瀏覽器中直接登出，回到登入頁", async ({ page }) => {
     await page.goto("/board");
-    await page.getByRole("button", { name: "登出" }).click();
+    await openProfileMenuItem(page, "登出");
     await expect(page).toHaveURL(/\/login$/);
     await page.goto("/board");
     await expect(page).toHaveURL(/\/login$/);
@@ -105,7 +105,7 @@ test.describe("登出", () => {
   test("Desktop 中先呼叫 beforeLogout()，放行後才登出", async ({ page }) => {
     await installBridge(page, true);
     await page.goto("/board");
-    await page.getByRole("button", { name: "登出" }).click();
+    await openProfileMenuItem(page, "登出");
     await expect(page).toHaveURL(/\/login$/);
     expect(await bridgeCalls(page)).toEqual(["beforeLogout"]);
   });
@@ -113,10 +113,10 @@ test.describe("登出", () => {
   test("Desktop 中使用者取消（proceed: false）時不登出", async ({ page }) => {
     await installBridge(page, false);
     await page.goto("/board");
-    await page.getByRole("button", { name: "登出" }).click();
+    await openProfileMenuItem(page, "登出");
     await expect.poll(() => bridgeCalls(page)).toEqual(["beforeLogout"]);
     await expect(page).toHaveURL(/\/board/);
     await page.reload();
-    await expect(page.getByRole("button", { name: "登出" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "個人選單" })).toBeVisible();
   });
 });

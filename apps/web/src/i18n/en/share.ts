@@ -1,0 +1,46 @@
+import type { Messages } from "../types";
+
+export default {
+  share: "Share",
+  title: (task: string) => `Share “${task}”`,
+  link: "Task link",
+  generalAccess: "General access",
+  general: {
+    invited: "Only people invited",
+    teamView: (team: string) => `${team} can view`,
+    teamEdit: (team: string) => `${team} can edit`,
+  },
+  generalSub: {
+    invited: "Only the owner and invited people",
+    teamView: "View the run only",
+    teamEdit: "Send messages, approve, and review",
+  },
+  role: {
+    owner: "Owner",
+    edit: "Can edit",
+    view: "Can view",
+  },
+  roleSub: {
+    edit: "Send messages, approve, and review",
+    view: "View the run only",
+  },
+  roleOf: (name: string) => `Role for ${name}`,
+  inviteRole: "Role for new people",
+  inThisTask: "In this task",
+  youSuffix: " (you)",
+  invited: "Invited",
+  revoke: "Revoke",
+  removeAccess: "Remove access",
+  removed: (name: string) => `Removed ${name}`,
+  revoked: "Invite revoked",
+  addPeople: "Add people",
+  searchPlaceholder: "Search teammates or enter email",
+  allJoined: "Everyone is already here",
+  addToTask: (count: number) => (count > 1 ? `Add to task (${count})` : "Add to task"),
+  invitedOne: (name: string) => `Invited ${name}`,
+  invitedMany: (count: number) => `Invited ${count} people`,
+  addedTo: (task: string) => `to “${task}”`,
+  emailInvite: "Email invite",
+  inviteMore: "Invite more",
+  done: "Done",
+} satisfies Messages["share"];

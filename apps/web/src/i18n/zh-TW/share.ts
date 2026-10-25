@@ -1,0 +1,46 @@
+// 分享卡與邀請成功卡（README §8）。
+
+export default {
+  share: "分享",
+  title: (task: string) => `分享「${task}」`,
+  link: "任務連結",
+  generalAccess: "一般存取",
+  general: {
+    invited: "僅受邀成員",
+    teamView: (team: string) => `${team} 可檢視`,
+    teamEdit: (team: string) => `${team} 可操作`,
+  },
+  generalSub: {
+    invited: "只有擁有者與受邀成員",
+    teamView: "只能查看執行過程",
+    teamEdit: "可傳訊息、核准權限與審查差異",
+  },
+  role: {
+    owner: "擁有者",
+    edit: "可操作",
+    view: "可檢視",
+  },
+  roleSub: {
+    edit: "可傳訊息、核准權限與審查差異",
+    view: "只能查看執行過程",
+  },
+  roleOf: (name: string) => `${name} 的角色`,
+  inviteRole: "邀請的角色",
+  inThisTask: "在這個任務中",
+  youSuffix: "（你）",
+  invited: "已邀請",
+  revoke: "撤銷",
+  removeAccess: "移除存取權",
+  removed: (name: string) => `已移除 ${name}`,
+  revoked: "已撤銷邀請",
+  addPeople: "加入成員",
+  searchPlaceholder: "搜尋成員或輸入 Email",
+  allJoined: "所有成員都已加入",
+  addToTask: (count: number) => (count > 1 ? `加入任務（${count}）` : "加入任務"),
+  invitedOne: (name: string) => `已邀請 ${name}`,
+  invitedMany: (count: number) => `已邀請 ${count} 位成員`,
+  addedTo: (task: string) => `加入「${task}」`,
+  emailInvite: "Email 邀請",
+  inviteMore: "繼續邀請",
+  done: "完成",
+};

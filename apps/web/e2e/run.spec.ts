@@ -27,8 +27,8 @@ test.describe("Run 即時檢視", () => {
     await expect(permission(page)).toContainText("已回覆：允許");
     await expect(timeline(page)).toContainText("已寫入 config.json。");
     await expect(timeline(page)).toContainText("完成了。");
-    await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
-    await expect(page.getByTestId("run-usage")).toContainText("context 1,200 / 200,000");
+    await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
+    await expect(page.getByTestId("run-usage")).toContainText("上下文 1,200 / 200,000");
     await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
 
     // tool call 的 diff 預覽與 terminal 輸出
@@ -62,7 +62,7 @@ test.describe("Run 即時檢視", () => {
     await permission(page).getByRole("button", { name: "允許" }).click();
     // 回合結束後還有 Verification；等它結束、進入 Review Gate 後 Event 才不再增加
     await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
-    await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+    await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
 
     const snapshot = () =>
       page.evaluate(() => {
@@ -78,7 +78,7 @@ test.describe("Run 即時檢視", () => {
     expect(before.rows.length).toBeGreaterThan(5);
 
     await page.reload();
-    await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+    await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
     await expect(timeline(page)).toHaveAttribute("data-item-count", before.count ?? "");
     await expect.poll(snapshot).toEqual(before);
   });
@@ -136,7 +136,7 @@ test("中止 Run 後 Task 回到 Ready", async ({ page }) => {
   await expect(page.getByTestId("run-status")).toHaveText("已中止");
   await expect(page.getByRole("button", { name: "中止 Run" })).toHaveCount(0);
   await page.getByRole("link", { name: /ORB-2/ }).click();
-  await expect(page.locator(".page-header .status-badge")).toHaveText("Ready");
+  await expect(page.locator(".page-header .status-badge")).toHaveText("就緒");
 });
 
 test.describe("別人在自己電腦上派工的 Run", () => {

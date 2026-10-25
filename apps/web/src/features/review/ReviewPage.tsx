@@ -25,8 +25,8 @@ import {
   taskQuery,
 } from "../../api/resources";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import { DIFF_CHANGE_LABELS } from "../../lib/labels";
 import { usePermissions } from "../auth/use-permissions";
 import { MentionMarkdown } from "../mention/MentionMarkdown";
 import { MentionTextarea } from "../mention/MentionTextarea";
@@ -431,6 +431,7 @@ function FileButton({
   commentCount: number;
   onSelect: () => void;
 }) {
+  const t = useT();
   return (
     <li>
       <button
@@ -440,7 +441,7 @@ function FileButton({
         data-change={file.change}
         onClick={onSelect}
       >
-        <span className="tag">{DIFF_CHANGE_LABELS[file.change]}</span>
+        <span className="tag">{t.labels.diffChange[file.change]}</span>
         <span className="file-path">{file.path}</span>
         {commentCount > 0 && <span className="count-badge">{commentCount}</span>}
       </button>

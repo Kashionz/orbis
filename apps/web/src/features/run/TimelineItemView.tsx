@@ -5,19 +5,8 @@ import type {
   PermissionPurpose,
 } from "@orbis/protocol";
 import Markdown from "react-markdown";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
-import {
-  MERGE_OUTCOME_LABELS,
-  PERMISSION_PURPOSE_LABELS,
-  PLAN_SOURCE_LABELS,
-  PREVIEW_STOP_REASON_LABELS,
-  PROMPT_SOURCE_LABELS,
-  RUN_ERROR_LABELS,
-  RUN_STATUS_LABELS,
-  TOOL_CALL_STATUS_LABELS,
-  TOOL_KIND_LABELS,
-  VERIFICATION_OUTCOME_LABELS,
-} from "../../lib/labels";
 import { DiffPreview } from "./DiffPreview";
 import type { TimelineItem } from "./timeline";
 
@@ -97,6 +86,7 @@ export function TimelineItemView({
   item: TimelineItem;
   controls: ItemControls;
 }) {
+  const t = useT();
   switch (item.type) {
     case "message":
       return (
@@ -128,10 +118,10 @@ export function TimelineItemView({
       return (
         <div className="event event-tool-call" data-tool-status={item.status}>
           <div className="tool-header">
-            <span className="tool-kind">{TOOL_KIND_LABELS[item.toolKind]}</span>
+            <span className="tool-kind">{t.labels.toolKind[item.toolKind]}</span>
             <span className="tool-title">{item.title}</span>
             <span className="status-badge" data-status={item.status}>
-              {TOOL_CALL_STATUS_LABELS[item.status]}
+              {t.labels.toolCallStatus[item.status]}
             </span>
           </div>
           {item.locations.length > 0 && (
@@ -196,7 +186,7 @@ export function TimelineItemView({
           id={item.key}
         >
           <div className="permission-title">
-            <strong>{PERMISSION_PURPOSE_LABELS[item.purpose]}</strong> {item.title}
+            <strong>{t.labels.permissionPurpose[item.purpose]}</strong> {item.title}
           </div>
           {item.resolved ? (
             <div className="hint">
@@ -247,7 +237,7 @@ export function TimelineItemView({
     case "status":
       return (
         <div className="event event-status">
-          狀態：{RUN_STATUS_LABELS[item.status]}
+          狀態：{t.labels.runStatus[item.status]}
           {item.gate && `（${item.gate === "plan" ? "Plan Gate" : "Review Gate"}）`}
           {item.message && <span className="hint"> — {item.message}</span>}
         </div>
@@ -256,7 +246,7 @@ export function TimelineItemView({
     case "error":
       return (
         <div className="event event-error" role="alert">
-          <strong>{RUN_ERROR_LABELS[item.code]}</strong>
+          <strong>{t.labels.runError[item.code]}</strong>
           {item.fatal && <span className="tag">Run 已停止</span>} {item.message}
         </div>
       );
@@ -290,7 +280,7 @@ export function TimelineItemView({
       return (
         <div className="event event-plan-proposed">
           <strong>Agent 提出 plan</strong>
-          <span className="hint">（來源：{PLAN_SOURCE_LABELS[item.source]}）</span>
+          <span className="hint">（來源：{t.labels.planSource[item.source]}）</span>
           {item.body.type === "inline" ? (
             <div className="markdown">
               <Markdown>{item.body.text}</Markdown>
@@ -305,7 +295,7 @@ export function TimelineItemView({
       return (
         <div className="event event-verification" data-outcome={item.outcome}>
           <span className="status-badge" data-status={item.outcome}>
-            {VERIFICATION_OUTCOME_LABELS[item.outcome]}
+            {t.labels.verificationOutcome[item.outcome]}
           </span>{" "}
           第 {item.attempt} 輪 Verification：{item.summary}
         </div>
@@ -314,14 +304,14 @@ export function TimelineItemView({
     case "verification_completed":
       return (
         <div className="event event-status" data-outcome={item.outcome}>
-          第 {item.attempt} 輪 Verification 結束：{VERIFICATION_OUTCOME_LABELS[item.outcome]}
+          第 {item.attempt} 輪 Verification 結束：{t.labels.verificationOutcome[item.outcome]}
         </div>
       );
 
     case "child_merged":
       return (
         <div className="event event-status" data-outcome={item.outcome}>
-          Child Run <code>{item.childRunId}</code> 合併結果：{MERGE_OUTCOME_LABELS[item.outcome]}
+          Child Run <code>{item.childRunId}</code> 合併結果：{t.labels.mergeOutcome[item.outcome]}
           {item.commitSha && (
             <>
               {" "}
@@ -344,7 +334,7 @@ export function TimelineItemView({
             aria-expanded={open}
             onClick={() => controls.toggle(item.key)}
           >
-            {open ? "▾" : "▸"} 送出 prompt（{PROMPT_SOURCE_LABELS[item.source]}）
+            {open ? "▾" : "▸"} 送出 prompt（{t.labels.promptSource[item.source]}）
           </button>
           {open && <Blocks blocks={item.blocks} />}
         </div>
@@ -354,7 +344,7 @@ export function TimelineItemView({
     case "preview_stopped":
       return (
         <div className="event event-error">
-          <strong>Preview 已停止</strong>：{PREVIEW_STOP_REASON_LABELS[item.reason]}
+          <strong>Preview 已停止</strong>：{t.labels.previewStopReason[item.reason]}
           {item.exitCode !== null && `（exit code ${item.exitCode}）`}
           {item.output && <pre className="tool-text">{item.output}</pre>}
         </div>

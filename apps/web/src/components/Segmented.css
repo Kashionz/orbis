@@ -1,0 +1,62 @@
+.o-segmented {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--o1c1e22);
+}
+
+.o-segmented > .o-fluid-highlight {
+  border-radius: 5px;
+}
+
+.o-segmented-inner {
+  display: flex;
+  gap: 2px;
+}
+
+.o-segmented-option {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--o8b9098);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.o-segmented-option[aria-checked="true"] {
+  background: var(--o2a2d33);
+  color: var(--oe8e9eb);
+}
+
+.o-segmented-option:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+
+.o-segmented-option:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.o-segmented-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--od9a845);
+}
+
+.o-segmented-count[data-tone="muted"] {
+  color: var(--o8b9098);
+}

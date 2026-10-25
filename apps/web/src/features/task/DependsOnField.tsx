@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { tasksQuery } from "../../api/resources";
-import { TASK_STATUS_LABELS } from "../../lib/labels";
+import { useT } from "../../i18n";
 import { matchesTaskKey, parseTaskKeyQuery } from "../../lib/task-key-search";
 
 interface DependsOnFieldProps {
@@ -14,6 +14,7 @@ interface DependsOnFieldProps {
 
 /** 這個 Task 依賴的其他 Task（同一個 Project），以 Task Key 搜尋加入。 */
 export function DependsOnField({ task, canEdit, onSave }: DependsOnFieldProps) {
+  const t = useT();
   const { data: tasks = [] } = useQuery(tasksQuery(task.projectId));
   const [search, setSearch] = useState("");
   const dependencies = task.dependsOn.map((id) => tasks.find((t) => t.id === id));
@@ -39,7 +40,7 @@ export function DependsOnField({ task, canEdit, onSave }: DependsOnFieldProps) {
                     <Link to="/tasks/$taskKey" params={{ taskKey: dependency.key }}>
                       {dependency.key}
                     </Link>{" "}
-                    <span className="hint">{TASK_STATUS_LABELS[dependency.status]}</span>
+                    <span className="hint">{t.labels.taskStatus[dependency.status]}</span>
                   </>
                 ) : (
                   <span className="hint">{id}</span>

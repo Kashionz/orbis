@@ -1,0 +1,42 @@
+.o-fluid {
+  position: relative;
+}
+
+.o-fluid > [data-fluid-item],
+.o-fluid [data-fluid-item] {
+  position: relative;
+  z-index: 1;
+}
+
+.o-fluid-highlight {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  border-radius: 6px;
+  background: var(--ohl);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 60ms ease-in;
+}
+
+.o-fluid-highlight[data-visible="true"] {
+  opacity: 1;
+  transition: opacity var(--dur-hover) ease-out;
+}
+
+.o-fluid-highlight[data-visible="true"][data-moving="true"] {
+  transition:
+    transform var(--dur-hover) var(--ease-fluid),
+    width var(--dur-hover) var(--ease-fluid),
+    height var(--dur-hover) var(--ease-fluid),
+    opacity var(--dur-hover) ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .o-fluid-highlight[data-visible="true"][data-moving="true"] {
+    transition: opacity var(--dur-hover) ease-out;
+  }
+}

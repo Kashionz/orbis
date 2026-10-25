@@ -30,6 +30,7 @@ import {
   UpdateRunnerCredentialInput,
   UpdateTaskCommentInput,
   UpdateTaskInput,
+  UpdateTeamInput,
   VerificationDecisionInput,
   WEB_WS_MAX_SUBSCRIPTIONS,
   WebClientMessage,
@@ -40,6 +41,7 @@ import { HttpResponse, http, ws } from "msw";
 import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
 import { MockCollabServer } from "./collab";
+import { createPrototypeHandlers } from "./prototype-features";
 
 /** 重播時每則 `run_events` 最多帶幾筆 Event（同 Server）。 */
 const REPLAY_BATCH_SIZE = 500;
@@ -47,7 +49,7 @@ const REPLAY_BATCH_SIZE = 500;
 type Resolver = (request: Request, params: Record<string, string>) => unknown | Promise<unknown>;
 
 /** 把 MockError 與 zod 錯誤轉成契約 ApiError 形狀的錯誤回應。 */
-function handle(resolver: Resolver, status = 200) {
+export function handle(resolver: Resolver, status = 200) {
   return async ({ request, params }: { request: Request; params: Record<string, unknown> }) => {
     try {
       const body = await resolver(request, params as Record<string, string>);
@@ -79,7 +81,10 @@ function handle(resolver: Resolver, status = 200) {
   };
 }
 
-async function parse<S extends z.ZodType>(request: Request, schema: S): Promise<z.output<S>> {
+export async function parse<S extends z.ZodType>(
+  request: Request,
+  schema: S,
+): Promise<z.output<S>> {
   return schema.parse(await request.json());
 }
 
@@ -632,8 +637,18 @@ export function createHandlers(backend: MockBackend) {
       handle(() => backend.members()),
     ),
     http.get(
+      API_ROUTES.team,
+      handle(() => backend.team()),
+    ),
+    http.patch(
+      API_ROUTES.team,
+      handle(async (request) => backend.updateTeam((await parse(request, UpdateTeamInput)).name)),
+    ),
+    http.get(
       API_ROUTES.needsYou,
       handle(() => backend.needsYou()),
     ),
+    // 原型中有、後端還沒有的功能（lib/features.ts）
+    ...createPrototypeHandlers(backend),
   ];
 }

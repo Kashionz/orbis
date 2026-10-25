@@ -87,7 +87,7 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     await expect(permission).toContainText(VERIFY_COMMAND, { timeout: 120_000 });
     await permission.getByRole("button", { name: "允許這次" }).click();
     await expect(timeline).toContainText("第 1 輪 Verification 結束：失敗", { timeout: 120_000 });
-    await expect(timeline).toContainText("送出 prompt（Verification 重試）");
+    await expect(timeline).toContainText("送出 prompt（驗收重試）");
     await expect(timeline).toContainText("第 2 輪 Verification 結束：失敗", { timeout: 120_000 });
     // 到了上限：不再送回 Agent，等人決定
     await expect(timeline).not.toContainText("第 3 輪 Verification");
@@ -137,7 +137,7 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     await approve.click();
     await expect(page.getByTestId("run-status")).toHaveText("已完成", { timeout: 60_000 });
     await page.goto(`/tasks/${task.key}`);
-    await expect(page.locator(".page-header .status-badge")).toHaveText("PR Open");
+    await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
     await context.close();
   });
 

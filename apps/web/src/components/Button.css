@@ -1,0 +1,141 @@
+.o-btn {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--r-btn);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    color var(--dur-hover) ease-out,
+    opacity var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.o-btn:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+
+.o-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.o-btn[data-size="sm"] {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 5px;
+}
+
+.o-btn[data-size="lg"] {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--r-card);
+  font-size: 13px;
+}
+
+.o-btn[data-variant="primary"] {
+  background: var(--obtn);
+  color: var(--obtnfg);
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.o-btn[data-variant="primary"]:hover:not(:disabled) {
+  background: var(--obtnh);
+}
+
+.o-btn[data-variant="secondary"] {
+  background: var(--o22242a);
+  color: var(--oe8e9eb);
+}
+
+.o-btn[data-variant="secondary"]:hover:not(:disabled) {
+  background: var(--o2b2e34);
+}
+
+.o-btn[data-variant="ghost"] {
+  background: transparent;
+  color: var(--o8b9098);
+}
+
+.o-btn[data-variant="ghost"]:hover:not(:disabled) {
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+}
+
+.o-btn[data-variant="subtle"] {
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+}
+
+.o-btn[data-variant="subtle"]:hover:not(:disabled) {
+  background: var(--o24262b);
+}
+
+.o-btn[data-variant="danger"] {
+  background: var(--oef6b62);
+  color: var(--obtnfg);
+  font-weight: 550;
+}
+
+.o-btn[data-variant="danger-ghost"] {
+  background: transparent;
+  color: var(--oef6b62);
+}
+
+.o-btn[data-variant="danger-ghost"]:hover:not(:disabled) {
+  background: var(--tint-danger);
+}
+
+.o-btn-icon {
+  display: flex;
+  flex: none;
+}
+
+.o-icon-btn {
+  appearance: none;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-btn);
+  background: transparent;
+  color: var(--o8b9098);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.o-icon-btn:hover:not(:disabled),
+.o-icon-btn[aria-pressed="true"],
+.o-icon-btn[aria-expanded="true"] {
+  background: var(--o202227);
+  color: var(--oe8e9eb);
+}
+
+.o-icon-btn[data-danger="true"]:hover:not(:disabled) {
+  color: var(--oef6b62);
+}
+
+.o-icon-btn:active:not(:disabled) {
+  transform: scale(var(--press-scale));
+}
+
+.o-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

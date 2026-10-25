@@ -78,7 +78,7 @@ test.describe("Task 頁", () => {
     const dependency = page.locator(".depends-list li");
     await expect(dependency).toHaveCount(1);
     await expect(dependency.getByRole("link", { name: "ORB-2" })).toBeVisible();
-    await expect(dependency).toContainText("Ready");
+    await expect(dependency).toContainText("就緒");
 
     await page.reload();
     await expect(page.getByLabel("指派對象")).toHaveValue("member-bob");
@@ -91,8 +91,8 @@ test.describe("Task 頁", () => {
     const rows = page.locator(".run-node");
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText("claude-code");
-    await expect(rows.first()).toContainText("我的電腦");
-    await expect(rows.first()).toContainText("等待 Gate");
+    await expect(rows.first()).toContainText("本機");
+    await expect(rows.first()).toContainText("等待關卡");
     await rows.first().getByRole("link", { name: "開啟 Run 頁" }).click();
     await expect(page).toHaveURL(/\/runs\/run-\d+$/);
   });
