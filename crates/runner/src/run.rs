@@ -2690,13 +2690,7 @@ impl Run {
             .await
             .unwrap_or_default();
         for path in untracked.split('\0').filter(|p| !p.is_empty()) {
-            let lines = std::fs::read(wt.path.join(path)).ok().and_then(|bytes| {
-                (!bytes.contains(&0)).then(|| {
-                    let count = bytes.iter().filter(|b| **b == b'\n').count() as u64;
-                    let tail = u64::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
-                    (count + tail, 0)
-                })
-            });
+            let lines = untracked_lines(&wt.path, path);
             files.push(crate::handoff::ChangedFile {
                 path: path.to_owned(),
                 lines,
@@ -3214,6 +3208,31 @@ impl Run {
         let sha = git.rev_parse_commit("HEAD").await.map_err(fail)?;
         Ok((branch, sha))
     }
+}
+
+/// 交接 prompt 的 diff 摘要中，還沒加入 git 的新檔案超過這個大小時不計算行數。
+const UNTRACKED_COUNT_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// 還沒加入 git 的新檔案的行數；二進位、太大、不是一般檔案（連結可能指向 Worktree 外）時為 `None`。
+fn untracked_lines(worktree: &std::path::Path, rel: &str) -> Option<(u64, u64)> {
+    use std::io::Read as _;
+    let path = worktree.join(rel);
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > UNTRACKED_COUNT_LIMIT {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path)
+        .ok()?
+        .take(UNTRACKED_COUNT_LIMIT)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.contains(&0) {
+        return None;
+    }
+    let count = bytes.iter().filter(|b| **b == b'\n').count() as u64;
+    let tail = u64::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
+    Some((count + tail, 0))
 }
 
 /// 忙碌中（不能做這個動作）時給 Server 的說明。

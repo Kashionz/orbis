@@ -1,0 +1,8 @@
+# 換 Agent（agent-switch）之後的 Agent：回報收到的交接 prompt 與自己這一段的用量。
+description: 換 Agent 之後的 Agent
+turns:
+  - steps:
+      - echo_prompt
+      - usage: { used: 100, size: 100000 }
+  - steps:
+      - echo_prompt
