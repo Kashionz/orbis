@@ -21,7 +21,10 @@ async function dragCard(page: Page, taskKey: string, status: string): Promise<vo
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
   await page.mouse.move(from.x + from.width / 2 + 10, from.y + from.height / 2 + 10, { steps: 5 });
-  await page.mouse.move(to.x + to.width / 2, to.y + 60, { steps: 15 });
+  // 欄位可能有一部分在視窗外（左側有側欄）：目標點取欄位在視窗內的部分，視窗外的指標事件在 Windows 收不到
+  const viewport = page.viewportSize();
+  const x = Math.min(to.x + to.width / 2, (viewport?.width ?? to.x + to.width) - 10);
+  await page.mouse.move(Math.max(to.x + 10, x), to.y + 60, { steps: 15 });
   await page.mouse.up();
 }
 
