@@ -110,9 +110,18 @@ export class TerminalHub {
   }
 
   /** 開著的終端機（定期重新確認權限用）。 */
-  info(terminalId: string): { runId: string; sessionId: string } | null {
+  info(
+    terminalId: string,
+  ): { runId: string; runnerId: string; memberId: string; sessionId: string } | null {
     const terminal = this.terminals.get(terminalId);
-    return terminal ? { runId: terminal.runId, sessionId: terminal.sessionId } : null;
+    return terminal
+      ? {
+          runId: terminal.runId,
+          runnerId: terminal.runnerId,
+          memberId: terminal.memberId,
+          sessionId: terminal.sessionId,
+        }
+      : null;
   }
 
   /** 登出或 session 結束：這個 session 開的終端機全部關閉。 */

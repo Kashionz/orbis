@@ -16,7 +16,6 @@ import { parse as parseCookie } from "hono/utils/cookie";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { findSession } from "../auth/service";
-import { ApiError } from "../http/errors";
 import { actorForSession } from "../preview/access";
 import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
@@ -40,18 +39,20 @@ export interface TerminalEndpoint {
 /** 連線期間重新確認權限的間隔。 */
 export const TERMINAL_AUTHZ_RECHECK_MS = 30_000;
 
-/** 開啟者是否仍然可以使用這個終端機。 */
+/**
+ * 開啟者是否仍然可以使用這個終端機：session 有效、仍是同一位 Member、仍能在這個 Run 開終端機，
+ * 而且 Run 目前的 Runner 就是開出終端機的那一台。任何錯誤都當作不行（fail closed）。
+ */
 async function stillAllowed(services: Services, terminalId: string): Promise<boolean> {
-  const info = services.terminals.info(terminalId);
-  if (!info) return false;
-  const actor = await actorForSession(services.db, services.clock, info.sessionId);
-  if (!actor) return false;
   try {
-    await authorizeTerminal(services.db, actor, info.runId);
-    return true;
-  } catch (error) {
-    if (error instanceof ApiError) return false;
-    throw error;
+    const info = services.terminals.info(terminalId);
+    if (!info) return false;
+    const actor = await actorForSession(services.db, services.clock, info.sessionId);
+    if (actor?.memberId !== info.memberId) return false;
+    const access = await authorizeTerminal(services.db, actor, info.runId);
+    return access.runner.id === info.runnerId;
+  } catch {
+    return false;
   }
 }
 
