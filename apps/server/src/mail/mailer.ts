@@ -23,7 +23,7 @@ export const NO_MAILER: Mailer = { enabled: false, send: async () => false };
 export interface SmtpConfig {
   /** 例如 `smtps://user:pass@smtp.example.com:465`。 */
   url: string;
-  /** 寄件者，例如 `Orbis <orbis@example.com>`。 */
+  /** 寄件者，例如 `Team <noreply@example.com>`。 */
   from: string;
 }
 

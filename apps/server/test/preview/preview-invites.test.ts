@@ -4,6 +4,7 @@
 import {
   API_ROUTES,
   apiPath,
+  NAMES,
   PreviewInviteCreated,
   PreviewInviteListResponse,
 } from "@orbis/api-contract";
@@ -85,8 +86,8 @@ describe.skipIf(dbSkipReason !== null)("預覽邀請", () => {
     if (!run) throw new Error("建立 Run 失敗");
     runId = run.id;
     await addEvent(1, "worktree_ready", {
-      worktree_path: "C:\\ob\\orbis\\ORB-1",
-      branch: "orbis/orb-1",
+      worktree_path: "C:/w/ORB-1-1",
+      branch: `${NAMES.branchPrefix}orb-1`,
       base_commit: "a".repeat(40),
       preview_port: 41234,
     });
