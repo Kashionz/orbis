@@ -30,6 +30,7 @@ import type {
   ToolKind,
   VerificationOutcome,
 } from "@orbis/protocol";
+import type { EffortLevel, ModelTag } from "../../features/agents/catalog";
 
 export default {
   /** Task 狀態（看板分組、側欄、工作區）。 */
@@ -235,6 +236,27 @@ export default {
     task_rejected: "自己的任務被退回",
     run_stopped: "執行停下來等人處理",
   } satisfies Record<NotificationKind, string>,
+
+  /** 模型選單右側的 tag（features/agents/catalog.ts）。 */
+  modelTag: {
+    best: "最強",
+    balanced: "平衡",
+    fast: "快速",
+    coding: "程式",
+  } satisfies Record<ModelTag, string>,
+
+  /** 推理強度。 */
+  effortLevel: {
+    fast: "快速",
+    std: "標準",
+    deep: "深度",
+  } satisfies Record<EffortLevel, string>,
+
+  effortLevelDescription: {
+    fast: "回應快、耗用少，適合簡單修改",
+    std: "一般開發任務",
+    deep: "較慢、耗用較多，適合複雜除錯與架構",
+  } satisfies Record<EffortLevel, string>,
 
   queueWaitingReason: {
     no_runner: "沒有在線的執行器",

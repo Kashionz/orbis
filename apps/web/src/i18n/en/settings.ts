@@ -1,3 +1,69 @@
 import type { Messages } from "../types";
 
-export default {} satisfies Messages["settings"];
+export default {
+  title: "Settings",
+  nav: {
+    general: "General",
+    runners: "Runners",
+    agents: "Agents",
+    notifications: "Notifications",
+    account: "Account",
+  },
+  theme: "Theme",
+  themes: {
+    dark: "Dark",
+    light: "Light",
+    system: "System",
+  },
+  language: "Language",
+  languages: {
+    "zh-TW": "中文",
+    en: "English",
+  },
+  defaultLayout: "Default layout",
+  layouts: {
+    split: "Split",
+    stream: "Stream only",
+  },
+  autoExpandTools: "Expand tool steps automatically",
+  version: "Version",
+  versionDesktop: (version: string) => `Desktop ${version}`,
+  versionServer: (version: string) => `Server ${version}`,
+
+  noRunners: "No runners paired yet",
+  runnerOnline: "Connected",
+  runnerPaused: "Paused",
+  runnerOffline: "Offline",
+  defaultShell: "Default shell",
+  windowsLongPaths: "Windows long paths",
+  pairRunner: "Pair a new runner",
+  pairLocal: "Local runner",
+  pairLocalSub: "Runs on this computer",
+  pairTeam: "Team runner",
+  pairTeamSub: "Runs on a shared team host",
+  pairingToken: "Pairing token",
+  pairingTokenExpires: (time: string) => `Valid until ${time}, shown only once`,
+  pairingTokenEnv: (tokenEnv: string, urlEnv: string) =>
+    `Set ${tokenEnv} and ${urlEnv}, then start the runner`,
+
+  noAgents: "No agents available yet",
+  signedIn: "Signed in",
+  needsSignIn: "Sign-in required",
+  signIn: "Sign in again",
+  signingIn: (tool: string) => `Opening ${tool} sign-in`,
+  defaultModel: "Default model",
+  defaultModelOf: (tool: string) => `Default model for ${tool}`,
+  agentDefault: "Agent default",
+
+  desktopNotifications: "Desktop notifications",
+  quietHours: "Quiet hours",
+  quietHoursFrom: "From",
+  quietHoursTo: "To",
+  timeZone: "Time zone",
+  saved: "Saved",
+
+  teamName: "Team name",
+  members: "Members",
+  memberCount: (n: number) => `${n} ${n === 1 ? "member" : "members"}`,
+  manageMembers: "Manage",
+} satisfies Messages["settings"];

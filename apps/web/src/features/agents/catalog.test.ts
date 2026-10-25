@@ -1,6 +1,7 @@
 import type { DispatchOptions } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
 import { catalogFromDispatchOptions, catalogModel, modelDisplayName } from "./catalog";
+import { defaultModelOf } from "./default-models";
 
 describe("modelDisplayName", () => {
   it("已知模型用表中的名稱", () => {
@@ -63,5 +64,23 @@ describe("catalogFromDispatchOptions", () => {
     expect(
       catalogFromDispatchOptions({ defaultPermissionPolicy: "auto", local: null, team: null }),
     ).toEqual([]);
+  });
+});
+
+describe("defaultModelOf", () => {
+  const entry = {
+    agentId: "claude-code",
+    tool: "Claude Code",
+    vendor: "Anthropic",
+    cliId: "claude",
+    signedIn: true,
+    models: [catalogModel("claude-opus-5-5"), catalogModel("claude-sonnet-5-5")],
+  };
+
+  it("有設定且還在目錄中時用設定的模型，否則用第一個", () => {
+    expect(defaultModelOf(entry, { "claude-code": "claude-sonnet-5-5" })).toBe("claude-sonnet-5-5");
+    expect(defaultModelOf(entry, { "claude-code": "removed-model" })).toBe("claude-opus-5-5");
+    expect(defaultModelOf(entry, {})).toBe("claude-opus-5-5");
+    expect(defaultModelOf({ ...entry, models: [] }, {})).toBeNull();
   });
 });

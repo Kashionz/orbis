@@ -6,6 +6,11 @@ import { z } from "zod";
 import { AGENT_CATALOG_PATH, type AgentCatalogEntry } from "../features/agents/catalog";
 import { TASK_WITHOUT_REPO_PATH } from "../features/new-task/api";
 import {
+  DesktopNotificationSetting,
+  RunnerSettings,
+  SETTINGS_ROUTES,
+} from "../features/settings/api";
+import {
   AddTaskShareInput,
   SHARE_ROUTES,
   type TaskShare,
@@ -151,7 +156,42 @@ class MockShares {
 
 export function createPrototypeHandlers(backend: MockBackend) {
   const shares = new MockShares(backend);
+  const catalog = structuredClone(MOCK_AGENT_CATALOG);
+  const runnerSettings = new Map<string, RunnerSettings>();
+  let desktopNotifications: DesktopNotificationSetting = { enabled: true };
   return [
+    http.post(
+      SETTINGS_ROUTES.agentRelogin,
+      handle((_, p) => {
+        const entry = catalog.find((agent) => agent.agentId === p.agentId);
+        if (!entry) throw new MockError(404, "not_found", "找不到這個 Agent");
+        // 模擬使用者在跳出的登入流程中完成登入
+        entry.signedIn = true;
+      }),
+    ),
+    http.get(
+      SETTINGS_ROUTES.runnerSettings,
+      handle((_, p) => runnerSettings.get(p.runnerId ?? "") ?? { windowsLongPaths: true }),
+    ),
+    http.put(
+      SETTINGS_ROUTES.runnerSettings,
+      handle(async (request, p) => {
+        const settings = await parse(request, RunnerSettings);
+        runnerSettings.set(p.runnerId ?? "", settings);
+        return settings;
+      }),
+    ),
+    http.get(
+      SETTINGS_ROUTES.desktopNotifications,
+      handle(() => desktopNotifications),
+    ),
+    http.put(
+      SETTINGS_ROUTES.desktopNotifications,
+      handle(async (request) => {
+        desktopNotifications = await parse(request, DesktopNotificationSetting);
+        return desktopNotifications;
+      }),
+    ),
     http.get(
       SHARE_ROUTES.share,
       handle((_, p) => shares.get(p.taskId ?? "")),
@@ -192,7 +232,7 @@ export function createPrototypeHandlers(backend: MockBackend) {
     ),
     http.get(
       AGENT_CATALOG_PATH,
-      handle(() => MOCK_AGENT_CATALOG),
+      handle(() => catalog),
     ),
     http.post(
       TASK_WITHOUT_REPO_PATH,

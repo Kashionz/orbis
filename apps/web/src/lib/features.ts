@@ -13,8 +13,6 @@ export const FEATURE_NAMES = [
   "modelCatalog",
   /** 代理重新登入（設定→代理）。 */
   "agentRelogin",
-  /** 每個代理的預設模型（個人設定）。 */
-  "agentDefaultModel",
   /** Runner 的 Windows 長路徑開關（設定→執行器）。 */
   "runnerLongPaths",
   /** 桌面通知總開關（設定→通知）。 */

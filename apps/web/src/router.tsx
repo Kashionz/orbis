@@ -6,20 +6,21 @@ import {
   type ErrorComponentProps,
   Outlet,
   redirect,
+  useNavigate,
 } from "@tanstack/react-router";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AdminPage } from "./features/admin/AdminPage";
 import { meQueryOptions, UnauthorizedError } from "./features/auth/api";
 import { LoginPage } from "./features/auth/LoginPage";
 import { BoardPage } from "./features/board/BoardPage";
 import { DraftTasksPage } from "./features/draft-tasks/DraftTasksPage";
 import { NeedsYouPage } from "./features/needs-you/NeedsYouPage";
-import { NotificationSettingsPage } from "./features/notifications/NotificationSettingsPage";
 import { NotificationsPage } from "./features/notifications/NotificationsPage";
 import { ProjectSettingsPage } from "./features/project/ProjectSettingsPage";
 import { RepoSpecPage } from "./features/repo-spec/RepoSpecPage";
 import { RunReviewRoute, RunRoute, TaskWorkspaceRoute } from "./features/run/workspace-routes";
 import { AppShell } from "./features/shell/AppShell";
+import { useShell } from "./features/shell/shell-context";
 import { parseRunLinkSearch, parseTaskWorkspaceSearch } from "./features/shell/workspace-search";
 import { useT } from "./i18n";
 
@@ -165,10 +166,19 @@ const notificationsRoute = createRoute({
   errorComponent: PageError,
 });
 
+/** 通知設定併入設定對話框：舊網址開啟對話框的通知分頁，頁面回到通知中心。 */
 const notificationSettingsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/settings/notifications",
-  component: NotificationSettingsPage,
+  component: function NotificationSettingsRoute() {
+    const { openSettings } = useShell();
+    const navigate = useNavigate();
+    useEffect(() => {
+      openSettings("notifications");
+      void navigate({ to: "/notifications", replace: true });
+    }, [openSettings, navigate]);
+    return null;
+  },
   errorComponent: PageError,
 });
 

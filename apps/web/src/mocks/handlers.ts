@@ -30,6 +30,7 @@ import {
   UpdateRunnerCredentialInput,
   UpdateTaskCommentInput,
   UpdateTaskInput,
+  UpdateTeamInput,
   VerificationDecisionInput,
   WEB_WS_MAX_SUBSCRIPTIONS,
   WebClientMessage,
@@ -634,6 +635,14 @@ export function createHandlers(backend: MockBackend) {
     http.get(
       API_ROUTES.members,
       handle(() => backend.members()),
+    ),
+    http.get(
+      API_ROUTES.team,
+      handle(() => backend.team()),
+    ),
+    http.patch(
+      API_ROUTES.team,
+      handle(async (request) => backend.updateTeam((await parse(request, UpdateTeamInput)).name)),
     ),
     http.get(
       API_ROUTES.needsYou,

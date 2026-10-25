@@ -47,6 +47,7 @@ import {
   TaskCommentListResponse,
   TaskNoteListResponse,
   type TaskStatus,
+  Team,
   TeamRunnerQueueResponse,
   type UpdateAcceptanceCriterionInput,
   type UpdateDraftTaskInput,
@@ -628,4 +629,10 @@ export function setProjectRole(
 
 export function deleteProjectRole(projectId: string, memberId: string): Promise<void> {
   return apiSend(apiPath(API_ROUTES.projectRole, { projectId, memberId }), { method: "DELETE" });
+}
+
+// ---------- Team（設定→帳號） ----------
+
+export function updateTeam(name: string): Promise<Team> {
+  return apiRequest(API_ROUTES.team, Team, { method: "PATCH", body: { name } });
 }

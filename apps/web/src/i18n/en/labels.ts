@@ -172,6 +172,22 @@ export default {
     task_rejected: "My task sent back",
     run_stopped: "Run stopped for a person",
   },
+  modelTag: {
+    best: "Best",
+    balanced: "Balanced",
+    fast: "Fast",
+    coding: "Coding",
+  },
+  effortLevel: {
+    fast: "Fast",
+    std: "Standard",
+    deep: "Deep",
+  },
+  effortLevelDescription: {
+    fast: "Quick and light, for simple edits",
+    std: "Everyday development work",
+    deep: "Slower and heavier, for hard problems",
+  },
   queueWaitingReason: {
     no_runner: "No runner online",
     agent_unavailable: "No runner can run this agent",
