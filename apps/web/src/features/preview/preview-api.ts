@@ -21,37 +21,24 @@ export const previewStateQuery = (runId: string) =>
     },
   });
 
-/** Preview 還不能開啟時給人看的說明；可以開啟時回傳 null。 */
-export function unavailableMessage(state: PreviewState, inDesktop: boolean): string | null {
+/** Preview 還不能開啟的原因；可以開啟時為 null。文字由 i18n 提供。 */
+export type PreviewUnavailable = "not_configured" | "starting" | "stopped" | "no_domain";
+
+export function unavailableReason(
+  state: PreviewState,
+  inDesktop: boolean,
+): PreviewUnavailable | null {
   switch (state.status) {
     case "not_configured":
-      return "這個 Repo 沒有設定 Preview（設定檔的 [preview].command）";
     case "starting":
-      return "Preview 啟動中…";
     case "stopped":
-      return stoppedMessage(state);
+      return state.status;
     case "ready":
       break;
   }
   // Desktop 可以直接開自己的 Local Runner 跑的 Run，是否能開由 Desktop 判斷
   if (inDesktop || state.shareUrl) return null;
-  return "Server 沒有設定 Preview 網域，只能在執行這個 Run 的電腦上用 Desktop 開啟 Preview";
-}
-
-type StopReason = NonNullable<PreviewState["stopped"]>["reason"];
-
-const STOP_REASON_LABELS: Record<StopReason, string> = {
-  exited: "dev server 結束了",
-  ready_timeout: "等待就緒逾時",
-  spawn_failed: "無法啟動 dev server",
-};
-
-/** Preview 停止的說明（Run 結束時沒有停止原因）。 */
-export function stoppedMessage(state: PreviewState): string {
-  const stopped = state.stopped;
-  if (!stopped) return "Preview 已停止";
-  const exit = stopped.exitCode === null ? "" : `，結束碼 ${stopped.exitCode}`;
-  return `Preview 已停止（${STOP_REASON_LABELS[stopped.reason]}${exit}）`;
+  return "no_domain";
 }
 
 /** 重新啟動 Preview 的 dev server。 */

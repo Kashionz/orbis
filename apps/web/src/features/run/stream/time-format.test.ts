@@ -13,17 +13,17 @@ const words: TimeWords = {
 
 describe("relativeTime", () => {
   const now = Date.parse("2026-10-25T08:00:00Z");
-  const before = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  const ago = (seconds: number) => new Date(now - seconds * 1000).toISOString();
 
   it("一分鐘內是剛剛，之後依分鐘、小時、天", () => {
-    expect(relativeTime(before(30), now, words)).toBe("剛剛");
-    expect(relativeTime(before(125), now, words)).toBe("2 分鐘前");
-    expect(relativeTime(before(3 * 3600 + 5), now, words)).toBe("3 小時前");
-    expect(relativeTime(before(2 * 86_400), now, words)).toBe("2 天前");
+    expect(relativeTime(ago(30), now, words)).toBe("剛剛");
+    expect(relativeTime(ago(125), now, words)).toBe("2 分鐘前");
+    expect(relativeTime(ago(3 * 3600 + 5), now, words)).toBe("3 小時前");
+    expect(relativeTime(ago(2 * 86_400), now, words)).toBe("2 天前");
   });
 
   it("未來的時間（時鐘誤差）當成剛剛", () => {
-    expect(relativeTime(before(-20), now, words)).toBe("剛剛");
+    expect(relativeTime(ago(-20), now, words)).toBe("剛剛");
   });
 });
 

@@ -146,6 +146,7 @@ export default {
     copyPath: "複製路徑",
     copyBranch: "複製分支名稱",
     openFailed: "無法開啟",
+    policyLocalOnly: "只能在本機執行器使用",
   },
 
   effort: {
@@ -228,6 +229,12 @@ export default {
       screenshot: "驗收的截圖",
     },
     saved: "規格已更新",
+    moveUp: "上移",
+    moveDown: "下移",
+    collabEdit: "共同編輯描述",
+    collabView: "即時檢視描述",
+    collabEnd: "結束共同編輯",
+    criterionLabel: (description: string) => `條件「${description}」的描述`,
   },
 
   noRun: {
@@ -250,6 +257,16 @@ export default {
     loadingAgents: "正在讀取可用的代理",
     runnerOffline: "離線",
     noPermission: "沒有派工的權限",
+    dispatchTitle: (key: string) => `派工 ${key}`,
+    runnerLocal: "我的電腦",
+    runnerTeam: "團隊執行器",
+    offlineQueued: "執行器目前離線，派工後會排隊，上線後才開始",
+    noAgents: "這種執行器上沒有可用的代理",
+    unavailable: "無法使用",
+    defaultPolicyUnavailable: (policy: string) =>
+      `專案預設是「${policy}」，這種執行器不提供，請另外選擇`,
+    met: "已完成",
+    notMet: "還缺",
   },
 
   diff: {
@@ -320,6 +337,10 @@ export default {
     drafts: "預覽留言草稿",
     draftsHint: "退回時和差異的行內留言一起送給代理",
     title: "預覽",
+    notConfigured: "這個儲存庫沒有設定預覽（設定檔的 [preview].command）",
+    noDomain: "伺服器沒有設定預覽網域，只能在執行這個執行的電腦上用桌面版開啟預覽",
+    stoppedWith: (reason: string, exitCode: number | null) =>
+      `預覽已停止（${reason}${exitCode === null ? "" : `，結束碼 ${exitCode}`}）`,
   },
 
   terminal: {

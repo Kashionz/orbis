@@ -686,8 +686,25 @@
   cursor: default;
 }
 
-.st-tool-row[data-expandable="true"] {
+.st-tool-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   cursor: pointer;
+}
+
+.st-tool-toggle:disabled {
+  cursor: default;
 }
 
 .st-tool-icon {

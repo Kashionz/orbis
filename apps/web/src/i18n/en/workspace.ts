@@ -142,6 +142,7 @@ export default {
     copyPath: "Copy path",
     copyBranch: "Copy branch name",
     openFailed: "Couldn’t open",
+    policyLocalOnly: "Local runner only",
   },
 
   effort: {
@@ -225,6 +226,12 @@ export default {
       screenshot: "Acceptance screenshot",
     },
     saved: "Spec updated",
+    moveUp: "Move up",
+    moveDown: "Move down",
+    collabEdit: "Edit description together",
+    collabView: "View description live",
+    collabEnd: "Stop editing together",
+    criterionLabel: (description: string) => `Description of “${description}”`,
   },
 
   noRun: {
@@ -248,6 +255,16 @@ export default {
     loadingAgents: "Loading available agents",
     runnerOffline: "Offline",
     noPermission: "No permission to dispatch",
+    dispatchTitle: (key: string) => `Dispatch ${key}`,
+    runnerLocal: "My computer",
+    runnerTeam: "Team Runner",
+    offlineQueued: "The runner is offline; the run will queue and start when it comes back",
+    noAgents: "No agents available on this runner",
+    unavailable: "Unavailable",
+    defaultPolicyUnavailable: (policy: string) =>
+      `The project default is ${policy}, which this runner doesn’t offer; choose another`,
+    met: "done",
+    notMet: "missing",
   },
 
   diff: {
@@ -319,6 +336,11 @@ export default {
     drafts: "Preview comment drafts",
     draftsHint: "Sent to the agent with the diff comments when rejecting",
     title: "Preview",
+    notConfigured: "This repo has no preview configured ([preview].command in the config file)",
+    noDomain:
+      "The server has no preview domain; open the preview in the desktop app on the computer running this run",
+    stoppedWith: (reason: string, exitCode: number | null) =>
+      `Preview stopped (${reason}${exitCode === null ? "" : `, exit code ${exitCode}`})`,
   },
 
   terminal: {

@@ -1,35 +1,35 @@
-// 時間軸項目的操作：展開與收合、回覆權限請求（Run 頁與 Task 頁的 Run 樹共用）。
+// 回覆權限請求（事件串流與待我處理共用的權限判斷）。
 
 import type { Run } from "@orbis/api-contract";
+import type { PermissionPurpose } from "@orbis/protocol";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
 import { queryKeys, respondToPermission } from "../../api/resources";
 import { canRespondToPermission } from "../../lib/permissions";
 import type { Permissions } from "../auth/use-permissions";
-import type { ItemControls } from "./TimelineItemView";
+import { workspaceKeys } from "./workspace-api";
+
+export interface RunControls {
+  /** 可以回覆這種用途的權限請求嗎（依 Role 與 Runner 擁有者）。 */
+  canRespond: (purpose: PermissionPurpose) => boolean;
+  /** 正在送出回覆的權限請求。 */
+  respondingRequestId: string | null;
+  respond: (requestId: string, optionId: string) => void;
+}
 
 export function useRunControls(
   run: Pick<Run, "id" | "runnerKind" | "startedByMemberId">,
   permissions: Permissions,
-): { controls: ItemControls; error: unknown } {
+): { controls: RunControls; error: unknown } {
   const queryClient = useQueryClient();
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const respond = useMutation({
     mutationFn: ({ requestId, optionId }: { requestId: string; optionId: string }) =>
       respondToPermission(run.id, requestId, { optionId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.needsYou });
+      void queryClient.invalidateQueries({ queryKey: workspaceKeys.eventActors(run.id) });
+    },
   });
-  const toggle = useCallback((key: string) => {
-    setExpanded((previous) => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-  const controls: ItemControls = {
-    isExpanded: (key) => expanded.has(key),
-    toggle,
+  const controls: RunControls = {
     canRespond: (purpose) => canRespondToPermission(run, purpose, permissions.ctx),
     respondingRequestId: respond.isPending ? (respond.variables?.requestId ?? null) : null,
     respond: (requestId, optionId) => respond.mutate({ requestId, optionId }),

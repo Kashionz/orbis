@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type PreviewState, stoppedMessage, unavailableMessage } from "./preview-api";
+import { type PreviewState, unavailableReason } from "./preview-api";
 import {
   clearPreviewDrafts,
   loadPreviewDrafts,
@@ -37,7 +37,7 @@ describe("cropToElement", () => {
   });
 });
 
-describe("unavailableMessage", () => {
+describe("unavailableReason", () => {
   const ready: PreviewState = {
     status: "ready",
     runnerId: "r",
@@ -48,34 +48,19 @@ describe("unavailableMessage", () => {
   };
 
   it("就緒而且有 Preview 網址時可以開啟", () => {
-    expect(unavailableMessage(ready, false)).toBeNull();
+    expect(unavailableReason(ready, false)).toBeNull();
   });
 
   it("沒有 Preview 網域時，瀏覽器版本無法開啟；Desktop 交給 Desktop 判斷", () => {
     const noDomain = { ...ready, shareUrl: null };
-    expect(unavailableMessage(noDomain, false)).toContain("沒有設定 Preview 網域");
-    expect(unavailableMessage(noDomain, true)).toBeNull();
+    expect(unavailableReason(noDomain, false)).toBe("no_domain");
+    expect(unavailableReason(noDomain, true)).toBeNull();
   });
 
-  it("停止時說明原因與結束碼", () => {
-    const stopped = (
-      reason: "exited" | "ready_timeout" | "spawn_failed",
-      exitCode: number | null,
-    ) => ({
-      ...ready,
-      status: "stopped" as const,
-      stopped: { reason, exitCode, output: "" },
-    });
-    expect(stoppedMessage(stopped("exited", 1))).toBe(
-      "Preview 已停止（dev server 結束了，結束碼 1）",
-    );
-    expect(stoppedMessage(stopped("ready_timeout", null))).toBe("Preview 已停止（等待就緒逾時）");
-    expect(stoppedMessage({ ...ready, status: "stopped" })).toBe("Preview 已停止");
-  });
-
-  it("還沒就緒時說明原因", () => {
-    expect(unavailableMessage({ ...ready, status: "starting" }, true)).toBe("Preview 啟動中…");
-    expect(unavailableMessage({ ...ready, status: "stopped" }, false)).toBe("Preview 已停止");
+  it("還沒就緒、停止、沒有設定時說明原因", () => {
+    expect(unavailableReason({ ...ready, status: "starting" }, true)).toBe("starting");
+    expect(unavailableReason({ ...ready, status: "stopped" }, false)).toBe("stopped");
+    expect(unavailableReason({ ...ready, status: "not_configured" }, false)).toBe("not_configured");
   });
 });
 

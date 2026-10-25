@@ -128,11 +128,10 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];
     if (start > 0) list.push({ kind: "earlier", key: "earlier", hidden: start });
-    items
-      .slice(start)
-      .forEach((item, index) =>
-        list.push({ kind: "item", key: item.key, item, first: start + index === 0 }),
-      );
+    for (let index = start; index < items.length; index += 1) {
+      const item = items[index] as StreamItem;
+      list.push({ kind: "item", key: item.key, item, first: index === 0 });
+    }
     if (tail) list.push({ kind: "tail", key: "tail", tail });
     return list;
   }, [items, start, tail]);

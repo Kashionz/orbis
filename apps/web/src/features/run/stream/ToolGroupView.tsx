@@ -163,48 +163,34 @@ function ToolRow({ tool }: { tool: ToolCallItem }) {
 
   return (
     <div className="st-tool">
-      <div
-        {...fluidItem}
-        className="st-tool-row"
-        data-expandable={canExpand}
-        role={canExpand ? "button" : undefined}
-        tabIndex={canExpand ? 0 : undefined}
-        aria-expanded={canExpand ? open : undefined}
-        data-tool-status={tool.status}
-        onClick={() => canExpand && env.toggle(detailKey, defaultOpen)}
-        onKeyDown={(event) => {
-          if (canExpand && (event.key === "Enter" || event.key === " ")) {
-            event.preventDefault();
-            env.toggle(detailKey, defaultOpen);
-          }
-        }}
-      >
-        <span className="st-tool-icon" data-tip={t.labels.toolKind[tool.toolKind]}>
-          <BucketIcon bucket={bucket} />
-        </span>
-        <span className="st-tool-primary">{primary}</span>
-        <span className="st-tool-secondary">{secondary}</span>
-        {diff && (
-          <span className="st-stats">
-            <span className="st-add">+{diff.adds}</span>
-            <span className="st-del">−{diff.dels}</span>
+      <div {...fluidItem} className="st-tool-row" data-tool-status={tool.status}>
+        <button
+          type="button"
+          className="st-tool-toggle"
+          aria-expanded={canExpand ? open : undefined}
+          disabled={!canExpand}
+          onClick={() => env.toggle(detailKey, defaultOpen)}
+        >
+          <span className="st-tool-icon" data-tip={t.labels.toolKind[tool.toolKind]}>
+            <BucketIcon bucket={bucket} />
           </span>
-        )}
-        {tool.status !== "completed" && (
-          <span className="st-tool-status" data-status={tool.status}>
-            {running && <StatusDot color="currentColor" live />}
-            {t.labels.toolCallStatus[tool.status]}
-          </span>
-        )}
+          <span className="st-tool-primary">{primary}</span>
+          <span className="st-tool-secondary">{secondary}</span>
+          {diff && (
+            <span className="st-stats">
+              <span className="st-add">+{diff.adds}</span>
+              <span className="st-del">−{diff.dels}</span>
+            </span>
+          )}
+          {tool.status !== "completed" && (
+            <span className="st-tool-status" data-status={tool.status}>
+              {running && <StatusDot color="currentColor" live />}
+              {t.labels.toolCallStatus[tool.status]}
+            </span>
+          )}
+        </button>
         {diffContent && (
-          <button
-            type="button"
-            className="st-link"
-            onClick={(event) => {
-              event.stopPropagation();
-              env.openFile(diffContent.path);
-            }}
-          >
+          <button type="button" className="st-link" onClick={() => env.openFile(diffContent.path)}>
             {w.openInDiff}
           </button>
         )}
