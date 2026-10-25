@@ -331,7 +331,11 @@ fn dispatch_repo_kinds_have_fixtures() {
         let repo = &value["repo"];
         assert_eq!(repo["kind"], offer.repo.kind().as_str(), "{name}");
         assert_eq!(repo["name"], offer.repo.name(), "{name}");
-        assert_eq!(repo["default_branch"], offer.repo.default_branch(), "{name}");
+        assert_eq!(
+            repo["default_branch"],
+            offer.repo.default_branch(),
+            "{name}"
+        );
         assert_eq!(repo["base_ref"], offer.repo.base_ref(), "{name}");
         assert_eq!(repo["clone_url"].as_str(), offer.repo.clone_url(), "{name}");
         kinds.insert(offer.repo.kind().as_str());

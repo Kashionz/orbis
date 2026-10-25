@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, ContentBlock, Diff, EnvVariable, ImageContent, InitializeRequest,
-    McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind, PlanEntryStatus,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification, SessionUpdate, StopReason,
-    ToolCallContent, ToolCallStatus, ToolCallUpdate,
+    AuthenticateRequest, CancelNotification, ContentBlock, Diff, EnvVariable, ImageContent,
+    InitializeRequest, McpServer, McpServerStdio, NewSessionRequest, PermissionOptionKind,
+    PlanEntryStatus, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
+    SessionConfigOptionCategory, SessionId, SessionNotification, SessionUpdate,
+    SetSessionConfigOptionRequest, StopReason, ToolCallContent, ToolCallStatus, ToolCallUpdate,
 };
 use agent_client_protocol::{self as acp, AcpAgent, AcpAgentConfig, Agent, ConnectionTo};
 use tempfile::TempDir;
@@ -21,14 +22,17 @@ use tempfile::TempDir;
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有對應測試的劇本；`scripts/` 新增劇本時要在這裡登記並補上測試。
-const COVERED_SCRIPTS: [&str; 17] = [
+const COVERED_SCRIPTS: [&str; 20] = [
     "cancel.yaml",
+    "config-options.yaml",
     "deleg-child.yaml",
     "deleg-parent.yaml",
     "diff.yaml",
     "empty-diff.yaml",
     "error.yaml",
     "feedback.yaml",
+    "login.yaml",
+    "long-turn.yaml",
     "m1.yaml",
     "mcp.yaml",
     "permission.yaml",
@@ -1278,4 +1282,289 @@ async fn 同一個_session_同時兩個_prompt_時第二個被拒絕() {
     .await;
     assert_eq!(i32::from(overlap.error().code), -32600);
     assert_eq!(first, StopReason::Cancelled);
+}
+
+/// config option 的 id 與目前的值（只看 select 類型）。
+fn config_values(options: &[SessionConfigOption]) -> Vec<(String, String)> {
+    options
+        .iter()
+        .filter_map(|option| match &option.kind {
+            SessionConfigKind::Select(select) => {
+                Some((option.id.0.to_string(), select.current_value.0.to_string()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn config_options_劇本_回報選項_切換後下一個回合看到新的值() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let (created, first, switched, rejected, second) = with_agent(
+        "config-options.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            conn.initialize().await?;
+            let response = conn
+                .cx
+                .send_request(NewSessionRequest::new(&cwd))
+                .block_task()
+                .await?;
+            let session = response.session_id.clone();
+            let created = response.config_options.unwrap_or_default();
+            let first = conn.prompt(&session, "目前的設定").await;
+            let switched = conn
+                .cx
+                .send_request(SetSessionConfigOptionRequest::new(
+                    session.clone(),
+                    "model",
+                    "opus",
+                ))
+                .block_task()
+                .await?
+                .config_options;
+            let rejected = conn
+                .cx
+                .send_request(SetSessionConfigOptionRequest::new(
+                    session.clone(),
+                    "thought",
+                    "max",
+                ))
+                .block_task()
+                .await;
+            let second = conn.prompt(&session, "目前的設定").await;
+            Ok((created, first, switched, rejected, second))
+        },
+    )
+    .await;
+    assert_eq!(
+        config_values(&created),
+        [
+            ("model".to_owned(), "sonnet".to_owned()),
+            ("thought".to_owned(), "medium".to_owned())
+        ]
+    );
+    assert_eq!(
+        created[0].category,
+        Some(SessionConfigOptionCategory::Model)
+    );
+    assert_eq!(
+        created[1].category,
+        Some(SessionConfigOptionCategory::ThoughtLevel)
+    );
+    assert_eq!(
+        first.described(),
+        ["message config: model=sonnet, thought=medium"]
+    );
+    assert_eq!(
+        config_values(&switched),
+        [
+            ("model".to_owned(), "opus".to_owned()),
+            ("thought".to_owned(), "medium".to_owned())
+        ]
+    );
+    let error = rejected.expect_err("不認得的值要回錯誤");
+    assert_eq!(i32::from(error.code), -32602);
+    assert_eq!(
+        second.described(),
+        ["message config: model=opus, thought=medium"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn 沒有宣告_config_options_時_echo_config_回報_none_也不接受切換() {
+    let scripts = workdir();
+    let script = write_script(scripts.path(), "turns:\n  - steps:\n      - echo_config\n");
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let (options, rejected, prompted) =
+        with_agent(&script, PermissionReply::Allow, async move |conn: Conn| {
+            conn.initialize().await?;
+            let response = conn
+                .cx
+                .send_request(NewSessionRequest::new(&cwd))
+                .block_task()
+                .await?;
+            let session = response.session_id.clone();
+            let rejected = conn
+                .cx
+                .send_request(SetSessionConfigOptionRequest::new(
+                    session.clone(),
+                    "model",
+                    "opus",
+                ))
+                .block_task()
+                .await;
+            let prompted = conn.prompt(&session, "目前的設定").await;
+            Ok((response.config_options, rejected, prompted))
+        })
+        .await;
+    assert!(options.is_none());
+    assert_eq!(i32::from(rejected.expect_err("沒有這個選項").code), -32602);
+    assert_eq!(prompted.described(), ["message config: none"]);
+}
+
+#[test]
+fn config_options_的_current_必須是_values_之一() {
+    let yaml = "config_options:\n  - id: model\n    current: x\n    values: [{ id: a }]\nturns:\n  - steps: [{ message: 好 }]\n";
+    assert!(orbis_fake_agent::Script::from_yaml(yaml).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn long_turn_劇本_長回合可以中斷_第二個回合等到檔案出現才結束() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let release = cwd.join("release.txt");
+    let (interrupted, waited, third) = with_agent(
+        "long-turn.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let session = conn.new_session(&cwd, vec![]).await?;
+            // 第一個回合：收到兩個進度後中斷。
+            let pending = conn
+                .cx
+                .send_request(Conn::prompt_request(&session, "做很久的事"));
+            while conn.recorded.lock().unwrap().updates.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            conn.cx
+                .send_notification(CancelNotification::new(session.clone()))?;
+            let stop = pending.block_task().await?.stop_reason;
+            let interrupted = (stop, conn.take_recorded().updates);
+            // 第二個回合：建立檔案之前不會結束。
+            let pending = conn
+                .cx
+                .send_request(Conn::prompt_request(&session, "中斷後送出的訊息"));
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let before = conn.recorded.lock().unwrap().updates.len();
+            std::fs::write(&release, "ok").unwrap();
+            let stop = pending.block_task().await?.stop_reason;
+            let waited = (before, stop, conn.take_recorded().updates);
+            let third = conn.prompt(&session, "第一則\n\n第二則").await;
+            Ok((interrupted, waited, third))
+        },
+    )
+    .await;
+    let (stop, updates) = interrupted;
+    assert_eq!(stop, StopReason::Cancelled);
+    let described: Vec<_> = updates.iter().map(describe).collect();
+    assert!(
+        described.len() >= 2 && described.len() < 50,
+        "{described:?}"
+    );
+    assert_eq!(described[0], "message 處理中 1/50");
+    assert!(!described.contains(&"message 第一個回合完成".to_owned()));
+    let (before, stop, updates) = waited;
+    assert_eq!(before, 1, "檔案出現之前只會送出 echo_prompt");
+    assert_eq!(stop, StopReason::EndTurn);
+    let described: Vec<_> = updates.iter().map(describe).collect();
+    assert_eq!(
+        described,
+        ["message text:中斷後送出的訊息", "message 第二個回合完成"]
+    );
+    assert_eq!(third.described(), ["message text:第一則\n\n第二則"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wait_for_file_可以被_cancel_中斷() {
+    let scripts = workdir();
+    let script = write_script(
+        scripts.path(),
+        "turns:\n  - steps:\n      - message: 等待\n      - wait_for_file: never.txt\n",
+    );
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let stop = with_agent(&script, PermissionReply::Allow, async move |conn: Conn| {
+        let session = conn.new_session(&cwd, vec![]).await?;
+        let pending = conn.cx.send_request(Conn::prompt_request(&session, "等"));
+        while conn.recorded.lock().unwrap().updates.is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        conn.cx
+            .send_notification(CancelNotification::new(session.clone()))?;
+        Ok(pending.block_task().await?.stop_reason)
+    })
+    .await;
+    assert_eq!(stop, StopReason::Cancelled);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn login_劇本_登入前_session_new_回_auth_required_登入要等一段時間() {
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let (methods, before, elapsed, after) = with_agent(
+        "login.yaml",
+        PermissionReply::Allow,
+        async move |conn: Conn| {
+            let init = conn
+                .cx
+                .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                .block_task()
+                .await?;
+            let methods: Vec<String> = init
+                .auth_methods
+                .iter()
+                .map(|method| method.id().0.to_string())
+                .collect();
+            let before = conn
+                .cx
+                .send_request(NewSessionRequest::new(&cwd))
+                .block_task()
+                .await;
+            let started = std::time::Instant::now();
+            conn.cx
+                .send_request(AuthenticateRequest::new("oauth-personal"))
+                .block_task()
+                .await?;
+            let elapsed = started.elapsed();
+            let session = conn
+                .cx
+                .send_request(NewSessionRequest::new(&cwd))
+                .block_task()
+                .await?
+                .session_id;
+            let after = conn.prompt(&session, "你好").await;
+            Ok((methods, before, elapsed, after))
+        },
+    )
+    .await;
+    assert_eq!(methods, ["oauth-personal"]);
+    assert_eq!(
+        before.expect_err("登入前要回 auth_required").code,
+        acp::Error::auth_required().code
+    );
+    assert!(elapsed >= Duration::from_millis(300), "{elapsed:?}");
+    assert_eq!(after.described(), ["message 已登入"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn auth_error_時_authenticate_失敗而且仍然要登入() {
+    let scripts = workdir();
+    let script = write_script(
+        scripts.path(),
+        "auth:\n  methods: [oauth-personal]\n  error: 使用者取消了登入\nturns:\n  - steps: [{ message: 好 }]\n",
+    );
+    let dir = workdir();
+    let cwd = dir.path().to_owned();
+    let (login, session) = with_agent(&script, PermissionReply::Allow, async move |conn: Conn| {
+        conn.initialize().await?;
+        let login = conn
+            .cx
+            .send_request(AuthenticateRequest::new("oauth-personal"))
+            .block_task()
+            .await;
+        let session = conn
+            .cx
+            .send_request(NewSessionRequest::new(&cwd))
+            .block_task()
+            .await;
+        Ok((login, session))
+    })
+    .await;
+    assert_eq!(login.expect_err("登入要失敗").message, "使用者取消了登入");
+    assert_eq!(
+        session.expect_err("沒有登入成功").code,
+        acp::Error::auth_required().code
+    );
 }

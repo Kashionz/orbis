@@ -1,0 +1,8 @@
+# login：要先 authenticate，登入需要一段時間（模擬在瀏覽器完成登入），給登入的成功與逾時測試用（agent-relogin）。
+description: 需要登入的 Agent
+auth:
+  methods: [oauth-personal]
+  delay_ms: 300
+turns:
+  - steps:
+      - message: 已登入

@@ -43,11 +43,33 @@
 //! | `echo_session_mode` | 以 `agent_message_chunk` 回報目前的 session mode：`mode: <id>`（沒有 mode 時為 `mode: none`） |
 //! | `echo_session_meta` | 以 `agent_message_chunk` 回報建立（或接續）session 時收到的 `_meta`（JSON；沒有時為 `null`），讓測試確認 Runner 傳給 Agent 的選項 |
 //! | `wait_for_cancel` | 一直等到 `session/cancel`，以 `cancelled` 結束 |
+//! | `ticks: {...}`（[`TicksStep`]） | 每隔 `interval_ms` 送一個 `agent_message_chunk`，共 `count` 個（長回合，可被 `session/cancel` 中斷） |
+//! | `wait_for_file: <路徑>` | 不送訊息，一直等到這個檔案出現（相對於 cwd；可被 `session/cancel` 中斷），讓測試決定回合何時結束 |
+//! | `echo_config` | 以 `agent_message_chunk` 回報目前的 config option：`config: <id>=<值>, …`（依宣告順序；沒有時為 `config: none`） |
 //! | `error: {...}`（[`ErrorStep`]） | `session/prompt` 回 JSON-RPC 錯誤 |
 //! | `rate_limit: {...}`（[`RateLimitStep`]） | `session/prompt` 回可辨識為 rate limit 的 JSON-RPC 錯誤 |
 //! | `stop: <stop reason>` | `session/prompt` 回指定的 stop reason |
 //!
 //! `error`、`rate_limit`、`stop`、`wait_for_cancel` 會結束回合，所以只能是步驟串的最後一個。
+//!
+//! # Session 的 config option 與認證
+//!
+//! 劇本頂層可以宣告 `config_options`（[`ConfigOptionDecl`]）：`session/new`、`session/load`、
+//! `session/resume` 回報這些選項（各 session 從 `current` 開始），`session/set_config_option` 可以切換，
+//! 不認得的選項或值回 `invalid_params`。`auth`（[`AuthDecl`]）控制 `authenticate` 的行為。
+//!
+//! ```yaml
+//! config_options:
+//!   - id: model
+//!     name: Model
+//!     category: model
+//!     current: sonnet
+//!     values: [{ id: sonnet, name: Sonnet }, { id: opus, name: Opus }]
+//! auth: { methods: [oauth-personal], delay_ms: 200 }
+//! turns:
+//!   - steps:
+//!       - echo_config
+//! ```
 //!
 //! # 路徑
 //!
@@ -71,6 +93,55 @@ pub struct Script {
     pub description: Option<String>,
     /// 回合，至少一個。
     pub turns: Vec<Turn>,
+    /// session 的 config option（ACP `configOptions`）；空的表示不支援 `session/set_config_option`。
+    #[serde(default)]
+    pub config_options: Vec<ConfigOptionDecl>,
+    /// `authenticate` 的行為；沒有時照 CLI 的 `--auth-methods` 立即成功。
+    #[serde(default)]
+    pub auth: Option<AuthDecl>,
+}
+
+/// 一個 select 類型的 config option。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigOptionDecl {
+    /// 選項的 id（`session/set_config_option` 的 `configId`）。
+    pub id: String,
+    /// 顯示名稱；省略時同 id。
+    #[serde(default)]
+    pub name: Option<String>,
+    /// ACP 的類別，例如 `model`、`thought_level`、`mode`；`_` 開頭的自訂類別也可以。省略時沒有類別。
+    #[serde(default)]
+    pub category: Option<String>,
+    /// 一開始的值，必須是 `values` 之一。
+    pub current: String,
+    /// 可以選的值，至少一個。
+    pub values: Vec<ConfigValueDecl>,
+}
+
+/// config option 可以選的一個值。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigValueDecl {
+    pub id: String,
+    /// 顯示名稱；省略時同 id。
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// `authenticate` 的行為。
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthDecl {
+    /// 宣告的認證方式；非空時取代 CLI 的 `--auth-methods`。
+    #[serde(default)]
+    pub methods: Vec<String>,
+    /// 回覆 `authenticate` 前等待的毫秒數（模擬使用者在瀏覽器登入；設很大可以測逾時）。
+    #[serde(default)]
+    pub delay_ms: u64,
+    /// 有值時 `authenticate` 以這段訊息回 JSON-RPC 錯誤（登入失敗），不記下登入狀態。
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// 一個回合：對應一次 `session/prompt`。
@@ -107,6 +178,12 @@ pub enum Step {
     SleepMs(u64),
     /// 等到 `session/cancel` 為止。
     WaitForCancel,
+    /// 定時送出訊息片段的長回合。
+    Ticks(TicksStep),
+    /// 等到檔案出現為止（相對於 session 的 cwd）。
+    WaitForFile(String),
+    /// 回報目前的 config option。
+    EchoConfig,
     /// 啟動一個不會自己結束的子程序（Runner 測試「取消時整個程序樹都被結束」用）。
     SpawnChild,
     /// 回報建立 session 時收到的 `_meta`。
@@ -131,6 +208,21 @@ impl Step {
             Step::WaitForCancel | Step::Error(_) | Step::RateLimit(_) | Step::Stop(_)
         )
     }
+}
+
+/// `ticks` 步驟：每隔 `interval_ms` 送一個 `agent_message_chunk`，內容是 `<message> <n>/<count>`
+/// （`message` 預設 `tick`）。被 `session/cancel` 中斷時以 `cancelled` 結束回合。
+///
+/// ```yaml
+/// ticks: { count: 20, interval_ms: 100, message: 處理中 }
+/// ```
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TicksStep {
+    pub count: u32,
+    pub interval_ms: u64,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 /// `tool_call` 步驟。
@@ -414,6 +506,19 @@ impl Script {
         }
         for (index, turn) in self.turns.iter().enumerate() {
             validate_steps(&turn.steps, &format!("turns[{index}].steps"))?;
+        }
+        let mut ids = std::collections::HashSet::new();
+        for (index, option) in self.config_options.iter().enumerate() {
+            let location = format!("config_options[{index}]");
+            if !ids.insert(option.id.as_str()) {
+                return Err(invalid(&location, "config option 的 id 重複"));
+            }
+            if option.values.is_empty() {
+                return Err(invalid(&location, "values 至少要有一個"));
+            }
+            if !option.values.iter().any(|v| v.id == option.current) {
+                return Err(invalid(&location, "current 必須是 values 之一"));
+            }
         }
         Ok(())
     }
