@@ -31,7 +31,12 @@ import type {
 import { and, asc, count, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { z } from "zod";
-import { authorize, authorizePermissionResponse } from "../authz/capabilities";
+import {
+  authorize,
+  authorizePermissionResponse,
+  roleOnTask,
+  taskAccess,
+} from "../authz/capabilities";
 import {
   actorProjectRoles,
   loadRunScope,
@@ -50,6 +55,7 @@ import {
   runEvents,
   runners,
   runs,
+  taskMembers,
   tasks,
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
@@ -103,6 +109,7 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
         gateAssignee: gates.assigneeMemberIdAtCreation,
         run: runs,
         runnerMemberId: runners.memberId,
+        shareRole: taskMembers.role,
       })
       .from(needsYouItems)
       .innerJoin(projects, eq(projects.id, needsYouItems.projectId))
@@ -110,6 +117,10 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
       .leftJoin(gates, eq(gates.id, needsYouItems.gateId))
       .leftJoin(runs, eq(runs.id, needsYouItems.runId))
       .leftJoin(runners, eq(runners.id, runs.runnerId))
+      .leftJoin(
+        taskMembers,
+        and(eq(taskMembers.taskId, tasks.id), eq(taskMembers.memberId, actor.memberId)),
+      )
       .where(
         and(
           eq(projects.teamId, actor.teamId),
@@ -126,7 +137,15 @@ export function createReviewRoutes(s: Services): Hono<AppEnv> {
     const roles = await actorProjectRoles(db, actor);
     const items: NeedsYouListResponse = [];
     for (const r of rows) {
-      const role = roles(r.project.id);
+      // 看不到的 Task 不出現（Task 分享，ADR-0012）；能不能處理依 Task 上的 Role 判斷。
+      const projectRole = roles(r.project.id);
+      const access = taskAccess({
+        role: projectRole,
+        taskRole: r.shareRole,
+        generalAccess: r.task.generalAccess,
+      });
+      if (access === null) continue;
+      const role = roleOnTask(projectRole, access);
       if (r.item.kind === "permission_request") {
         if (!r.run) continue;
         const allowed = authorizePermissionResponse({
@@ -624,7 +643,8 @@ async function requirePermissionResponder(
     : [];
   const result = authorizePermissionResponse({
     memberId: actor.memberId,
-    role: scope.role,
+    // Task 上的 Role（ADR-0012）：被分享為可操作的人可以回覆；config 信任仍只有 Admin 以上。
+    role: scope.taskRole,
     runnerKind: scope.run.target,
     runnerOwnerMemberId: runnerOwnerOf(scope.run, runner?.memberId),
     purpose,

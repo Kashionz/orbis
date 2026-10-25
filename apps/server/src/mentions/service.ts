@@ -20,8 +20,9 @@ import {
 } from "@orbis/api-contract";
 import type { ContentBlock } from "@orbis/protocol";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
-import { authorize, effectiveRole } from "../authz/capabilities";
-import { members, mentions, projectMemberRoles, projects, runs, type tasks } from "../db/schema";
+import { authorize } from "../authz/capabilities";
+import { memberOnTask } from "../authz/task-access";
+import { members, mentions, projects, runs, type tasks } from "../db/schema";
 import type { Executor, UnitOfWork } from "../db/tx";
 import type { Logger } from "../logger";
 import type { Notify } from "../notifications/types";
@@ -224,25 +225,17 @@ export class MentionService {
     memberId: string,
     target: "local" | "team",
   ): Promise<boolean> {
-    const [row] = await tx
-      .select({ member: members, project: projects, override: projectMemberRoles.role })
-      .from(members)
-      .innerJoin(projects, eq(projects.teamId, members.teamId))
-      .leftJoin(
-        projectMemberRoles,
-        and(
-          eq(projectMemberRoles.memberId, members.id),
-          eq(projectMemberRoles.projectId, projects.id),
-        ),
-      )
-      .where(and(eq(members.id, memberId), eq(projects.id, task.projectId)));
-    if (!row) return false;
+    // 依 Task 上的 Role 判斷（Task 分享，ADR-0012）；看不到這個 Task 的人不能派工。
+    const onTask = await memberOnTask(tx, task.id, memberId);
+    if (!onTask) return false;
+    const [project] = await tx.select().from(projects).where(eq(projects.id, task.projectId));
+    if (!project) return false;
     return authorize(target === "local" ? "dispatch_local" : "dispatch_team", {
       memberId,
-      role: effectiveRole(row.member.role, row.override),
+      role: onTask.taskRole,
       project: {
-        allowMemberTeamRunnerDispatch: row.project.allowMemberTeamRunnerDispatch,
-        forbidSelfApproval: row.project.forbidSelfApproval,
+        allowMemberTeamRunnerDispatch: project.allowMemberTeamRunnerDispatch,
+        forbidSelfApproval: project.forbidSelfApproval,
       },
     }).ok;
   }

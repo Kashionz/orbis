@@ -341,6 +341,7 @@ export class RunControlService {
       runId,
       title: `${row.task.key} 停下來了`,
       body: reason,
+      stoppedRun: { reasonCode, attempt: null, detail },
     });
   }
 }

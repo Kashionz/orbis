@@ -17,6 +17,7 @@ import {
   projects,
   repos,
   sessions,
+  taskMembers,
   tasks,
   teams,
 } from "../../src/db/schema";
@@ -124,23 +125,44 @@ export interface SeededTeam {
 
 let nextGitHubUserId = 1000;
 
-/** 建立一個 Member 與它的 session。 */
-export async function seedMember(db: Database, teamId: string, role: Role): Promise<SeededMember> {
+/** 建立一個 Member 與它的 session。`email` 是已驗證的 email（Member 與 session 都寫入）。 */
+export async function seedMember(
+  db: Database,
+  teamId: string,
+  role: Role,
+  options: { email?: string | null } = {},
+): Promise<SeededMember> {
   const githubUserId = nextGitHubUserId++;
+  const email = options.email ?? null;
   const [member] = await db
     .insert(members)
-    .values({ teamId, githubUserId, githubLogin: `user${githubUserId}`, role })
+    .values({ teamId, githubUserId, githubLogin: `user${githubUserId}`, role, email })
     .returning();
   if (!member) throw new Error("建立 Member 失敗");
+  const { cookie } = await seedSession(db, { githubUserId, teamId, email });
+  return { id: member.id, role, githubUserId, cookie };
+}
+
+/** 建立一個登入 session（可以不屬於任何 Team，例如受邀者）。回傳 `Cookie` header 的值。 */
+export async function seedSession(
+  db: Database,
+  options: { githubUserId?: number; teamId?: string | null; email?: string | null } = {},
+): Promise<{ githubUserId: number; cookie: string; sessionId: string }> {
+  const githubUserId = options.githubUserId ?? nextGitHubUserId++;
   const token = randomToken();
-  await db.insert(sessions).values({
-    tokenHash: sha256Hex(token),
-    githubUserId,
-    githubLogin: `user${githubUserId}`,
-    currentTeamId: teamId,
-    expiresAt: new Date("2100-01-01T00:00:00.000Z"),
-  });
-  return { id: member.id, role, githubUserId, cookie: `${SESSION_COOKIE}=${token}` };
+  const [session] = await db
+    .insert(sessions)
+    .values({
+      tokenHash: sha256Hex(token),
+      githubUserId,
+      githubLogin: `user${githubUserId}`,
+      verifiedEmail: options.email ?? null,
+      currentTeamId: options.teamId ?? null,
+      expiresAt: new Date("2100-01-01T00:00:00.000Z"),
+    })
+    .returning();
+  if (!session) throw new Error("建立 session 失敗");
+  return { githubUserId, cookie: `${SESSION_COOKIE}=${token}`, sessionId: session.id };
 }
 
 /** 建立 Team，以及 Owner、Admin、Member、Viewer 各一位。 */
@@ -247,6 +269,12 @@ export async function seedReadyTask(
     })
     .returning();
   if (!task) throw new Error("建立 Task 失敗");
+  // 和 API 建立 Task 相同：建立的人是擁有者（ADR-0012）。
+  if (task.createdByMemberId) {
+    await db
+      .insert(taskMembers)
+      .values({ taskId: task.id, memberId: task.createdByMemberId, role: "owner" });
+  }
   await db.insert(acceptanceCriteria).values({
     taskId: task.id,
     position: 0,

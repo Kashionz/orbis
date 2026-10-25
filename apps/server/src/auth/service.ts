@@ -40,7 +40,13 @@ export async function signIn(
 
     await tx
       .update(members)
-      .set({ githubLogin: user.login, name: user.name, avatarUrl: user.avatarUrl })
+      // email 每次登入覆寫（沒有已驗證 email 時寫 null），Task 邀請與預覽邀請以此比對。
+      .set({
+        githubLogin: user.login,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+        email: user.email ?? null,
+      })
       .where(eq(members.githubUserId, user.id));
 
     const [existing] = await tx
@@ -63,6 +69,7 @@ export async function signIn(
           githubLogin: user.login,
           name: user.name,
           avatarUrl: user.avatarUrl,
+          email: user.email ?? null,
           role: "owner",
         });
         currentTeamId = team.id;
@@ -79,6 +86,7 @@ export async function signIn(
         githubLogin: user.login,
         githubName: user.name,
         githubAvatarUrl: user.avatarUrl,
+        verifiedEmail: user.email ?? null,
         currentTeamId,
         expiresAt: new Date(now.getTime() + SESSION_TTL_MS),
       })

@@ -45,6 +45,10 @@ export interface Config {
    * 目錄中的檔案照常回應，其他不是 `/api` 的路徑回 `index.html`（SPA）。未設定時只提供 API（開發時 Web 由 Vite 提供）。
    */
   webDir: string | null;
+  /**
+   * 寄信用的 SMTP（Task 邀請、預覽邀請）。網址與寄件者都有設定時才寄；沒有設定時由邀請人複製連結。
+   */
+  smtp: { url: string; from: string } | null;
   logLevel: string;
   /** 以易讀格式輸出 log（開發用）。 */
   prettyLogs: boolean;
@@ -91,6 +95,8 @@ export const CONFIG_ENV = {
   blobDir: envVar("BLOB_DIR"),
   previewDomain: envVar("PREVIEW_DOMAIN"),
   webDir: envVar("WEB_DIR"),
+  smtpUrl: envVar("SMTP_URL"),
+  smtpFrom: envVar("SMTP_FROM"),
   logLevel: envVar("LOG_LEVEL"),
   logPretty: envVar("LOG_PRETTY"),
 } as const;
@@ -133,6 +139,10 @@ const EnvSchema = z.object({
     if (problem) ctx.addIssue({ code: "custom", message: problem });
   }),
   webDir: optionalString,
+  smtpUrl: optionalString.pipe(
+    z.url({ protocol: /^smtps?$/, error: "必須是 smtp:// 或 smtps:// 開頭的網址" }).optional(),
+  ),
+  smtpFrom: optionalString,
   logLevel: optionalString.pipe(z.enum(LOG_LEVELS).default("info")),
   logPretty: optionalString.pipe(z.enum(["0", "1"]).optional()),
 } satisfies Record<EnvKey, z.ZodType>);
@@ -152,6 +162,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     throw new ConfigError(problems);
   }
   const e = parsed.data;
+  if ((e.smtpUrl === undefined) !== (e.smtpFrom === undefined)) {
+    const missing = e.smtpUrl === undefined ? CONFIG_ENV.smtpUrl : CONFIG_ENV.smtpFrom;
+    throw new ConfigError([`${missing}：要寄信時 SMTP 網址與寄件者都要設定`]);
+  }
   return {
     databaseUrl: e.databaseUrl,
     port: e.port,
@@ -164,6 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     blobDir: e.blobDir ?? DEFAULT_BLOB_DIR,
     previewDomain: e.previewDomain ?? null,
     webDir: e.webDir ? path.resolve(e.webDir) : null,
+    smtp: e.smtpUrl && e.smtpFrom ? { url: e.smtpUrl, from: e.smtpFrom } : null,
     logLevel: e.logLevel,
     prettyLogs: e.logPretty === undefined ? env.NODE_ENV !== "production" : e.logPretty === "1",
   };

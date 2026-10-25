@@ -19,6 +19,8 @@ import {
   loadTaskScope,
   requireProjectCapability,
   type TaskRow,
+  taskViewer,
+  visibleTasksCondition,
 } from "../authz/scope";
 import { collabDocRef } from "../collab/doc-name";
 import {
@@ -29,6 +31,7 @@ import {
   repos,
   runs,
   taskDependencies,
+  taskMembers,
   tasks,
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
@@ -64,10 +67,11 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         and(
           eq(tasks.projectId, scope.project.id),
           query.status ? eq(tasks.status, query.status) : undefined,
+          visibleTasksCondition(actor.memberId, scope.role),
         ),
       )
       .orderBy(asc(tasks.number));
-    return c.json(await toTasks(db, rows));
+    return c.json(await toTasks(db, rows, taskViewer(actor, scope)));
   });
 
   app.post(API_ROUTES.projectTasks, auth, async (c) => {
@@ -84,12 +88,12 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         .where(eq(projects.id, scope.project.id))
         .for("update");
       if (!project) throw notFound("Project");
-      // TODO(backend, task-without-repo)：不指定 Repo 的 Task（ADR-0011）。
+      // 可以不指定 Repo（ADR-0011 的修訂）：這種 Task 只能停在 Backlog，之後補指定一次。
       const repoId = input.repoId;
-      if (repoId === null) {
-        throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援不指定 Repo 的 Task");
+      if (repoId !== null) await requireRepoInProject(tx, repoId, project.id);
+      if (repoId === null && input.specPath) {
+        throw new ApiError(422, "invalid_input", "沒有指定 Repo 的 Task 不能連結 Spec");
       }
-      await requireRepoInProject(tx, repoId, project.id);
       if (input.assigneeMemberId) await requireTeamMember(tx, actor, input.assigneeMemberId);
       await requireTasksInProject(tx, input.dependsOn, project.id);
 
@@ -98,7 +102,8 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         .update(projects)
         .set({ nextTaskNumber: number + 1 })
         .where(eq(projects.id, project.id));
-      const repoSpecId = input.specPath ? await upsertSpec(tx, repoId, input.specPath) : null;
+      const repoSpecId =
+        input.specPath && repoId !== null ? await upsertSpec(tx, repoId, input.specPath) : null;
       const [row] = await tx
         .insert(tasks)
         .values({
@@ -115,6 +120,10 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         })
         .returning();
       if (!row) throw new Error("建立 Task 失敗");
+      // 建立的人是 Task 的擁有者（ADR-0012）。
+      await tx
+        .insert(taskMembers)
+        .values({ taskId: row.id, memberId: actor.memberId, role: "owner" });
       const dependsOn = [...new Set(input.dependsOn)];
       if (dependsOn.length > 0) {
         await tx
@@ -132,7 +141,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
       );
       return row;
     });
-    return c.json(await toTask(db, task), 201);
+    return c.json(await toTask(db, task, taskViewer(actor, scope)), 201);
   });
 
   app.get(API_ROUTES.taskByKey, auth, async (c) => {
@@ -154,14 +163,14 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     if (!row) throw notFound("Task");
     const scope = await loadTaskScope(db, actor, row.id);
     requireProjectCapability(actor, scope, "view");
-    return c.json(await toTask(db, scope.task));
+    return c.json(await toTask(db, scope.task, taskViewer(actor, scope)));
   });
 
   app.get(API_ROUTES.task, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "view");
-    return c.json(await toTask(db, scope.task));
+    return c.json(await toTask(db, scope.task, taskViewer(actor, scope)));
   });
 
   app.patch(API_ROUTES.task, auth, async (c) => {
@@ -169,10 +178,6 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
     const input = await readJson(c, UpdateTaskInput);
-    // TODO(backend, task-without-repo)：補指定 Repo（只接受從 null 補一次，ADR-0011）。
-    if (input.repoId !== undefined) {
-      throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援補指定 Task 的 Repo");
-    }
     const task = await inTransaction(db, async (uow) => {
       const { tx } = uow;
       await tx
@@ -181,6 +186,22 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         .where(eq(projects.id, scope.project.id))
         .for("update");
       const changes: Partial<typeof tasks.$inferInsert> = {};
+      // Repo 只能從沒有補指定一次，之後不能更換（ADR-0011 的修訂）。
+      const [current] = await tx
+        .select({ repoId: tasks.repoId })
+        .from(tasks)
+        .where(eq(tasks.id, scope.task.id));
+      const currentRepoId = current?.repoId ?? null;
+      if (input.repoId !== undefined && input.repoId !== currentRepoId) {
+        if (currentRepoId !== null) {
+          throw new ApiError(409, "repo_already_set", "Task 已經指定 Repo，不能更換");
+        }
+        if (input.repoId !== null) {
+          await requireRepoInProject(tx, input.repoId, scope.project.id);
+          changes.repoId = input.repoId;
+        }
+      }
+      const repoIdAfter = changes.repoId ?? currentRepoId;
       if (input.title !== undefined) changes.title = input.title;
       if (input.description !== undefined) changes.description = input.description;
       if (input.planGateEnabled !== undefined) changes.planGateEnabled = input.planGateEnabled;
@@ -190,9 +211,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
       }
       if (input.specPath !== undefined) {
         changes.repoSpecId =
-          input.specPath && scope.task.repoId
-            ? await upsertSpec(tx, scope.task.repoId, input.specPath)
-            : null;
+          input.specPath && repoIdAfter ? await upsertSpec(tx, repoIdAfter, input.specPath) : null;
       }
       if (input.dependsOn !== undefined) {
         await replaceDependencies(tx, scope.task, [...new Set(input.dependsOn)]);
@@ -219,7 +238,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
       );
       return row;
     });
-    return c.json(await toTask(db, task));
+    return c.json(await toTask(db, task, taskViewer(actor, scope)));
   });
 
   app.delete(API_ROUTES.task, auth, async (c) => {
@@ -258,7 +277,7 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         actorMemberId: actor.memberId,
       }),
     );
-    return c.json(await toTask(db, task));
+    return c.json(await toTask(db, task, taskViewer(actor, scope)));
   });
 
   // ---- Acceptance Criterion ----

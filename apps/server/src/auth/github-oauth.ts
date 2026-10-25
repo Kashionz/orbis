@@ -8,6 +8,11 @@ export interface GitHubUser {
   login: string;
   name: string | null;
   avatarUrl: string | null;
+  /**
+   * 主要且已驗證的 email（小寫，需要 `user:email` scope）；沒有或取不到時為 null。
+   * 測試替身可以省略（視為 null）。
+   */
+  email?: string | null;
 }
 
 export interface GitHubOAuth {
@@ -28,6 +33,10 @@ const TokenResponse = z.union([
   z.object({ error: z.string(), error_description: z.string().optional() }),
 ]);
 
+const EmailsResponse = z.array(
+  z.object({ email: z.string(), primary: z.boolean(), verified: z.boolean() }),
+);
+
 const UserResponse = z.object({
   id: z.number().int(),
   login: z.string(),
@@ -35,7 +44,10 @@ const UserResponse = z.object({
   avatar_url: z.string().nullable().optional(),
 });
 
-/** 呼叫 github.com 的實作。只需要讀取公開的使用者資料，所以 scope 為空。 */
+/**
+ * 呼叫 github.com 的實作。scope 只有 `user:email`：取得已驗證的 email，給 Task 邀請與預覽邀請比對
+ * （ADR-0012、ADR-0015）；其他只讀公開的使用者資料。
+ */
 export function createGitHubOAuth(options: {
   clientId: string;
   clientSecret: string;
@@ -48,6 +60,7 @@ export function createGitHubOAuth(options: {
       url.searchParams.set("client_id", options.clientId);
       url.searchParams.set("redirect_uri", redirectUri);
       url.searchParams.set("state", state);
+      url.searchParams.set("scope", "user:email");
       url.searchParams.set("allow_signup", "false");
       return url.toString();
     },
@@ -91,7 +104,34 @@ export function createGitHubOAuth(options: {
         login: user.login,
         name: user.name ?? null,
         avatarUrl: user.avatar_url ?? null,
+        email: await primaryVerifiedEmail(doFetch, accessToken),
       };
     },
   };
+}
+
+/**
+ * `GET /user/emails` 中主要且已驗證的 email（小寫）。沒有、或取不到（例如使用者沒有授權 scope）時為 null，
+ * 不讓登入失敗。
+ */
+async function primaryVerifiedEmail(
+  doFetch: typeof fetch,
+  accessToken: string,
+): Promise<string | null> {
+  try {
+    const response = await doFetch("https://api.github.com/user/emails", {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${accessToken}`,
+        "user-agent": NAMES.productSlug,
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    if (!response.ok) return null;
+    const emails = EmailsResponse.parse(await response.json());
+    const primary = emails.find((e) => e.primary && e.verified);
+    return primary ? primary.email.toLowerCase() : null;
+  } catch {
+    return null;
+  }
 }

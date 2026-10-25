@@ -9,6 +9,7 @@ import { attachCollabEndpoint, type CollabEndpoint } from "./collab/endpoint";
 import type { Config } from "./config";
 import type { Database } from "./db/client";
 import type { Logger } from "./logger";
+import { createSmtpMailer } from "./mail/mailer";
 import { createPreviewHost } from "./preview/host";
 import { PreviewRelayService } from "./preview/relay";
 import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
@@ -25,7 +26,7 @@ export interface ServerDeps {
     | "devPairingToken"
     | "runnerHeartbeatIntervalMs"
   > &
-    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain" | "webDir">>;
+    Partial<Pick<Config, "blobDir" | "apiOrigin" | "previewDomain" | "webDir" | "smtp">>;
   db: Database;
   logger: Logger;
   githubOAuth: GitHubOAuth;
@@ -63,6 +64,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       blobDir: deps.config.blobDir,
       publicUrl: deps.config.publicUrl,
       previewDomain: deps.config.previewDomain,
+      ...(deps.config.smtp && { mailer: createSmtpMailer(deps.config.smtp, deps.logger) }),
       ...(deps.github && { github: deps.github }),
     });
   const app = createApp({ ...deps, services });

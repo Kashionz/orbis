@@ -41,6 +41,7 @@ describe("Server 設定", () => {
       blobDir: DEFAULT_BLOB_DIR,
       previewDomain: null,
       webDir: null,
+      smtp: null,
       logLevel: "info",
       prettyLogs: false,
     });

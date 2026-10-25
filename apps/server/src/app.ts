@@ -17,12 +17,14 @@ import { createCommentRoutes } from "./routes/comments";
 import { createCredentialRoutes } from "./routes/credentials";
 import { createDraftRoutes } from "./routes/drafts";
 import { createGitHubRoutes, createGitHubWebhookRoute } from "./routes/github";
+import { createInvitePageRoutes } from "./routes/invite-pages";
 import { createNotificationRoutes } from "./routes/notifications";
 import { createProjectRoutes } from "./routes/projects";
 import { createRepoSpecRoutes } from "./routes/repo-specs";
 import { createReviewRoutes } from "./routes/review";
 import { createRunnerRoutes } from "./routes/runners";
 import { createRunRoutes } from "./routes/runs";
+import { createTaskShareRoutes } from "./routes/task-share";
 import { createTaskRoutes } from "./routes/tasks";
 import { createTeamRoutes } from "./routes/team";
 import { createServices, type Services } from "./services";
@@ -92,6 +94,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", createCredentialRoutes(services));
   app.route("/", createRepoSpecRoutes(services));
   app.route("/", createNotificationRoutes(services));
+  app.route("/", createTaskShareRoutes(services));
 
   // blob：Runner 以 Runner token 上傳，Web 以 session 下載。
   const blobRoutes = createBlobRoutes(services);
@@ -105,6 +108,9 @@ export function createApp(deps: AppDeps): Hono {
   // E 軌的 Preview：狀態查詢與 Preview 網址的換票（實作在 src/preview/）。Preview 網址本身的請求
   // 依 Host 在 server.ts 分流，不經過這裡。
   app.route("/", createPreviewRoutes(services));
+
+  // 邀請連結（PAGE_ROUTES，不在 `/api` 之下）：要在 Web 靜態檔的 SPA fallback 之前。
+  app.route("/", createInvitePageRoutes(services));
 
   // 正式部署時 Server 同時提供 Web 的靜態檔（ARCHITECTURE §16）。放在所有 API 路由之後：
   // `/api` 底下沒有對應的路徑仍回 404，其他路徑才交給 Web（SPA 的 index.html）。

@@ -1,6 +1,6 @@
 // 通知系統（ARCHITECTURE §12.3）。
 //
-// 1. 收件者去掉重複、null 與操作者本人。
+// 1. 收件者去掉重複、null 與操作者本人；有 Task 時也去掉看不到這個 Task 的人（Task 分享，ADR-0012）。
 // 2. 套用個人設定：關閉的事件類型兩個 Channel 都不送（不建立通知）；勿擾時段只壓住桌面推送
 //    （desktop = false），App 內照常記錄，結束後也不補推。
 // 3. 存進 notifications，commit 之後交給各 Channel。
@@ -9,6 +9,7 @@
 
 import type { Notification } from "@orbis/api-contract";
 import { eq, inArray } from "drizzle-orm";
+import { membersOnTask } from "../authz/task-access";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
 import { notificationPreferences, notifications, tasks } from "../db/schema";
@@ -66,9 +67,13 @@ export class NotificationService implements Notify {
 
   private async create(uow: UnitOfWork, request: NotifyRequest): Promise<void> {
     const { tx } = uow;
-    const recipients = [
+    let recipients = [
       ...new Set(request.recipients.filter((r): r is string => typeof r === "string" && r !== "")),
     ].filter((r) => r !== request.actorMemberId);
+    if (request.taskId && recipients.length > 0) {
+      const visible = new Set((await membersOnTask(tx, request.taskId)).map((m) => m.memberId));
+      recipients = recipients.filter((r) => visible.has(r));
+    }
     if (recipients.length === 0) return;
     const [task] = request.taskId
       ? await tx.select({ key: tasks.key }).from(tasks).where(eq(tasks.id, request.taskId))
@@ -103,6 +108,7 @@ export class NotificationService implements Notify {
           title: request.title,
           body: request.body ?? null,
           url: request.url ?? (task ? `/tasks/${encodeURIComponent(task.key)}` : null),
+          stoppedRun: request.stoppedRun ?? null,
           desktop,
           createdAt: now,
         })

@@ -684,15 +684,70 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       });
     });
 
-    it("補指定 Repo 還不支援：回 400，Task 不變", async () => {
+    it("已指定的 Repo 不能更換：409 repo_already_set，Task 不變", async () => {
       const project = await createProject();
       const repo = await createRepo(project.id);
       const other = await createRepo(project.id, "other");
       const task = await createTask(project.id, repo.id);
       const res = await as("member").patch(`/api/tasks/${task.id}`, { repoId: other.id });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ error: "repo_already_set" });
+      // 同一個 Repo 不算更換
+      expect((await as("member").patch(`/api/tasks/${task.id}`, { repoId: repo.id })).status).toBe(
+        200,
+      );
       const after = expectContract(Task, (await as("member").get(`/api/tasks/${task.id}`)).body);
       expect(after.repoId).toBe(repo.id);
+    });
+
+    it("不指定 Repo 的 Task：只能停在 Backlog，之後補指定一次", async () => {
+      const project = await createProject();
+      const repo = await createRepo(project.id);
+      const created = await as("member").post(`/api/projects/${project.id}/tasks`, {
+        title: "還沒想好放哪",
+        description: "想法",
+        repoId: null,
+      });
+      expect(created.status).toBe(201);
+      const task = expectContract(Task, created.body);
+      expect(task.repoId).toBeNull();
+      await as("member").post(`/api/tasks/${task.id}/acceptance-criteria`, {
+        kind: "manual",
+        description: "看起來對",
+      });
+      const ready = await as("member").post(`/api/tasks/${task.id}/transition`, {
+        status: "ready",
+      });
+      expect(ready.status).toBe(409);
+      expect(ready.body).toMatchObject({ error: "repo_required", missing: ["repo"] });
+
+      const assigned = await as("member").patch(`/api/tasks/${task.id}`, { repoId: repo.id });
+      expect(assigned.status).toBe(200);
+      expect(expectContract(Task, assigned.body).repoId).toBe(repo.id);
+      const again = await as("member").post(`/api/tasks/${task.id}/transition`, {
+        status: "ready",
+      });
+      expect(again.status).toBe(200);
+    });
+
+    it("沒有 Repo 的 Task 不能連結 Spec；補指定的 Repo 要在同一個 Project", async () => {
+      const project = await createProject();
+      const otherProject = await createProject("OTH");
+      const foreign = await createRepo(otherProject.id);
+      const withSpec = await as("member").post(`/api/projects/${project.id}/tasks`, {
+        title: "x",
+        repoId: null,
+        specPath: "docs/spec.md",
+      });
+      expect(withSpec.status).toBe(422);
+      const created = await as("member").post(`/api/projects/${project.id}/tasks`, {
+        title: "x",
+        repoId: null,
+      });
+      const task = expectContract(Task, created.body);
+      expect(
+        (await as("member").patch(`/api/tasks/${task.id}`, { repoId: foreign.id })).status,
+      ).toBe(422);
     });
 
     it("指派給其他 Team 的人時回 422", async () => {

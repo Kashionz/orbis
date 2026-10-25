@@ -21,6 +21,7 @@ import {
 } from "./github/integration";
 import { type AppEnv, requireActor } from "./http/session";
 import type { Logger } from "./logger";
+import { type Mailer, NO_MAILER } from "./mail/mailer";
 import { MentionService } from "./mentions/service";
 import { DesktopChannel, InAppChannel, WebPushHub } from "./notifications/channels";
 import { NotificationService } from "./notifications/service";
@@ -76,6 +77,10 @@ export interface Services {
   heartbeatIntervalMs: number;
   /** Preview 網址的換票與登入保護（E 軌，src/preview/）。 */
   preview: PreviewService;
+  /** 寄信（Task 邀請、預覽邀請）；沒有設定 SMTP 時不寄。 */
+  mailer: Mailer;
+  /** Web 的 origin：邀請連結、信件中的網址。 */
+  publicUrl: string;
 }
 
 export interface ServicesOptions {
@@ -103,6 +108,8 @@ export interface ServicesOptions {
   collabStore?: CollabStore;
   /** 共同編輯文件修改後多久寫回（測試用）。 */
   collabPersistDebounceMs?: number;
+  /** 未提供時不寄信。 */
+  mailer?: Mailer;
 }
 
 export function createServices(options: ServicesOptions): Services {
@@ -222,5 +229,7 @@ export function createServices(options: ServicesOptions): Services {
       domain: options.previewDomain,
       publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
     }),
+    mailer: options.mailer ?? NO_MAILER,
+    publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
   };
 }

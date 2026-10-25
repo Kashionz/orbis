@@ -10,13 +10,12 @@
 import type { GateKind } from "@orbis/api-contract";
 import type { EventKindName } from "@orbis/protocol";
 import { and, desc, eq } from "drizzle-orm";
-import { authorize, effectiveRole } from "../authz/capabilities";
+import { authorize, roleAtLeast } from "../authz/capabilities";
+import { memberOnTask, membersOnTask } from "../authz/task-access";
 import {
   acceptanceCriteria,
   gates,
-  members,
   needsYouItems,
-  projectMemberRoles,
   projects,
   runEvents,
   type runs,
@@ -68,30 +67,21 @@ export async function latestEventSeq(
  */
 export async function gateNeedsYouMember(
   tx: Executor,
-  task: Pick<TaskRow, "projectId" | "assigneeMemberId">,
+  task: Pick<TaskRow, "id" | "projectId" | "assigneeMemberId">,
   run: Pick<RunRow, "requestedByMemberId">,
 ): Promise<string | null> {
   const assignee = task.assigneeMemberId;
   if (!assignee) return run.requestedByMemberId;
+  const onTask = await memberOnTask(tx, task.id, assignee);
+  if (!onTask) return run.requestedByMemberId;
+  // 負責人在這個 Task 上不能核准（只能看）時不指派給特定的人（Task 分享，ADR-0012）。
+  if (!roleAtLeast(onTask.taskRole, "member")) return null;
   const [project] = await tx
     .select({ forbidSelfApproval: projects.forbidSelfApproval })
     .from(projects)
     .where(eq(projects.id, task.projectId));
-  if (!project?.forbidSelfApproval) return assignee;
-  const [member] = await tx
-    .select({ role: members.role, override: projectMemberRoles.role })
-    .from(members)
-    .leftJoin(
-      projectMemberRoles,
-      and(
-        eq(projectMemberRoles.memberId, members.id),
-        eq(projectMemberRoles.projectId, task.projectId),
-      ),
-    )
-    .where(eq(members.id, assignee));
-  if (!member) return run.requestedByMemberId;
-  // 只有有效 Role 是 Member 的人受「不能核准自己的 Task」限制（authz/capabilities.ts）。
-  return effectiveRole(member.role, member.override) === "member" ? null : assignee;
+  // 只有 Task 上的 Role 是 Member 的人受「不能核准自己的 Task」限制（authz/capabilities.ts）。
+  return project?.forbidSelfApproval && onTask.taskRole === "member" ? null : assignee;
 }
 
 /** 建立 Gate 與它的 Needs You。 */
@@ -152,23 +142,14 @@ export async function gateRecipients(tx: Executor, gate: GateRow): Promise<strin
     .where(eq(tasks.id, gate.taskId));
   if (!context) return [];
   const { task, project } = context;
-  const candidates = await tx
-    .select({ id: members.id, role: members.role, override: projectMemberRoles.role })
-    .from(members)
-    .leftJoin(
-      projectMemberRoles,
-      and(
-        eq(projectMemberRoles.memberId, members.id),
-        eq(projectMemberRoles.projectId, project.id),
-      ),
-    )
-    .where(eq(members.teamId, project.teamId));
+  // 看不到這個 Task 的人不通知（Task 分享，ADR-0012）；能不能核准依 Task 上的 Role 判斷。
+  const candidates = await membersOnTask(tx, task.id);
   return candidates
     .filter(
       (m) =>
         authorize("approve_gate", {
-          memberId: m.id,
-          role: effectiveRole(m.role, m.override),
+          memberId: m.memberId,
+          role: m.taskRole,
           project: {
             allowMemberTeamRunnerDispatch: project.allowMemberTeamRunnerDispatch,
             forbidSelfApproval: project.forbidSelfApproval,
@@ -179,5 +160,5 @@ export async function gateRecipients(tx: Executor, gate: GateRow): Promise<strin
           },
         }).ok,
     )
-    .map((m) => m.id);
+    .map((m) => m.memberId);
 }
