@@ -83,10 +83,14 @@ test("主視窗使用嚴格的安全設定，頁面中只有 bridge、沒有 Nod
     process: "undefined",
     bridgeKeys: [
       "beforeLogout",
+      "getNotificationsEnabled",
       "getVersion",
+      "loginAgent",
       "openWorktreeInEditor",
       "openWorktreeInTerminal",
       "preview",
+      "revealWorktree",
+      "setNotificationsEnabled",
     ],
   });
   expect(

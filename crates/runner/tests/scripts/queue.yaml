@@ -1,0 +1,12 @@
+# 執行中傳訊息（run-prompt）：第一個回合等測試建立 turn1.done 才結束（中途可被 session/cancel 中斷），
+# 之後的回合回報收到的 prompt。
+description: 排隊、收回與中斷
+turns:
+  - steps:
+      - message: 第一個回合開始
+      - wait_for_file: turn1.done
+      - message: 第一個回合完成
+  - steps:
+      - echo_prompt
+  - steps:
+      - echo_prompt

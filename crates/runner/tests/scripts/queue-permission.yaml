@@ -1,0 +1,17 @@
+# 等待權限回覆時排隊（run-prompt）：第一個回合先問權限，回覆後結束；第二個回合回報收到的 prompt。
+description: 等待權限回覆時排隊
+turns:
+  - steps:
+      - permission:
+          tool_call:
+            id: write-note
+            title: 寫入 note.txt
+            edit:
+              path: note.txt
+              content: "note\n"
+          allow:
+            - message: 已寫入。
+          reject:
+            - message: 沒有寫入。
+  - steps:
+      - echo_prompt

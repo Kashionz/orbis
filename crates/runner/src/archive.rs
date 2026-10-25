@@ -128,6 +128,18 @@ async fn archive_one(
         remote_alignment: Default::default(),
     };
     let removal = worktrees.remove(&wt).await.map_err(|e| failed(e.message))?;
+    // 本機 Repo 以 squash 合併過：分支不是基準分支的祖先，但 HEAD 還是合併時的 commit 就是內容已經合併。
+    if removal.branch_kept
+        && let (Some(branch), Some(merged)) = (&record.branch, &record.merged_head)
+    {
+        let git = Git::new(&record.root_checkout);
+        let head = git.rev_parse_commit(branch).await.ok();
+        if head.as_ref() == Some(merged)
+            && let Err(e) = git.run(["branch", "-D", branch]).await
+        {
+            tracing::warn!(run_id, branch, error = %e, "無法刪除已合併的分支");
+        }
+    }
     tracing::info!(
         run_id,
         branch_kept = removal.branch_kept,

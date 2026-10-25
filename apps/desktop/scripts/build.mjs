@@ -13,8 +13,9 @@ const dist = fileURLToPath(new URL("../dist", import.meta.url));
 
 if (process.argv.includes("--with-runner")) {
   const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-  // 參數以陣列傳給 spawn，不經過 shell
-  const cargo = spawnSync("cargo", ["build", "-p", `${NAMES.productSlug}-runner`], {
+  // 參數以陣列傳給 spawn，不經過 shell。Fake Agent 給 Agent 重新登入的 e2e 使用。
+  const packages = [`${NAMES.productSlug}-runner`, `${NAMES.productSlug}-fake-agent`];
+  const cargo = spawnSync("cargo", ["build", ...packages.flatMap((p) => ["-p", p])], {
     cwd: repoRoot,
     stdio: "inherit",
   });

@@ -22,6 +22,8 @@ export interface DesktopConfig {
   skippedUpdateVersion: string | null;
   editor: ToolChoice;
   terminal: ToolChoice;
+  /** 桌面通知總開關（每台電腦各自決定）；關閉時照常輪詢 Needs You，但不發原生通知。 */
+  notificationsEnabled: boolean;
 }
 
 export function defaultConfig(platform: NodeJS.Platform = process.platform): DesktopConfig {
@@ -32,6 +34,7 @@ export function defaultConfig(platform: NodeJS.Platform = process.platform): Des
     skippedUpdateVersion: null,
     editor: defaultEditor(),
     terminal: defaultTerminal(platform),
+    notificationsEnabled: true,
   };
 }
 
@@ -58,6 +61,7 @@ function configSchema(platform: NodeJS.Platform) {
     skippedUpdateVersion: z.string().min(1).nullable().catch(null),
     editor: toolChoice(EDITOR_PRESETS, defaults.editor),
     terminal: toolChoice(terminalPresets(platform), defaults.terminal),
+    notificationsEnabled: z.boolean().catch(true),
   });
 }
 

@@ -37,6 +37,7 @@ tokio-util = { version = "0.7.20", features = ["compat"] }
 toml = "0.9"
 uuid = { version = "1.28.0", features = ["v7"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+portable-pty = "0.9"
 
 [dev-dependencies]
 orbis-fake-agent = { path = "../fake-agent" }

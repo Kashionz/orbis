@@ -16,6 +16,11 @@
 # [repos."https://github.com/acme/web.git"]
 # path = "/home/orbis/.orbis/checkouts/web"
 
+# 互動式終端機（ARCHITECTURE §6.5）：Team Runner 預設不允許。要打開時，Team 設定「允許 Team Runner 的終端機」
+# 也要打開；打開後 Team 中的 Admin 可以在這個容器裡開 shell。
+# allow_terminal = true
+# terminal_shell = ["/bin/bash"]
+
 # 內建 Agent 的覆寫，例如同時跑的 Run 數（每組 Credential 的並行上限預設 30）
 # [agents.claude-code]
 # max_concurrent_runs = 4

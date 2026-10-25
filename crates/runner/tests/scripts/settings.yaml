@@ -1,0 +1,27 @@
+# 執行中切換模型與推理強度（run-settings、dispatch-effort、model-catalog）：宣告 config option，
+# 第一個回合回報目前的值後等測試建立 turn1.done，之後的回合回報新的值。
+description: 模型與推理強度的 config option
+config_options:
+  - id: model
+    name: Model
+    category: model
+    current: sonnet
+    values:
+      - { id: sonnet, name: Sonnet 5.5 }
+      - { id: opus, name: Opus 5.5 }
+  - id: thought
+    name: Thinking
+    category: thought_level
+    current: medium
+    values:
+      - { id: low, name: Low }
+      - { id: medium, name: Medium }
+      - { id: high, name: High }
+turns:
+  - steps:
+      - echo_config
+      - wait_for_file: turn1.done
+  - steps:
+      - echo_config
+  - steps:
+      - echo_config

@@ -1,0 +1,18 @@
+# 換 Agent（agent-switch）的第一個 Agent：第一個回合產出 plan、建立 src.txt；Review Gate 退回後修改內容。
+description: 換 Agent 之前的 Agent
+turns:
+  - steps:
+      - plan:
+          - { content: 建立 src.txt, status: completed }
+          - { content: 補上說明 }
+      - tool_call:
+          title: 建立 src.txt
+          edit: { path: src.txt, content: "draft\n" }
+      - message: 我建立了 src.txt。
+      - usage: { used: 5000, size: 200000 }
+  - steps:
+      - tool_call:
+          title: 修改 src.txt
+          edit: { path: src.txt, content: "hello\nworld\n" }
+      - message: 已改成 hello。
+      - usage: { used: 9000, size: 200000 }

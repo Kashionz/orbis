@@ -206,15 +206,50 @@ impl RunnerHome {
         self.read_json(RUN_WORKTREES_FILE).unwrap_or_default()
     }
 
-    /// 刪掉這些 Run 的 Worktree 紀錄（封存之後）。
+    /// 刪掉這些 Run 的 Worktree 紀錄與 Run 的歷史（封存之後）。
     pub fn forget_run_worktrees(&self, run_ids: &[String]) -> anyhow::Result<()> {
         let _guard = lock(&self.lock);
         let mut runs: BTreeMap<String, RunWorktreeRecord> =
             self.read_json(RUN_WORKTREES_FILE).unwrap_or_default();
         for id in run_ids {
             runs.remove(id);
+            if let Some(path) = self.run_history_path(id) {
+                let _ = std::fs::remove_file(path);
+            }
         }
         self.write_json(RUN_WORKTREES_FILE, &runs, false)
+    }
+
+    /// Run 歷史的位置（`run-history/<run id>.json`）。Run ID 不能當成檔名時為 `None`。
+    fn run_history_path(&self, run_id: &str) -> Option<PathBuf> {
+        let safe = !run_id.is_empty()
+            && run_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        safe.then(|| {
+            self.state_dir()
+                .join(RUN_HISTORY_DIR)
+                .join(format!("{run_id}.json"))
+        })
+    }
+
+    /// 這個 Run 的歷史（交接 prompt 用，ARCHITECTURE §7）；沒有或讀不懂時是空的。
+    pub fn run_history(&self, run_id: &str) -> crate::handoff::History {
+        self.run_history_path(run_id)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_run_history(
+        &self,
+        run_id: &str,
+        history: &crate::handoff::History,
+    ) -> anyhow::Result<()> {
+        let path = self
+            .run_history_path(run_id)
+            .with_context(|| format!("Run ID {run_id} 不能當成檔名"))?;
+        write_atomic(&path, serde_json::to_string(history)?.as_bytes(), false)
     }
 
     /// 這個 Repo 的 config.toml 內容（hash）是否已被核准「永遠允許」。
@@ -245,6 +280,8 @@ pub struct RunWorktreeRecord {
     pub dispatch_id: String,
     pub path: PathBuf,
     pub root_checkout: PathBuf,
+    /// 信任紀錄用的 Repo 識別（[`crate::worktree::repo_key`]：GitHub Repo 是 clone URL，本機 Repo 是
+    /// `local:<名稱>`）。欄位名稱沿用舊的格式。
     pub clone_url: String,
     pub branch: Option<String>,
     pub base_commit: String,
@@ -256,10 +293,16 @@ pub struct RunWorktreeRecord {
     pub task_key: String,
     /// `branch` 模式 Child Run 的父 Run（父 Run 封存時一起處理）。
     pub parent_run_id: Option<String>,
+    /// 本機合併（`merge_local`）時 Run 分支的 HEAD。squash 之後分支不是基準分支的祖先，封存時分支 HEAD
+    /// 還是這個 commit 就刪掉分支（內容已經合併）。
+    #[serde(default)]
+    pub merged_head: Option<String>,
 }
 
 /// 每個 Run 的 Worktree 紀錄（狀態目錄中）。
 const RUN_WORKTREES_FILE: &str = "run-worktrees.json";
+/// 每個 Run 的歷史（交接 prompt 用），隨 Worktree 紀錄封存時刪除。
+const RUN_HISTORY_DIR: &str = "run-history";
 const TRUST_FILE: &str = "trust.json";
 
 fn lock(mutex: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
@@ -389,6 +432,10 @@ fn user_home_dir() -> Option<PathBuf> {
 /// [repos."https://github.com/acme/web.git"]
 /// path = "D:\\code\\web"
 ///
+/// # 互動式終端機（Team Runner 預設不允許，Local Runner 預設允許）
+/// allow_terminal = true
+/// terminal_shell = ["pwsh", "-NoLogo"]
+///
 /// # 加入一般的 ACP Agent，或覆寫內建 Agent Profile 的啟動指令
 /// [agents.my-agent]
 /// command = "my-agent-acp"
@@ -409,6 +456,14 @@ pub struct Settings {
     /// 判定 `browser` 類型條件時注入的瀏覽器 MCP server；沒有設定時用 Runner 管理的
     /// Playwright MCP（鎖定版本，ARCHITECTURE §5.1）。
     pub browser_judge: Option<BrowserJudgeSettings>,
+    /// 是否允許互動式終端機（ARCHITECTURE §6.5）。沒有設定時依 Runner 的種類：Local Runner 允許、
+    /// Team Runner 不允許（Server 沒有回報種類時也不允許）。
+    pub allow_terminal: Option<bool>,
+    /// 終端機的 shell 與參數，例如 `["pwsh", "-NoLogo"]`；沒有設定時 Windows 用 PowerShell、
+    /// 其他平台用 `$SHELL`。
+    pub terminal_shell: Option<Vec<String>>,
+    /// 終端機閒置（沒有輸入也沒有輸出）多少秒後關閉，預設 1800。
+    pub terminal_idle_timeout_secs: Option<u64>,
 }
 
 /// 判定 `browser` 類型條件用的 MCP server 啟動設定。Runner 在 `args` 之後加上 Preview 的
@@ -444,6 +499,9 @@ pub struct AgentSettings {
     /// 只對內建的 Claude Code 有效：是否載入使用者全域的 Claude 設定（`~/.claude/settings.json`
     /// 的 allow 規則、plugin、hooks 等）。預設 `false`：Run 中只載入 Repo 的設定（ARCHITECTURE §8）。
     pub user_settings: Option<bool>,
+    /// 推理強度對應的額外啟動參數（`{ fast = [...], std = [...], deep = [...] }`），派工或換 Agent 時
+    /// 接在 `args` 後面。Agent 有 thought level 的 config option 時不需要設定（ARCHITECTURE §7）。
+    pub effort_args: Option<crate::catalog::PerEffort<Vec<String>>>,
 }
 
 impl Settings {
@@ -465,6 +523,11 @@ impl Settings {
             anyhow::bail!("port_range 必須是 [最小值, 最大值]，而且最小值大於 0");
         }
         Ok(settings)
+    }
+
+    /// 本機 Repo 的 checkout：只依名稱（`[repos.<名稱>]`）。
+    pub fn local_checkout(&self, name: &str) -> Option<&Path> {
+        self.repos.get(name).map(|repo| repo.path.as_path())
     }
 
     /// Repo 對應的本機 checkout：先比對 clone URL，再比對名稱。

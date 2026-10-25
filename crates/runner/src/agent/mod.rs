@@ -13,9 +13,13 @@ use std::path::{Path, PathBuf};
 use agent_client_protocol::schema::v1::{
     InitializeResponse, RequestPermissionRequest, ToolCallUpdate, ToolKind,
 };
-use orbis_protocol::availability::{AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS};
+use orbis_protocol::availability::{
+    AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS, EffortSupport, LoginHint, LoginHintKind, ModelTag,
+};
+use orbis_protocol::enums::Effort;
 
 use self::download::ArchiveBuild;
+use crate::catalog::{PerEffort, ProfileModel};
 use crate::home::{AgentSettings, Settings};
 use crate::paths;
 use crate::policy::PermissionSubject;
@@ -280,6 +284,45 @@ pub struct AgentProfile {
     /// 由 Runner 代為登入時預設的 ACP 認證方式（[`login_command`]）。`None` 表示 Agent 的登入
     /// 由它自己的 CLI 處理。
     pub auth_method: Option<&'static str>,
+    /// 顯示名稱（AgentAvailability 的 `display_name`）；`runner.toml` 自訂的 Agent 為 id。
+    pub display_name: String,
+    pub vendor: Option<&'static str>,
+    /// Agent 的 CLI 代號。
+    pub cli: Option<&'static str>,
+    /// 內建的模型清單（模型目錄的基準，ARCHITECTURE §7）；session 回報 config option 後改用那一份。
+    pub models: Vec<ProfileModel>,
+    /// 推理強度對應的 thought level config option 值；`None` 時依值的名稱判斷。
+    pub effort_values: Option<PerEffort<String>>,
+    /// 推理強度對應的額外啟動參數（`runner.toml` 的 `effort_args`）。只能在啟動 Agent 時套用：
+    /// 派工與換 Agent 時使用，執行中切換時無法套用。
+    pub effort_args: Option<PerEffort<Vec<String>>>,
+    /// 怎麼登入或重新登入（AgentAvailability 的 `login_hint`）。
+    pub login_hint: Option<LoginHint>,
+}
+
+/// 內建 Agent 的推理強度對應的 thought level 值（待實機確認；session 回報的值不同時依名稱判斷）。
+fn default_effort_values() -> Option<PerEffort<String>> {
+    Some(PerEffort {
+        fast: "low".into(),
+        std: "medium".into(),
+        deep: "high".into(),
+    })
+}
+
+/// 由 Agent 自己的 CLI 處理的登入。
+fn cli_login(command: &str) -> Option<LoginHint> {
+    Some(LoginHint {
+        kind: LoginHintKind::Cli,
+        command: command.to_owned(),
+    })
+}
+
+/// 由 Runner 代為登入（[`login_command`]）。
+fn runner_login(agent: &str) -> Option<LoginHint> {
+    Some(LoginHint {
+        kind: LoginHintKind::Runner,
+        command: login_command(agent),
+    })
 }
 
 /// Claude Code 在 Run 中載入的設定來源（claude-agent-acp 的 `_meta.claudeCode.options.settingSources`，
@@ -351,6 +394,34 @@ impl AgentProfile {
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: None,
             auth_method: None,
+            display_name: "Claude Code".into(),
+            vendor: Some("Anthropic"),
+            cli: Some("claude"),
+            models: vec![
+                ProfileModel::new(
+                    "claude-opus-5-5",
+                    "Opus 5.5",
+                    Some(ModelTag::Best),
+                    EffortSupport::Adjustable,
+                ),
+                ProfileModel::new(
+                    "claude-sonnet-5-5",
+                    "Sonnet 5.5",
+                    Some(ModelTag::Balanced),
+                    EffortSupport::Adjustable,
+                ),
+                ProfileModel::new(
+                    "claude-haiku-5-5",
+                    "Haiku 5.5",
+                    Some(ModelTag::Fast),
+                    EffortSupport::Fixed {
+                        level: Effort::Fast,
+                    },
+                ),
+            ],
+            effort_values: default_effort_values(),
+            effort_args: None,
+            login_hint: cli_login("claude /login"),
         }
     }
 
@@ -390,6 +461,32 @@ impl AgentProfile {
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: None,
             auth_method: None,
+            display_name: "Codex".into(),
+            vendor: Some("OpenAI"),
+            cli: Some("codex"),
+            models: vec![
+                ProfileModel::new(
+                    "gpt-5",
+                    "GPT-5",
+                    Some(ModelTag::Best),
+                    EffortSupport::Adjustable,
+                ),
+                ProfileModel::new(
+                    "gpt-5-codex",
+                    "GPT-5 Codex",
+                    Some(ModelTag::Coding),
+                    EffortSupport::Adjustable,
+                ),
+                ProfileModel::new(
+                    "gpt-5-mini",
+                    "GPT-5 Mini",
+                    Some(ModelTag::Fast),
+                    EffortSupport::Adjustable,
+                ),
+            ],
+            effort_values: default_effort_values(),
+            effort_args: None,
+            login_hint: cli_login("codex login"),
         }
     }
 
@@ -430,6 +527,26 @@ impl AgentProfile {
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: None,
             auth_method: Some(ANTIGRAVITY_AUTH_METHOD),
+            display_name: "Antigravity".into(),
+            vendor: Some("Google"),
+            cli: Some("agy"),
+            models: vec![
+                ProfileModel::new(
+                    "gemini-2.5-pro",
+                    "Gemini 2.5 Pro",
+                    Some(ModelTag::Best),
+                    EffortSupport::Adjustable,
+                ),
+                ProfileModel::new(
+                    "gemini-2.5-flash",
+                    "Gemini 2.5 Flash",
+                    Some(ModelTag::Fast),
+                    EffortSupport::Adjustable,
+                ),
+            ],
+            effort_values: default_effort_values(),
+            effort_args: None,
+            login_hint: runner_login(ANTIGRAVITY),
         }
     }
 
@@ -461,6 +578,26 @@ impl AgentProfile {
             max_concurrent_runs: DEFAULT_MAX_CONCURRENT_RUNS,
             min_version: Some(GROK_MIN_VERSION),
             auth_method: None,
+            display_name: "Grok Build".into(),
+            vendor: Some("xAI"),
+            cli: Some("grok"),
+            models: vec![
+                ProfileModel::new(
+                    "grok-4",
+                    "Grok 4",
+                    Some(ModelTag::Best),
+                    EffortSupport::Unsupported,
+                ),
+                ProfileModel::new(
+                    "grok-code-fast-1",
+                    "Grok Code Fast 1",
+                    Some(ModelTag::Coding),
+                    EffortSupport::Unsupported,
+                ),
+            ],
+            effort_values: None,
+            effort_args: None,
+            login_hint: cli_login("grok login"),
         }
     }
 
@@ -486,6 +623,13 @@ impl AgentProfile {
                 .unwrap_or(DEFAULT_MAX_CONCURRENT_RUNS),
             min_version: None,
             auth_method: None,
+            display_name: id.into(),
+            vendor: None,
+            cli: None,
+            models: Vec::new(),
+            effort_values: None,
+            effort_args: settings.effort_args.clone(),
+            login_hint: None,
         }
     }
 
@@ -507,6 +651,13 @@ impl AgentProfile {
             out.push(AgentCapability::PlanMode);
         }
         out
+    }
+
+    /// 推理強度對應的額外啟動參數；沒有設定 `effort_args` 時為 `None`。
+    pub fn effort_launch_args(&self, effort: Effort) -> Option<&[String]> {
+        self.effort_args
+            .as_ref()
+            .map(|args| args.get(effort).as_slice())
     }
 
     /// 組出啟動指令。`agents_dir` 是 Runner 代管安裝的位置。
@@ -671,6 +822,9 @@ impl Profiles {
                     };
                     if let Some(max) = agent.max_concurrent_runs {
                         builtin.max_concurrent_runs = max;
+                    }
+                    if agent.effort_args.is_some() {
+                        builtin.effort_args = agent.effort_args.clone();
                     }
                     // 換成使用者自己的啟動指令：版本無從比較。
                     builtin.min_version = None;

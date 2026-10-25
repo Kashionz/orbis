@@ -1,0 +1,7 @@
+# 換 Agent（agent-switch）：第一個回合等測試建立 turn1.done 才結束，用來確認回合中送出的 switch_agent 等回合結束。
+description: 回合中換 Agent
+turns:
+  - steps:
+      - message: 第一個回合開始
+      - wait_for_file: turn1.done
+      - message: 第一個回合完成

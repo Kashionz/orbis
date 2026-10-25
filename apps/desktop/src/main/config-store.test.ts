@@ -29,6 +29,16 @@ describe("ConfigStore", () => {
     expect(JSON.parse(readFileSync(path, "utf8")).serverUrl).toBe("https://s.example");
   });
 
+  it("桌面通知總開關預設打開，可以關閉並保存；壞值回到打開", () => {
+    const path = tempPath();
+    const store = new ConfigStore(path);
+    expect(store.get().notificationsEnabled).toBe(true);
+    store.update({ notificationsEnabled: false });
+    expect(new ConfigStore(path).get().notificationsEnabled).toBe(false);
+    writeFileSync(path, JSON.stringify({ notificationsEnabled: "no" }));
+    expect(new ConfigStore(path).get().notificationsEnabled).toBe(true);
+  });
+
   it("壞掉的 JSON 回到預設值", () => {
     const path = tempPath();
     new ConfigStore(path).update({ serverUrl: "https://x" });
@@ -57,6 +67,7 @@ describe("ConfigStore", () => {
       skippedUpdateVersion: null,
       editor: { preset: "vscode", customCommand: "vim {path}" },
       terminal: { preset: "x-terminal-emulator", customCommand: "" },
+      notificationsEnabled: true,
     });
   });
 });

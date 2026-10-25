@@ -1,0 +1,19 @@
+# 執行中切換 Permission Policy（run-settings）：第一個回合等測試建立 turn1.done，第二個回合寫入
+# Worktree 內的檔案（manual 會問人、auto 自動允許）。
+description: 切換 Permission Policy 後的下一個權限請求
+turns:
+  - steps:
+      - message: 第一個回合開始
+      - wait_for_file: turn1.done
+  - steps:
+      - permission:
+          tool_call:
+            id: write-note
+            title: 寫入 note.txt
+            edit:
+              path: note.txt
+              content: "note\n"
+          allow:
+            - message: 已寫入。
+          reject:
+            - message: 沒有寫入。

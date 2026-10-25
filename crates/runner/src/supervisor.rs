@@ -60,6 +60,13 @@ pub struct Supervisor {
     mcp: Arc<crate::orbis_mcp::hub::McpHub>,
     /// 已經開始探測 Agent 的能力旗標（第一次連上 Server 後才開始）。
     probing: std::sync::atomic::AtomicBool,
+    /// 模型目錄（session 回報的 config option 與登入狀態，ARCHITECTURE §7）。
+    catalog: Arc<crate::catalog::CatalogStore>,
+    /// 上次看到的「由 Runner 代為登入」的登入標記。`<Runner> login` 是另一個程序（例如 Desktop 執行的），
+    /// Heartbeat 時比對，有變化就重送 AgentAvailability。
+    login_seen: Mutex<Option<Vec<(String, bool)>>>,
+    /// Server 在 `hello_ack` 回報的 Runner 種類（決定 `allow_terminal` 的預設值）；沒有回報時為 `None`。
+    runner_kind: Mutex<Option<orbis_protocol::enums::RunnerKind>>,
 }
 
 /// 啟動時探測一個 Agent 的逾時：Agent 第一次啟動可能比較慢，逾時只記 log、不當成無法使用。
@@ -78,8 +85,12 @@ impl Supervisor {
         let (frames, frames_rx) = mpsc::unbounded_channel();
         let profiles = Profiles::from_settings(home.settings());
         let mcp = crate::orbis_mcp::hub::McpHub::start(frames.clone(), outbox.clone())?;
+        let catalog = Arc::new(crate::catalog::CatalogStore::new(home.agents_dir()));
         let supervisor = Arc::new_cyclic(|me| Self {
             me: me.clone(),
+            catalog,
+            login_seen: Mutex::new(None),
+            runner_kind: Mutex::new(None),
             worktrees: Arc::new(WorktreeManager::new(home.clone())),
             home,
             outbox,
@@ -191,11 +202,29 @@ impl Supervisor {
 
     pub fn heartbeat(&self) -> Heartbeat {
         self.publish_snapshot();
+        self.check_logins();
         Heartbeat {
             ts: now(),
             active_run_ids: self.active_run_ids(),
             accepting_dispatches: !self.is_paused(),
         }
+    }
+
+    /// 「由 Runner 代為登入」的 Agent 的登入標記有變化（另一個程序執行了 `<Runner> login`）時，
+    /// 重送 AgentAvailability（ARCHITECTURE §7「重新登入」）。
+    fn check_logins(&self) {
+        let now: Vec<(String, bool)> = self
+            .profiles
+            .iter()
+            .filter(|p| p.auth_method.is_some())
+            .map(|p| (p.id.clone(), crate::login::logged_in(&self.home, &p.id)))
+            .collect();
+        let mut seen = lock(&self.login_seen);
+        if seen.as_ref().is_some_and(|before| *before != now) {
+            tracing::info!("Agent 的登入狀態改變，重送 AgentAvailability");
+            self.availability_changed.notify_one();
+        }
+        *seen = Some(now);
     }
 
     async fn detected(&self) -> Vec<(String, agent::Detected)> {
@@ -285,7 +314,7 @@ impl Supervisor {
         let runs = lock(&self.runs);
         let active_by_credential = |label: &str| {
             runs.values()
-                .filter(|h| h.is_active() && h.credential == label)
+                .filter(|h| h.is_active() && h.credential() == label)
                 .count() as u32
         };
         let mut agents = Vec::new();
@@ -316,6 +345,13 @@ impl Supervisor {
                 ),
                 _ => (available, reason),
             };
+            let entry = self.catalog.get(&profile.id);
+            // 由 Runner 代為登入的 Agent 看登入標記；其他看最近一次 session 的結果（還沒跑過時不知道）。
+            let signed_in = if profile.auth_method.is_some() {
+                Some(crate::login::logged_in(&self.home, &profile.id))
+            } else {
+                entry.signed_in
+            };
             agents.push(AgentInfo {
                 id: profile.id.clone(),
                 version: version.or(learned.version),
@@ -323,16 +359,14 @@ impl Supervisor {
                 unavailable_reason: reason,
                 // 啟動時探測的結果；還沒探測過（代管的 adapter 尚未安裝）時，第一次派工後更新。
                 capabilities: learned.capabilities,
-                // TODO(backend, model-catalog, agent-relogin)：模型目錄、顯示資訊、登入狀態與登入方式
-                // 從 Agent Profile 與 session 的 config option 填入。
-                models: Vec::new(),
+                models: crate::catalog::model_infos(profile, &entry),
                 permission_gaps: profile.permission_gaps.clone(),
                 credential: Some(profile.credential.clone()),
-                display_name: profile.id.clone(),
-                vendor: None,
-                cli: None,
-                signed_in: None,
-                login_hint: None,
+                display_name: profile.display_name.clone(),
+                vendor: profile.vendor.map(str::to_owned),
+                cli: profile.cli.map(str::to_owned),
+                signed_in,
+                login_hint: profile.login_hint.clone(),
             });
             if !credentials.iter().any(|c| c.label == profile.credential) {
                 credentials.push(CredentialInfo {
@@ -388,6 +422,7 @@ impl Supervisor {
                         rate_limits: self.rate_limits.clone(),
                         blobs: self.blobs.clone(),
                         mcp: self.mcp.clone(),
+                        catalog: self.catalog.clone(),
                     },
                 );
                 // 父 Run 結束（中止、失敗、完成或 Runner 不再執行它）時，連同 Child Run 一起中止（§9）。
@@ -432,12 +467,11 @@ impl Supervisor {
                 "這台 Runner 已暫停領取新的 Run".into(),
             ));
         }
-        // TODO(backend, local-repo)：本機 Repo（協定版本 3）實作之前一律拒絕。
-        if offer.repo.kind() == orbis_protocol::enums::RepoKind::Local {
-            return Err((
-                DispatchRejectReason::RepoUnavailable,
-                format!("這個版本的 Runner 還不支援本機 Repo {}", offer.repo.name()),
-            ));
+        // 本機 Repo 只依 runner.toml 的 [repos.<名稱>] 找 checkout（ARCHITECTURE §6.2）。
+        if offer.repo.kind() == orbis_protocol::enums::RepoKind::Local
+            && let Err(message) = self.local_checkout(offer.repo.name())
+        {
+            return Err((DispatchRejectReason::RepoUnavailable, message));
         }
         if let Some(delegation) = &offer.delegation {
             use crate::orbis_mcp::hub::{MAX_CHILDREN, MAX_DEPTH};
@@ -467,10 +501,21 @@ impl Supervisor {
                 ));
             }
         }
-        let Some(profile) = self.profiles.get(&offer.agent).cloned() else {
+        self.usable_agent(&offer.agent, None).await
+    }
+
+    /// 這台 Runner 現在能不能用 `agent`（派工與換 Agent 共用）：有這個 Agent Profile、偵測為可用、
+    /// 需要時已登入、Credential 沒有在 rate limit 中、沒有超過並行上限。`except` 是換 Agent 的 Run 本身
+    /// （它原本佔用的名額不算）。
+    async fn usable_agent(
+        &self,
+        agent: &str,
+        except: Option<&RunId>,
+    ) -> Result<agent::AgentProfile, (DispatchRejectReason, String)> {
+        let Some(profile) = self.profiles.get(agent).cloned() else {
             return Err((
                 DispatchRejectReason::AgentUnavailable,
-                format!("這台 Runner 沒有 Agent {}", offer.agent),
+                format!("這台 Runner 沒有 Agent {agent}"),
             ));
         };
         let detected = self.detected().await;
@@ -504,7 +549,9 @@ impl Supervisor {
         }
         let active = lock(&self.runs)
             .values()
-            .filter(|h| h.is_active() && h.credential == profile.credential)
+            .filter(|h| {
+                h.is_active() && Some(&h.run_id) != except && h.credential() == profile.credential
+            })
             .count() as u32;
         if active >= profile.max_concurrent_runs {
             return Err((
@@ -516,6 +563,182 @@ impl Supervisor {
             ));
         }
         Ok(profile)
+    }
+
+    /// `switch_agent`：確認這台 Runner 能用新的 Agent 後交給 Run（附上 Agent Profile），不能用時
+    /// 回 `rejected(failed)`（ARCHITECTURE §7）。
+    async fn handle_switch(&self, control: RunControl) {
+        let RunControlAction::SwitchAgent { agent, .. } = &control.action else {
+            return;
+        };
+        let reject = |message: String| {
+            let _ = self
+                .frames
+                .send(RunnerToServer::RunControlResult(RunControlResult {
+                    control_id: control.control_id.clone(),
+                    run_id: control.run_id.clone(),
+                    dispatch_id: control.dispatch_id.clone(),
+                    outcome: RunControlOutcome::Rejected {
+                        reason: RunControlRejectReason::Failed,
+                        message,
+                    },
+                }));
+        };
+        let profile = match self.usable_agent(agent, Some(&control.run_id)).await {
+            Ok(profile) => profile,
+            Err((_, message)) => return reject(message),
+        };
+        let sent = lock(&self.runs).get(&control.run_id).is_some_and(|handle| {
+            handle
+                .tx
+                .send(RunInput::Switch {
+                    control: control.clone(),
+                    profile: Box::new(profile),
+                })
+                .is_ok()
+        });
+        if !sent {
+            reject("Run 已經結束".into());
+        }
+    }
+
+    /// 本機 Repo 在 `runner.toml` 中對應的 checkout；沒有對應或不是 git checkout 時回傳原因。
+    fn local_checkout(&self, name: &str) -> Result<std::path::PathBuf, String> {
+        let Some(path) = self.home.settings().local_checkout(name) else {
+            return Err(format!(
+                "runner.toml 中沒有本機 Repo {name} 的對應（[repos.{name}]）"
+            ));
+        };
+        let path = crate::paths::normalize(path);
+        if !path.join(".git").exists() {
+            return Err(format!(
+                "runner.toml 中 {name} 對應的 {} 不是 git checkout",
+                path.display()
+            ));
+        }
+        Ok(path)
+    }
+
+    /// 本機 Repo 的 Repo Spec 提交（frame `repo_spec_commit`，ARCHITECTURE §12.1）：在背景 commit 到
+    /// 基準分支，回 `repo_spec_commit_result`。
+    pub fn handle_repo_spec_commit(&self, commit: orbis_protocol::repo_spec::RepoSpecCommit) {
+        let Some(me) = self.me.upgrade() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let outcome = me.repo_spec_commit(&commit).await;
+            let _ = me.frames.send(RunnerToServer::RepoSpecCommitResult(
+                orbis_protocol::repo_spec::RepoSpecCommitResult {
+                    commit_id: commit.commit_id,
+                    outcome,
+                },
+            ));
+        });
+    }
+
+    async fn repo_spec_commit(
+        &self,
+        commit: &orbis_protocol::repo_spec::RepoSpecCommit,
+    ) -> orbis_protocol::repo_spec::RepoSpecCommitOutcome {
+        use crate::local_merge::{LocalError, SpecCommit};
+        use orbis_protocol::repo_spec::{RepoSpecCommitFailure, RepoSpecCommitOutcome};
+        let failed = |reason, message: String| RepoSpecCommitOutcome::Failed {
+            reason,
+            message: crate::secrets::Redactor::new().redact(&message),
+        };
+        let checkout = match self.local_checkout(&commit.repo) {
+            Ok(path) => path,
+            Err(message) => return failed(RepoSpecCommitFailure::RepoUnavailable, message),
+        };
+        let path = match crate::local_merge::spec_path(&commit.path) {
+            Ok(path) => path,
+            Err(message) => return failed(RepoSpecCommitFailure::Failed, message),
+        };
+        let invalid_branch = commit.base_branch.is_empty()
+            || commit.base_branch.starts_with('-')
+            || !crate::git::Git::new(".")
+                .succeeds(["check-ref-format", "--branch", &commit.base_branch])
+                .await;
+        if invalid_branch {
+            return failed(
+                RepoSpecCommitFailure::Failed,
+                format!("基準分支 {:?} 不合法", commit.base_branch),
+            );
+        }
+        let temp_root = match crate::worktree::path_segment(&commit.repo, "Repo 名稱") {
+            Ok(name) => self.worktrees.root().join(name),
+            Err(e) => return failed(RepoSpecCommitFailure::Failed, e.message),
+        };
+        let lock = self.worktrees.repo_lock(&checkout);
+        let _guard = lock.lock().await;
+        match crate::local_merge::commit_file(
+            &checkout,
+            &temp_root,
+            &commit.base_branch,
+            &path,
+            &commit.content,
+            &commit.message,
+        )
+        .await
+        {
+            Ok(SpecCommit::Committed(commit_sha)) => {
+                RepoSpecCommitOutcome::Committed { commit_sha }
+            }
+            Ok(SpecCommit::Unchanged(commit_sha)) => {
+                RepoSpecCommitOutcome::Unchanged { commit_sha }
+            }
+            Err(e @ LocalError::Dirty { .. }) => {
+                failed(RepoSpecCommitFailure::WorkingTreeDirty, e.to_string())
+            }
+            Err(e) => failed(RepoSpecCommitFailure::Failed, e.to_string()),
+        }
+    }
+
+    /// 記下 Server 回報的 Runner 種類（每次連線的 `hello_ack`）。
+    pub fn set_runner_kind(&self, kind: Option<orbis_protocol::enums::RunnerKind>) {
+        *lock(&self.runner_kind) = kind;
+    }
+
+    /// 終端機的設定（ARCHITECTURE §6.5）。`allow_terminal` 沒有設定時：Local Runner 允許、Team Runner 與
+    /// 不知道種類（舊的 Server）時不允許。
+    pub fn terminal_env(&self) -> crate::terminal::TerminalEnv {
+        use orbis_protocol::enums::RunnerKind;
+        let settings = self.home.settings();
+        let allowed = settings
+            .allow_terminal
+            .unwrap_or(*lock(&self.runner_kind) == Some(RunnerKind::Local));
+        crate::terminal::TerminalEnv {
+            allowed,
+            shell: crate::terminal::resolve_shell(settings.terminal_shell.as_deref()),
+            idle_timeout: Duration::from_secs(settings.terminal_idle_timeout_secs.unwrap_or(
+                u64::from(orbis_protocol::terminal::TERMINAL_IDLE_TIMEOUT_SECS),
+            )),
+        }
+    }
+
+    /// 終端機要開在哪裡：依本機的 Worktree 紀錄（Run 結束後也可以，同 `archive`）。
+    /// 已封存或不在這台電腦時為 `None`。
+    pub fn terminal_worktree(&self, run_id: &RunId) -> Option<crate::terminal::TerminalWorktree> {
+        let record = self.home.run_worktree(run_id.as_str())?;
+        record.path.join(".git").exists().then(|| {
+            use orbis_protocol::names;
+            crate::terminal::TerminalWorktree {
+                env: vec![
+                    (
+                        names::ENV_ROOT_PATH.into(),
+                        record.root_checkout.to_string_lossy().into_owned(),
+                    ),
+                    (
+                        names::ENV_WORKTREE_PATH.into(),
+                        record.path.to_string_lossy().into_owned(),
+                    ),
+                    (names::ENV_PORT.into(), record.port.to_string()),
+                    (names::ENV_RUN_ID.into(), run_id.to_string()),
+                    (names::ENV_TASK_KEY.into(), record.task_key.clone()),
+                ],
+                path: record.path,
+            }
+        })
     }
 
     /// 中止 `parent` 還在進行中的 Child Run（以 Runner 內部的 RunControl，不回 `run_control_result`）。
@@ -662,6 +885,14 @@ impl Supervisor {
                     dispatch_id: control.dispatch_id.clone(),
                     outcome: RunControlOutcome::Applied,
                 }));
+            return;
+        }
+        // 換 Agent 要先確認這台 Runner 能用新的 Agent（偵測、登入、並行數），在背景做完再交給 Run。
+        if matches!(control.action, RunControlAction::SwitchAgent { .. }) {
+            drop(runs);
+            if let Some(me) = self.me.upgrade() {
+                tokio::spawn(async move { me.handle_switch(control).await });
+            }
             return;
         }
         if handle.tx.send(RunInput::Control(control.clone())).is_err() {

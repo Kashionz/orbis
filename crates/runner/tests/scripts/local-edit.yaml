@@ -1,0 +1,11 @@
+# 本機 Repo（local-repo）：建立 feature.txt 並修改 README.md，給本機合併的測試用。
+description: 本機 Repo 的修改
+turns:
+  - steps:
+      - tool_call:
+          title: 建立 feature.txt
+          edit: { path: feature.txt, content: "feature\n" }
+      - tool_call:
+          title: 修改 README.md
+          edit: { path: README.md, content: "# web\nagent\n" }
+      - message: 完成了。

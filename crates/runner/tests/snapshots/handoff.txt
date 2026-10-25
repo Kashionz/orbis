@@ -1,0 +1,29 @@
+## 交接
+這個 Run 原本由 fake-a 執行，現在換你接手，繼續同一個 Worktree 中的工作。以下是到目前為止的脈絡；請先檢查 Worktree 的現況再繼續，不要從頭開始。
+
+## Task 的規格
+新增 src.txt，內容是問候語。
+
+## 驗收條件
+- （指令）測試通過：`pnpm test`
+- （人工）內容讀起來自然
+
+## 人送出的 prompt（依時間）
+1. （訊息）請建立 src.txt
+2. （Review Gate 退回）內容改成 hello world
+
+## Agent 每個回合最後的回覆（依時間）
+1. 我建立了 src.txt。
+2. 已改成 hello。
+
+## 目前的計畫
+- [x] 建立 src.txt
+- [ ] 補上說明
+
+## 目前的變更（相對 base commit）
+- src.txt（+2 −0）
+細節請直接讀 Worktree 中的檔案。
+
+## 還沒處理的審查留言
+- `src.txt:1`：第一行改成大寫
+- 預覽 http://localhost:41000/：首頁的標題太小
