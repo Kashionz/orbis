@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::enums::RunnerKind;
 use crate::ids::{RunId, RunnerId, Timestamp};
 
 /// Runner 連上 Server 後送出的第一個 frame。
@@ -51,6 +52,11 @@ pub struct HelloAck {
     /// Server 端每個進行中的 Run 已收到的最後 seq。Runner 重新連上後，
     /// 從 `last_seq + 1` 開始補送暫存的 Event（ARCHITECTURE §14）。
     pub resume: Vec<RunResume>,
+    /// 這台 Runner 的種類（Server 依 Pairing 決定）。Runner 據此決定 `runner.toml` 中依種類而定的預設值，
+    /// 例如 `allow_terminal`（ARCHITECTURE §6.5）。缺少時（舊的 Server）Runner 當成不知道，一律採用較嚴格的預設值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runner_kind: Option<RunnerKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

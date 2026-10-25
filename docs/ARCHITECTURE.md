@@ -214,7 +214,8 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
     - `dispatch_offer` 加 `effort`；`repo` 改成以 `kind` 區分 `github`（帶 clone URL）與 `local`（只有名稱），本機 Repo 在 `runner.toml` 找不到對應時以 `repo_unavailable` 拒絕。
     - 終端機的 frame 見 §6.5；`repo_spec_commit` 見 §12.1。
 
-  - 連線後 Runner 先送 `hello`（協定版本與 Pairing token，或已配對的 Runner token）。Server 回 `hello_ack`（Runner ID、第一次 Pairing 時發的 Runner token、心跳間隔、各 Run 已收到的最後 seq），或回 `hello_rejected` 並附上原因。
+  - 連線後 Runner 先送 `hello`（協定版本與 Pairing token，或已配對的 Runner token）。Server 回 `hello_ack`（Runner ID、第一次 Pairing 時發的 Runner token、心跳間隔、各 Run 已收到的最後 seq、Runner 的種類 `runner_kind`），或回 `hello_rejected` 並附上原因。
+    - `runner_kind`（`local`／`team`，協定版本 3 的選填欄位）讓 Runner 決定依種類而定的預設值，例如終端機的 `allow_terminal`（§6.5）；缺少時（舊的 Server）Runner 採用較嚴格的預設值。
   - Runner 收到 `hello_ack` 後，先送 `agent_availability`，接著依間隔送 `heartbeat`。
   - 分支名稱由 Server 產生，放在 `dispatch_offer` 中。Worktree 路徑由 Runner 依 §6.2 計算，建好後以 `worktree_ready` Event 回報。
   - 改派時，`dispatch_offer` 帶上該 Run 已收到的最後 seq，新的 Dispatch 從下一個 seq 接續。
@@ -339,6 +340,7 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 - Runner 在 Run 的 Worktree 中開 PTY（`portable-pty`，Windows 用 ConPTY），輸入輸出經由 Runner 通道到 Server，再經由專用的 WebSocket（`/api/terminals/<terminal-id>/ws`）到 Web 的終端機分頁（xterm.js）。
 - **frame**：Server→Runner `terminal_open { terminal_id, run_id, cols, rows }`、`terminal_input`、`terminal_resize`、`terminal_close`；Runner→Server `terminal_output`、`terminal_exited { code, reason }`。資料以 base64 傳送，單一 frame 解碼後最多 64 KiB；沒有 credit 背壓，Runner 送出時排在 Event、control 與 Heartbeat 之後。每個 `terminal_open` 最後恰好有一個 `terminal_exited`（開不起來時也是，`reason` 說明原因）。
 - **誰能用**：Local Runner 只限那台 Runner 的擁有者（和權限回覆的規則相同）；Team Runner 只限 Admin 以上，而且 Team 設定「允許 Team Runner 的終端機」預設關閉。Server 把 `terminal_id` 綁定到開啟者的 session，只轉送那個人的輸入；Runner 只接受自己開過的 `terminal_id`。
+- **Runner 端的開關**：`runner.toml` 的 `allow_terminal`，Team Runner 預設 `false`、Local Runner 預設 `true`（種類取自 `hello_ack` 的 `runner_kind`，缺少時視為 `false`）。不允許時 `terminal_open` 回 `terminal_exited`（`reason = disabled`）。Team Runner 要同時打開 Team 設定與這個開關才能開終端機。
 - 終端機是人自己下指令，不經過 Permission Policy。Server 只記錄誰在什麼時候開、關（`terminal_sessions`），不記錄按鍵與輸出。
 - Worktree 存在期間都能用（Run 結束後也可以，Runner 依本機的 Worktree 紀錄找到路徑）；閒置 30 分鐘自動關閉；每個 Run 最多同時 3 個（`terminal_limit`）。Worktree 已封存時回 `worktree_archived`。
 - WebSocket 關閉即關閉終端機，不支援重新接上。
