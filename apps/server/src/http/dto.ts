@@ -38,8 +38,9 @@ import {
   repoSpecs,
   type repos,
   reviewComments,
+  runControls,
   type runEvents,
-  type runs,
+  runs,
   taskDependencies,
   taskMembers,
   type taskNotes,
@@ -276,15 +277,56 @@ export function toRun(row: typeof runs.$inferSelect): Run {
   };
 }
 
-export function toRunEvent(row: typeof runEvents.$inferSelect): RunEvent {
-  return {
-    runId: row.runId,
-    seq: row.seq,
-    ts: iso(row.ts),
-    event: row.payload as RunEvent["event"],
-    // TODO(backend, event-actor)：依 Event 的 control_id 查出 run_controls.requested_by_member_id。
-    actorMemberId: null,
-  };
+/**
+ * 一批 Event 轉成 API 回應，並補上作者（`actorMemberId`）：依 Event 的 `control_id` 查出送出那個 RunControl 的
+ * Member；Run 第一則人送出的 prompt（沒有 control id、來源是 `user`）的作者是派工的人。其他為 null。
+ */
+export async function toRunEvents(
+  db: Executor,
+  rows: (typeof runEvents.$inferSelect)[],
+): Promise<RunEvent[]> {
+  if (rows.length === 0) return [];
+  const controlIds = [
+    ...new Set(
+      rows.flatMap((row) => {
+        const id = (row.payload as { control_id?: unknown }).control_id;
+        return typeof id === "string" ? [id] : [];
+      }),
+    ),
+  ];
+  const controls =
+    controlIds.length > 0
+      ? await db
+          .select({ id: runControls.controlId, memberId: runControls.requestedByMemberId })
+          .from(runControls)
+          .where(inArray(runControls.controlId, controlIds))
+      : [];
+  const authorOf = new Map(controls.map((c) => [c.id, c.memberId]));
+  const runIds = [...new Set(rows.map((row) => row.runId))];
+  const requesters = await db
+    .select({ id: runs.id, memberId: runs.requestedByMemberId })
+    .from(runs)
+    .where(inArray(runs.id, runIds));
+  const requesterOf = new Map(requesters.map((r) => [r.id, r.memberId]));
+  return rows.map((row) => {
+    const payload = row.payload as { kind: string; control_id?: unknown; source?: unknown };
+    let actorMemberId: string | null = null;
+    if (typeof payload.control_id === "string") {
+      actorMemberId = authorOf.get(payload.control_id) ?? null;
+    } else if (
+      payload.kind === "prompt_submitted" &&
+      (payload.source === undefined || payload.source === "user")
+    ) {
+      actorMemberId = requesterOf.get(row.runId) ?? null;
+    }
+    return {
+      runId: row.runId,
+      seq: row.seq,
+      ts: iso(row.ts),
+      event: row.payload as RunEvent["event"],
+      actorMemberId,
+    };
+  });
 }
 
 type GateRow = typeof gates.$inferSelect;

@@ -24,7 +24,7 @@ import {
 import { parse as parseCookie } from "hono/utils/cookie";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 import { loadRunScope, requireProjectCapability } from "../authz/scope";
-import { toRunEvent } from "../http/dto";
+import { toRunEvents } from "../http/dto";
 import { ApiError } from "../http/errors";
 import { type Actor, resolveActor } from "../http/session";
 import type { Logger } from "../logger";
@@ -246,11 +246,12 @@ class WebConnection {
             subscription.lastSentSeq,
             WEB_WS_BATCH_SIZE,
           );
-          const events: RunEvent[] = [];
+          const contiguous: typeof rows = [];
           for (const row of rows) {
-            if (row.seq !== subscription.lastSentSeq + events.length + 1) break;
-            events.push(toRunEvent(row));
+            if (row.seq !== subscription.lastSentSeq + contiguous.length + 1) break;
+            contiguous.push(row);
           }
+          const events: RunEvent[] = await toRunEvents(this.services.db, contiguous);
           if (events.length > 0) {
             this.send({ type: "run_events", runId: subscription.runId, events });
             subscription.lastSentSeq += events.length;

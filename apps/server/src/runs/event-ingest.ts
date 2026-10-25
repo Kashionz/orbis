@@ -8,9 +8,12 @@
 
 import type { EventAck, RunStatus } from "@orbis/protocol";
 import {
+  EFFORTS,
   GATE_KINDS,
   PERMISSION_OPTION_KINDS,
+  PERMISSION_POLICIES,
   PERMISSION_PURPOSES,
+  RUN_SETTING_NAMES,
   RUN_STATUSES,
   VERIFICATION_OUTCOMES,
 } from "@orbis/protocol";
@@ -42,6 +45,7 @@ import { cancelChildren } from "./children";
 import type { EventStore } from "./event-store";
 import { gateRecipients, openGate } from "./gates";
 import type { RunControlService } from "./run-control";
+import { recordAgentSwitched, recordSegmentUsage, settingsChangedColumns } from "./run-settings";
 import type { VerificationService } from "./verification";
 
 /** event frame 的外層；各 kind 的內容只在套用副作用時才驗證。 */
@@ -120,6 +124,21 @@ const VerificationCompletedBody = z.object({
 });
 
 const AgentSessionBody = z.object({ session_id: z.string().min(1) });
+
+const SettingsChangedBody = z.object({
+  control_id: z.string().nullable(),
+  model: z.string().nullable(),
+  effort: z.enum(EFFORTS).nullable(),
+  permission_policy: z.enum(PERMISSION_POLICIES).nullable(),
+  not_applied: z.array(z.enum(RUN_SETTING_NAMES)),
+});
+
+const AgentSwitchedBody = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  model: z.string().nullable(),
+  control_id: z.string().nullable(),
+});
 
 const RateLimitedBody = z.object({
   resets_at: z.iso.datetime({ offset: true }).nullable(),
@@ -249,21 +268,43 @@ export class EventIngest {
       case "usage": {
         const body = parse(UsageBody);
         if (!body) return;
-        await tx
-          .update(runs)
-          .set({
-            usage: {
-              inputTokens: body.input_tokens,
-              outputTokens: body.output_tokens,
-              thoughtTokens: body.thought_tokens,
-              cachedReadTokens: body.cached_read_tokens,
-              cachedWriteTokens: body.cached_write_tokens,
-              contextUsedTokens: body.context_used_tokens,
-              contextWindowTokens: body.context_window_tokens,
-              cost: body.cost,
-            },
-          })
-          .where(eq(runs.id, runId));
+        const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
+        if (!run) return;
+        // 換過 Agent 時，usage 是目前這一段的累計；Run 的用量是各段的合計（ADR-0016）。
+        const usage = await recordSegmentUsage(
+          tx,
+          run,
+          {
+            inputTokens: body.input_tokens,
+            outputTokens: body.output_tokens,
+            thoughtTokens: body.thought_tokens,
+            cachedReadTokens: body.cached_read_tokens,
+            cachedWriteTokens: body.cached_write_tokens,
+            contextUsedTokens: body.context_used_tokens,
+            contextWindowTokens: body.context_window_tokens,
+            cost: body.cost,
+          },
+          this.clock.now(),
+        );
+        await tx.update(runs).set({ usage }).where(eq(runs.id, runId));
+        return;
+      }
+      case "run_settings_changed": {
+        const body = parse(SettingsChangedBody);
+        if (!body) return;
+        const columns = settingsChangedColumns(body);
+        if (Object.keys(columns).length > 0) {
+          await tx.update(runs).set(columns).where(eq(runs.id, runId));
+        }
+        return;
+      }
+      case "agent_switched": {
+        const body = parse(AgentSwitchedBody);
+        if (!body) return;
+        const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
+        if (!run) return;
+        const columns = await recordAgentSwitched(tx, run, body, this.clock.now());
+        await tx.update(runs).set(columns).where(eq(runs.id, runId));
         return;
       }
       case "permission_request": {

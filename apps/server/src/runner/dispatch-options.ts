@@ -2,16 +2,29 @@
 // AgentAvailability 依 Runner 種類彙整成「這種 Runner 目前能跑哪些 Agent」。
 
 import type { AgentOption, DispatchTarget } from "@orbis/api-contract";
+import type { LoginHint, ModelInfo } from "@orbis/protocol";
 import type { agentAvailabilities } from "../db/schema";
 
 type AvailabilityRow = typeof agentAvailabilities.$inferSelect;
 
-/** recordAgentAvailability 存進 details 的欄位。 */
-interface AvailabilityDetails {
+/** 模型目錄需要的 AgentInfo 欄位（協定版本 3）。 */
+export interface AgentCatalogDetails {
+  displayName: string;
+  vendor: string | null;
+  cli: string | null;
+  signedIn: boolean | null;
+  loginHint: LoginHint | null;
+  models: ModelInfo[];
+}
+
+/** recordAgentAvailability 存進 details 的欄位。協定版本 3 之前存的列沒有 catalog 與 mappedRepos。 */
+export interface AvailabilityDetails {
   version?: string | null;
   unavailableReason?: string | null;
   models?: string[];
   permissionGaps?: string[];
+  catalog?: AgentCatalogDetails;
+  mappedRepos?: string[];
 }
 
 export interface RunnerAvailability {

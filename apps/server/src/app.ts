@@ -22,6 +22,7 @@ import { createNotificationRoutes } from "./routes/notifications";
 import { createProjectRoutes } from "./routes/projects";
 import { createRepoSpecRoutes } from "./routes/repo-specs";
 import { createReviewRoutes } from "./routes/review";
+import { createRunOpsRoutes } from "./routes/run-ops";
 import { createRunnerRoutes } from "./routes/runners";
 import { createRunRoutes } from "./routes/runs";
 import { createTaskShareRoutes } from "./routes/task-share";
@@ -87,6 +88,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route("/", createProjectRoutes(services));
   app.route("/", createTaskRoutes(services));
   app.route("/", createRunRoutes(services));
+  app.route("/", createRunOpsRoutes(services));
   app.route("/", createReviewRoutes(services));
   app.route("/", createRunnerRoutes(services));
   app.route("/", createDraftRoutes(services));

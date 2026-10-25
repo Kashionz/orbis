@@ -8,6 +8,7 @@ import { validate as isUuid } from "uuid";
 import { constantTimeEqual, randomToken, sha256Hex } from "../crypto";
 import type { Database } from "../db/client";
 import { agentAvailabilities, runnerPairingTokens, runners, teams } from "../db/schema";
+import type { AgentCatalogDetails } from "./dispatch-options";
 
 export interface AuthenticatedRunner {
   id: string;
@@ -214,8 +215,18 @@ export async function recordAgentAvailability(
           version: agent.version,
           unavailableReason: agent.unavailable_reason,
           capabilities: agent.capabilities,
-          // dispatch-options 只用 model id；完整的模型目錄由 agent-catalog 彙整（TODO(backend, model-catalog)）。
+          // dispatch-options 只用 model id；完整的模型目錄（catalog）由 agent-catalog 彙整。
           models: agent.models.map((model) => model.id),
+          catalog: {
+            displayName: agent.display_name,
+            vendor: agent.vendor,
+            cli: agent.cli,
+            signedIn: agent.signed_in,
+            loginHint: agent.login_hint,
+            models: agent.models,
+          } satisfies AgentCatalogDetails,
+          // 每台 Runner 的 runner.toml 對應的 Repo（本機 Repo 以名稱比對）；重複存在每個 Agent 的列中。
+          mappedRepos: availability.mapped_repos,
           permissionGaps: agent.permission_gaps,
           activeRuns: info?.active_runs ?? null,
         },

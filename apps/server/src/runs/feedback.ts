@@ -15,6 +15,7 @@ import type { TaskLifecycleService } from "../domain/task-lifecycle";
 import { ApiError } from "../http/errors";
 import type { Dispatcher } from "../runner/dispatcher";
 import type { RunnerHub } from "../runner/hub";
+import { currentPermissionPolicy } from "./run-settings";
 
 export class FeedbackRunService implements FeedbackRunPort {
   constructor(
@@ -53,7 +54,8 @@ export class FeedbackRunService implements FeedbackRunPort {
             taskId: task.id,
             agent: previous.agent,
             model: previous.model,
-            permissionPolicy: previous.permissionPolicy,
+            permissionPolicy: await currentPermissionPolicy(uow.tx, previous),
+            effort: previous.effort,
             target: previous.target,
             requestedByMemberId: previous.requestedByMemberId,
             origin: "feedback_loop",

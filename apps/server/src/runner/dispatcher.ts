@@ -42,6 +42,7 @@ import { planGateEnabled } from "../domain/task-lifecycle";
 import type { Logger } from "../logger";
 import { childSequence, runDepth } from "../runs/children";
 import type { EventStore } from "../runs/event-store";
+import { currentPermissionPolicy, ensureFirstSegment } from "../runs/run-settings";
 import {
   CREDENTIAL_OCCUPYING_STATUSES,
   type CredentialLoad,
@@ -393,7 +394,9 @@ export class Dispatcher {
       branch: run.branch,
       agent: run.agent,
       model: run.model,
-      permission_policy: run.permissionPolicy,
+      // 執行中切換過時用目前的值（改派時沿用）。
+      permission_policy: await currentPermissionPolicy(this.db, run),
+      ...(run.effort && { effort: run.effort }),
       // Child Run、@agent、Feedback Loop 的 Run 有自己的 prompt；其他 Run 由 Task 組出。
       prompt: (run.prompt as ContentBlock[] | null) ?? (await buildPrompt(this.db, task)),
       ...(run.promptSource && { prompt_source: run.promptSource }),
@@ -457,10 +460,13 @@ export class Dispatcher {
         )
         .returning();
       if (!dispatch) return null;
-      await tx
+      const [started] = await tx
         .update(runs)
         .set({ status: "starting" })
-        .where(and(eq(runs.id, dispatch.runId), eq(runs.status, "dispatched")));
+        .where(and(eq(runs.id, dispatch.runId), eq(runs.status, "dispatched")))
+        .returning();
+      // 用量依 Agent 分段（ADR-0016）：第一次被接受時建立第一段。
+      if (started) await ensureFirstSegment(tx, started, now);
       return dispatch;
     });
     if (!accepted) {

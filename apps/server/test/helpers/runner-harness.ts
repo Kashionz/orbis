@@ -2,7 +2,13 @@
 
 import { randomUUID } from "node:crypto";
 import type { RunnerKind } from "@orbis/api-contract";
-import type { AgentAvailability, EventKind, RunnerToServer, ServerToRunner } from "@orbis/protocol";
+import type {
+  AgentAvailability,
+  AgentInfo,
+  EventKind,
+  RunnerToServer,
+  ServerToRunner,
+} from "@orbis/protocol";
 import { PROTOCOL_VERSION, RUNNER_WS_PATH } from "@orbis/protocol";
 import { eq } from "drizzle-orm";
 import { WebSocket } from "ws";
@@ -100,7 +106,7 @@ export class MockRunner {
     });
   }
 
-  availability(agents: MockAgent[] = [{ id: "claude-code" }]): void {
+  availability(agents: MockAgent[] = [{ id: "claude-code" }], mappedRepos: string[] = []): void {
     const frame: AgentAvailability = {
       agents: agents.map((a) => ({
         id: a.id,
@@ -122,9 +128,10 @@ export class MockRunner {
         cli: null,
         signed_in: null,
         login_hint: null,
+        ...a.info,
       })),
       credentials: [{ label: "default", max_concurrent_runs: 30, active_runs: 0 }],
-      mapped_repos: [],
+      mapped_repos: mappedRepos,
     };
     this.send({ type: "agent_availability", ...frame });
   }
@@ -245,6 +252,8 @@ export class MockRunner {
 /** 模擬 Runner 回報的一個 Agent（未指定的欄位用預設值；credential 預設 `default`）。 */
 export interface MockAgent {
   id: string;
+  /** 覆寫 AgentInfo 的其他欄位（模型目錄、登入狀態等）。 */
+  info?: Partial<AgentInfo>;
   available?: boolean;
   version?: string;
   credential?: string | null;

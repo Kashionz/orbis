@@ -34,7 +34,7 @@ import { inTransaction } from "../db/tx";
 import { isPrimaryRun, isTerminalRunStatus } from "../domain/run-status";
 import { planGateEnabled } from "../domain/task-lifecycle";
 import { isInFlight } from "../domain/task-state-machine";
-import { toRun, toRunEvent, toVerifications } from "../http/dto";
+import { toRun, toRunEvents, toVerifications } from "../http/dto";
 import { ApiError, conflict, notFound, readId, readJson, readQuery } from "../http/errors";
 import type { AppEnv } from "../http/session";
 import { summarizeDispatchTarget } from "../runner/dispatch-options";
@@ -77,6 +77,10 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
       scope,
       input.runnerKind === "local" ? "dispatch_local" : "dispatch_team",
     );
+    // 沒有 Repo 的 Task 不能派工（ADR-0011 的修訂）；正常情況下它也進不了 Ready。
+    if (scope.task.repoId === null) {
+      throw new ApiError(409, "repo_required", "Task 還沒有指定 Repo，不能派工");
+    }
     const permissionPolicy = input.permissionPolicy ?? scope.project.defaultPermissionPolicy;
     if (permissionPolicy === "yolo" && input.runnerKind === "team") {
       throw new ApiError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
@@ -100,6 +104,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
           taskId: task.id,
           agent: input.agent,
           model: input.model,
+          effort: input.effort,
           permissionPolicy,
           target: input.runnerKind,
           requestedByMemberId: actor.memberId,
@@ -172,7 +177,7 @@ export function createRunRoutes(s: Services): Hono<AppEnv> {
     requireProjectCapability(actor, scope, "view");
     const query = readQuery(c, ListEventsQuery);
     const rows = await s.eventStore.list(scope.run.id, query.afterSeq, query.limit);
-    return c.json(rows.map(toRunEvent) satisfies RunEvent[]);
+    return c.json((await toRunEvents(db, rows)) satisfies RunEvent[]);
   });
 
   /** 最新一份 review diff（Runner 進入 Review Gate 前送出的 `run_diff` Event）。還沒有時回 404。 */
