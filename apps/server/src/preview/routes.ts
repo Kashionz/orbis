@@ -10,6 +10,7 @@ import { API_ROUTES, apiPath, PREVIEW_SCREENSHOT_MAX_BYTES } from "@orbis/api-co
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getCookie } from "hono/cookie";
+import { findSession } from "../auth/service";
 import { requireProjectCapability } from "../authz/scope";
 import { BLOB_RETENTION_MS, blobStorageKey } from "../blobs/store";
 import { blobs } from "../db/schema";
@@ -19,7 +20,7 @@ import { ApiError, conflict, readId } from "../http/errors";
 import { type AppEnv, resolveActor } from "../http/session";
 import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
-import { requireRunVisible } from "./access";
+import { canViewRunByInvite, requireRunVisible } from "./access";
 import { PREVIEW_CALLBACK_PATH, previewShareUrl, safeReturnPath } from "./domain";
 import { loadPreviewState } from "./state";
 
@@ -74,18 +75,22 @@ export function createPreviewRoutes(s: Services): Hono<AppEnv> {
     const runId = readId(c, "runId", "Run");
     const domain = preview.domain;
     if (!domain) throw new ApiError(404, "not_found", "Server 沒有設定 Preview 網域");
-    let actor: Awaited<ReturnType<typeof resolveActor>>;
+    const token = getCookie(c, SESSION_COOKIE);
+    const session = token ? await findSession(db, token, clock.now()) : null;
+    if (!session) return c.redirect(`${preview.publicUrl}/login`, 302);
+    // Team 中能查看這個 Run，或有有效的預覽邀請（受邀者可以不屬於任何 Team，ADR-0015）。
+    let visible = false;
     try {
-      actor = await resolveActor(db, clock, getCookie(c, SESSION_COOKIE));
+      await requireRunVisible(db, await resolveActor(db, clock, token), runId);
+      visible = true;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        return c.redirect(`${preview.publicUrl}/login`, 302);
-      }
-      throw error;
+      if (!(error instanceof ApiError)) throw error;
     }
-    await requireRunVisible(db, actor, runId);
+    if (!visible && !(await canViewRunByInvite(db, clock, session.id, runId))) {
+      throw new ApiError(404, "not_found", "找不到Run");
+    }
     const callback = new URL(PREVIEW_CALLBACK_PATH, previewShareUrl(runId, domain));
-    callback.searchParams.set("ticket", preview.auth.issueTicket(runId, actor.sessionId));
+    callback.searchParams.set("ticket", preview.auth.issueTicket(runId, session.id));
     callback.searchParams.set("return", safeReturnPath(c.req.query("return")));
     // ticket 在網址中：不要被快取，也不要以 Referer 帶到其他網站
     c.header("cache-control", "no-store");

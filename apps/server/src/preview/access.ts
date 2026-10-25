@@ -7,9 +7,10 @@ import { authorize } from "../authz/capabilities";
 import { loadRunScope } from "../authz/scope";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
-import { members, sessions } from "../db/schema";
+import { members, runs, sessions } from "../db/schema";
 import { ApiError } from "../http/errors";
 import type { Actor } from "../http/session";
+import { hasActivePreviewInvite } from "./invites";
 
 export async function actorForSession(
   db: Database,
@@ -50,6 +51,10 @@ export async function requireRunVisible(db: Database, actor: Actor, runId: strin
   return scope;
 }
 
+/**
+ * 這個 Orbis session 能不能查看 Run 的 Preview：Team 中能查看這個 Run，或有這個 Run 有效的預覽邀請
+ * （ADR-0015，受邀者可以不屬於任何 Team）。
+ */
 export async function canViewRun(
   db: Database,
   clock: Clock,
@@ -57,12 +62,32 @@ export async function canViewRun(
   runId: string,
 ): Promise<boolean> {
   const actor = await actorForSession(db, clock, sessionId);
-  if (!actor) return false;
-  try {
-    await requireRunVisible(db, actor, runId);
-    return true;
-  } catch (error) {
-    if (error instanceof ApiError) return false;
-    throw error;
+  if (actor) {
+    try {
+      await requireRunVisible(db, actor, runId);
+      return true;
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+    }
   }
+  return canViewRunByInvite(db, clock, sessionId, runId);
+}
+
+/** 以預覽邀請查看：session 有效，而且有這個 Run 有效的邀請。 */
+export async function canViewRunByInvite(
+  db: Database,
+  clock: Clock,
+  sessionId: string,
+  runId: string,
+): Promise<boolean> {
+  const now = clock.now();
+  const [session] = await db
+    .select()
+    .from(sessions)
+    .where(and(eq(sessions.id, sessionId), gt(sessions.expiresAt, now)))
+    .limit(1);
+  if (!session) return false;
+  const [run] = await db.select().from(runs).where(eq(runs.id, runId));
+  if (!run) return false;
+  return hasActivePreviewInvite(db, session, run, now);
 }
