@@ -1,6 +1,7 @@
 import type { NeedsYouItem } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
-import { groupNeedsYou, targetOf } from "./needs-you-model";
+import { DICTIONARIES } from "../../i18n";
+import { groupNeedsYou, stoppedRunSummary, targetOf } from "./needs-you-model";
 
 const base = {
   memberId: "me",
@@ -68,5 +69,40 @@ describe("targetOf", () => {
       focus: "verification",
     });
     expect(targetOf(question)).toEqual({ taskKey: "ORB-1", run: "run-1--c1" });
+  });
+});
+
+describe("stoppedRunSummary", () => {
+  const zh = DICTIONARIES["zh-TW"].needsYou;
+  const en = DICTIONARIES.en.needsYou;
+  const item = (patch: Partial<Extract<NeedsYouItem, { kind: "stopped_run" }>>) => ({
+    ...base,
+    id: "s1",
+    kind: "stopped_run" as const,
+    reasonCode: "push_failed" as const,
+    attempt: null,
+    detail: null,
+    ...patch,
+  });
+
+  it("依代碼顯示原因，有 detail 時接在後面", () => {
+    expect(stoppedRunSummary(item({ detail: "remote: Permission denied" }), zh)).toBe(
+      "push 分支失敗：remote: Permission denied",
+    );
+    expect(
+      stoppedRunSummary(item({ reasonCode: "pr_open_failed", detail: "GitHub 回應 502" }), en),
+    ).toBe("Opening the PR failed: GitHub 回應 502");
+    expect(stoppedRunSummary(item({ reasonCode: "local_merge_blocked" }), zh)).toBe(
+      "本機合併被擋下",
+    );
+  });
+
+  it("Verification 超過上限顯示次數；舊資料沒有次數時不顯示數字", () => {
+    expect(stoppedRunSummary(item({ reasonCode: "verification_limit", attempt: 4 }), zh)).toBe(
+      "驗收連續失敗 4 次，超過重試上限",
+    );
+    expect(stoppedRunSummary(item({ reasonCode: "verification_limit" }), zh)).toBe(
+      "驗收連續失敗，超過重試上限",
+    );
   });
 });
