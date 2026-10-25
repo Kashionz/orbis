@@ -6,6 +6,7 @@ import {
   canDispatchTo,
   canRespondToPermission,
   defaultPermissionPolicy,
+  isRunnerOwner,
   permissionPoliciesFor,
 } from "./permissions";
 
@@ -149,6 +150,20 @@ describe("permissionPoliciesFor", () => {
   it("yolo 只在 Local Runner 提供", () => {
     expect(permissionPoliciesFor("local")).toEqual(["manual", "auto", "yolo"]);
     expect(permissionPoliciesFor("team")).toEqual(["manual", "auto"]);
+  });
+});
+
+describe("isRunnerOwner", () => {
+  it("Local Runner 上只有派工的人；Team Runner 不限", () => {
+    expect(
+      isRunnerOwner({ runnerKind: "local", startedByMemberId: "me" }, { memberId: "me" }),
+    ).toBe(true);
+    expect(
+      isRunnerOwner({ runnerKind: "local", startedByMemberId: "alice" }, { memberId: "me" }),
+    ).toBe(false);
+    expect(
+      isRunnerOwner({ runnerKind: "team", startedByMemberId: "alice" }, { memberId: "me" }),
+    ).toBe(true);
   });
 });
 

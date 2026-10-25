@@ -157,6 +157,7 @@ export default {
     copyBranch: "複製分支名稱",
     openFailed: "無法開啟",
     policyLocalOnly: "只能在本機執行器使用",
+    runnerOwnerOnly: "只有這台本機執行器的擁有者能切換",
   },
 
   effort: {

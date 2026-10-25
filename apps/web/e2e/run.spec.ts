@@ -183,6 +183,15 @@ test.describe("別人在自己電腦上派工的 Run", () => {
     await page.reload();
     await expect(permissionRow(page)).toContainText("等待有權限的成員回覆");
     await expect(permissionRow(page).locator(".st-option")).toHaveCount(0);
+
+    // 換 Permission Policy 與換 Agent 也只限擁有者；模型只能在目前的 Agent 中切換
+    const policyChip = page.getByRole("button", { name: /^權限策略/ });
+    await expect(policyChip).toHaveAttribute("aria-disabled", "true");
+    await expect(policyChip).toHaveAttribute("data-tip", "只有這台本機執行器的擁有者能切換");
+    await page.getByRole("button", { name: /^切換模型/ }).click();
+    const models = page.getByRole("menu", { name: "切換模型" });
+    await expect(models.getByRole("menuitemradio", { name: /Sonnet 5\.5/ })).toBeVisible();
+    await expect(models.getByRole("menuitemradio", { name: /GPT-5 Codex/ })).toHaveCount(0);
   });
 });
 

@@ -153,6 +153,7 @@ export default {
     copyBranch: "Copy branch name",
     openFailed: "Couldn’t open",
     policyLocalOnly: "Local runner only",
+    runnerOwnerOnly: "Only the owner of this local runner can change this",
   },
 
   effort: {

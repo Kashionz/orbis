@@ -135,6 +135,17 @@ export function defaultPermissionPolicy(
  * - 其他用途：Local Runner 上的請求只有該 Runner 的擁有者（在自己電腦上派工的人）能回覆；
  *   Team Runner 上的，Role 至少是 Member 的人都能回覆。
  */
+/**
+ * 能不能做只限 Local Runner 擁有者的操作（和 Server 相同）：換 Permission Policy、換 Agent。Team Runner 上
+ * 不限擁有者，依 Project 的規則。
+ */
+export function isRunnerOwner(
+  run: Pick<Run, "runnerKind" | "startedByMemberId">,
+  ctx: Pick<PermissionContext, "memberId">,
+): boolean {
+  return run.runnerKind === "team" || run.startedByMemberId === ctx.memberId;
+}
+
 export function canRespondToPermission(
   run: Pick<Run, "runnerKind" | "startedByMemberId">,
   purpose: PermissionPurpose,
@@ -142,5 +153,5 @@ export function canRespondToPermission(
 ): boolean {
   if (purpose === "config_trust") return can("policy.manage", ctx);
   if (!can("run.control", ctx)) return false;
-  return run.runnerKind === "team" || run.startedByMemberId === ctx.memberId;
+  return isRunnerOwner(run, ctx);
 }

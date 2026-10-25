@@ -2965,6 +2965,13 @@ export class MockBackend {
     this.state.settingsChanges[runId] = list;
   }
 
+  /** Local Runner 上的 Run：換 Permission Policy、換 Agent 只限那台 Runner 的擁有者（同 Server）。 */
+  private requireRunnerOwner(run: Run, what: string): void {
+    if (run.runnerKind === "local" && run.startedByMemberId !== ME_ID) {
+      throw new MockError(403, "forbidden", `只有這台 Local Runner 的擁有者能${what}`);
+    }
+  }
+
   private requireRunning(runId: string): Run {
     this.requireEditor();
     const run = this.run(runId);
@@ -2977,6 +2984,8 @@ export class MockBackend {
   /** 執行中切換模型、推理強度、權限策略（模型目錄檢查同 Server）。 */
   updateRunSettings(runId: string, input: UpdateRunSettingsInput): { controlIds: string[] } {
     const run = this.requireRunning(runId);
+    if (input.permissionPolicy !== undefined)
+      this.requireRunnerOwner(run, "改變 Permission Policy");
     if (input.permissionPolicy === "yolo" && run.runnerKind === "team") {
       throw new MockError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
     }
@@ -3055,6 +3064,7 @@ export class MockBackend {
   /** 換成同一台 Runner 上的另一個 Agent（同一個 Run 與 Worktree）。 */
   switchAgent(runId: string, input: SwitchAgentInput): { controlId: string } {
     const run = this.requireRunning(runId);
+    this.requireRunnerOwner(run, "換 Agent");
     const entry = MOCK_AGENT_CATALOG.find((a) => a.agentId === input.agent);
     if (!entry || entry.signedIn === false) {
       throw new MockError(422, "agent_unavailable", `這台 Runner 上沒有可以用的 ${input.agent}`);

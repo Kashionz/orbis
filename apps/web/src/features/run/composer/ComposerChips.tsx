@@ -36,6 +36,8 @@ interface ChipsProps {
   locked: boolean;
   /** Runner 連線中（執行電腦的圖示顏色）。 */
   connected: boolean;
+  /** 能換 Permission Policy 與換 Agent：Local Runner 上只限那台 Runner 的擁有者。 */
+  runnerOwner: boolean;
 }
 
 type SwitchRequest =
@@ -63,7 +65,7 @@ function useSwitch(run: Run) {
   });
 }
 
-export function ComposerChips({ run, settings, locked, connected }: ChipsProps) {
+export function ComposerChips({ run, settings, locked, connected, runnerOwner }: ChipsProps) {
   const t = useT();
   const c = t.workspace.composer;
   const switchSettings = useSwitch(run);
@@ -83,6 +85,7 @@ export function ComposerChips({ run, settings, locked, connected }: ChipsProps) 
         model={current.model}
         disabled={blocked}
         reason={null}
+        otherAgents={runnerOwner}
         onSelect={(agent, model) =>
           switchSettings.mutate(
             agent === current.agent
@@ -102,8 +105,8 @@ export function ComposerChips({ run, settings, locked, connected }: ChipsProps) 
       <PolicyChip
         run={run}
         policy={current.permissionPolicy}
-        disabled={blocked}
-        reason={null}
+        disabled={blocked || !runnerOwner}
+        reason={!locked && !runnerOwner ? c.runnerOwnerOnly : null}
         onSelect={(permissionPolicy) =>
           switchSettings.mutate({ kind: "settings", input: { permissionPolicy } })
         }
@@ -124,10 +127,13 @@ function ModelChip({
   model,
   disabled,
   reason,
+  otherAgents,
   onSelect,
 }: ChipProps & {
   agent: string;
   model: string | null;
+  /** 能不能換成其他 Agent；不能時只列出目前 Agent 的模型。 */
+  otherAgents: boolean;
   onSelect: (agent: string, model: string) => void;
 }) {
   const t = useT();
@@ -137,7 +143,7 @@ function ModelChip({
   const { data: catalog } = useAgentCatalog();
   const current = `${agent}|${model ?? ""}`;
   const groups: MenuGroup<string>[] = catalog
-    .filter((entry) => entry.models.length > 0)
+    .filter((entry) => entry.models.length > 0 && (otherAgents || entry.agentId === agent))
     .map((entry) => ({
       title: entry.tool,
       titleSub: entry.vendor ?? undefined,

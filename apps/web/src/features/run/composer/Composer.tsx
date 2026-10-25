@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 import { decideGate, decideVerification, queryKeys } from "../../../api/resources";
 import { ErrorText } from "../../../components/ErrorText";
 import { useT } from "../../../i18n";
+import { isRunnerOwner } from "../../../lib/permissions";
 import { clearPreviewDrafts, loadPreviewDrafts } from "../../preview/preview-drafts";
 import { EMPTY_DRAFT, loadDraft, saveDraft, sortComments } from "../../review/review-drafts";
 import type { RunWorkspaceData } from "../workspace/use-run-workspace";
@@ -201,6 +202,7 @@ export function Composer({
               run={run}
               settings={data.settings}
               locked={finished || !permissions.can("run.control")}
+              runnerOwner={isRunnerOwner(run, permissions.ctx)}
               connected={!finished && data.connected}
             />
             {send.action === "prompt" && !finished && (
