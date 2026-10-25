@@ -131,6 +131,28 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
       expect(expectContract(Team, res.body).name).toBe("核心小組");
     });
 
+    it("只改 Team 的對外分享預覽或終端機設定時也會寫入，名稱不變（預設都關閉）", async () => {
+      const before = expectContract(Team, (await as("admin").get("/api/team")).body);
+      expect(before).toMatchObject({ allowExternalPreview: false, allowTeamRunnerTerminal: false });
+      const preview = await as("admin").patch("/api/team", { allowExternalPreview: true });
+      expect(preview.status).toBe(200);
+      expect(expectContract(Team, preview.body)).toMatchObject({
+        name: before.name,
+        allowExternalPreview: true,
+        allowTeamRunnerTerminal: false,
+      });
+      const terminal = await as("admin").patch("/api/team", { allowTeamRunnerTerminal: true });
+      expect(expectContract(Team, terminal.body)).toMatchObject({
+        name: before.name,
+        allowExternalPreview: true,
+        allowTeamRunnerTerminal: true,
+      });
+      expect((await as("member").patch("/api/team", { allowExternalPreview: false })).status).toBe(
+        403,
+      );
+      expect((await as("admin").patch("/api/team", {})).status).toBe(400);
+    });
+
     it("Admin 以 GitHub login 新增 Member", async () => {
       ctx.githubUsers.add({ id: 77, login: "Newbie", name: "New", avatarUrl: null });
       const res = await as("admin").post("/api/members", { githubLogin: "newbie", role: "member" });
@@ -301,6 +323,33 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         verificationMaxRetries: 5,
         feedbackBotAllowlist: [],
         planGateEnabled: true,
+      });
+    });
+
+    it("本機 Repo 的合併設定：預設 squash、不 push；只改這兩個也會寫入，建立時也會保存", async () => {
+      const project = await createProject();
+      expect(project.policy).toMatchObject({ localMergeStrategy: "squash", localPushBase: false });
+      const strategy = await as("admin").patch(`/api/projects/${project.id}`, {
+        policy: { localMergeStrategy: "merge" },
+      });
+      expect(strategy.status).toBe(200);
+      expect(expectContract(Project, strategy.body).policy.localMergeStrategy).toBe("merge");
+      const push = await as("admin").patch(`/api/projects/${project.id}`, {
+        policy: { localPushBase: true },
+      });
+      expect(expectContract(Project, push.body).policy).toMatchObject({
+        localMergeStrategy: "merge",
+        localPushBase: true,
+      });
+      const created = await as("admin").post("/api/projects", {
+        name: "本機",
+        keyPrefix: "LOC",
+        policy: { localMergeStrategy: "merge", localPushBase: true },
+      });
+      expect(created.status).toBe(201);
+      expect(expectContract(Project, created.body).policy).toMatchObject({
+        localMergeStrategy: "merge",
+        localPushBase: true,
       });
     });
 
@@ -633,6 +682,17 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
         specPath: "docs/specs/login.md",
         planGateEnabled: false,
       });
+    });
+
+    it("補指定 Repo 還不支援：回 400，Task 不變", async () => {
+      const project = await createProject();
+      const repo = await createRepo(project.id);
+      const other = await createRepo(project.id, "other");
+      const task = await createTask(project.id, repo.id);
+      const res = await as("member").patch(`/api/tasks/${task.id}`, { repoId: other.id });
+      expect(res.status).toBe(400);
+      const after = expectContract(Task, (await as("member").get(`/api/tasks/${task.id}`)).body);
+      expect(after.repoId).toBe(repo.id);
     });
 
     it("指派給其他 Team 的人時回 422", async () => {

@@ -169,6 +169,10 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
     const input = await readJson(c, UpdateTaskInput);
+    // TODO(backend, task-without-repo)：補指定 Repo（只接受從 null 補一次，ADR-0011）。
+    if (input.repoId !== undefined) {
+      throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援補指定 Task 的 Repo");
+    }
     const task = await inTransaction(db, async (uow) => {
       const { tx } = uow;
       await tx

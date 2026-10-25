@@ -58,6 +58,10 @@ function policyColumns(policy: Partial<ProjectPolicy>): Partial<ProjectInsert> {
   if (policy.feedbackBotAllowlist !== undefined) {
     columns.feedbackBotAllowlist = policy.feedbackBotAllowlist;
   }
+  if (policy.localMergeStrategy !== undefined) {
+    columns.localMergeStrategy = policy.localMergeStrategy;
+  }
+  if (policy.localPushBase !== undefined) columns.localPushBase = policy.localPushBase;
   return columns;
 }
 

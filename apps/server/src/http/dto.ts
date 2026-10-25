@@ -483,23 +483,38 @@ export function toNotification(
 
 /**
  * Needs You `stopped_run` 的 payload 轉成契約的 StoppedRunInfo。migration 0004 之前建立的項目只有
- * 中文的 `reason`：有 `verificationId` 的是 Verification 超過上限，其他當成 push 失敗，原文放進 detail。
+ * 中文的 `reason`，依原因文字推回代碼（見 `legacyStoppedRunInfo`）。
  */
-function stoppedRunInfo(payload: Record<string, unknown>): StoppedRunInfo {
-  const reasonCode =
-    (payload.reasonCode as StoppedRunReason | undefined) ??
-    (payload.verificationId ? "verification_limit" : "push_failed");
-  const attempt =
-    typeof payload.attempt === "number"
-      ? payload.attempt
-      : reasonCode === "verification_limit"
-        ? 1
-        : null;
-  const detail =
-    typeof payload.detail === "string"
-      ? payload.detail
-      : payload.reasonCode
-        ? null
-        : String(payload.reason ?? "") || null;
-  return { reasonCode, attempt, detail };
+export function stoppedRunInfo(payload: Record<string, unknown>): StoppedRunInfo {
+  if (typeof payload.reasonCode === "string") {
+    return {
+      reasonCode: payload.reasonCode as StoppedRunReason,
+      attempt: typeof payload.attempt === "number" ? payload.attempt : null,
+      detail: typeof payload.detail === "string" ? payload.detail : null,
+    };
+  }
+  return legacyStoppedRunInfo(String(payload.reason ?? ""), payload.verificationId !== undefined);
+}
+
+/**
+ * migration 0004 之前的原因文字：`Verification 連續失敗 N 次`、`開 PR 失敗：<錯誤>`、
+ * `push 分支失敗：<錯誤>`（或沒有錯誤的 `push 分支失敗`）。冒號後面的錯誤放進 detail；
+ * 解析不到 Verification 的次數時 attempt 為 null（不給錯的數字）。
+ */
+export function legacyStoppedRunInfo(reason: string, hasVerification: boolean): StoppedRunInfo {
+  const separator = reason.indexOf("：");
+  const detail = separator >= 0 ? reason.slice(separator + 1).trim() || null : null;
+  if (hasVerification || reason.startsWith("Verification")) {
+    const count = /連續失敗 (\d+) 次/.exec(reason)?.[1];
+    return {
+      reasonCode: "verification_limit",
+      attempt: count === undefined ? null : Number(count),
+      detail: null,
+    };
+  }
+  if (reason.startsWith("開 PR 失敗"))
+    return { reasonCode: "pr_open_failed", attempt: null, detail };
+  if (reason.startsWith("push 分支失敗"))
+    return { reasonCode: "push_failed", attempt: null, detail };
+  return { reasonCode: "push_failed", attempt: null, detail: reason || null };
 }
