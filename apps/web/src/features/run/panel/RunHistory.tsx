@@ -67,6 +67,7 @@ export function RunHistory({ taskKey, runs, currentRunId, canCancel }: RunHistor
               <span className="rp-mono-muted">{run.id}</span>
               <span className="rp-mono-muted rp-ellipsis">
                 {run.agent}
+                {run.model && ` ${run.model}`}
                 {run.origin !== "dispatch" && ` ${t.labels.runOrigin[run.origin]}`}
                 {run.delegationMode && ` ${t.labels.delegationMode[run.delegationMode]}`}
               </span>

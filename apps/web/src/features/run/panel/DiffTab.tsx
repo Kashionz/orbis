@@ -560,7 +560,11 @@ function EmptyDiff({
   return (
     <section className="rp-diff-empty" aria-label={w.empty}>
       <span className="rp-empty-title">{w.empty}</span>
-      {reviewing && <span className="rp-muted">{w.emptyHint}</span>}
+      {reviewing && (
+        <span className="rp-muted" role="note">
+          {w.emptyHint}
+        </span>
+      )}
       {finished && <span className="rp-muted">{w.finishedWithoutChanges}</span>}
       <span className="rp-section-title">{w.finalMessage}</span>
       {reply.error ? (
