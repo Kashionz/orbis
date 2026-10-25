@@ -1,0 +1,104 @@
+/* 任務分頁的留言。 */
+
+.tc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tc-thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tc-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tc-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.tc-author {
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  color: var(--oe8e9eb);
+}
+
+.tc-time {
+  color: var(--o8b9098);
+}
+
+.tc-own {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.tc-body {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--oe8e9eb);
+  padding-left: 26px;
+  overflow-wrap: anywhere;
+}
+
+.tc-body p {
+  margin: 0 0 6px;
+}
+
+.tc-link {
+  font-size: 12px;
+  color: var(--o7fb0fa);
+  text-decoration: none;
+}
+
+.tc-consult {
+  margin: 0;
+  padding-left: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tc-form textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  border: 1px solid var(--o26292e);
+  border-radius: var(--r-card);
+  background: var(--o1a1b1f);
+  color: var(--oe8e9eb);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.tc-form textarea:focus {
+  border-color: var(--o34373d);
+}
+
+.tc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}

@@ -347,6 +347,38 @@ export default {
       `預覽已停止（${reason}${exitCode === null ? "" : `，結束碼 ${exitCode}`}）`,
   },
 
+  comments: {
+    title: "留言",
+    empty: "還沒有留言",
+    newComment: "新增留言",
+    body: "留言內容",
+    placeholder: "輸入 @ 提及成員或代理（@agent 會建立諮詢執行）",
+    send: "送出留言",
+    edit: "修改",
+    editComment: "修改留言",
+    edited: "（已編輯）",
+    agentReply: "代理的回覆",
+    fromRun: (id: string) => `來自執行 ${id}`,
+    removedMember: "已移除的成員",
+    consultRun: (id: string) => `@agent 的諮詢執行（${id}）`,
+  },
+
+  collab: {
+    synced: "已同步",
+    syncing: "同步中",
+    connecting: "連線中",
+    reconnecting: "連線中斷，重新連線中",
+    failed: "已中斷",
+    readOnly: "唯讀",
+    peers: "正在編輯的人",
+    loading: "正在載入文件",
+    unauthorized: "登入已失效，請重新登入後再編輯。",
+    forbidden: "沒有權限查看這份文件。",
+    notFound: "找不到這份文件。",
+    mentionOptions: "提及的對象",
+    consultRun: (label: string) => `@${label} 的諮詢執行`,
+  },
+
   terminal: {
     shell: "Shell",
     empty: "沒有輸出",

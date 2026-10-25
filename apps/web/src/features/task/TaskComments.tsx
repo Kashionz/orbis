@@ -10,10 +10,13 @@ import {
   taskCommentsQuery,
   updateTaskComment,
 } from "../../api/resources";
+import { Avatar } from "../../components/Avatar";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
 import { MentionMarkdown } from "../mention/MentionMarkdown";
 import { MentionTextarea } from "../mention/MentionTextarea";
+import "./comments.css";
 
 /**
  * Task 留言（ARCHITECTURE §12.3）：可以 @成員或 @agent；@agent 會建立 `consult` Run，
@@ -31,6 +34,8 @@ export function TaskComments({
   memberId: string;
   canComment: boolean;
 }) {
+  const t = useT();
+  const c = t.workspace.comments;
   const queryClient = useQueryClient();
   const { data: comments = [], error } = useQuery(taskCommentsQuery(taskId));
   const { data: members = [] } = useQuery(membersQuery);
@@ -48,11 +53,13 @@ export function TaskComments({
   });
 
   return (
-    <section className="section" aria-labelledby="comments-heading">
-      <h2 id="comments-heading">留言</h2>
+    <section className="tc" aria-labelledby="tc-heading">
+      <h2 id="tc-heading" className="rp-section-title">
+        {c.title}
+      </h2>
       <ErrorText error={error} />
-      {comments.length === 0 && <p className="empty">還沒有留言</p>}
-      <ol className="comment-thread">
+      {comments.length === 0 && <span className="rp-muted">{c.empty}</span>}
+      <ol className="tc-thread">
         {comments.map((comment) => (
           <CommentItem
             key={comment.id}
@@ -66,8 +73,8 @@ export function TaskComments({
       </ol>
       {canComment && (
         <form
-          className="comment-form"
-          aria-label="新增留言"
+          className="tc-form"
+          aria-label={c.newComment}
           onSubmit={(event) => {
             event.preventDefault();
             if (body.trim() !== "") create.mutate();
@@ -75,19 +82,20 @@ export function TaskComments({
         >
           <MentionTextarea
             projectId={projectId}
-            label="留言內容"
+            label={c.body}
             value={body}
             onChange={setBody}
-            placeholder="輸入 @ 提及成員或 Agent（@agent 會建立 consult Run）"
+            placeholder={c.placeholder}
           />
           <ErrorText error={create.error} />
-          <div className="form-actions">
+          <div className="tc-actions">
             <button
               type="submit"
-              className="primary"
+              className="o-btn"
+              data-variant="primary"
               disabled={create.isPending || body.trim() === ""}
             >
-              送出留言
+              {c.send}
             </button>
           </div>
         </form>
@@ -109,6 +117,8 @@ function CommentItem({
   own: boolean;
   onChanged: () => Promise<unknown>;
 }) {
+  const t = useT();
+  const c = t.workspace.comments;
   const [draft, setDraft] = useState<string | null>(null);
   const author = members.find((m) => m.id === comment.authorMemberId);
   const save = useMutation({
@@ -124,63 +134,68 @@ function CommentItem({
   });
 
   return (
-    <li className="task-comment" data-comment-id={comment.id}>
-      <div className="task-comment-meta">
+    <li className="tc-item task-comment" data-comment-id={comment.id}>
+      <div className="tc-meta">
         {comment.authorRunId ? (
           <>
-            <strong>Agent 的回覆</strong>{" "}
-            <Link to="/runs/$runId" params={{ runId: comment.authorRunId }}>
-              來自 Run {comment.authorRunId}
+            <span className="tc-author">{c.agentReply}</span>
+            <Link to="/runs/$runId" params={{ runId: comment.authorRunId }} className="tc-link">
+              {c.fromRun(comment.authorRunId)}
             </Link>
           </>
         ) : (
-          <strong>{author ? `@${author.githubLogin}` : "已移除的成員"}</strong>
+          <>
+            <Avatar
+              person={author ? { name: author.githubLogin, avatarUrl: author.avatarUrl } : null}
+              size={18}
+            />
+            <span className="tc-author">{author ? `@${author.githubLogin}` : c.removedMember}</span>
+          </>
         )}
-        <span className="hint">{formatTime(comment.createdAt)}</span>
-        {comment.updatedAt !== comment.createdAt && <span className="hint">（已編輯）</span>}
+        <span className="tc-time">{formatTime(comment.createdAt)}</span>
+        {comment.updatedAt !== comment.createdAt && <span className="tc-time">{c.edited}</span>}
+        {own && draft === null && (
+          <span className="tc-own">
+            <button type="button" className="rp-text-btn" onClick={() => setDraft(comment.body)}>
+              {c.edit}
+            </button>
+            <button
+              type="button"
+              className="rp-text-btn"
+              data-danger="true"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              {t.common.delete}
+            </button>
+          </span>
+        )}
       </div>
       {draft === null ? (
-        <MentionMarkdown text={comment.body} />
+        <div className="tc-body">
+          <MentionMarkdown text={comment.body} />
+        </div>
       ) : (
         <form
-          aria-label="修改留言"
+          className="tc-form"
+          aria-label={c.editComment}
           onSubmit={(event) => {
             event.preventDefault();
             if (draft.trim() !== "") save.mutate(draft.trim());
           }}
         >
-          <MentionTextarea
-            projectId={projectId}
-            label="修改留言"
-            value={draft}
-            onChange={setDraft}
-          />
-          <div className="form-actions">
-            <button type="submit" className="primary" disabled={save.isPending}>
-              儲存
+          <MentionTextarea projectId={projectId} label={c.editComment} value={draft} onChange={setDraft} />
+          <div className="tc-actions">
+            <button type="button" className="o-btn" data-variant="ghost" onClick={() => setDraft(null)}>
+              {t.common.cancel}
             </button>
-            <button type="button" onClick={() => setDraft(null)}>
-              取消
+            <button type="submit" className="o-btn" data-variant="primary" disabled={save.isPending}>
+              {t.common.save}
             </button>
           </div>
         </form>
       )}
       <ConsultRunLinks runIds={comment.consultRunIds} />
-      {own && draft === null && (
-        <div className="form-actions">
-          <button type="button" className="link-button" onClick={() => setDraft(comment.body)}>
-            修改
-          </button>
-          <button
-            type="button"
-            className="link-button"
-            disabled={remove.isPending}
-            onClick={() => remove.mutate()}
-          >
-            刪除
-          </button>
-        </div>
-      )}
       <ErrorText error={save.error ?? remove.error} />
     </li>
   );
@@ -188,12 +203,13 @@ function CommentItem({
 
 /** @agent 建立的 consult Run 的連結（Task 留言、diff 行內留言共用）。 */
 export function ConsultRunLinks({ runIds }: { runIds: readonly string[] }) {
+  const t = useT();
   if (runIds.length === 0) return null;
   return (
-    <p className="consult-runs">
+    <p className="tc-consult">
       {runIds.map((runId) => (
-        <Link key={runId} to="/runs/$runId" params={{ runId }}>
-          @agent 的 consult Run（{runId}）
+        <Link key={runId} to="/runs/$runId" params={{ runId }} className="tc-link">
+          {t.workspace.comments.consultRun(runId)}
         </Link>
       ))}
     </p>

@@ -347,6 +347,38 @@ export default {
       `Preview stopped (${reason}${exitCode === null ? "" : `, exit code ${exitCode}`})`,
   },
 
+  comments: {
+    title: "Comments",
+    empty: "No comments yet",
+    newComment: "New comment",
+    body: "Comment",
+    placeholder: "Type @ to mention a member or agent (@agent starts a consult run)",
+    send: "Post comment",
+    edit: "Edit",
+    editComment: "Edit comment",
+    edited: "(edited)",
+    agentReply: "Agent reply",
+    fromRun: (id: string) => `From run ${id}`,
+    removedMember: "Removed member",
+    consultRun: (id: string) => `@agent consult run (${id})`,
+  },
+
+  collab: {
+    synced: "Synced",
+    syncing: "Syncing",
+    connecting: "Connecting",
+    reconnecting: "Disconnected, reconnecting",
+    failed: "Disconnected",
+    readOnly: "Read-only",
+    peers: "People editing",
+    loading: "Loading document",
+    unauthorized: "Your session expired. Sign in again to edit.",
+    forbidden: "You don’t have access to this document.",
+    notFound: "This document doesn’t exist.",
+    mentionOptions: "Mention suggestions",
+    consultRun: (label: string) => `Consult run for @${label}`,
+  },
+
   terminal: {
     shell: "Shell",
     empty: "No output",

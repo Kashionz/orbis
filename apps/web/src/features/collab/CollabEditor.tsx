@@ -12,10 +12,10 @@ import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useMemo, useRef } from "react";
 import { mentionCandidatesQuery } from "../../api/resources";
+import { useT } from "../../i18n";
 import { meQueryOptions } from "../auth/api";
 import { collabMentionExtension } from "./collab-mention";
 import {
-  COLLAB_FAILURE_MESSAGES,
   type CollabDocument,
   useCollabDocument,
   useCollabPeers,
@@ -33,6 +33,8 @@ interface CollabEditorProps {
   /** 這份文件中 mention 的紀錄（taskMentions），用來顯示 @agent 建立的 consult Run。 */
   mentions?: readonly Mention[];
   placeholder?: string;
+  /** 檢視模式中可以編輯的人也是唯讀：不顯示「唯讀」標記。 */
+  hideReadOnly?: boolean;
 }
 
 /**
@@ -40,6 +42,7 @@ interface CollabEditorProps {
  * 文件內容由 Server 保存並轉成 markdown 回寫。
  */
 export function CollabEditor(props: CollabEditorProps) {
+  const c = useT().workspace.collab;
   const { data: me } = useSuspenseQuery(meQueryOptions);
   const user = useMemo(
     () => ({ name: me.githubLogin, color: userColor(me.githubLogin) }),
@@ -53,19 +56,19 @@ export function CollabEditor(props: CollabEditorProps) {
       <div className="collab-bar">
         <span className="collab-status" data-testid="collab-status">
           {failure
-            ? "已中斷"
+            ? c.failed
             : status === "connected"
               ? synced
-                ? "已同步"
-                : "同步中…"
+                ? c.synced
+                : c.syncing
               : status === "connecting"
-                ? "連線中…"
-                : "連線中斷，重新連線中…"}
+                ? c.connecting
+                : c.reconnecting}
         </span>
-        {!props.canEdit && <span className="tag">唯讀</span>}
+        {!props.canEdit && !props.hideReadOnly && <span className="tag">{c.readOnly}</span>}
         <span className="spacer" />
         {peers.length > 0 && (
-          <ul className="collab-peers" aria-label="正在編輯的人">
+          <ul className="collab-peers" aria-label={c.peers}>
             {peers.map((peer) => (
               <li key={peer.name} style={{ borderColor: peer.color }}>
                 {peer.name}
@@ -76,7 +79,7 @@ export function CollabEditor(props: CollabEditorProps) {
       </div>
       {failure ? (
         <p className="error-text" role="alert">
-          {COLLAB_FAILURE_MESSAGES[failure]}
+          {c[failure === "not_found" ? "notFound" : failure]}
         </p>
       ) : (
         // 第一次同步完成後才建立編輯器：之前綁定空文件時，ProseMirror 補上的空段落會寫進共同文件，
@@ -85,7 +88,7 @@ export function CollabEditor(props: CollabEditorProps) {
         (everSynced ? (
           <BoundEditor key={document.docName} document={document} user={user} {...props} />
         ) : (
-          <p className="hint collab-loading">正在載入文件…</p>
+          <p className="hint collab-loading">{c.loading}</p>
         ))
       )}
     </div>
@@ -160,6 +163,7 @@ function BoundEditor({
     }))
     .filter((node) => node.runId !== null);
 
+  const t = useT();
   return (
     <>
       <EditorContent editor={editor} />
@@ -167,7 +171,7 @@ function BoundEditor({
         <p className="consult-runs">
           {consults.map((node) => (
             <Link key={node.nodeId} to="/runs/$runId" params={{ runId: node.runId ?? "" }}>
-              @{node.label} 的 consult Run
+              {t.workspace.collab.consultRun(node.label)}
             </Link>
           ))}
         </p>

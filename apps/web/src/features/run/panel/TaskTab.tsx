@@ -29,7 +29,7 @@ import { type MenuGroup, Popover } from "../../../components/Popover";
 import { StatusDot } from "../../../components/StatusDot";
 import { useT } from "../../../i18n";
 import type { Permissions } from "../../auth/use-permissions";
-import { MentionMarkdown } from "../../mention/MentionMarkdown";
+import { CollabEditor } from "../../collab/CollabEditor";
 import { TaskComments } from "../../task/TaskComments";
 import { TONE_COLOR, taskTone } from "../run-tone";
 import { VERIFICATION_FOCUS } from "../workspace/route-state";
@@ -101,13 +101,18 @@ export function TaskTab({
                   </button>
                 )}
               </div>
-              {task.description.trim() === "" ? (
-                <span className="rp-muted">{w.notWritten}</span>
-              ) : (
-                <div className="rp-spec">
-                  <MentionMarkdown text={task.description} />
-                </div>
-              )}
+              {/* 檢視時也是共同編輯文件（唯讀）：看得到其他人即時的修改與在線名單 */}
+              <div className="rp-spec rp-spec-view">
+                <CollabEditor
+                  docRef={{ kind: "task-description", id: task.id }}
+                  label={w.spec}
+                  canEdit={false}
+                  hideReadOnly={canEdit}
+                  projectId={project.id}
+                  mentions={mentions}
+                  placeholder={w.notWritten}
+                />
+              </div>
             </section>
             <AcceptanceList
               criteria={criteria}
