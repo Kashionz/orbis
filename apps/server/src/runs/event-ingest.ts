@@ -133,6 +133,12 @@ const SettingsChangedBody = z.object({
   not_applied: z.array(z.enum(RUN_SETTING_NAMES)),
 });
 
+const LocalMergedBody = z.object({
+  commit_sha: z.string().regex(/^[0-9a-f]{40}$/),
+  base_branch: z.string().min(1),
+  pushed: z.boolean(),
+});
+
 const AgentSwitchedBody = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
@@ -162,6 +168,8 @@ export interface EventIngestDeps {
   verification: VerificationService;
   runControls: RunControlService;
   watch: RunWatch;
+  /** 主 Run 在 Task 已經 Done 之後才結束（本機合併）：封存 Worktree。 */
+  onPrimaryRunCompletedAfterDone?: (taskId: string) => void | Promise<void>;
   /** Feedback Loop 的修正 Run 沒有 push 就結束（GitHub 整合的 onFeedbackRunEnded）。 */
   onFeedbackRunEnded?: (runId: string) => void | Promise<void>;
   notify: Notify;
@@ -296,6 +304,12 @@ export class EventIngest {
         if (Object.keys(columns).length > 0) {
           await tx.update(runs).set(columns).where(eq(runs.id, runId));
         }
+        return;
+      }
+      case "local_merged": {
+        const body = parse(LocalMergedBody);
+        if (!body) return;
+        await this.onLocalMerged(uow, runId, body);
         return;
       }
       case "agent_switched": {
@@ -525,6 +539,57 @@ export class EventIngest {
     if (status !== "completed" && primary && isInFlight(task.status)) {
       await this.lifecycle.transition(uow, task.id, "ready", "run_stopped");
     }
+    // 本機 Repo 的 Task 在合併時就轉 Done，Run 之後才結束：這時才封存 Worktree（ADR-0013）。
+    if (status === "completed" && primary && task.status === "done") {
+      uow.afterCommit(() => this.deps.onPrimaryRunCompletedAfterDone?.(task.id));
+    }
+  }
+
+  /**
+   * 本機 Repo 的本機合併完成（ADR-0013）：Task 從 Review Gate 直接轉 Done（關閉原因 completed），
+   * 被擋下時留下的「停下來的 Run」一併處理掉。Worktree 在 Task 轉 Done 或 Run 結束時封存。
+   */
+  private async onLocalMerged(
+    uow: UnitOfWork,
+    runId: string,
+    body: z.infer<typeof LocalMergedBody>,
+  ): Promise<void> {
+    const context = await this.runContext(uow, runId);
+    if (!context) return;
+    const { run, task } = context;
+    if (!isPrimaryRun(run) || task.status !== "review_gate") {
+      this.logger.warn(
+        { runId, taskStatus: task.status },
+        "Task 不在等待本機合併，忽略 local_merged",
+      );
+      return;
+    }
+    const [requested] = await uow.tx
+      .select({ id: runControls.controlId })
+      .from(runControls)
+      .where(and(eq(runControls.runId, runId), eq(runControls.action, "merge_local")))
+      .limit(1);
+    if (!requested) {
+      this.logger.warn({ runId }, "沒有送出 merge_local，忽略 local_merged");
+      return;
+    }
+    await this.lifecycle.transition(uow, task.id, "done", "local_merge", {
+      source: "system",
+      doneReason: "completed",
+    });
+    await uow.tx
+      .update(needsYouItems)
+      .set({
+        resolvedAt: this.clock.now(),
+        resolution: { reason: "local_merged", commitSha: body.commit_sha },
+      })
+      .where(
+        and(
+          eq(needsYouItems.runId, runId),
+          eq(needsYouItems.kind, "stopped_run"),
+          isNull(needsYouItems.resolvedAt),
+        ),
+      );
   }
 
   /** @agent 的 consult Run 結束：把 Agent 最後的回覆貼回成 Task 留言（作者是這個 Run）。 */

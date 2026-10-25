@@ -40,7 +40,22 @@ export interface RunnerAvailability {
  * - 離線或暫停領取的 Runner 沿用它最後回報的可用性：ARCHITECTURE §6.1 允許派工給離線的 Runner，
  *   Run 停在佇列等它上線；是否在線由 `online` 另外表達，對話框據此提示 Run 會排隊。
  */
-export function summarizeDispatchTarget(runners: RunnerAvailability[]): DispatchTarget {
+export function summarizeDispatchTarget(
+  runners: RunnerAvailability[],
+  /** Task 的 Repo 是本機 Repo 時的名稱：只算 runner.toml 有對應它的 Runner（ADR-0013）。 */
+  localRepoName: string | null = null,
+): DispatchTarget {
+  if (localRepoName !== null) {
+    const mapped = runners.filter((runner) =>
+      runner.agents.some((row) =>
+        ((row.details ?? {}) as AvailabilityDetails).mappedRepos?.includes(localRepoName),
+      ),
+    );
+    if (mapped.length === 0) {
+      return { ...summarizeDispatchTarget(runners), unavailableReason: "repo_not_mapped" };
+    }
+    return summarizeDispatchTarget(mapped);
+  }
   const byAgent = new Map<
     string,
     {
@@ -84,6 +99,5 @@ export function summarizeDispatchTarget(runners: RunnerAvailability[]): Dispatch
       }),
     )
     .sort((a, b) => a.id.localeCompare(b.id));
-  // TODO(backend, local-repo)：依 Task 的本機 Repo 與 Runner 的 mapped_repos 判斷 repo_not_mapped。
   return { online: runners.some((r) => r.dispatchable), agents, unavailableReason: null };
 }

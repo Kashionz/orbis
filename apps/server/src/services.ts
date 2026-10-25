@@ -204,6 +204,7 @@ export function createServices(options: ServicesOptions): Services {
       notify,
       clock,
       logger,
+      onPrimaryRunCompletedAfterDone: (taskId) => archive.archiveTask(taskId),
       onFeedbackRunEnded: async (runId) => {
         await githubApp?.app.onFeedbackRunEnded({ runId });
       },

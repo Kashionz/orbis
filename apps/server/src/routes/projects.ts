@@ -2,6 +2,7 @@
 
 import {
   API_ROUTES,
+  ConnectRepoToGithubInput,
   CreateProjectInput,
   CreateRepoInput,
   GitBranchName,
@@ -230,9 +231,23 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
     const input = await readJson(c, CreateRepoInput);
-    // TODO(backend, local-repo)：登記本機 Repo（ADR-0013）。
     if (input.kind === "local") {
-      throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援本機 Repo");
+      // 本機 Repo（ADR-0013）：只有名稱，路徑由各 Runner 的 runner.toml 對應，Server 不保存。
+      const [local] = await db
+        .insert(repos)
+        .values({
+          projectId: scope.project.id,
+          kind: "local",
+          githubOwner: null,
+          githubName: input.name,
+          defaultBranch: input.defaultBranch ?? DEFAULT_BRANCH,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (!local) {
+        throw new ApiError(409, "repo_exists", `本機 Repo ${input.name} 已經登記在這個 Project`);
+      }
+      return c.json(toRepo(local, s.github.installUrl), 201);
     }
     const registration = await registerRepo(s, input, actor.memberId);
     const [repo] = await db
@@ -242,6 +257,71 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
       .returning();
     if (!repo) throw conflict(`${input.owner}/${input.name} 已經登記在這個 Project`);
     return c.json(toRepo(repo, s.github.installUrl), 201);
+  });
+
+  /**
+   * 本機 Repo 改成 GitHub Repo（ADR-0013，只能單向）：確認 GitHub App 已安裝在那個 repo 上之後改 `kind`。
+   * 之後新的 Run 核准後走 push 與開 PR，Issues 同步、Feedback Loop、Repo Spec 的 PR 從此啟用。
+   */
+  app.post(API_ROUTES.repoConnectGithub, auth, async (c) => {
+    const actor = c.get("actor");
+    const repoId = readId(c, "repoId", "Repo");
+    const [repo] = await db.select().from(repos).where(eq(repos.id, repoId));
+    if (!repo) throw notFound("Repo");
+    const scope = await loadProjectScope(db, actor, repo.projectId);
+    requireProjectCapability(actor, scope, "manage_project");
+    const input = await readJson(c, ConnectRepoToGithubInput);
+    if (repo.kind !== "local") throw conflict("這個 Repo 已經是 GitHub Repo");
+    if (!s.github.app) {
+      throw new ApiError(409, "github_disabled", "Server 沒有設定 GitHub App，無法連接到 GitHub");
+    }
+    const inspection = await s.github.app.inspectRepo(input.owner, input.name, actor.memberId);
+    if (!inspection.installed) {
+      throw new ApiError(409, "repo_not_connected", "GitHub App 沒有安裝在這個 repo 上", {
+        ...(s.github.installUrl && { installUrl: s.github.installUrl }),
+      });
+    }
+    const registration = await registerRepo(s, input, actor.memberId);
+    const [existing] = await db
+      .select({ id: repos.id })
+      .from(repos)
+      .where(
+        and(
+          eq(repos.projectId, repo.projectId),
+          eq(repos.kind, "github"),
+          eq(repos.githubOwner, registration.githubOwner),
+          eq(repos.githubName, registration.githubName),
+        ),
+      );
+    if (existing) {
+      throw new ApiError(
+        409,
+        "repo_exists",
+        `${registration.githubOwner}/${registration.githubName} 已經登記在這個 Project`,
+      );
+    }
+    const [updated] = await db
+      .update(repos)
+      .set({ kind: "github", ...registration, defaultBranch: repo.defaultBranch })
+      .where(and(eq(repos.id, repo.id), eq(repos.kind, "local")))
+      .returning();
+    if (!updated) throw conflict("這個 Repo 已經是 GitHub Repo");
+    // 連接之前建立、還沒有 Issue 的 Task 從此開始同步：對每個 Task 送一次更新的 domain event。
+    const connectedTasks = await db
+      .select({ id: tasks.id, projectId: tasks.projectId })
+      .from(tasks)
+      .where(eq(tasks.repoId, updated.id));
+    for (const task of connectedTasks) {
+      void s.events.emit({
+        type: "task.updated",
+        taskId: task.id,
+        projectId: task.projectId,
+        fields: ["repoId"],
+        source: "api",
+        actorMemberId: actor.memberId,
+      });
+    }
+    return c.json(toRepo(updated, s.github.installUrl));
   });
 
   app.delete(API_ROUTES.repo, auth, async (c) => {

@@ -34,6 +34,7 @@ import {
   repoSpecs,
   repos,
   runs,
+  taskMembers,
   tasks,
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
@@ -46,7 +47,7 @@ type RepoRow = typeof repos.$inferSelect;
 const toRepoRecord = (row: RepoRow): RepoRecord => ({
   id: row.id,
   projectId: row.projectId,
-  // 本機 Repo 沒有 owner，也不會進到 GitHub 整合（TODO(backend, local-repo)：改成只查 GitHub Repo）。
+  // 只有 GitHub Repo 會進到這裡（下面的查詢都限定 kind = github），GitHub Repo 一定有 owner。
   owner: row.githubOwner ?? "",
   name: row.githubName,
   githubRepoId: row.githubRepoId,
@@ -131,7 +132,11 @@ export class GitHubDomainService implements DomainService {
   }
 
   async getRepo(repoId: string): Promise<RepoRecord | null> {
-    const [row] = await this.db.select().from(repos).where(eq(repos.id, repoId));
+    // 本機 Repo 不進 GitHub 整合（ADR-0013）：當作找不到。
+    const [row] = await this.db
+      .select()
+      .from(repos)
+      .where(and(eq(repos.id, repoId), eq(repos.kind, "github")));
     return row ? toRepoRecord(row) : null;
   }
 
@@ -139,7 +144,7 @@ export class GitHubDomainService implements DomainService {
     const rows = await this.db
       .select()
       .from(repos)
-      .where(eq(repos.githubRepoId, githubRepoId))
+      .where(and(eq(repos.githubRepoId, githubRepoId), eq(repos.kind, "github")))
       .orderBy(asc(repos.createdAt), asc(repos.id));
     return rows.map(toRepoRecord);
   }
@@ -148,7 +153,7 @@ export class GitHubDomainService implements DomainService {
     const rows = await this.db
       .select()
       .from(repos)
-      .where(eq(repos.githubInstallationId, installationId))
+      .where(and(eq(repos.githubInstallationId, installationId), eq(repos.kind, "github")))
       .orderBy(asc(repos.createdAt), asc(repos.id));
     return rows.map(toRepoRecord);
   }
@@ -159,6 +164,7 @@ export class GitHubDomainService implements DomainService {
       .from(repos)
       .where(
         and(
+          eq(repos.kind, "github"),
           sql`lower(${repos.githubOwner}) = lower(${owner})`,
           sql`lower(${repos.githubName}) = lower(${name})`,
         ),
@@ -218,6 +224,10 @@ export class GitHubDomainService implements DomainService {
         })
         .returning();
       if (!created) throw new Error("建立 Task 失敗");
+      // 匯入或從 Issue 建立的人是 Task 的擁有者（ADR-0012）。
+      await tx
+        .insert(taskMembers)
+        .values({ taskId: created.id, memberId: input.createdByMemberId, role: "owner" });
       uow.afterCommit(() =>
         this.lifecycle.emit({
           type: "task.created",

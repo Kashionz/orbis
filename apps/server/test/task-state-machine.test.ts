@@ -29,6 +29,8 @@ const EXPECTED = new Set([
   "review_gate→pr_open(gate)",
   // Review Gate 的 diff 為空：結束（沒有變更），不 push、不開 PR（#73）。
   "review_gate→done(gate)",
+  // 本機 Repo 的本機合併完成（ADR-0013）。
+  "review_gate→done(local_merge)",
   "pr_open→review_gate(pull_request)",
   // PR 重新打開：退回 Review Gate 的 Task 回到 PR Open。
   "review_gate→pr_open(pull_request)",

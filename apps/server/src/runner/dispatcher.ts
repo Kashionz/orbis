@@ -21,7 +21,7 @@ import type {
   DispatchReject,
   RunResume,
 } from "@orbis/protocol";
-import { and, asc, count, eq, gt, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock";
 import type { Database } from "../db/client";
 import {
@@ -257,11 +257,14 @@ export class Dispatcher {
   async placement(run: RunRow, now: Date): Promise<Placement> {
     if (run.target === "local" && !run.requestedByMemberId) return { reason: "no_runner" };
     const [owner] = await this.db
-      .select({ teamId: projects.teamId })
+      .select({ teamId: projects.teamId, repoKind: repos.kind, repoName: repos.githubName })
       .from(tasks)
       .innerJoin(projects, eq(projects.id, tasks.projectId))
+      .leftJoin(repos, eq(repos.id, tasks.repoId))
       .where(eq(tasks.id, run.taskId));
     if (!owner) return { reason: "no_runner" };
+    // 本機 Repo 只能派到 Local Runner（ADR-0013）。
+    if (owner.repoKind === "local" && run.target !== "local") return { reason: "no_runner" };
     // Child Run、讀別的 Run Worktree 的 consult Run、Feedback Loop 接續的 Run 只能派給那個 Run 所在的
     // Runner（要用同一個 Worktree）。那個 Run 不在任何 Runner 上時留在佇列。
     const pinned = run.parentRunId ?? run.consultOfRunId ?? run.resumesRunId;
@@ -296,6 +299,8 @@ export class Dispatcher {
           eligible,
           eq(agentAvailabilities.agent, run.agent),
           eq(agentAvailabilities.available, true),
+          // 本機 Repo：只派給 runner.toml 有對應這個 Repo 名稱的 Runner。
+          owner.repoKind === "local" && owner.repoName ? mapsRepo(owner.repoName) : undefined,
         ),
       )
       .orderBy(asc(runners.createdAt), asc(runners.id), asc(agentAvailabilities.credential));
@@ -383,14 +388,22 @@ export class Dispatcher {
       expires_at: expiresAt.toISOString(),
       task: { task_id: task.id, task_key: task.key, title: task.title },
       run_seq: await runSequence(this.db, run),
-      // TODO(backend, local-repo)：本機 Repo 送 `{ kind: "local", name, default_branch, base_ref }`。
-      repo: {
-        kind: "github",
-        name: repo.githubName,
-        clone_url: `https://github.com/${repo.githubOwner}/${repo.githubName}.git`,
-        default_branch: defaultBranch,
-        base_ref: `origin/${defaultBranch}`,
-      },
+      // 本機 Repo 沒有 clone URL，Runner 依 runner.toml 找 checkout，從基準分支本身開出 Worktree（ADR-0013）。
+      repo:
+        repo.kind === "local"
+          ? {
+              kind: "local",
+              name: repo.githubName,
+              default_branch: defaultBranch,
+              base_ref: defaultBranch,
+            }
+          : {
+              kind: "github",
+              name: repo.githubName,
+              clone_url: `https://github.com/${repo.githubOwner}/${repo.githubName}.git`,
+              default_branch: defaultBranch,
+              base_ref: `origin/${defaultBranch}`,
+            },
       branch: run.branch,
       agent: run.agent,
       model: run.model,
@@ -592,4 +605,9 @@ export async function buildPrompt(
     if (spec) blocks.push({ type: "resource_link", uri: spec.path, name: spec.title ?? spec.path });
   }
   return blocks;
+}
+
+/** AgentAvailability 的 mapped_repos（存在 details.mappedRepos）含有這個本機 Repo 名稱。 */
+export function mapsRepo(name: string) {
+  return sql`coalesce(${agentAvailabilities.details} -> 'mappedRepos', '[]'::jsonb) @> ${JSON.stringify([name])}::jsonb`;
 }

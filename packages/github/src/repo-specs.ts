@@ -66,7 +66,8 @@ export function repoSpecBranchName(path: string, suffix: string): string {
   return `${NAMES.productSlug}/spec/${slug || "spec"}-${suffix}`;
 }
 
-function coAuthor(member: MemberRecord): string {
+/** commit 訊息的 `Co-authored-by`（本機 Repo 的 Spec 提交也用同一個格式）。 */
+export function coAuthor(member: Pick<MemberRecord, "githubLogin" | "githubUserId">): string {
   return `Co-authored-by: ${member.githubLogin} <${member.githubUserId}+${member.githubLogin}@users.noreply.github.com>`;
 }
 
