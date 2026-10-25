@@ -54,6 +54,7 @@ import {
   type UpdateProjectInput,
   type UpdateRunnerCredentialInput,
   type UpdateTaskInput,
+  type UpdateTeamInput,
   type VerificationDecisionInput,
   VerificationListResponse,
 } from "@orbis/api-contract";
@@ -77,7 +78,8 @@ export const queryKeys = {
   reviewDiff: (runId: string) => ["runs", runId, "review-diff"] as const,
   taskGates: (taskId: string) => ["tasks", taskId, "gates"] as const,
   members: ["members"] as const,
-  dispatchOptions: (projectId: string) => ["projects", projectId, "dispatch-options"] as const,
+  dispatchOptions: (projectId: string, taskId?: string) =>
+    ["projects", projectId, "dispatch-options", taskId ?? null] as const,
   needsYou: ["needs-you"] as const,
   verifications: (runId: string) => ["runs", runId, "verifications"] as const,
   draftTasks: (projectId: string) => ["projects", projectId, "draft-tasks"] as const,
@@ -176,13 +178,21 @@ export const membersQuery = queryOptions({
   queryFn: ({ signal }) => apiRequest(API_ROUTES.members, z.array(Member), { signal }),
 });
 
-export const dispatchOptionsQuery = (projectId: string) =>
+/**
+ * 派工對話框的選項。帶 `taskId` 時依那個 Task 判斷：本機 Repo 只能派到有對應的 Local Runner
+ * （沒有對應時 `unavailableReason` 為 `repo_not_mapped`，Team Runner 為 null）。
+ */
+export const dispatchOptionsQuery = (projectId: string, taskId?: string) =>
   queryOptions({
-    queryKey: queryKeys.dispatchOptions(projectId),
+    queryKey: queryKeys.dispatchOptions(projectId, taskId),
     queryFn: ({ signal }) =>
-      apiRequest(apiPath(API_ROUTES.projectDispatchOptions, { projectId }), DispatchOptions, {
-        signal,
-      }),
+      apiRequest(
+        `${apiPath(API_ROUTES.projectDispatchOptions, { projectId })}${
+          taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""
+        }`,
+        DispatchOptions,
+        { signal },
+      ),
   });
 
 export const needsYouQuery = queryOptions({
@@ -365,6 +375,17 @@ export function checkAcceptanceCriterion(
 export function refreshRepoInstallation(repoId: string): Promise<Repo> {
   return apiRequest(apiPath(API_ROUTES.repoRefreshInstallation, { repoId }), Repo, {
     method: "POST",
+  });
+}
+
+/** 本機 Repo 改成 GitHub Repo（只能單向，ADR-0013）。 */
+export function connectRepoToGithub(
+  repoId: string,
+  input: { owner: string; name: string },
+): Promise<Repo> {
+  return apiRequest(apiPath(API_ROUTES.repoConnectGithub, { repoId }), Repo, {
+    method: "POST",
+    body: input,
   });
 }
 
@@ -632,6 +653,17 @@ export function deleteProjectRole(projectId: string, memberId: string): Promise<
 }
 
 // ---------- Team（設定→帳號） ----------
+
+/** Team（名稱與兩個分享設定：對外分享預覽、Team Runner 的終端機）。 */
+export const teamQuery = queryOptions({
+  queryKey: ["team"] as const,
+  queryFn: ({ signal }) => apiRequest(API_ROUTES.team, Team, { signal }),
+});
+
+/** 修改 Team 的設定（Admin 以上，只送要改的欄位）。 */
+export function updateTeamSettings(input: UpdateTeamInput): Promise<Team> {
+  return apiRequest(API_ROUTES.team, Team, { method: "PATCH", body: input });
+}
 
 export function updateTeam(name: string): Promise<Team> {
   return apiRequest(API_ROUTES.team, Team, { method: "PATCH", body: { name } });

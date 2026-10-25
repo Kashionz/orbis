@@ -17,7 +17,7 @@ export interface Permissions {
  */
 export function usePermissions(
   project?: Pick<Project, "policy" | "viewerRole"> | null,
-  task?: Pick<Task, "assigneeMemberId"> | null,
+  task?: (Pick<Task, "assigneeMemberId"> & Partial<Pick<Task, "viewerAccess">>) | null,
 ): Permissions {
   const { data: me } = useSuspenseQuery(meQueryOptions);
   if (!me.member) throw new Error("登入者還不是 Team 的 Member");
@@ -26,6 +26,8 @@ export function usePermissions(
     memberId: me.member.id,
     policy: project?.policy,
     task: task ?? undefined,
+    // Task 分享（ADR-0012）：Task 上的操作依這個 Task 的有效權限
+    ...(task?.viewerAccess && { taskAccess: task.viewerAccess }),
   };
   return { ctx, can: (action) => can(action, ctx) };
 }

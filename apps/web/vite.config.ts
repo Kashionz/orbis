@@ -34,6 +34,9 @@ function productNameInHtml(): Plugin {
 
 const apiProxy: Record<string, ProxyOptions> = {
   "/api": { target: `http://localhost:${serverPort()}`, ws: true },
+  // 邀請連結由 Server 處理（PAGE_ROUTES）；失敗頁 `/invites/error` 是 Web 的頁面，不轉送
+  "^/invites/(?!error(?:$|[/?]))": { target: `http://localhost:${serverPort()}` },
+  "/preview-invites/": { target: `http://localhost:${serverPort()}` },
 };
 
 /** `vite --mode mock`：以 MSW 假後端取代 Server（src/mocks），開發與元件層級的 e2e 使用。 */

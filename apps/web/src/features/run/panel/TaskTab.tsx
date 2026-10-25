@@ -28,6 +28,7 @@ import { ErrorText } from "../../../components/ErrorText";
 import { type MenuGroup, Popover } from "../../../components/Popover";
 import { StatusDot } from "../../../components/StatusDot";
 import { useT } from "../../../i18n";
+import { repoDisplayName } from "../../../lib/github";
 import type { Permissions } from "../../auth/use-permissions";
 import { CollabEditor } from "../../collab/CollabEditor";
 import { TaskComments } from "../../task/TaskComments";
@@ -279,9 +280,24 @@ function TaskMeta({
         {needs && <span className="rp-needs">{w.needsYou}</span>}
       </MetaRow>
       <MetaRow label={w.repo}>
-        <span className="rp-mono">
-          {repo ? `${repo.owner}/${repo.name}` : t.common.notSpecified}
-        </span>
+        {/* Repo 只能從沒有補指定一次，之後不能更換（ADR-0011 的修訂） */}
+        <MetaPicker<string>
+          label={w.assignRepo}
+          canEdit={canEdit && task.repoId === null && repos.length > 0}
+          groups={[
+            {
+              items: repos.map((r) => ({
+                value: r.id,
+                label: repoDisplayName(r),
+                mono: true,
+                checked: false,
+              })),
+            },
+          ]}
+          onSelect={(repoId) => update.mutate({ repoId })}
+        >
+          <span className="rp-mono">{repo ? repoDisplayName(repo) : t.common.notSpecified}</span>
+        </MetaPicker>
       </MetaRow>
       <MetaRow label={w.assignee}>
         <MetaPicker<string | null>

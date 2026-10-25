@@ -352,3 +352,27 @@
 .cp-send:active:not([aria-disabled="true"]) {
   transform: scale(var(--press-scale));
 }
+
+/* 中斷目前的回合並傳送 */
+.cp-interrupt {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--o8b9098);
+  cursor: pointer;
+}
+
+.cp-interrupt:hover:not([aria-disabled]) {
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+}
+
+.cp-interrupt[aria-disabled] {
+  cursor: default;
+  opacity: 0.4;
+}

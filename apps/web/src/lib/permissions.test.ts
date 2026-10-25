@@ -34,6 +34,7 @@ const MATRIX: Record<Action, Record<Role, boolean>> = {
   "run.control": { owner: true, admin: true, member: true, viewer: false },
   "gate.approve": { owner: true, admin: true, member: true, viewer: false },
   "gate.reject": { owner: true, admin: true, member: true, viewer: false },
+  "task.share": { owner: true, admin: true, member: false, viewer: false },
   view: { owner: true, admin: true, member: true, viewer: true },
 };
 
@@ -45,6 +46,46 @@ describe("can：§12.2 每一格", () => {
       });
     }
   }
+});
+
+describe("can：Task 層（ADR-0012）", () => {
+  it("可操作的 Task 角色把 Viewer 調高到能編輯、派工、核准，但不能管理分享", () => {
+    const ctx = { role: "viewer" as const, memberId: "me", policy, taskAccess: "edit" as const };
+    expect(can("task.edit", ctx)).toBe(true);
+    expect(can("run.dispatchLocal", ctx)).toBe(true);
+    expect(can("run.control", ctx)).toBe(true);
+    expect(can("gate.approve", ctx)).toBe(true);
+    expect(can("task.share", ctx)).toBe(false);
+    expect(can("project.manage", ctx)).toBe(false);
+  });
+
+  it("只能檢視時 Member 不能編輯或派工", () => {
+    const ctx = { role: "member" as const, memberId: "me", policy, taskAccess: "view" as const };
+    expect(can("task.edit", ctx)).toBe(false);
+    expect(can("run.dispatchTeam", ctx)).toBe(false);
+    expect(can("view", ctx)).toBe(true);
+  });
+
+  it("Task 的擁有者可以管理分享；Owner、Admin 不受 Task 層影響", () => {
+    expect(can("task.share", { role: "member", memberId: "me", taskAccess: "manage" })).toBe(true);
+    for (const role of ["owner", "admin"] as const) {
+      const ctx = { role, memberId: "me", policy, taskAccess: "view" as const };
+      expect(can("task.edit", ctx)).toBe(true);
+      expect(can("run.dispatchTeam", ctx)).toBe(true);
+    }
+  });
+
+  it("Task 層的權限仍套用 Project 政策", () => {
+    const closed = { ...policy, memberCanDispatchToTeamRunner: false };
+    const ctx = {
+      role: "viewer" as const,
+      memberId: "me",
+      policy: closed,
+      taskAccess: "edit" as const,
+    };
+    expect(can("run.dispatchTeam", ctx)).toBe(false);
+    expect(can("run.dispatchLocal", ctx)).toBe(true);
+  });
 });
 
 describe("can：Project 政策", () => {

@@ -6,7 +6,12 @@ import { NAMES, type RunEvent } from "@orbis/api-contract";
 import type { EventKind, ToolCallContent } from "@orbis/protocol";
 
 export type ScriptStep =
-  | { type: "event"; event: EventKind }
+  | {
+      type: "event";
+      event: EventKind;
+      /** 觸發這筆 Event 的人（例如 Gate 退回的 prompt）；省略時依 Event 推斷。 */
+      actorMemberId?: string;
+    }
   /** 送出權限請求後暫停，依回覆的選項走不同分支。 */
   | {
       type: "await_permission";

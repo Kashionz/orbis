@@ -324,13 +324,14 @@ describe("withExtras", () => {
       stream,
       [
         {
+          seq: 2,
           ts: later(30),
-          memberId: "me",
-          kind: "policy",
+          actorMemberId: "me",
           agent: null,
           model: null,
           effort: null,
           permissionPolicy: "manual",
+          notApplied: [],
         },
       ],
       {

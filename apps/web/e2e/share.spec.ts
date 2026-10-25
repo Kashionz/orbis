@@ -1,5 +1,5 @@
-// 分享卡與邀請成功卡（新工作區介面 PROMPTS 第 5i 點）。後端還沒有 Task 層級的分享，mock 提供完整行為；
-// 這裡以元件展示頁的 ORB-4 分享區塊測試（工作區標題列由 U2 接上）。
+// 分享卡與邀請成功卡（新工作區介面 PROMPTS 第 5i 點、ADR-0012）：以元件展示頁的 ORB-4 分享區塊測試。
+// mock 的分享 API 與 Server 相同形狀（src/mocks/share.ts）。
 
 import { expect, test } from "./fixtures";
 
@@ -47,8 +47,13 @@ test("成員角色、撤銷邀請、一般存取；加入成員與 Email 後顯�
   const done = page.getByRole("alertdialog", { name: "已邀請 2 位成員" });
   await expect(done).toContainText("加入「整理 README」");
   await expect(done).toContainText("new@example.com");
-  await expect(done).toContainText("Email 邀請");
   await expect(done.getByRole("button", { name: "完成" })).toBeFocused();
+  // 沒有設定寄信時，邀請連結只在這裡出現一次，由邀請人複製
+  await expect(done).toContainText("請複製連結傳給對方");
+  await done.getByRole("button", { name: "複製邀請連結" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(
+    /\/invites\/[0-9a-f]{32}$/,
+  );
   await done.getByRole("button", { name: "繼續邀請" }).click();
   await expect(card).toBeVisible();
   await expect(card.getByText("bob")).toBeVisible();
@@ -83,21 +88,4 @@ test("標題列變窄時隱藏頭像，再窄時分享按鈕只剩圖示", async
   await expect(share.getByRole("button", { name: "分享" })).toHaveText("分享");
   await share.getByRole("combobox", { name: "標題列寬度" }).selectOption("400");
   await expect(share.getByRole("button", { name: "分享" })).toHaveText("");
-});
-
-test.describe("後端還沒有分享", () => {
-  test.use({ mock: { features: { taskSharing: false } } });
-
-  test("分享按鈕停用並顯示尚未開放", async ({ page }) => {
-    await page.goto("/__dev/components");
-    const button = page.getByRole("region", { name: "share" }).getByRole("button", {
-      name: "分享",
-    });
-    await expect(button).toHaveAttribute("aria-disabled", "true");
-    await button.click({ force: true });
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page.mouse.move(0, 0);
-    await button.hover();
-    await expect(page.getByRole("tooltip")).toHaveText("尚未開放");
-  });
 });

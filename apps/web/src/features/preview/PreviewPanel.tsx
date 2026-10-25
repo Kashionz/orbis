@@ -1,5 +1,5 @@
 // 工作區的預覽分頁（ARCHITECTURE §13、README「Preview」）：重新載入、狀態、網址、桌面／行動裝置寬度、
-// 分享給團隊。
+// 分享給團隊（複製 Preview 網址）與邀請特定的人（預覽邀請，ADR-0015）。
 // - Desktop：經由 bridge 在這個區塊疊上內嵌瀏覽器（自己的 Run 開 localhost，別人的 Run 開 Preview 網址），
 //   可以選取元素留言（附截圖、selector 與 URL）。
 // - 一般瀏覽器：以 iframe 開 Preview 網址，不能選取元素，只能附整頁截圖。
@@ -22,6 +22,7 @@ import {
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { ErrorText } from "../../components/ErrorText";
 import { type Messages, useT } from "../../i18n";
+import { PreviewInvites } from "./PreviewInvites";
 import {
   type PreviewState,
   previewStateQuery,
@@ -54,6 +55,8 @@ export interface PreviewPanelProps {
   canComment: boolean;
   /** 能不能重新啟動 Preview（和取消 Run 的權限相同）。 */
   canRestart: boolean;
+  /** 能不能邀請特定的人檢視預覽（對這個 Task 有操作權限）。 */
+  canInvite?: boolean;
 }
 
 type Width = "desktop" | "mobile";
@@ -72,7 +75,12 @@ function stateLabel(t: Messages, state: PreviewState): { label: string; tone: st
   }
 }
 
-export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProps) {
+export function PreviewPanel({
+  runId,
+  canComment,
+  canRestart,
+  canInvite = false,
+}: PreviewPanelProps) {
   const t = useT();
   const p = t.workspace.preview;
   const [bridge] = useState(() => getDesktopBridge()?.preview ?? null);
@@ -160,7 +168,7 @@ export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProp
         type="button"
         className="pv-btn"
         aria-disabled={!state.shareUrl || undefined}
-        data-tip={state.shareUrl ? undefined : t.common.notAvailableYet}
+        data-tip={state.shareUrl ? undefined : p.noDomain}
         onClick={share}
       >
         <Share2 {...ICON} />
@@ -269,6 +277,7 @@ export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProp
         </section>
       )}
       <ErrorText error={restart.error} />
+      {canInvite && state.shareUrl && <PreviewInvites runId={runId} />}
     </div>
   );
 }

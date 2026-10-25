@@ -216,6 +216,10 @@ test.describe("Worktree 路徑選單", () => {
             calls.push(`terminal:${path}`);
             return { ok: false, message: "找不到設定的終端機" };
           },
+          revealWorktree: async (path: string) => {
+            calls.push(`reveal:${path}`);
+            return { ok: true };
+          },
           beforeLogout: async () => ({ proceed: true }),
         },
       });
@@ -228,14 +232,14 @@ test.describe("Worktree 路徑選單", () => {
     await open("在 VS Code 開啟");
     await open("在終端機開啟");
     await expect(page.getByText("找不到設定的終端機")).toBeVisible();
-    // TODO(backend, reveal-in-explorer)：bridge 還沒有在檔案總管開啟，項目停用
-    await page.getByRole("button", { name: /^工作樹/ }).click();
-    await expect(
-      page.getByRole("menu", { name: "工作樹" }).getByRole("menuitem", { name: "在檔案總管開啟" }),
-    ).toHaveAttribute("aria-disabled", "true");
+    await open("在檔案總管開啟");
     const calls = await page.evaluate(
       () => (window as unknown as { __bridgeCalls: string[] }).__bridgeCalls,
     );
-    expect(calls).toEqual(["editor:C:/wt/demo/run", "terminal:C:/wt/demo/run"]);
+    expect(calls).toEqual([
+      "editor:C:/wt/demo/run",
+      "terminal:C:/wt/demo/run",
+      "reveal:C:/wt/demo/run",
+    ]);
   });
 });

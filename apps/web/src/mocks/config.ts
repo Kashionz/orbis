@@ -1,7 +1,6 @@
 // MSW 假後端的設定。Playwright 以 `page.addInitScript` 在頁面載入前設定 `window.__MOCK_CONFIG__`。
 
 import type { ProjectPolicy, Role } from "@orbis/api-contract";
-import type { FeatureName } from "../lib/features";
 
 /** 假後端狀態在 sessionStorage 中的 key（e2e 也用它讀出狀態）。 */
 export const MOCK_STATE_STORAGE_KEY = "mock-backend-state";
@@ -48,6 +47,8 @@ export interface MockConfig {
   emptyDiff?: boolean;
   /** 在等待 Review Gate 的 Run（ORB-4）底下建立 Child Run 樹與一個向人提問的 Child Run。 */
   childRuns?: boolean;
+  /** Server 有設定寄信（SMTP）：邀請的回應 `emailSent` 為 true。 */
+  smtp?: boolean;
   /** Run 的 Preview 已就緒；省略時所有 Run 都是「沒有設定」。 */
   preview?: boolean;
   /** 共同編輯的連線一律以這個 close code 關閉（4401、4403）。 */
@@ -61,10 +62,8 @@ export interface MockConfig {
    * `server-outdated`＝Server 比 Web 舊、`no-versions`＝比 Phase 1 更早、不回報版本的 Server。
    */
   health?: "ok" | "web-outdated" | "server-outdated" | "no-versions";
-  /**
-   * 個別關閉後端還沒有的功能（lib/features.ts），模擬真實模式下的停用狀態；省略時全部開啟。
-   */
-  features?: Partial<Record<FeatureName, boolean>>;
+  /** Team 設定「允許對外分享預覽」的初始值，預設 true（方便看到預覽邀請）。 */
+  allowExternalPreview?: boolean;
 }
 
 declare global {

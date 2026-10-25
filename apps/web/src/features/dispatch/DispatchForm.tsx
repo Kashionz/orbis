@@ -24,7 +24,13 @@ import {
   defaultPermissionPolicy,
   permissionPoliciesFor,
 } from "../../lib/permissions";
-import { modelDisplayName } from "../agents/catalog";
+import {
+  EFFORT_LEVELS,
+  type EffortLevel,
+  findModel,
+  modelDisplayName,
+  useAgentCatalog,
+} from "../agents/catalog";
 import { usePermissions } from "../auth/use-permissions";
 import "./dispatch.css";
 
@@ -44,12 +50,21 @@ function firstAvailable(agents: readonly AgentOption[]): string {
 
 export function DispatchForm({ task, project, onDispatched, onCancel }: DispatchFormProps) {
   const t = useT();
-  const { data: options, error, isPending } = useQuery(dispatchOptionsQuery(project.id));
+  const { data: options, error, isPending } = useQuery(dispatchOptionsQuery(project.id, task.id));
   const { ctx } = usePermissions(project, task);
   if (isPending) return <p className="df-muted">{t.workspace.noRun.loadingAgents}</p>;
   if (error || !options) return <ErrorText error={error} />;
-  const kinds = RUNNER_KINDS.filter((kind) => canDispatchTo(kind, ctx) && options[kind] !== null);
-  if (kinds.length === 0) return <p className="df-muted">{t.workspace.noRun.noRunner}</p>;
+  const kinds = RUNNER_KINDS.filter(
+    (kind) =>
+      canDispatchTo(kind, ctx) && options[kind] !== null && !options[kind]?.unavailableReason,
+  );
+  if (kinds.length === 0) {
+    // 本機 Repo：自己的 Local Runner 的 runner.toml 沒有對應這個 Repo
+    if (options.local?.unavailableReason === "repo_not_mapped") {
+      return <p className="df-muted">{t.workspace.noRun.repoNotMapped}</p>;
+    }
+    return <p className="df-muted">{t.workspace.noRun.noRunner}</p>;
+  }
   return (
     <DispatchFields
       task={task}
@@ -82,10 +97,17 @@ function DispatchFields({
   const agents = options[runnerKind]?.agents ?? [];
   const [agentId, setAgentId] = useState(() => firstAvailable(options[initialKind]?.agents ?? []));
   const [model, setModel] = useState("");
+  /** 推理強度；空字串表示代理的預設值。 */
+  const [effort, setEffort] = useState<EffortLevel | "">("");
+  const { data: catalog } = useAgentCatalog();
   const [policy, setPolicy] = useState<PermissionPolicy>(() =>
     defaultPermissionPolicy(options.defaultPermissionPolicy, initialKind),
   );
   const agent = agents.find((a) => a.id === agentId && a.available);
+  // 模型的推理強度能力（模型目錄）；不知道時視為可以調整
+  const effortSupport = (model ? findModel(catalog, agentId, model)?.effort : null) ?? {
+    kind: "adjustable" as const,
+  };
   const { data: runners = [] } = useQuery({ ...runnersQuery, refetchInterval: false });
   const policies = permissionPoliciesFor(runnerKind);
   const me = usePermissions().ctx.memberId;
@@ -95,6 +117,7 @@ function DispatchFields({
       dispatchRun(task.id, {
         agent: agentId,
         model: model === "" ? null : model,
+        effort: effort === "" || effortSupport.kind !== "adjustable" ? null : effort,
         runnerKind,
         permissionPolicy: policy,
       }),
@@ -111,6 +134,7 @@ function DispatchFields({
     setRunnerKind(kind);
     setAgentId(firstAvailable(options[kind]?.agents ?? []));
     setModel("");
+    setEffort("");
     if (!permissionPoliciesFor(kind).includes(policy)) {
       setPolicy(defaultPermissionPolicy(options.defaultPermissionPolicy, kind));
     }
@@ -217,7 +241,25 @@ function DispatchFields({
             <option value="">{n.agentDefault}</option>
             {agent?.models.map((name) => (
               <option key={name} value={name}>
-                {modelDisplayName(name)}
+                {modelDisplayName(name, catalog)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="df-field">
+          <span className="df-label">{n.effort}</span>
+          <select
+            className="df-select"
+            value={effortSupport.kind === "fixed" ? effortSupport.level : effort}
+            disabled={!agent || effortSupport.kind !== "adjustable"}
+            onChange={(event) => setEffort(event.target.value as EffortLevel | "")}
+          >
+            <option value="">
+              {effortSupport.kind === "unsupported" ? n.effortUnsupported : n.agentDefault}
+            </option>
+            {EFFORT_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {t.workspace.effort[level]}
               </option>
             ))}
           </select>

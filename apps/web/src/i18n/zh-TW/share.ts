@@ -40,7 +40,12 @@ export default {
   invitedOne: (name: string) => `已邀請 ${name}`,
   invitedMany: (count: number) => `已邀請 ${count} 位成員`,
   addedTo: (task: string) => `加入「${task}」`,
-  emailInvite: "Email 邀請",
   inviteMore: "繼續邀請",
   done: "完成",
+  readOnly: "只有任務的擁有者與管理員能修改分享",
+  transferOwner: "轉移擁有者",
+  transferOwnerSub: "原本的擁有者改為可操作",
+  emailSent: "已寄出邀請信",
+  copyLinkToSend: "請複製連結傳給對方",
+  copyInviteLink: "複製邀請連結",
 };

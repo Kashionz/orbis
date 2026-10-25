@@ -1,7 +1,6 @@
 // 事件串流的輔助判斷（純函式）：某個時間點的 Agent 與模型、訊息中的檔名是不是變更的檔案。
 
-import type { Run } from "@orbis/api-contract";
-import type { RunSettings } from "../types";
+import type { Run, RunSettings } from "@orbis/api-contract";
 
 /** `ts` 那個時間點使用的 Agent 與模型（依執行中切換的紀錄）。 */
 export function agentAt(
@@ -10,11 +9,13 @@ export function agentAt(
   settings: Pick<RunSettings, "initial" | "changes"> | null,
 ): { agent: string; model: string | null } {
   if (!settings || settings.changes.length === 0) return { agent: run.agent, model: run.model };
-  let current = { ...settings.initial };
+  let current = { agent: settings.initial.agent, model: settings.initial.model };
   for (const change of settings.changes) {
     if (change.ts > ts) break;
-    if (change.kind === "model") {
-      current = { agent: change.agent ?? current.agent, model: change.model ?? current.model };
+    if (change.agent) {
+      current = { agent: change.agent, model: change.model };
+    } else if (change.model && !change.notApplied.includes("model")) {
+      current = { ...current, model: change.model };
     }
   }
   return current;

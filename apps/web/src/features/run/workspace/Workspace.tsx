@@ -6,6 +6,7 @@ import { TERMINAL_RUN_STATUSES } from "@orbis/protocol";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { errorMessage } from "../../../api/client";
 import {
   acceptanceCriteriaQuery,
   cancelRun,
@@ -33,6 +34,7 @@ import { EventStream } from "../stream/EventStream";
 import { type StreamEnv, StreamProvider, useExpansion } from "../stream/stream-context";
 import { buildStream, streamTail, withExtras } from "../stream/stream-model";
 import type { TimelineItem } from "../timeline";
+import { withdrawRunPrompt } from "../workspace-api";
 import { NoRunView } from "./NoRunView";
 import type { WorkspaceTab } from "./route-state";
 import { useNow } from "./use-now";
@@ -181,6 +183,11 @@ function RunWorkspace({
       ]),
   });
 
+  const withdraw = useMutation({
+    mutationFn: (controlId: string) => withdrawRunPrompt(run.id, controlId),
+    onError: (error) => toast.show(errorMessage(error)),
+  });
+
   const copy = useCallback(
     (value: string) => {
       void navigator.clipboard?.writeText(value).then(
@@ -194,11 +201,10 @@ function RunWorkspace({
   const env: StreamEnv = {
     run,
     members: new Map(members.map((m) => [m.id, m])),
-    actors: data.actors,
     settings: data.settings,
     criteria: new Map(criteria.map((c) => [c.id, c])),
     changedPaths,
-    policy: run.permissionPolicy,
+    policy: data.settings?.current.permissionPolicy ?? run.permissionPolicy,
     now,
     pendingPlanSeq:
       data.planGate?.planSeq ??
@@ -217,6 +223,9 @@ function RunWorkspace({
       setText(value);
       setFocusSignal((n) => n + 1);
     },
+    withdrawPrompt: data.permissions.can("run.control")
+      ? (controlId) => withdraw.mutate(controlId)
+      : null,
   };
 
   const lastPreview = [...items]
@@ -282,9 +291,12 @@ function RunWorkspace({
               runId={run.id}
               canComment={data.permissions.can("gate.reject")}
               canRestart={data.permissions.can("run.control")}
+              canInvite={data.permissions.can("task.edit")}
             />
           )}
-          {ui.tab === "terminal" && <TerminalTab run={run} items={items} />}
+          {ui.tab === "terminal" && (
+            <TerminalTab run={run} items={items} canOpen={data.permissions.can("run.control")} />
+          )}
         </RightPanel>
       }
     >

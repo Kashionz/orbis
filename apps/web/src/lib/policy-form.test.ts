@@ -21,13 +21,8 @@ describe("policy-form", () => {
     expect(parseList(" claude-code, codex\n\ncodex ,")).toEqual(["claude-code", "codex"]);
   });
 
-  it("沒有修改時轉回原本的政策（不含預設 Permission Policy 與本機合併設定）", () => {
-    const {
-      defaultPermissionPolicy: _policy,
-      localMergeStrategy: _strategy,
-      localPushBase: _push,
-      ...rest
-    } = POLICY;
+  it("沒有修改時轉回原本的政策（不含預設 Permission Policy）", () => {
+    const { defaultPermissionPolicy: _policy, ...rest } = POLICY;
     expect(validatePolicyForm(policyFormValues(POLICY))).toEqual({ ok: true, policy: rest });
   });
 

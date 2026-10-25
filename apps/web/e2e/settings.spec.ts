@@ -1,5 +1,6 @@
 // 設定對話框（新工作區介面 PROMPTS 第 5j 點）。
 
+import { DESKTOP_BRIDGE_KEY } from "@orbis/desktop/bridge";
 import { expect, gotoShell, openProfileMenuItem, test } from "./fixtures";
 
 async function openSettings(page: import("@playwright/test").Page, tab: string) {
@@ -54,10 +55,9 @@ test("執行器：清單、預設終端、Windows 長路徑、產生配對碼", 
     "true",
   );
 
-  const longPaths = dialog.getByRole("switch", { name: "Windows 長路徑" });
-  await expect(longPaths).toHaveAttribute("aria-checked", "true");
-  await longPaths.click();
-  await expect(longPaths).toHaveAttribute("aria-checked", "false");
+  // Runner 在 Windows 上固定開啟長路徑（#84），只顯示狀態
+  await expect(dialog.getByRole("switch", { name: "Windows 長路徑" })).toHaveCount(0);
+  await expect(dialog.getByText("已開啟")).toBeVisible();
 
   await dialog.getByRole("button", { name: "配對新的執行器" }).click();
   await page.getByRole("menuitem", { name: /團隊執行器/ }).click();
@@ -65,13 +65,17 @@ test("執行器：清單、預設終端、Windows 長路徑、產生配對碼", 
   await expect(dialog.getByRole("status")).toContainText("團隊");
 });
 
-test("代理：登入狀態、重新登入、預設模型", async ({ page }) => {
+test("代理：登入狀態與瀏覽器中顯示登入指令、預設模型", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const dialog = await openSettings(page, "代理");
   const antigravity = dialog.locator('[data-agent="antigravity"]');
   await expect(antigravity).toContainText("需要重新登入");
-  await antigravity.getByRole("button", { name: "重新登入" }).click();
-  await expect(page.getByText("正在開啟 Antigravity 登入")).toBeVisible();
-  await expect(antigravity).toContainText("已登入");
+  await antigravity.getByRole("button", { name: "agy auth login" }).click();
+  await expect(page.getByText("已複製")).toBeVisible();
+  await expect(dialog.locator('[data-agent="grok-build"]')).toContainText("無法得知");
+  // 一般瀏覽器不能在這台電腦上登入，`runner` 的方式也只顯示指令
+  await expect(dialog.getByRole("button", { name: "重新登入" })).toHaveCount(0);
+  await expect(dialog.locator('[data-agent="claude-code"]')).toContainText("claude /login");
 
   const claude = dialog.locator('[data-agent="claude-code"]');
   await claude.getByRole("button", { name: /Claude Code 的預設模型/ }).click();
@@ -81,6 +85,57 @@ test("代理：登入狀態、重新登入、預設模型", async ({ page }) => 
   await expect(claude.getByRole("button", { name: /Claude Code 的預設模型/ })).toHaveText(
     "Sonnet 5.5",
   );
+});
+
+test.describe("在 Desktop 中", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((key) => {
+      const calls: string[] = [];
+      let notifications = true;
+      Object.assign(window, { __bridgeCalls: calls });
+      Object.assign(window, {
+        [key]: {
+          getVersion: async () => "0.1.0",
+          openWorktreeInEditor: async () => ({ ok: true }),
+          openWorktreeInTerminal: async () => ({ ok: true }),
+          beforeLogout: async () => ({ proceed: true }),
+          loginAgent: async (agentId: string) => {
+            calls.push(`login:${agentId}`);
+            return { ok: true };
+          },
+          getNotificationsEnabled: async () => notifications,
+          setNotificationsEnabled: async (enabled: boolean) => {
+            calls.push(`notifications:${enabled}`);
+            notifications = enabled;
+          },
+        },
+      });
+    }, DESKTOP_BRIDGE_KEY);
+  });
+
+  test("代理以 Desktop 重新登入；桌面通知總開關", async ({ page }) => {
+    const dialog = await openSettings(page, "代理");
+    const claude = dialog.locator('[data-agent="claude-code"]');
+    await claude.getByRole("button", { name: "重新登入" }).click();
+    await expect(page.getByText("正在開啟 Claude Code 登入")).toBeVisible();
+    // `cli` 的登入方式仍顯示指令
+    await expect(dialog.locator('[data-agent="antigravity"]')).toContainText("agy auth login");
+
+    await dialog.getByRole("tab", { name: "通知" }).click();
+    const toggle = dialog.getByRole("switch", { name: "桌面通知" });
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    const calls = await page.evaluate(
+      () => (window as unknown as { __bridgeCalls: string[] }).__bridgeCalls,
+    );
+    expect(calls).toEqual(["login:claude-code", "notifications:false"]);
+  });
+});
+
+test("瀏覽器中沒有桌面通知總開關", async ({ page }) => {
+  const dialog = await openSettings(page, "通知");
+  await expect(dialog.getByRole("switch", { name: "桌面通知" })).toHaveCount(0);
 });
 
 test("帳號：修改團隊名稱後側欄跟著換；可以登出", async ({ page }) => {
@@ -106,28 +161,6 @@ test.describe("Member", () => {
     await dialog.getByRole("button", { name: "配對新的執行器" }).click();
     await expect(page.getByRole("menuitem", { name: /本機執行器/ })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /團隊執行器/ })).toHaveCount(0);
-  });
-});
-
-test.describe("後端還沒有的設定", () => {
-  test.use({
-    mock: { features: { runnerLongPaths: false, agentRelogin: false, desktopNotifyToggle: false } },
-  });
-
-  test("停用並顯示尚未開放", async ({ page }) => {
-    const dialog = await openSettings(page, "執行器");
-    const longPaths = dialog.getByRole("switch", { name: "Windows 長路徑" });
-    await expect(longPaths).toHaveAttribute("aria-disabled", "true");
-    await longPaths.hover();
-    await expect(page.getByRole("tooltip")).toHaveText("尚未開放");
-
-    await dialog.getByRole("tab", { name: "代理" }).click();
-    await expect(dialog.getByRole("button", { name: "重新登入" })).toBeDisabled();
-    await dialog.getByRole("tab", { name: "通知" }).click();
-    await expect(dialog.getByRole("switch", { name: "桌面通知" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
   });
 });
 

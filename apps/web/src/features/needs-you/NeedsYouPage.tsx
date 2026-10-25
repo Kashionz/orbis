@@ -28,6 +28,7 @@ import { ErrorText } from "../../components/ErrorText";
 import { useT } from "../../i18n";
 import { relativeTime } from "../run/stream/time-format";
 import { useNow } from "../run/workspace/use-now";
+import { retryLocalMerge } from "../run/workspace-api";
 import { MainColumn } from "../shell/WorkspaceLayout";
 import {
   groupNeedsYou,
@@ -204,6 +205,9 @@ function Row({
           </div>
         )}
         {item.kind === "child_question" && <ChildQuestionForm item={item} />}
+        {item.kind === "stopped_run" && item.reasonCode === "local_merge_blocked" && (
+          <LocalMergeRetry runId={item.runId} />
+        )}
       </div>
       <div className="ny-side">
         <span className="ny-ago">{relativeTime(item.createdAt, now, t.common)}</span>
@@ -213,6 +217,30 @@ function Row({
         </button>
       </div>
     </li>
+  );
+}
+
+/** 本機合併被擋下（ADR-0013）：處理好本機 checkout 後重試合併。 */
+function LocalMergeRetry({ runId }: { runId: string }) {
+  const t = useT();
+  const queryClient = useQueryClient();
+  const retry = useMutation({
+    mutationFn: () => retryLocalMerge(runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.needsYou }),
+  });
+  return (
+    <div className="ny-options">
+      <button
+        type="button"
+        className="o-btn"
+        data-variant="primary"
+        disabled={retry.isPending}
+        onClick={() => retry.mutate()}
+      >
+        {t.needsYou.retryLocalMerge}
+      </button>
+      <ErrorText error={retry.error} />
+    </div>
   );
 }
 

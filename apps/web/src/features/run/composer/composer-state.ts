@@ -4,7 +4,8 @@
 // - 計畫關卡：退回並附上意見。
 // - 審查關卡：把文字當整體說明退回。
 // - Verification 超過重試上限：附意見再試。
-// - 執行中：傳訊息給 Agent（後端還沒有，見 `TODO(backend, run-prompt)`）。
+// - 執行中：傳訊息給 Agent（回合中或等待權限回覆時排隊，回合結束後送出；也可以中斷後送出）。
+//   還沒開始、Verification 中不接受（Server 回 `run_not_accepting_prompts`）。
 // - Run 已結束：停用。
 
 import type { GateKind, RunStatus } from "@orbis/protocol";
@@ -57,15 +58,21 @@ export function dockFor(s: ComposerSituation): DockState | null {
 export type SendAction = "plan_reject" | "review_reject" | "verification_retry" | "prompt";
 
 /** 送出鍵為什麼不能用。 */
-export type SendBlocker = "finished" | "forbidden" | "unavailable";
+export type SendBlocker = "finished" | "forbidden" | "not_accepting";
+
+/** 可以傳訊息給 Agent 的 Run 狀態（其他狀態 Server 回 `run_not_accepting_prompts`）。 */
+const ACCEPTS_PROMPT: readonly RunStatus[] = [
+  "starting",
+  "running",
+  "awaiting_permission",
+  "rate_limited",
+];
 
 export interface SendCapabilities {
   /** 能退回 Gate（`gate.reject`）。 */
   reject: boolean;
   /** 能控制 Run（`run.control`）：Verification 的決定、傳訊息。 */
   control: boolean;
-  /** 後端支援執行中傳訊息（feature flag）。 */
-  prompt: boolean;
 }
 
 export interface SendState {
@@ -86,5 +93,5 @@ export function sendStateFor(s: ComposerSituation, can: SendCapabilities): SendS
     return { action: "verification_retry", blocker: can.control ? null : "forbidden" };
   }
   if (!can.control) return { action: "prompt", blocker: "forbidden" };
-  return { action: "prompt", blocker: can.prompt ? null : "unavailable" };
+  return { action: "prompt", blocker: ACCEPTS_PROMPT.includes(s.status) ? null : "not_accepting" };
 }

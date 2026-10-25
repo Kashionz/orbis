@@ -7,6 +7,7 @@ import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
 import { useT } from "../../i18n";
+import { repoDisplayName } from "../../lib/github";
 
 /** Project 設定頁：每個 Repo 的 Spec 清單與登記（ARCHITECTURE §12.1）。 */
 export function RepoSpecsSection({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
@@ -39,7 +40,7 @@ function RepoSpecs({ repo, canEdit }: { repo: Repo; canEdit: boolean }) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.repoSpecs(repo.id) });
     },
   });
-  const name = `${repo.owner}/${repo.name}`;
+  const name = repoDisplayName(repo);
 
   return (
     <div className="repo-specs" data-repo={name}>

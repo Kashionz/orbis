@@ -1372,3 +1372,103 @@ button.rp-line:hover {
   min-height: 0;
   padding: 0;
 }
+
+/* 終端機分頁：代理指令與互動式終端機（ADR-0014） */
+.rp-term-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.rp-term-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--o2a2d33);
+  overflow-x: auto;
+}
+
+.rp-term-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--o8b9098);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rp-term-tab[aria-selected="true"],
+.rp-term-tab[data-selected="true"] {
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+}
+
+.rp-term-tab-label,
+.rp-term-tab-close,
+.rp-term-new {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rp-term-tab-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  border-radius: 4px;
+}
+
+.rp-term-new {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--o8b9098);
+}
+
+.rp-term-new:hover,
+.rp-term-tab-close:hover {
+  background: var(--o2a2d33);
+}
+
+.rp-term-session {
+  flex: 1;
+  min-height: 0;
+}
+
+.rp-term-session[hidden] {
+  display: none;
+}
+
+.rp-xterm-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.rp-xterm {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  background: #0b0c0e;
+}
+
+.rp-xterm-ended {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--o8b9098);
+}

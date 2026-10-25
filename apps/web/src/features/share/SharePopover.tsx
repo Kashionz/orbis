@@ -1,7 +1,14 @@
-// 分享卡（README §8）：任務連結、一般存取、這個任務中的成員與邀請、加入成員（搜尋或 Email）。
-// 送出後由 ShareCluster 在同一個位置顯示邀請成功卡。
+// 分享卡（README §8、ADR-0012）：任務連結、一般存取、這個任務中的成員與邀請、加入成員（搜尋或 Email）。
+// 送出後由 ShareCluster 在同一個位置顯示邀請成功卡。只有擁有者與 Admin 以上能修改（`task.share`），
+// 其他人只能看。
 
-import type { Member, Task } from "@orbis/api-contract";
+import type {
+  GeneralAccess,
+  Member,
+  Task,
+  TaskInviteRole,
+  TaskShareRole,
+} from "@orbis/api-contract";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Check, ChevronRight, Copy, Link2, Lock, Users, X } from "lucide-react";
 import {
@@ -20,11 +27,9 @@ import { Floating } from "../../components/Floating";
 import { type MenuGroup, Popover, useMenu } from "../../components/Popover";
 import { useToast } from "../../components/Toast";
 import { type Messages, useT } from "../../i18n";
-import { isFeatureEnabled } from "../../lib/features";
 import { meQueryOptions } from "../auth/api";
-import { useShareMutations, useTaskShare } from "./api";
-import type { InviteResult } from "./InviteDoneCard";
-import type { GeneralAccess, InviteRole, TaskShare } from "./types";
+import { usePermissions } from "../auth/use-permissions";
+import { type ShareAddResult, useShareMutations, useTaskShare } from "./api";
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const COPIED_MS = 1600;
@@ -47,9 +52,9 @@ export function generalAccessText(t: Messages, general: GeneralAccess, team: str
   switch (general) {
     case "invited":
       return { label: t.share.general.invited, sub: t.share.generalSub.invited };
-    case "team-view":
+    case "team_view":
       return { label: t.share.general.teamView(team), sub: t.share.generalSub.teamView };
-    case "team-edit":
+    case "team_edit":
       return { label: t.share.general.teamEdit(team), sub: t.share.generalSub.teamEdit };
   }
 }
@@ -59,7 +64,7 @@ interface SharePopoverProps {
   task: Task;
   anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
-  onInvited: (result: InviteResult) => void;
+  onInvited: (result: ShareAddResult) => void;
 }
 
 export function SharePopover({ open, task, anchorRef, onClose, onInvited }: SharePopoverProps) {
@@ -90,19 +95,19 @@ function ShareCardBody({
   task: Task;
   searchRef: RefObject<HTMLInputElement | null>;
   onClose: () => void;
-  onInvited: (result: InviteResult) => void;
+  onInvited: (result: ShareAddResult) => void;
 }) {
   const t = useT();
   const toast = useToast();
+  const canManage = usePermissions(null, task).can("task.share");
   const { data: me } = useSuspenseQuery(meQueryOptions);
   const { data: members = [] } = useQuery(membersQuery);
   const { data: share, error: loadError } = useTaskShare(task.id);
   const mutations = useShareMutations(task.id);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const [role, setRole] = useState<InviteRole>("edit");
+  const [role, setRole] = useState<TaskInviteRole>("edit");
   const [copied, setCopied] = useState(false);
-  const allowEmail = isFeatureEnabled("taskInvites");
 
   useEffect(() => {
     if (!copied) return;
@@ -121,7 +126,6 @@ function ShareCardBody({
         (m.name ?? "").toLowerCase().includes(q.toLowerCase())),
   );
   const typedEmail =
-    allowEmail &&
     EMAIL.test(q) &&
     !selected.includes(q) &&
     !(share?.invites ?? []).some((invite) => invite.email === q)
@@ -161,8 +165,8 @@ function ShareCardBody({
     mutations.add.mutate(
       { memberIds, emails, role },
       {
-        onSuccess: () => {
-          onInvited({ who: selected, role });
+        onSuccess: (result) => {
+          onInvited(result);
           setSelected([]);
           setQuery("");
         },
@@ -199,8 +203,9 @@ function ShareCardBody({
           </div>
           <hr className="share-divider" />
           <GeneralAccessButton
-            share={share}
+            general={share?.generalAccess ?? task.generalAccess}
             team={team}
+            disabled={!canManage}
             onChange={(general) => mutations.setGeneral.mutate(general)}
           />
         </div>
@@ -219,8 +224,8 @@ function ShareCardBody({
                     <span className="share-muted">{t.share.youSuffix}</span>
                   )}
                 </span>
-                {entry.role === "owner" ? (
-                  <span className="share-owner">{t.share.role.owner}</span>
+                {entry.role === "owner" || !canManage ? (
+                  <span className="share-owner">{t.share.role[entry.role]}</span>
                 ) : (
                   <MemberRoleButton
                     name={name}
@@ -238,71 +243,76 @@ function ShareCardBody({
             );
           })}
           {share?.invites.map((invite) => (
-            <div key={invite.email} className="share-person">
+            <div key={invite.id} className="share-person">
               <Avatar person={null} size={24} placeholder="@" />
               <span className="share-person-name">
                 {invite.email}
                 <span className="share-muted share-invited">{t.share.invited}</span>
               </span>
-              <button
-                type="button"
-                className="share-text-button"
-                data-danger="true"
-                onClick={() =>
-                  mutations.revoke.mutate(invite.email, {
-                    onSuccess: () => toast.show(t.share.revoked),
-                  })
-                }
-              >
-                {t.share.revoke}
-              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  className="share-text-button"
+                  data-danger="true"
+                  onClick={() =>
+                    mutations.revoke.mutate(invite.id, {
+                      onSuccess: () => toast.show(t.share.revoked),
+                    })
+                  }
+                >
+                  {t.share.revoke}
+                </button>
+              )}
             </div>
           ))}
         </div>
 
-        <div className="share-section share-add">
-          <span className="share-section-title">{t.share.addPeople}</span>
-          <input
-            ref={searchRef}
-            className="share-search"
-            value={query}
-            placeholder={t.share.searchPlaceholder}
-            aria-label={t.share.searchPlaceholder}
-            autoComplete="off"
-            data-own-escape={query ? "" : undefined}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          {(candidates.length > 0 || selectedEmails.length > 0 || typedEmail) && (
-            <div className="share-candidates">
-              {candidates.map((member) => (
-                <CandidateTile
-                  key={member.id}
-                  label={member.githubLogin}
-                  tooltip={member.name ?? member.githubLogin}
-                  selected={selected.includes(member.id)}
-                  onToggle={() => toggle(member.id)}
-                  avatar={<MemberAvatar member={member} size={40} />}
-                />
-              ))}
-              {[...selectedEmails, ...(typedEmail ? [typedEmail] : [])].map((email) => (
-                <CandidateTile
-                  key={email}
-                  label={email.split("@")[0] ?? email}
-                  tooltip={email}
-                  selected={selected.includes(email)}
-                  onToggle={() => {
-                    toggle(email);
-                    if (!selected.includes(email)) setQuery("");
-                  }}
-                  avatar={<Avatar person={null} size={40} placeholder="@" />}
-                />
-              ))}
-            </div>
-          )}
-          {candidates.length === 0 && !q && selectedEmails.length === 0 && (
-            <span className="share-muted share-empty">{t.share.allJoined}</span>
-          )}
-        </div>
+        {canManage && (
+          <div className="share-section share-add">
+            <span className="share-section-title">{t.share.addPeople}</span>
+            <input
+              ref={searchRef}
+              className="share-search"
+              value={query}
+              placeholder={t.share.searchPlaceholder}
+              aria-label={t.share.searchPlaceholder}
+              autoComplete="off"
+              data-own-escape={query ? "" : undefined}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {(candidates.length > 0 || selectedEmails.length > 0 || typedEmail) && (
+              <div className="share-candidates">
+                {candidates.map((member) => (
+                  <CandidateTile
+                    key={member.id}
+                    label={member.githubLogin}
+                    tooltip={member.name ?? member.githubLogin}
+                    selected={selected.includes(member.id)}
+                    onToggle={() => toggle(member.id)}
+                    avatar={<MemberAvatar member={member} size={40} />}
+                  />
+                ))}
+                {[...selectedEmails, ...(typedEmail ? [typedEmail] : [])].map((email) => (
+                  <CandidateTile
+                    key={email}
+                    label={email.split("@")[0] ?? email}
+                    tooltip={email}
+                    selected={selected.includes(email)}
+                    onToggle={() => {
+                      toggle(email);
+                      if (!selected.includes(email)) setQuery("");
+                    }}
+                    avatar={<Avatar person={null} size={40} placeholder="@" />}
+                  />
+                ))}
+              </div>
+            )}
+            {candidates.length === 0 && !q && selectedEmails.length === 0 && (
+              <span className="share-muted share-empty">{t.share.allJoined}</span>
+            )}
+          </div>
+        )}
+        {!canManage && <span className="share-muted share-readonly">{t.share.readOnly}</span>}
         <ErrorText
           error={
             loadError ??
@@ -314,17 +324,19 @@ function ShareCardBody({
           }
         />
       </div>
-      <div className="share-card-footer">
-        <InviteRoleButton role={role} onChange={setRole} />
-        <button
-          type="button"
-          className="share-submit"
-          disabled={selected.length === 0 || mutations.add.isPending}
-          onClick={invite}
-        >
-          {t.share.addToTask(selected.length)}
-        </button>
-      </div>
+      {canManage && (
+        <div className="share-card-footer">
+          <InviteRoleButton role={role} onChange={setRole} />
+          <button
+            type="button"
+            className="share-submit"
+            disabled={selected.length === 0 || mutations.add.isPending}
+            onClick={invite}
+          >
+            {t.share.addToTask(selected.length)}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -368,23 +380,24 @@ function CandidateTile({
 }
 
 function GeneralAccessButton({
-  share,
+  general: current,
   team,
+  disabled,
   onChange,
 }: {
-  share: TaskShare | undefined;
+  general: GeneralAccess;
   team: string;
+  disabled: boolean;
   onChange: (general: GeneralAccess) => void;
 }) {
   const t = useT();
   const menu = useMenu();
-  const current = share?.general ?? "team-view";
   const text = generalAccessText(t, current, team);
   const icon = (general: GeneralAccess, size: number) =>
     general === "invited" ? <Lock size={size} /> : <Users size={size} />;
   const groups: MenuGroup<GeneralAccess>[] = [
     {
-      items: (["invited", "team-view", "team-edit"] as const).map((general) => ({
+      items: (["invited", "team_view", "team_edit"] as const).map((general) => ({
         value: general,
         ...generalAccessText(t, general, team),
         icon: icon(general, 14),
@@ -399,7 +412,8 @@ function GeneralAccessButton({
         type="button"
         className="share-general"
         aria-label={`${t.share.generalAccess}：${text.label}`}
-        {...menu.triggerProps}
+        aria-disabled={disabled || undefined}
+        {...(disabled ? {} : menu.triggerProps)}
       >
         <span className="share-muted-icon">{icon(current, 16)}</span>
         <span className="share-general-text">
@@ -426,8 +440,8 @@ function MemberRoleButton({
   onChange,
 }: {
   name: string;
-  role: InviteRole;
-  onChange: (value: InviteRole | "remove") => void;
+  role: TaskShareRole;
+  onChange: (value: TaskShareRole | "remove") => void;
 }) {
   const t = useT();
   const menu = useMenu();
@@ -443,7 +457,7 @@ function MemberRoleButton({
         {t.share.role[role]}
         <ChevronRight size={14} className="share-chevron-down" aria-hidden="true" />
       </button>
-      <Popover<InviteRole | "remove">
+      <Popover<TaskShareRole | "remove">
         {...menu.popoverProps}
         label={t.share.roleOf(name)}
         minWidth={240}
@@ -459,6 +473,11 @@ function MemberRoleButton({
               checked: value === role,
             })),
           },
+          {
+            items: [
+              { value: "owner", label: t.share.transferOwner, sub: t.share.transferOwnerSub },
+            ],
+          },
           { items: [{ value: "remove", label: t.share.removeAccess, danger: true }] },
         ]}
       />
@@ -470,8 +489,8 @@ function InviteRoleButton({
   role,
   onChange,
 }: {
-  role: InviteRole;
-  onChange: (role: InviteRole) => void;
+  role: TaskInviteRole;
+  onChange: (role: TaskInviteRole) => void;
 }) {
   const t = useT();
   const menu = useMenu();

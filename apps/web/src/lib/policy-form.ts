@@ -15,6 +15,10 @@ export interface PolicyFormValues {
   memberCanDispatchToTeamRunner: boolean;
   autoCreateIssues: boolean;
   feedbackBotAllowlist: string;
+  /** 本機 Repo 核准後的合併方式（ADR-0013）。 */
+  localMergeStrategy: "squash" | "merge";
+  /** 本機合併後 push 基準分支（checkout 有 origin 時）。 */
+  localPushBase: boolean;
 }
 
 /** 以逗號或換行分隔的清單；去掉空白與重複。 */
@@ -39,14 +43,13 @@ export function policyFormValues(policy: ProjectPolicy): PolicyFormValues {
     memberCanDispatchToTeamRunner: policy.memberCanDispatchToTeamRunner,
     autoCreateIssues: policy.autoCreateIssues,
     feedbackBotAllowlist: policy.feedbackBotAllowlist.join("\n"),
+    localMergeStrategy: policy.localMergeStrategy,
+    localPushBase: policy.localPushBase,
   };
 }
 
-/**
- * 這個表單不管的欄位：預設 Permission Policy 另有表單；本機 Repo 的合併設定還沒有 UI
- * （TODO(backend, local-repo)）。送出時省略，Server 保留原本的值。
- */
-type OtherPolicyFields = "defaultPermissionPolicy" | "localMergeStrategy" | "localPushBase";
+/** 這個表單不管的欄位：預設 Permission Policy 另有表單。送出時省略，Server 保留原本的值。 */
+type OtherPolicyFields = "defaultPermissionPolicy";
 
 export type PolicyFormResult =
   | { ok: true; policy: Omit<ProjectPolicy, OtherPolicyFields> }
@@ -64,12 +67,10 @@ export function validatePolicyForm(values: PolicyFormValues): PolicyFormResult {
     memberCanDispatchToTeamRunner: values.memberCanDispatchToTeamRunner,
     autoCreateIssues: values.autoCreateIssues,
     feedbackBotAllowlist: parseList(values.feedbackBotAllowlist),
+    localMergeStrategy: values.localMergeStrategy,
+    localPushBase: values.localPushBase,
   };
-  const result = ProjectPolicy.omit({
-    defaultPermissionPolicy: true,
-    localMergeStrategy: true,
-    localPushBase: true,
-  }).safeParse(policy);
+  const result = ProjectPolicy.omit({ defaultPermissionPolicy: true }).safeParse(policy);
   if (result.success) return { ok: true, policy: result.data };
   const errors: Partial<Record<keyof PolicyFormValues, string>> = {};
   for (const issue of result.error.issues) {

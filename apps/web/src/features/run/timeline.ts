@@ -57,8 +57,11 @@ export type TimelineItem =
       /** 用途：一般 tool call、設定的信任核准、Agent 設定檔被修改。 */
       purpose: PermissionPurpose;
       options: PermissionOption[];
-      /** 尚未回覆時為 null；`selectedOptionId` 為 null 表示請求被取消。 */
-      resolved: { selectedOptionId: string | null } | null;
+      /**
+       * 尚未回覆時為 null；`selectedOptionId` 為 null 表示請求被取消。`byMemberId` 是回覆的人
+       * （依 Permission Policy 自動回覆、被取消或舊的 Event 為 null）。
+       */
+      resolved: { selectedOptionId: string | null; byMemberId: string | null } | null;
     })
   | (ItemBase & { type: "plan"; entries: PlanEntry[] })
   | (ItemBase & {
@@ -101,7 +104,27 @@ export type TimelineItem =
       conflictedPaths: string[];
     })
   /** 送給 Agent 的 prompt（派工、Gate 退回、Verification 重試、Feedback Loop 等）。 */
-  | (ItemBase & { type: "prompt"; source: PromptSource; blocks: ContentBlock[] })
+  | (ItemBase & {
+      type: "prompt";
+      source: PromptSource;
+      blocks: ContentBlock[];
+      /** 送出的人（Event 的 actorMemberId）；Server 或 Runner 產生的 prompt 為 null。 */
+      actorMemberId: string | null;
+    })
+  /**
+   * 執行中排隊的訊息（`prompt_queued`）：回合結束後送出。送出（`prompt_submitted` 帶同一個 control id）後
+   * `submitted` 為 true，改由 prompt 項目顯示；收回（`prompt_withdrawn`）後 `withdrawn` 為 true。
+   */
+  | (ItemBase & {
+      type: "queued_prompt";
+      controlId: string;
+      blocks: ContentBlock[];
+      actorMemberId: string | null;
+      submitted: boolean;
+      withdrawn: boolean;
+    })
+  /** 本機 Repo 核准後合併到本機 checkout 的基準分支（ADR-0013）。 */
+  | (ItemBase & { type: "local_merged"; commitSha: string; baseBranch: string; pushed: boolean })
   | (ItemBase & {
       type: "preview_stopped";
       reason: PreviewStopReason;
@@ -123,6 +146,9 @@ export interface Timeline {
   pending: ReadonlyMap<number, RunEvent>;
   toolCallIndex: ReadonlyMap<string, number>;
   permissionIndex: ReadonlyMap<string, number>;
+  queuedIndex: ReadonlyMap<string, number>;
+  /** 套用過的 `run_settings_changed`／`agent_switched` 數（變化時重新取得 Run 的設定）。 */
+  settingsVersion: number;
 }
 
 export const EMPTY_TIMELINE: Timeline = {
@@ -134,6 +160,8 @@ export const EMPTY_TIMELINE: Timeline = {
   pending: new Map(),
   toolCallIndex: new Map(),
   permissionIndex: new Map(),
+  queuedIndex: new Map(),
+  settingsVersion: 0,
 };
 
 /** 套用過程中可以直接修改的副本，套用完才包成新的 Timeline。 */
@@ -146,6 +174,8 @@ interface Draft {
   pending: Map<number, RunEvent>;
   toolCallIndex: Map<string, number>;
   permissionIndex: Map<string, number>;
+  queuedIndex: Map<string, number>;
+  settingsVersion: number;
 }
 
 /** 協定允許之後增加錯誤代碼；不認得的值當成 `internal`。 */
@@ -163,7 +193,7 @@ function appendBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[
   return [...blocks, block];
 }
 
-function applyOne(draft: Draft, { seq, ts, event }: RunEvent): void {
+function applyOne(draft: Draft, { seq, ts, event, actorMemberId }: RunEvent): void {
   const last = draft.items.at(-1);
   const lastIndex = draft.items.length - 1;
   const base = { key: `${event.kind}-${seq}`, seq, ts, lastTs: ts };
@@ -248,7 +278,7 @@ function applyOne(draft: Draft, { seq, ts, event }: RunEvent): void {
       if (index === undefined || existing?.type !== "permission") return;
       draft.items[index] = {
         ...existing,
-        resolved: { selectedOptionId: event.selected_option_id },
+        resolved: { selectedOptionId: event.selected_option_id, byMemberId: actorMemberId ?? null },
         lastTs: ts,
       };
       return;
@@ -353,8 +383,59 @@ function applyOne(draft: Draft, { seq, ts, event }: RunEvent): void {
       });
       return;
 
-    case "prompt_submitted":
-      draft.items.push({ ...base, type: "prompt", source: event.source, blocks: event.prompt });
+    case "prompt_submitted": {
+      // 排隊的訊息真正送出：排隊列不再顯示，改由這則 prompt 顯示
+      const queued = event.control_id ? draft.queuedIndex.get(event.control_id) : undefined;
+      const existing = queued === undefined ? undefined : draft.items[queued];
+      if (queued !== undefined && existing?.type === "queued_prompt") {
+        draft.items[queued] = { ...existing, submitted: true, lastTs: ts };
+      }
+      draft.items.push({
+        ...base,
+        type: "prompt",
+        source: event.source,
+        blocks: event.prompt,
+        actorMemberId: actorMemberId ?? null,
+      });
+      return;
+    }
+
+    case "prompt_queued":
+      if (draft.queuedIndex.has(event.control_id)) return;
+      draft.queuedIndex.set(event.control_id, draft.items.length);
+      draft.items.push({
+        ...base,
+        type: "queued_prompt",
+        controlId: event.control_id,
+        blocks: event.prompt,
+        actorMemberId: actorMemberId ?? null,
+        submitted: false,
+        withdrawn: false,
+      });
+      return;
+
+    case "prompt_withdrawn": {
+      const index = draft.queuedIndex.get(event.control_id);
+      const existing = index === undefined ? undefined : draft.items[index];
+      if (index === undefined || existing?.type !== "queued_prompt") return;
+      draft.items[index] = { ...existing, withdrawn: true, lastTs: ts };
+      return;
+    }
+
+    case "local_merged":
+      draft.items.push({
+        ...base,
+        type: "local_merged",
+        commitSha: event.commit_sha,
+        baseBranch: event.base_branch,
+        pushed: event.pushed,
+      });
+      return;
+
+    case "run_settings_changed":
+    case "agent_switched":
+      // 切換紀錄由 Run 的設定（GET runSettings）提供；這裡只記下有變化
+      draft.settingsVersion += 1;
       return;
 
     case "preview_stopped":
@@ -392,6 +473,8 @@ export function applyEvents(timeline: Timeline, events: readonly RunEvent[]): Ti
       pending: new Map(timeline.pending),
       toolCallIndex: new Map(timeline.toolCallIndex),
       permissionIndex: new Map(timeline.permissionIndex),
+      queuedIndex: new Map(timeline.queuedIndex),
+      settingsVersion: timeline.settingsVersion,
     };
     draft.pending.set(event.seq, event);
     for (let next = draft.pending.get(draft.lastSeq + 1); next; ) {

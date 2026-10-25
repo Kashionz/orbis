@@ -17,3 +17,8 @@ export function appInstallUrl(repo: Pick<Repo, "github">): string | null {
     return null;
   }
 }
+
+/** Repo 的顯示名稱：GitHub Repo 是 `owner/name`，本機 Repo 只有名稱。 */
+export function repoDisplayName(repo: { owner: string | null; name: string }): string {
+  return repo.owner ? `${repo.owner}/${repo.name}` : repo.name;
+}

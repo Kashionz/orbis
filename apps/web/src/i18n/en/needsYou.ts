@@ -34,4 +34,5 @@ export default {
   answer: "Answer",
   answerLabel: (key: string) => `Answer the child run of ${key}`,
   answerPlaceholder: "Answer the child run’s question",
+  retryLocalMerge: "Retry merge",
 } satisfies Messages["needsYou"];
