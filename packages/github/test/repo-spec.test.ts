@@ -52,6 +52,7 @@ describe("提交到 repo", () => {
     const { w } = withSpec();
     const result = await commit(w);
     if (!result.ok) throw new Error(result.message);
+    if (!result.pullRequest) throw new Error("GitHub Repo 一定開 PR");
     expect(result).toMatchObject({ created: true, overwritesUpstreamChanges: false });
     expect(result.commitSha).not.toBeNull();
 
@@ -162,6 +163,7 @@ describe("PR merge 後更新版本", () => {
     const { w } = withSpec();
     const result = await commit(w);
     if (!result.ok) throw new Error(result.message);
+    if (!result.pullRequest) throw new Error("GitHub Repo 一定開 PR");
     const { mergeSha, response } = await merge(w, result.pullRequest.number);
     expect(response).toMatchObject({
       status: 200,
@@ -196,6 +198,7 @@ describe("PR merge 後更新版本", () => {
     const { w } = withSpec();
     const first = await commit(w);
     if (!first.ok) throw new Error(first.message);
+    if (!first.pullRequest) throw new Error("GitHub Repo 一定開 PR");
     await merge(w, first.pullRequest.number);
     const second = await commit(w, `${DRAFT}第二版\n`);
     expect(second).toMatchObject({ ok: true, created: true, overwritesUpstreamChanges: false });
@@ -208,6 +211,7 @@ describe("PR merge 後更新版本", () => {
     const { w } = withSpec();
     const first = await commit(w);
     if (!first.ok) throw new Error(first.message);
+    if (!first.pullRequest) throw new Error("GitHub Repo 一定開 PR");
     w.github.humanClosePullRequest(w.repo.id, first.pullRequest.number);
     const response = await w.deliver(
       "pull_request",
@@ -222,13 +226,14 @@ describe("PR merge 後更新版本", () => {
     expect(w.repoSpecs.specs.get("spec-1")?.version).toBe(0);
     const second = await commit(w);
     expect(second).toMatchObject({ ok: true, created: true });
-    if (second.ok) expect(second.pullRequest.number).not.toBe(first.pullRequest.number);
+    if (second.ok) expect(second.pullRequest?.number).not.toBe(first.pullRequest.number);
   });
 
   it("PR 在 GitHub 上已經關閉、但沒收到 webhook：再提交時開新的 PR", async () => {
     const { w } = withSpec();
     const first = await commit(w);
     if (!first.ok) throw new Error(first.message);
+    if (!first.pullRequest) throw new Error("GitHub Repo 一定開 PR");
     w.github.humanClosePullRequest(w.repo.id, first.pullRequest.number);
     const second = await commit(w, `${DRAFT}改\n`);
     expect(second).toMatchObject({ ok: true, created: true });

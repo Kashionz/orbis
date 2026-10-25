@@ -7,6 +7,7 @@
 // - `archive` 是例外（§6.2）：在 Run 結束後才送，對象是 Run 最後一個 completed 的 Dispatch 與它的 Runner，
 //   不會改派；Runner 離線時同樣留著等重新連線補送。
 
+import type { StoppedRunReason } from "@orbis/api-contract";
 import type {
   RunControl,
   RunControlAction,
@@ -295,7 +296,7 @@ export class RunControlService {
       }
       if (failure !== null) {
         this.logger.error({ ...log, failure }, "開 PR 失敗");
-        await this.stopRun(control.runId, `開 PR 失敗：${failure}`);
+        await this.stopRun(control.runId, `開 PR 失敗：${failure}`, "pr_open_failed", failure);
       }
       return;
     }
@@ -303,11 +304,21 @@ export class RunControlService {
     const message =
       result.outcome === "rejected" ? `push 分支失敗：${result.message}` : "push 分支失敗";
     this.logger.warn({ ...log, result }, message);
-    await this.stopRun(control.runId, message);
+    await this.stopRun(
+      control.runId,
+      message,
+      "push_failed",
+      result.outcome === "rejected" ? result.message : null,
+    );
   }
 
   /** 產生「停下來的 Run」的 Needs You 項目，指派給 Task 負責人（沒有時給派工者）。 */
-  private async stopRun(runId: string, reason: string): Promise<void> {
+  private async stopRun(
+    runId: string,
+    reason: string,
+    reasonCode: StoppedRunReason,
+    detail: string | null,
+  ): Promise<void> {
     const [row] = await this.db
       .select({ run: runs, task: tasks })
       .from(runs)
@@ -321,7 +332,7 @@ export class RunControlService {
       kind: "stopped_run",
       taskId: row.task.id,
       runId,
-      payload: { reason },
+      payload: { reason, reasonCode, attempt: null, detail },
     });
     await this.notify.notify(null, {
       kind: "run_stopped",

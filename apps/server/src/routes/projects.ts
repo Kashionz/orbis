@@ -226,6 +226,10 @@ export function createProjectRoutes(s: Services): Hono<AppEnv> {
     const scope = await loadProjectScope(db, actor, readId(c, "projectId", "Project"));
     requireProjectCapability(actor, scope, "manage_project");
     const input = await readJson(c, CreateRepoInput);
+    // TODO(backend, local-repo)：登記本機 Repo（ADR-0013）。
+    if (input.kind === "local") {
+      throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援本機 Repo");
+    }
     const registration = await registerRepo(s, input, actor.memberId);
     const [repo] = await db
       .insert(repos)

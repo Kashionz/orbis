@@ -116,6 +116,7 @@ export async function buildMeResponse(db: Database, session: Session): Promise<M
         teamId: members.teamId,
         teamName: teams.name,
         role: members.role,
+        email: members.email,
       })
       .from(members)
       .innerJoin(teams, eq(teams.id, members.teamId))

@@ -496,7 +496,7 @@ describe.skipIf(dbSkipReason !== null)("PM API", () => {
           github: { installed: false, installUrl },
         });
         const list = await as("viewer").get(`/api/projects/${project.id}/repos`);
-        expect(expectContract(z.array(Repo), list.body)[0]?.github.installUrl).toBe(installUrl);
+        expect(expectContract(z.array(Repo), list.body)[0]?.github?.installUrl).toBe(installUrl);
       });
 
       it("請求者本人對 repo 沒有寫入權限時，視同沒有安裝（不借用別人的 App 安裝）", async () => {

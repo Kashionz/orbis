@@ -140,6 +140,8 @@ export function createRepoSpecRoutes(s: Services): Hono<AppEnv> {
     }
     const response: RepoSpecCommitResponse = {
       pullRequest: result.pullRequest,
+      // TODO(backend, local-repo)：本機 Repo 經由 Local Runner 直接 commit（repo_spec_commit）。
+      localCommit: null,
       created: result.created,
       overwritesUpstreamChanges: result.overwritesUpstreamChanges,
     };

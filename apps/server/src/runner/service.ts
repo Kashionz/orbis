@@ -214,7 +214,8 @@ export async function recordAgentAvailability(
           version: agent.version,
           unavailableReason: agent.unavailable_reason,
           capabilities: agent.capabilities,
-          models: agent.models,
+          // dispatch-options 只用 model id；完整的模型目錄由 agent-catalog 彙整（TODO(backend, model-catalog)）。
+          models: agent.models.map((model) => model.id),
           permissionGaps: agent.permission_gaps,
           activeRuns: info?.active_runs ?? null,
         },

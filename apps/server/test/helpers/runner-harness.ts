@@ -108,11 +108,23 @@ export class MockRunner {
         available: a.available ?? true,
         unavailable_reason: a.available === false ? "未登入" : null,
         capabilities: ["load_session"],
-        models: a.models ?? [],
+        models: (a.models ?? []).map((id) => ({
+          id,
+          name: id,
+          tag: null,
+          effort: { kind: "adjustable" as const },
+          source: "profile" as const,
+        })),
         permission_gaps: a.permissionGaps ?? [],
         credential: a.credential === undefined ? "default" : a.credential,
+        display_name: a.id,
+        vendor: null,
+        cli: null,
+        signed_in: null,
+        login_hint: null,
       })),
       credentials: [{ label: "default", max_concurrent_runs: 30, active_runs: 0 }],
+      mapped_repos: [],
     };
     this.send({ type: "agent_availability", ...frame });
   }

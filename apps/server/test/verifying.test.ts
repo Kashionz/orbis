@@ -177,7 +177,13 @@ describe.skipIf(dbSkipReason !== null)("Verifying", () => {
       (await flow.as("admin").get("/api/needs-you")).body,
     );
     expect(items).toMatchObject([
-      { kind: "stopped_run", runId: started.run.id, reason: "Verification 連續失敗 4 次" },
+      {
+        kind: "stopped_run",
+        runId: started.run.id,
+        reasonCode: "verification_limit",
+        attempt: 4,
+        detail: null,
+      },
     ]);
     const list = await verificationsOf(started.run.id);
     expect(list.map((v) => v.status)).toEqual(["failed", "failed", "failed", "failed"]);

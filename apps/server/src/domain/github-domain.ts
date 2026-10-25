@@ -45,7 +45,8 @@ type RepoRow = typeof repos.$inferSelect;
 const toRepoRecord = (row: RepoRow): RepoRecord => ({
   id: row.id,
   projectId: row.projectId,
-  owner: row.githubOwner,
+  // 本機 Repo 沒有 owner，也不會進到 GitHub 整合（TODO(backend, local-repo)：改成只查 GitHub Repo）。
+  owner: row.githubOwner ?? "",
   name: row.githubName,
   githubRepoId: row.githubRepoId,
   defaultBranch: row.defaultBranch,

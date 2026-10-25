@@ -74,9 +74,15 @@ describe.skipIf(dbSkipReason !== null)("並行佇列（Team Runner）", () => {
           models: [],
           permission_gaps: [],
           credential: "default",
+          display_name: "Claude Code",
+          vendor: null,
+          cli: null,
+          signed_in: null,
+          login_hint: null,
         },
       ],
       credentials: [{ label: "default", max_concurrent_runs: 2, active_runs: 0 }],
+      mapped_repos: [],
     });
     await waitUntil(async () => {
       const [row] = await database.db

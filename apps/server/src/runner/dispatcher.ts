@@ -382,7 +382,9 @@ export class Dispatcher {
       expires_at: expiresAt.toISOString(),
       task: { task_id: task.id, task_key: task.key, title: task.title },
       run_seq: await runSequence(this.db, run),
+      // TODO(backend, local-repo)：本機 Repo 送 `{ kind: "local", name, default_branch, base_ref }`。
       repo: {
+        kind: "github",
         name: repo.githubName,
         clone_url: `https://github.com/${repo.githubOwner}/${repo.githubName}.git`,
         default_branch: defaultBranch,

@@ -211,6 +211,8 @@ export async function commitRepoSpec(
       return {
         ok: true,
         pullRequest: { number: pr.number, url: pr.htmlUrl },
+        // GitHub Repo 一律開 PR；本機 Repo 的 commit 不經過這裡。
+        localCommit: null,
         created,
         commitSha,
         overwritesUpstreamChanges,

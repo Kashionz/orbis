@@ -491,6 +491,7 @@ describe.skipIf(dbSkipReason !== null)("Runner 登錄與 Dispatch 佇列", () =>
             permissionGaps: [],
           },
         ],
+        unavailableReason: null,
       });
       // 多台 Team Runner：models 與 permissionGaps 取聯集。
       expect(options.team?.agents).toEqual([
