@@ -92,6 +92,9 @@ test.describe("Run 工作區的事件串流", () => {
   });
 
   test("5,000 筆事件用虛擬列表與分段顯示順暢呈現", async ({ page }) => {
+    // 第一次載入 5,000 筆事件在 macOS runner 上冷啟動較慢，點完「載入較早」常常超過預設的 30 秒。
+    // 效能由下面載入與捲動各 10 秒的斷言判斷，不靠整體逾時，所以放寬到 90 秒。
+    test.setTimeout(90_000);
     const events = generateLargeRun(LARGE_RUN_ID, 5_000);
     const items = buildStream(applyEvents(EMPTY_TIMELINE, events).items, {
       status: "completed",
