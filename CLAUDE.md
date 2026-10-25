@@ -4,7 +4,7 @@
 
 ## 先讀
 
-- **名詞**：[GLOSSARY.md](GLOSSARY.md)。程式碼、UI 文字、commit 訊息一律使用其中的標準名詞，不使用 `_Avoid_` 列出的同義詞。
+- **名詞**：[GLOSSARY.md](GLOSSARY.md)。程式碼、測試名稱、commit 訊息與文件一律使用其中的標準名詞，不使用 `_Avoid_` 列出的同義詞。UI 文字依 GLOSSARY 的「UI 顯示」表，經 `apps/web/src/i18n` 的字典顯示。
 - **設計**：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 是唯一依據，只讀和你這次工作相關的章節。
 - **為什麼這樣設計**：[docs/adr/](docs/adr/)。想推翻某項設計之前，先讀對應的 ADR，然後提出來討論，不要直接改。
 - **分軌與目錄所有權**：[docs/PLAN.md](docs/PLAN.md)。
