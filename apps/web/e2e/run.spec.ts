@@ -92,10 +92,6 @@ test.describe("Run 工作區的事件串流", () => {
   });
 
   test("5,000 筆事件用虛擬列表與分段顯示順暢呈現", async ({ page }) => {
-    test.skip(
-      process.platform === "darwin",
-      "macOS 上虛擬列表會一直重新量測，「載入較早」按鈕不斷被卸載、點不到（#94），修好之前先跳過；Windows 照常執行",
-    );
     const events = generateLargeRun(LARGE_RUN_ID, 5_000);
     const items = buildStream(applyEvents(EMPTY_TIMELINE, events).items, {
       status: "completed",
@@ -119,10 +115,15 @@ test.describe("Run 工作區的事件串流", () => {
     const earlier = stream(page).getByRole("button", { name: /載入較早的/ });
     const presses = Math.ceil(items.length / STREAM_WINDOW) - 1;
     for (let i = 0; i < presses; i += 1) {
+      const hidden = items.length - STREAM_WINDOW * (i + 2);
       await stream(page).evaluate((el) => {
         el.scrollTop = 0;
       });
+      // 按鈕在虛擬列表之外，列表重新量測時不會移動或被卸載（#94）
       await earlier.click();
+      if (hidden > 0) {
+        await expect(earlier).toHaveText(new RegExp(hidden.toLocaleString("en-US")));
+      }
     }
     await expect(earlier).toHaveCount(0);
 

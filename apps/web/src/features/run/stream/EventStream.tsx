@@ -1,6 +1,7 @@
 // 事件串流：動態高度的虛擬列表，只渲染看得到的項目。
 // - 在底部時跟著新的事件捲動；往上捲之後出現「N 筆新事件」，按下回到底部。
 // - 一開始只顯示最後 WINDOW 個項目，上方的「載入較早的 N 筆事件」每次多顯示 WINDOW 個（協調者 Q9）。
+//   這個按鈕放在虛擬列表之外：列表重新量測高度、調整捲動位置時，它不會跟著移動或被卸載（#94）。
 // - `focusKey`（例如從待我處理跳過來的權限請求）會捲到那個項目並短暫標示。
 
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -34,7 +35,6 @@ const FOLLOW_THRESHOLD_PX = 48;
 const FOCUS_HIGHLIGHT_MS = 2600;
 
 type Row =
-  | { kind: "earlier"; key: string; hidden: number }
   | { kind: "item"; key: string; item: StreamItem; first: boolean }
   | { kind: "tail"; key: string; tail: StreamTail };
 
@@ -103,6 +103,9 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
   const t = useT();
   const env = useStreamEnv();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  /** 列表在捲動區中的起點（上方有 padding 與「載入較早」按鈕），交給 virtualizer 的 scrollMargin。 */
+  const [listOffset, setListOffset] = useState(0);
   const followRef = useRef(env.focusKey === null);
   const [following, setFollowing] = useState(env.focusKey === null);
   /** 停止跟隨時已有的項目數（算「N 筆新事件」）。 */
@@ -125,7 +128,6 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
 
   const rows = useMemo<Row[]>(() => {
     const list: Row[] = [];
-    if (start > 0) list.push({ kind: "earlier", key: "earlier", hidden: start });
     for (let index = start; index < items.length; index += 1) {
       const item = items[index] as StreamItem;
       list.push({ kind: "item", key: item.key, item, first: index === 0 });
@@ -139,7 +141,14 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 64,
     overscan: 6,
+    scrollMargin: listOffset,
     getItemKey: (index) => rows[index]?.key ?? index,
+  });
+
+  // 「載入較早」按鈕出現或消失時，列表的起點跟著改變。
+  useLayoutEffect(() => {
+    const offset = innerRef.current?.offsetTop ?? 0;
+    if (offset !== listOffset) setListOffset(offset);
   });
 
   // 在底部時跟著新的事件捲動
@@ -221,48 +230,54 @@ export function EventStream({ items, tail, loading, dockShown }: EventStreamProp
           {loading && items.length === 0 ? (
             <StreamSkeleton />
           ) : (
-            <div className="st-inner" style={{ height: virtualizer.getTotalSize() }}>
-              {virtualizer.getVirtualItems().map((virtual) => {
-                const row = rows[virtual.index];
-                if (!row) return null;
-                return (
-                  <div
-                    key={virtual.key}
-                    ref={virtualizer.measureElement}
-                    data-index={virtual.index}
-                    className="st-row"
-                    style={{ transform: `translateY(${virtual.start}px)` }}
-                  >
-                    {row.kind === "earlier" && (
-                      <button type="button" className="st-earlier" onClick={loadEarlier}>
-                        {t.workspace.stream.loadEarlier(row.hidden.toLocaleString("en-US"))}
-                      </button>
-                    )}
-                    {row.kind === "tail" && <TailRow tail={row.tail} />}
-                    {row.kind === "item" && (
-                      <div
-                        className="st-item"
-                        data-key={row.item.key}
-                        data-type={row.item.kind}
-                        data-focused={highlight === row.item.key ? "true" : undefined}
-                      >
-                        {row.item.head && (
-                          <HeadRow
-                            head={row.item.head}
-                            ts={tsOf(row.item)}
-                            seq={seqOf(row.item)}
-                            first={row.first}
-                          />
-                        )}
-                        <div className="st-body">
-                          <ItemBody item={row.item} />
+            <>
+              {start > 0 && (
+                <button type="button" className="st-earlier" onClick={loadEarlier}>
+                  {t.workspace.stream.loadEarlier(start.toLocaleString("en-US"))}
+                </button>
+              )}
+              <div
+                ref={innerRef}
+                className="st-inner"
+                style={{ height: virtualizer.getTotalSize() }}
+              >
+                {virtualizer.getVirtualItems().map((virtual) => {
+                  const row = rows[virtual.index];
+                  if (!row) return null;
+                  return (
+                    <div
+                      key={virtual.key}
+                      ref={virtualizer.measureElement}
+                      data-index={virtual.index}
+                      className="st-row"
+                      style={{ transform: `translateY(${virtual.start - listOffset}px)` }}
+                    >
+                      {row.kind === "tail" && <TailRow tail={row.tail} />}
+                      {row.kind === "item" && (
+                        <div
+                          className="st-item"
+                          data-key={row.item.key}
+                          data-type={row.item.kind}
+                          data-focused={highlight === row.item.key ? "true" : undefined}
+                        >
+                          {row.item.head && (
+                            <HeadRow
+                              head={row.item.head}
+                              ts={tsOf(row.item)}
+                              seq={seqOf(row.item)}
+                              first={row.first}
+                            />
+                          )}
+                          <div className="st-body">
+                            <ItemBody item={row.item} />
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
       </div>
