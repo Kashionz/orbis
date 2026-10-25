@@ -143,6 +143,54 @@ wire_enum! {
         FeedbackCi => "feedback_ci",
         /// Child Run 以 `ask_parent` 提出、由人在 Needs You 回答的問題。
         ChildQuestion => "child_question",
+        /// 換 Agent 後，Runner 交給新 Agent 的交接 prompt（協定版本 3，見 [`crate::control::HandoffContext`]）。
+        Handoff => "handoff",
+    }
+}
+
+wire_enum! {
+    /// 推理強度（協定版本 3）：派工時指定（DispatchOffer `effort`），或執行中切換
+    /// （RunControl `set_session_config`）。Runner 依 Agent Profile 對應到 ACP 的 config option
+    /// （類別 `thought_level`）。
+    Effort {
+        Fast => "fast",
+        Std => "std",
+        Deep => "deep",
+    }
+}
+
+wire_enum! {
+    /// 執行中送出的 prompt 什麼時候交給 Agent（協定版本 3）。
+    #[derive(Default)]
+    PromptDelivery {
+        /// 回合中或等待權限回覆時先排隊，回合結束後送出（多則依序合併成一則）。
+        #[default]
+        Queue => "queue",
+        /// 先 `session/cancel` 目前的回合，回合結束後立即送出。
+        Interrupt => "interrupt",
+    }
+}
+
+wire_enum! {
+    /// Repo 的種類（協定版本 3）。
+    RepoKind {
+        /// GitHub repository：核准後 push 並開 PR。
+        Github => "github",
+        /// 本機 git repository（本機 Repo）：只在 `runner.toml` 有對應的 Local Runner 上執行，
+        /// 核准後由 Runner 合併到本機 checkout 的基準分支。
+        Local => "local",
+    }
+}
+
+wire_enum! {
+    /// 本機 Repo 核准後合併到基準分支的方式（Project 設定，協定版本 3）。
+    #[derive(Default)]
+    LocalMergeStrategy {
+        /// 把 Run 的分支壓成一個 commit。
+        #[default]
+        Squash => "squash",
+        /// 建立 merge commit。
+        Merge => "merge",
     }
 }
 
@@ -219,7 +267,8 @@ mod tests {
             | PromptSource::VerificationRetry
             | PromptSource::FeedbackReview
             | PromptSource::FeedbackCi
-            | PromptSource::ChildQuestion => 7,
+            | PromptSource::ChildQuestion
+            | PromptSource::Handoff => 8,
         };
         check(PromptSource::ALL, source_count(PromptSource::User));
         let criterion_count = |k: AcceptanceCriterionKind| match k {
@@ -231,6 +280,25 @@ mod tests {
         check(
             AcceptanceCriterionKind::ALL,
             criterion_count(AcceptanceCriterionKind::Manual),
+        );
+        let effort_count = |e: Effort| match e {
+            Effort::Fast | Effort::Std | Effort::Deep => 3,
+        };
+        check(Effort::ALL, effort_count(Effort::Std));
+        let delivery_count = |d: PromptDelivery| match d {
+            PromptDelivery::Queue | PromptDelivery::Interrupt => 2,
+        };
+        check(PromptDelivery::ALL, delivery_count(PromptDelivery::Queue));
+        let repo_kind_count = |k: RepoKind| match k {
+            RepoKind::Github | RepoKind::Local => 2,
+        };
+        check(RepoKind::ALL, repo_kind_count(RepoKind::Local));
+        let strategy_count = |s: LocalMergeStrategy| match s {
+            LocalMergeStrategy::Squash | LocalMergeStrategy::Merge => 2,
+        };
+        check(
+            LocalMergeStrategy::ALL,
+            strategy_count(LocalMergeStrategy::Squash),
         );
     }
 
@@ -263,10 +331,28 @@ mod tests {
         for k in AcceptanceCriterionKind::ALL {
             assert_eq!(serde_json::to_value(k).unwrap(), k.as_str());
         }
+        for e in Effort::ALL {
+            assert_eq!(serde_json::to_value(e).unwrap(), e.as_str());
+        }
+        for d in PromptDelivery::ALL {
+            assert_eq!(serde_json::to_value(d).unwrap(), d.as_str());
+        }
+        for k in RepoKind::ALL {
+            assert_eq!(serde_json::to_value(k).unwrap(), k.as_str());
+        }
+        for s in LocalMergeStrategy::ALL {
+            assert_eq!(serde_json::to_value(s).unwrap(), s.as_str());
+        }
     }
 
     #[test]
     fn default_permission_policy_is_auto() {
         assert_eq!(PermissionPolicy::default(), PermissionPolicy::Auto);
+    }
+
+    #[test]
+    fn defaults_of_v3_enums() {
+        assert_eq!(PromptDelivery::default(), PromptDelivery::Queue);
+        assert_eq!(LocalMergeStrategy::default(), LocalMergeStrategy::Squash);
     }
 }

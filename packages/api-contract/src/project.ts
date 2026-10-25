@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
-import { PermissionPolicy, Role } from "./enums";
+import { LocalMergeStrategy, PermissionPolicy, Role } from "./enums";
 
 /**
  * Task Key 的 Project 前綴，例如 `ORB-12` 的 `ORB`。
@@ -39,6 +39,10 @@ export const ProjectPolicy = z.object({
    * 不觸發（§5.2）。
    */
   feedbackBotAllowlist: z.array(z.string().trim().min(1).max(100)).max(50),
+  /** 本機 Repo 核准後合併到基準分支的方式（預設 `squash`，ADR-0013）。 */
+  localMergeStrategy: LocalMergeStrategy,
+  /** 本機 Repo 合併後是否 push 基準分支（checkout 有 `origin` 時才有作用，預設關閉）。 */
+  localPushBase: z.boolean(),
 });
 export type ProjectPolicy = z.infer<typeof ProjectPolicy>;
 

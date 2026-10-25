@@ -24,7 +24,9 @@ const stopped: NeedsYouItem = {
   ...base,
   id: "n3",
   kind: "stopped_run",
-  reason: "Verification 失敗 3 次",
+  reasonCode: "verification_limit",
+  attempt: 3,
+  detail: null,
 };
 
 describe("needsYouNotification", () => {
@@ -40,8 +42,17 @@ describe("needsYouNotification", () => {
     );
     expect(needsYouNotification(stopped)).toMatchObject({
       title: "ORB-12 的 Run 停下來了",
-      body: "Verification 失敗 3 次",
+      body: "Verification 連續失敗 3 次",
     });
+    // 有原始的錯誤訊息時接在原因後面
+    expect(
+      needsYouNotification({
+        ...stopped,
+        reasonCode: "push_failed",
+        attempt: null,
+        detail: "remote: Permission denied",
+      }).body,
+    ).toBe("push 分支失敗：remote: Permission denied");
   });
 
   it("Review Gate 到 diff review，Plan Gate 到 Run 頁，停下來的 Run 到 Verification 分頁，網址中的 ID 會編碼", () => {

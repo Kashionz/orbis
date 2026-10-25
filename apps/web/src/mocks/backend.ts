@@ -368,6 +368,8 @@ export class MockBackend {
             autoCreateIssues: false,
             verificationMaxRetries: 3,
             feedbackBotAllowlist: [],
+            localMergeStrategy: "squash",
+            localPushBase: false,
             ...this.config.policy,
           },
           viewerRole: this.role,
@@ -390,6 +392,8 @@ export class MockBackend {
             autoCreateIssues: false,
             verificationMaxRetries: 3,
             feedbackBotAllowlist: [],
+            localMergeStrategy: "squash",
+            localPushBase: false,
           },
           viewerRole: this.config.role ?? "owner",
           createdAt: SEED_TIME,
@@ -400,6 +404,7 @@ export class MockBackend {
         {
           id: "repo-1",
           projectId: "project-1",
+          kind: "github",
           owner: "acme",
           name: "demo",
           defaultBranch: "main",
@@ -410,6 +415,7 @@ export class MockBackend {
         {
           id: "repo-2",
           projectId: "project-2",
+          kind: "github",
           owner: "acme",
           name: "docs",
           defaultBranch: "main",
@@ -613,7 +619,7 @@ export class MockBackend {
       member:
         this.config.session === "no-team"
           ? null
-          : { id: ME_ID, teamId: "team-1", teamName: this.teamName(), role },
+          : { id: ME_ID, teamId: "team-1", teamName: this.teamName(), role, email: null },
     };
   }
 
@@ -622,7 +628,14 @@ export class MockBackend {
   }
 
   team(): Team {
-    return { id: "team-1", name: this.teamName(), createdAt: SEED_TIME, updatedAt: SEED_TIME };
+    return {
+      id: "team-1",
+      name: this.teamName(),
+      allowExternalPreview: false,
+      allowTeamRunnerTerminal: false,
+      createdAt: SEED_TIME,
+      updatedAt: SEED_TIME,
+    };
   }
 
   /** 修改 Team 名稱：Admin 以上。 */
@@ -783,6 +796,7 @@ export class MockBackend {
             permissionGaps: ["MCP server 的工具呼叫不會送出權限請求"],
           },
         ],
+        unavailableReason: null,
       },
       team: {
         online: true,
@@ -804,6 +818,7 @@ export class MockBackend {
             permissionGaps: [],
           },
         ],
+        unavailableReason: null,
       },
     };
   }
@@ -947,6 +962,8 @@ export class MockBackend {
         autoCreateIssues: true,
         verificationMaxRetries: 3,
         feedbackBotAllowlist: [],
+        localMergeStrategy: "squash",
+        localPushBase: false,
         ...input.policy,
       },
       // 新的 Project 沒有 Role 覆寫
@@ -986,6 +1003,10 @@ export class MockBackend {
   createRepo(projectId: string, input: CreateRepoInput): Repo {
     const project = this.project(projectId);
     this.requireProjectAdmin(project);
+    // TODO(backend, local-repo)：mock 也還不支援本機 Repo。
+    if (input.kind === "local") {
+      throw new MockError(400, "invalid_input", "還不支援本機 Repo");
+    }
     const duplicate = this.state.repos.some(
       (r) => r.projectId === projectId && r.owner === input.owner && r.name === input.name,
     );
@@ -997,6 +1018,7 @@ export class MockBackend {
     const repo: Repo = {
       id: this.newId("repo"),
       projectId,
+      kind: "github",
       owner: input.owner,
       name: input.name,
       defaultBranch: installed ? GITHUB_DEFAULT_BRANCH : (input.defaultBranch ?? "main"),
@@ -1022,7 +1044,7 @@ export class MockBackend {
       );
     }
     const owners = this.config.githubAppOwnersOnRefresh ?? GITHUB_APP_OWNERS;
-    const installed = owners.includes(repo.owner);
+    const installed = repo.owner !== null && owners.includes(repo.owner);
     repo.github = { installed, installUrl: installed ? null : GITHUB_APP_INSTALL_URL };
     repo.updatedAt = now();
     this.save();
@@ -1053,7 +1075,7 @@ export class MockBackend {
       id: this.newId("task"),
       key: formatTaskKey(project.keyPrefix, number),
       projectId,
-      repoId: input.repoId,
+      repoId: input.repoId ?? null,
       title: input.title,
       description: input.description ?? "",
       status: "backlog",
@@ -1063,6 +1085,9 @@ export class MockBackend {
       dependsOn: input.dependsOn ?? [],
       planGateEnabled: input.planGateEnabled ?? null,
       createdByMemberId: ME_ID,
+      pullRequest: null,
+      generalAccess: "team_edit",
+      viewerAccess: "manage",
       createdAt: time,
       updatedAt: time,
     };
@@ -1178,6 +1203,7 @@ export class MockBackend {
       delegationMode: null,
       agent: input.agent,
       model: input.model ?? null,
+      effort: input.effort ?? null,
       permissionPolicy: input.permissionPolicy,
       runnerKind: input.runnerKind,
       runnerId: null,
@@ -1577,6 +1603,7 @@ export class MockBackend {
     this.save();
     return {
       pullRequest: spec.openPullRequest,
+      localCommit: null,
       created,
       overwritesUpstreamChanges: this.config.specUpstreamChanged ?? false,
     };
@@ -1845,6 +1872,7 @@ export class MockBackend {
       title,
       body: null,
       url: null,
+      stoppedRun: null,
       readAt: null,
       createdAt: now(),
       ...extra,
@@ -2486,7 +2514,9 @@ export class MockBackend {
     this.state.needsYou.push({
       id: this.newId("needs-you"),
       kind: "stopped_run",
-      reason: `Verification 連續失敗 ${verification.attempt} 輪，超過重試上限`,
+      reasonCode: "verification_limit",
+      attempt: verification.attempt,
+      detail: null,
       memberId: ME_ID,
       taskId: task.id,
       taskKey: task.key,
@@ -2828,7 +2858,13 @@ export class MockBackend {
     this.state.events[runId] = list;
     const run = this.run(runId);
     const appended = kinds.map((event) => {
-      const runEvent: RunEvent = { runId, seq: list.length + 1, ts: now(), event };
+      const runEvent: RunEvent = {
+        runId,
+        seq: list.length + 1,
+        ts: now(),
+        event,
+        actorMemberId: null,
+      };
       list.push(runEvent);
       this.applySideEffects(run, event);
       return runEvent;
@@ -2960,6 +2996,7 @@ function member(id: string, githubUserId: number, login: string, name: string, r
     githubLogin: login,
     name,
     avatarUrl: null,
+    email: null,
     role,
     createdAt: SEED_TIME,
     updatedAt: SEED_TIME,

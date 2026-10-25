@@ -457,6 +457,7 @@ pub fn offer(
         consult_of_run_id: None,
         continuation: None,
         prompt_source: None,
+        effort: None,
     }
 }
 

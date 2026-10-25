@@ -4,11 +4,16 @@ import type { AgentCapability } from "./AgentCapability";
 import type { DelegationMode } from "./DelegationMode";
 import type { DelegationPurpose } from "./DelegationPurpose";
 import type { DispatchRejectReason } from "./DispatchRejectReason";
+import type { Effort } from "./Effort";
 import type { EventKindName } from "./EventKindName";
 import type { FileChange } from "./FileChange";
 import type { GateDecision } from "./GateDecision";
 import type { GateKind } from "./GateKind";
+import type { LocalMergeStrategy } from "./LocalMergeStrategy";
+import type { LoginHintKind } from "./LoginHintKind";
 import type { MergeOutcome } from "./MergeOutcome";
+import type { ModelSource } from "./ModelSource";
+import type { ModelTag } from "./ModelTag";
 import type { OrbisToolErrorCode } from "./OrbisToolErrorCode";
 import type { OrbisToolName } from "./OrbisToolName";
 import type { PermissionOptionKind } from "./PermissionOptionKind";
@@ -19,20 +24,25 @@ import type { PlanSource } from "./PlanSource";
 import type { PreviewResetReason } from "./PreviewResetReason";
 import type { PreviewStopReason } from "./PreviewStopReason";
 import type { PreviewStreamKind } from "./PreviewStreamKind";
+import type { PromptDelivery } from "./PromptDelivery";
 import type { PromptSource } from "./PromptSource";
+import type { RepoKind } from "./RepoKind";
+import type { RepoSpecCommitFailure } from "./RepoSpecCommitFailure";
 import type { RunControlActionName } from "./RunControlActionName";
 import type { RunControlRejectReason } from "./RunControlRejectReason";
 import type { RunErrorCode } from "./RunErrorCode";
 import type { RunOrigin } from "./RunOrigin";
+import type { RunSettingName } from "./RunSettingName";
 import type { RunStatus } from "./RunStatus";
 import type { RunnerKind } from "./RunnerKind";
 import type { SidecarConnectionState } from "./SidecarConnectionState";
+import type { TerminalExitReason } from "./TerminalExitReason";
 import type { ToolCallStatus } from "./ToolCallStatus";
 import type { ToolKind } from "./ToolKind";
 import type { VerificationKind } from "./VerificationKind";
 import type { VerificationOutcome } from "./VerificationOutcome";
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const RUNNER_WS_PATH = "/runner";
 
@@ -58,6 +68,12 @@ export const PREVIEW_DATA_HEADER_LEN = 5;
 
 export const PREVIEW_MAX_WS_MESSAGE = 16777216;
 
+export const TERMINAL_MAX_PER_RUN = 3;
+
+export const TERMINAL_IDLE_TIMEOUT_SECS = 1800;
+
+export const TERMINAL_MAX_CHUNK = 65536;
+
 export const PREVIEW_DATA_KINDS = { body: 0, ws_text: 1, ws_binary: 2, ws_fragment: 3 } as const;
 
 export const RUN_STATUSES = ["queued", "dispatched", "starting", "running", "verifying", "awaiting_permission", "rate_limited", "awaiting_gate", "completed", "failed", "canceled"] as const satisfies readonly RunStatus[];
@@ -74,13 +90,13 @@ export const GATE_KINDS = ["plan", "review"] as const satisfies readonly GateKin
 
 export const GATE_DECISIONS = ["approved", "rejected"] as const satisfies readonly GateDecision[];
 
-export const EVENT_KINDS = ["message_chunk", "thought_chunk", "tool_call", "permission_request", "permission_resolved", "plan", "usage", "status_changed", "error", "rate_limited", "preview_ready", "worktree_ready", "run_diff", "plan_proposed", "verification_result", "verification_completed", "child_merged", "final_message", "agent_session", "prompt_submitted", "preview_stopped"] as const satisfies readonly EventKindName[];
+export const EVENT_KINDS = ["message_chunk", "thought_chunk", "tool_call", "permission_request", "permission_resolved", "plan", "usage", "status_changed", "error", "rate_limited", "preview_ready", "worktree_ready", "run_diff", "plan_proposed", "verification_result", "verification_completed", "child_merged", "final_message", "agent_session", "prompt_submitted", "preview_stopped", "prompt_queued", "prompt_withdrawn", "run_settings_changed", "agent_switched", "local_merged"] as const satisfies readonly EventKindName[];
 
-export const RUN_CONTROL_ACTIONS = ["cancel", "prompt", "permission_response", "gate_result", "push_branch", "verify", "archive", "restart_preview"] as const satisfies readonly RunControlActionName[];
+export const RUN_CONTROL_ACTIONS = ["cancel", "prompt", "permission_response", "gate_result", "push_branch", "verify", "archive", "restart_preview", "withdraw_prompt", "set_session_config", "set_permission_policy", "switch_agent", "merge_local"] as const satisfies readonly RunControlActionName[];
 
 export const RUN_CONTROL_REJECT_REASONS = ["unknown_run", "stale_dispatch", "invalid_state", "unknown_permission_request", "failed"] as const satisfies readonly RunControlRejectReason[];
 
-export const DISPATCH_REJECT_REASONS = ["concurrency_limit", "rate_limited", "agent_unavailable", "expired", "duplicate", "unsupported", "internal"] as const satisfies readonly DispatchRejectReason[];
+export const DISPATCH_REJECT_REASONS = ["concurrency_limit", "rate_limited", "agent_unavailable", "expired", "duplicate", "unsupported", "repo_unavailable", "internal"] as const satisfies readonly DispatchRejectReason[];
 
 export const AGENT_CAPABILITIES = ["load_session", "plan_mode", "image_prompt", "usage_report"] as const satisfies readonly AgentCapability[];
 
@@ -102,7 +118,7 @@ export const RUN_ERROR_CODES = ["agent_start_failed", "agent_crashed", "agent_er
 
 export const RUN_ORIGINS = ["dispatch", "delegation", "verification", "mention", "feedback_loop"] as const satisfies readonly RunOrigin[];
 
-export const PROMPT_SOURCES = ["user", "plan_gate", "review_gate", "verification_retry", "feedback_review", "feedback_ci", "child_question"] as const satisfies readonly PromptSource[];
+export const PROMPT_SOURCES = ["user", "plan_gate", "review_gate", "verification_retry", "feedback_review", "feedback_ci", "child_question", "handoff"] as const satisfies readonly PromptSource[];
 
 export const ACCEPTANCE_CRITERION_KINDS = ["command", "agent", "browser", "manual"] as const satisfies readonly AcceptanceCriterionKind[];
 
@@ -125,3 +141,23 @@ export const DELEGATION_PURPOSES = ["tool", "verification"] as const satisfies r
 export const PREVIEW_STREAM_KINDS = ["http", "websocket"] as const satisfies readonly PreviewStreamKind[];
 
 export const PREVIEW_RESET_REASONS = ["canceled", "upstream_error", "not_running", "too_many_streams", "protocol_error"] as const satisfies readonly PreviewResetReason[];
+
+export const EFFORTS = ["fast", "std", "deep"] as const satisfies readonly Effort[];
+
+export const PROMPT_DELIVERIES = ["queue", "interrupt"] as const satisfies readonly PromptDelivery[];
+
+export const REPO_KINDS = ["github", "local"] as const satisfies readonly RepoKind[];
+
+export const LOCAL_MERGE_STRATEGIES = ["squash", "merge"] as const satisfies readonly LocalMergeStrategy[];
+
+export const MODEL_TAGS = ["best", "balanced", "fast", "coding"] as const satisfies readonly ModelTag[];
+
+export const MODEL_SOURCES = ["profile", "session"] as const satisfies readonly ModelSource[];
+
+export const LOGIN_HINT_KINDS = ["runner", "cli"] as const satisfies readonly LoginHintKind[];
+
+export const RUN_SETTING_NAMES = ["model", "effort", "permission_policy"] as const satisfies readonly RunSettingName[];
+
+export const TERMINAL_EXIT_REASONS = ["exited", "closed", "idle_timeout", "worktree_missing", "spawn_failed", "limit_exceeded", "runner_shutdown"] as const satisfies readonly TerminalExitReason[];
+
+export const REPO_SPEC_COMMIT_FAILURES = ["repo_unavailable", "working_tree_dirty", "failed"] as const satisfies readonly RepoSpecCommitFailure[];

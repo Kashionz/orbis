@@ -90,6 +90,7 @@ async fn plan_gate_後_verification_失敗重試再通過() {
                 text: result["summary"].as_str().unwrap().to_owned(),
             }],
             source: Some(PromptSource::VerificationRetry),
+            delivery: None,
         },
     )
     .await;

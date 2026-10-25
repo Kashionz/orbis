@@ -19,6 +19,8 @@ const policy: ProjectPolicy = {
   autoCreateIssues: false,
   verificationMaxRetries: 3,
   feedbackBotAllowlist: [],
+  localMergeStrategy: "squash",
+  localPushBase: false,
 };
 
 /** ARCHITECTURE §12.2 的表格（Project 採預設政策：Member 可以派工到 Team Runner、可以核准自己的 Task）。 */

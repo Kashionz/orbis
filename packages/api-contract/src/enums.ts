@@ -7,14 +7,23 @@
 import {
   ACCEPTANCE_CRITERION_KINDS,
   DELEGATION_MODES,
+  EFFORTS,
   GATE_DECISIONS,
   GATE_KINDS,
+  LOCAL_MERGE_STRATEGIES,
+  LOGIN_HINT_KINDS,
+  MODEL_SOURCES,
+  MODEL_TAGS,
   PERMISSION_POLICIES,
+  PROMPT_DELIVERIES,
   PROMPT_SOURCES,
+  REPO_KINDS,
   RUN_CONTROL_ACTIONS,
   RUN_ORIGINS,
+  RUN_SETTING_NAMES,
   RUN_STATUSES,
   RUNNER_KINDS,
+  TERMINAL_EXIT_REASONS,
   VERIFICATION_OUTCOMES,
 } from "@orbis/protocol";
 import { z } from "zod";
@@ -22,14 +31,23 @@ import { z } from "zod";
 export {
   ACCEPTANCE_CRITERION_KINDS,
   DELEGATION_MODES,
+  EFFORTS,
   GATE_DECISIONS,
   GATE_KINDS,
+  LOCAL_MERGE_STRATEGIES,
+  LOGIN_HINT_KINDS,
+  MODEL_SOURCES,
+  MODEL_TAGS,
   PERMISSION_POLICIES,
+  PROMPT_DELIVERIES,
   PROMPT_SOURCES,
+  REPO_KINDS,
   RUN_CONTROL_ACTIONS,
   RUN_ORIGINS,
+  RUN_SETTING_NAMES,
   RUN_STATUSES,
   RUNNER_KINDS,
+  TERMINAL_EXIT_REASONS,
   VERIFICATION_OUTCOMES,
 };
 
@@ -209,3 +227,90 @@ export type FeedbackFixStatus = z.infer<typeof FeedbackFixStatus>;
 export const REVIEW_COMMENT_KINDS = ["diff", "preview"] as const;
 export const ReviewCommentKind = z.enum(REVIEW_COMMENT_KINDS);
 export type ReviewCommentKind = z.infer<typeof ReviewCommentKind>;
+
+// 以下是新工作區介面後端缺口（協定 v3、API 版本 2）新增的列舉。
+
+/** 推理強度：快速、標準、深度（協定的 Effort）。 */
+export const Effort = z.enum(EFFORTS);
+export type Effort = z.infer<typeof Effort>;
+
+/** 執行中傳給 Agent 的訊息：排隊到回合結束（預設），或中斷目前的回合後送出。 */
+export const PromptDelivery = z.enum(PROMPT_DELIVERIES);
+export type PromptDelivery = z.infer<typeof PromptDelivery>;
+
+/** Repo 的種類：GitHub repository，或本機 Repo（本機 git repository）。 */
+export const RepoKind = z.enum(REPO_KINDS);
+export type RepoKind = z.infer<typeof RepoKind>;
+
+/** 本機 Repo 核准後合併到基準分支的方式（Project 設定）。 */
+export const LocalMergeStrategy = z.enum(LOCAL_MERGE_STRATEGIES);
+export type LocalMergeStrategy = z.infer<typeof LocalMergeStrategy>;
+
+/** 模型目錄中 model 的標記。 */
+export const ModelTag = z.enum(MODEL_TAGS);
+export type ModelTag = z.infer<typeof ModelTag>;
+
+/** 模型清單的來源：Agent Profile 的靜態清單，或最近一次真實 session 回報的 config option。 */
+export const ModelSource = z.enum(MODEL_SOURCES);
+export type ModelSource = z.infer<typeof ModelSource>;
+
+/** 登入方式：Runner 代為登入（Desktop 執行），或在終端機執行 Agent 自己的 CLI。 */
+export const LoginHintKind = z.enum(LOGIN_HINT_KINDS);
+export type LoginHintKind = z.infer<typeof LoginHintKind>;
+
+/** 執行中可以切換的設定。 */
+export const RunSettingName = z.enum(RUN_SETTING_NAMES);
+export type RunSettingName = z.infer<typeof RunSettingName>;
+
+/** 終端機結束的原因（協定的 TerminalExitReason）。 */
+export const TerminalExitReason = z.enum(TERMINAL_EXIT_REASONS);
+export type TerminalExitReason = z.infer<typeof TerminalExitReason>;
+
+/**
+ * Run 停下來等人處理的原因（Needs You 的 `stopped_run`，UI 依代碼在地化）：
+ * Verification 超過重試上限、push 失敗、開 PR 失敗、本機合併被擋下（工作目錄有變更或衝突）。
+ */
+export const STOPPED_RUN_REASONS = [
+  "verification_limit",
+  "push_failed",
+  "pr_open_failed",
+  "local_merge_blocked",
+] as const;
+export const StoppedRunReason = z.enum(STOPPED_RUN_REASONS);
+export type StoppedRunReason = z.infer<typeof StoppedRunReason>;
+
+/** Task 中的角色（Task 分享）：擁有者、可操作、可檢視。 */
+export const TASK_SHARE_ROLES = ["owner", "edit", "view"] as const;
+export const TaskShareRole = z.enum(TASK_SHARE_ROLES);
+export type TaskShareRole = z.infer<typeof TaskShareRole>;
+
+/** 加入或邀請時可以給的 Task 角色（擁有者只能轉移，不能邀請）。 */
+export const TaskInviteRole = TaskShareRole.exclude(["owner"]);
+export type TaskInviteRole = z.infer<typeof TaskInviteRole>;
+
+/**
+ * Task 的一般存取：僅受邀成員、Team 可檢視、Team 可操作（預設，和沒有 Task 分享時的行為相同）。
+ * 限制時，不在 Task 成員中的人在這個 Task 上的權限降到對應的程度；Owner、Admin 不受影響。
+ */
+export const GENERAL_ACCESS_LEVELS = ["invited", "team_view", "team_edit"] as const;
+export const GeneralAccess = z.enum(GENERAL_ACCESS_LEVELS);
+export type GeneralAccess = z.infer<typeof GeneralAccess>;
+
+/**
+ * 目前登入者在某個 Task 上的有效權限（ADR-0012）：`manage`＝可以操作也能管理分享（Task 擁有者、
+ * Admin 以上），`edit`＝可以操作（編輯、派工、核准關卡、傳訊息），`view`＝只能看。
+ * Admin 層級的能力（權限策略、設定信任、Team Runner、Project 設定）不受 Task 角色影響。
+ */
+export const TASK_ACCESS_LEVELS = ["manage", "edit", "view"] as const;
+export const TaskAccess = z.enum(TASK_ACCESS_LEVELS);
+export type TaskAccess = z.infer<typeof TaskAccess>;
+
+/** 預覽邀請的期限。 */
+export const PREVIEW_INVITE_DURATIONS = ["1h", "24h", "7d"] as const;
+export const PreviewInviteDuration = z.enum(PREVIEW_INVITE_DURATIONS);
+export type PreviewInviteDuration = z.infer<typeof PreviewInviteDuration>;
+
+/** 預覽邀請的狀態：有效、過期（含預覽停止或 Worktree 封存後失效）、已撤銷。 */
+export const PREVIEW_INVITE_STATUSES = ["active", "expired", "revoked"] as const;
+export const PreviewInviteStatus = z.enum(PREVIEW_INVITE_STATUSES);
+export type PreviewInviteStatus = z.infer<typeof PreviewInviteStatus>;

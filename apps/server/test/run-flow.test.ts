@@ -654,7 +654,12 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
         commit_sha: "b".repeat(40),
       });
       const item = await waitUntil(async () => (await needsYou("member"))[0]);
-      expect(item.kind === "stopped_run" && item.reason).toContain("GitHub 回應 502");
+      expect(item).toMatchObject({
+        kind: "stopped_run",
+        reasonCode: "pr_open_failed",
+        attempt: null,
+      });
+      expect(item.kind === "stopped_run" && item.detail).toContain("GitHub 回應 502");
       expect(await taskStatus(started.task.id)).toBe("pr_open");
     });
 
@@ -670,7 +675,8 @@ describe.skipIf(dbSkipReason !== null)("Run 的 Event、Needs You 與 Review Gat
       });
       const item = await waitUntil(async () => (await needsYou("member"))[0]);
       expect(item).toMatchObject({ kind: "stopped_run", runId: started.run.id });
-      expect(item.kind === "stopped_run" && item.reason).toContain("Permission denied");
+      expect(item).toMatchObject({ reasonCode: "push_failed", attempt: null });
+      expect(item.kind === "stopped_run" && item.detail).toContain("Permission denied");
     });
 
     it("中止：送出 cancel，Task 回到 Ready；Runner 回報 canceled 後 Run 結束", async () => {

@@ -21,6 +21,16 @@ export default {
     stopped_run: "前往決定",
     child_question: "前往子執行",
   },
+  /** 停下來的原因（Needs You 的 `reasonCode`）；舊資料可能沒有次數。 */
+  stoppedReason: {
+    verification_limit: (attempt: number | null) =>
+      attempt === null ? "驗收連續失敗，超過重試上限" : `驗收連續失敗 ${attempt} 次，超過重試上限`,
+    push_failed: "push 分支失敗",
+    pr_open_failed: "開合併請求失敗",
+    local_merge_blocked: "本機合併被擋下",
+  },
+  /** 原因後面接上原始的錯誤訊息（`detail`，不翻譯）。 */
+  stoppedWithDetail: (reason: string, detail: string) => `${reason}：${detail}`,
   answer: "回答",
   answerLabel: (key: string) => `回答 ${key} 的子執行`,
   answerPlaceholder: "回答子執行的問題",

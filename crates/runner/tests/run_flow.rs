@@ -127,6 +127,7 @@ async fn 領取到完成_退回後再次完成並_push() {
                     text: "請改成第二版".into(),
                 }],
                 source: None,
+                delivery: None,
             },
         )
         .await;
@@ -250,6 +251,7 @@ async fn m1_劇本在_manual_政策下走完並_push_回本機_bare_repo() {
                     text: "m1.txt 第 1 行：請改成第二版".into(),
                 }],
                 source: None,
+                delivery: None,
             },
         ),
     ] {

@@ -36,9 +36,18 @@ export function createTeamRoutes(s: Services): Hono<AppEnv> {
     const actor = c.get("actor");
     requireTeamCapability(actor, "manage_team");
     const input = await readJson(c, UpdateTeamInput);
+    // 只寫入有送的欄位（契約保證至少一個）。
+    const changes: Partial<typeof teams.$inferInsert> = {};
+    if (input.name !== undefined) changes.name = input.name;
+    if (input.allowExternalPreview !== undefined) {
+      changes.allowExternalPreview = input.allowExternalPreview;
+    }
+    if (input.allowTeamRunnerTerminal !== undefined) {
+      changes.allowTeamRunnerTerminal = input.allowTeamRunnerTerminal;
+    }
     const [team] = await db
       .update(teams)
-      .set({ name: input.name })
+      .set(changes)
       .where(eq(teams.id, actor.teamId))
       .returning();
     if (!team) throw notFound("Team");

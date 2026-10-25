@@ -1,0 +1,39 @@
+{
+  "type": "run_control",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "action": "switch_agent",
+  "agent": "codex",
+  "model": "gpt-5-codex",
+  "effort": null,
+  "credential": "codex-chatgpt",
+  "handoff": {
+    "task_spec": {
+      "type": "inline",
+      "text": "登入頁加上「記住我」。"
+    },
+    "acceptance_criteria": [
+      {
+        "criterion_id": "0192f3a0-0000-7000-8000-0000000000f1",
+        "kind": "command",
+        "description": "測試通過",
+        "command": "pnpm test"
+      }
+    ],
+    "review_comments": [
+      {
+        "path": "src/login.ts",
+        "line": 12,
+        "url": null,
+        "body": "這裡要處理空字串"
+      },
+      {
+        "path": null,
+        "line": null,
+        "url": "https://0192f3a0.preview.example.com/login",
+        "body": "按鈕太小"
+      }
+    ]
+  }
+}

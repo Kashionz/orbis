@@ -69,7 +69,7 @@ export const FAKE_ME: Omit<MeResponse, "member"> & { member: NonNullable<MeRespo
   githubLogin: "octo",
   name: "Octo",
   avatarUrl: null,
-  member: { id: "member-1", teamId: "team-1", teamName: "Team", role: "owner" },
+  member: { id: "member-1", teamId: "team-1", teamName: "Team", role: "owner", email: null },
 };
 
 /** Preview 網址換票的 callback 路徑（ARCHITECTURE §13）。 */

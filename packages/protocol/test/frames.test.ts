@@ -54,6 +54,9 @@ describe("frame 的 type", () => {
       | "preview_end"
       | "preview_reset"
       | "preview_ws_close"
+      | "terminal_output"
+      | "terminal_exited"
+      | "repo_spec_commit_result"
     >();
   });
 
@@ -70,6 +73,11 @@ describe("frame 的 type", () => {
       | "preview_end"
       | "preview_reset"
       | "preview_ws_close"
+      | "terminal_open"
+      | "terminal_input"
+      | "terminal_resize"
+      | "terminal_close"
+      | "repo_spec_commit"
     >();
   });
 });

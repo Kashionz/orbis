@@ -32,5 +32,11 @@ export const RunEvent = z.object({
   seq: z.number().int().positive(),
   ts: Timestamp,
   event: RunEventBody,
+  /**
+   * 觸發這筆 Event 的人（API 版本 2）：`prompt_submitted` 是送出 prompt 的人、`permission_resolved` 是回覆的人，
+   * 由 Event 的 `control_id` 對應到送出 RunControl 的 Member；Run 的第一個 prompt 是派工的人。
+   * 其他 Event、系統觸發的 prompt、舊的 Event（沒有 `control_id`）為 null。
+   */
+  actorMemberId: Id.nullable(),
 });
 export type RunEvent = z.infer<typeof RunEvent>;

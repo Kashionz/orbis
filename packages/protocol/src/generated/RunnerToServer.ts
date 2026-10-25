@@ -10,10 +10,13 @@ import type { PreviewReset } from "./PreviewReset";
 import type { PreviewResponse } from "./PreviewResponse";
 import type { PreviewWindow } from "./PreviewWindow";
 import type { PreviewWsClose } from "./PreviewWsClose";
+import type { RepoSpecCommitResult } from "./RepoSpecCommitResult";
 import type { RunControlResult } from "./RunControlResult";
+import type { TerminalExited } from "./TerminalExited";
+import type { TerminalOutput } from "./TerminalOutput";
 import type { ToolCallFrame } from "./ToolCallFrame";
 
 /**
  * Runner 送給 Server 的 frame。
  */
-export type RunnerToServer = { "type": "hello" } & Hello | { "type": "heartbeat" } & Heartbeat | { "type": "agent_availability" } & AgentAvailability | { "type": "dispatch_accept" } & DispatchAccept | { "type": "dispatch_reject" } & DispatchReject | { "type": "event" } & EventFrame | { "type": "run_control_result" } & RunControlResult | { "type": "tool_call" } & ToolCallFrame | { "type": "preview_response" } & PreviewResponse | { "type": "preview_window" } & PreviewWindow | { "type": "preview_end" } & PreviewEnd | { "type": "preview_reset" } & PreviewReset | { "type": "preview_ws_close" } & PreviewWsClose;
+export type RunnerToServer = { "type": "hello" } & Hello | { "type": "heartbeat" } & Heartbeat | { "type": "agent_availability" } & AgentAvailability | { "type": "dispatch_accept" } & DispatchAccept | { "type": "dispatch_reject" } & DispatchReject | { "type": "event" } & EventFrame | { "type": "run_control_result" } & RunControlResult | { "type": "tool_call" } & ToolCallFrame | { "type": "preview_response" } & PreviewResponse | { "type": "preview_window" } & PreviewWindow | { "type": "preview_end" } & PreviewEnd | { "type": "preview_reset" } & PreviewReset | { "type": "preview_ws_close" } & PreviewWsClose | { "type": "terminal_output" } & TerminalOutput | { "type": "terminal_exited" } & TerminalExited | { "type": "repo_spec_commit_result" } & RepoSpecCommitResult;

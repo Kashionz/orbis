@@ -6,6 +6,7 @@ import type { DispatchDelegation } from "./DispatchDelegation";
 import type { DispatchId } from "./DispatchId";
 import type { DispatchRepo } from "./DispatchRepo";
 import type { DispatchTask } from "./DispatchTask";
+import type { Effort } from "./Effort";
 import type { PermissionPolicy } from "./PermissionPolicy";
 import type { PromptSource } from "./PromptSource";
 import type { RunId } from "./RunId";
@@ -84,4 +85,9 @@ continuation?: DispatchContinuation,
 /**
  * `prompt` 的來源（缺少＝`user`）。
  */
-prompt_source?: PromptSource, };
+prompt_source?: PromptSource, 
+/**
+ * 推理強度（缺少＝Agent 的預設值）。Runner 在 session 建立後以 config option 套用，
+ * 並送 `run_settings_changed`（`control_id` 為 `null`）。
+ */
+effort?: Effort, };

@@ -3,7 +3,7 @@
 import { PERMISSION_OPTION_KINDS, PERMISSION_PURPOSES } from "@orbis/protocol";
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
-import { GateKind } from "./enums";
+import { GateKind, StoppedRunReason } from "./enums";
 import { TaskKey } from "./task";
 
 const NeedsYouBase = z.object({
@@ -49,12 +49,31 @@ export const NeedsYouGate = NeedsYouBase.extend({
 });
 export type NeedsYouGate = z.infer<typeof NeedsYouGate>;
 
-/** 停下來等人處理的 Run，例如 Verification 重試超過上限（§5.1）。 */
+const stoppedRunShape = {
+  reasonCode: StoppedRunReason,
+  /** 第幾輪 Verification；只有 `verification_limit` 有值。 */
+  attempt: z.number().int().positive().nullable(),
+  /** 原始的錯誤訊息（例如 git 的輸出），不翻譯，UI 以 code 字型顯示；沒有時為 null。 */
+  detail: z.string().nullable(),
+};
+
+const attemptOnlyForVerificationLimit = (info: {
+  reasonCode: StoppedRunReason;
+  attempt: number | null;
+}) => (info.attempt !== null) === (info.reasonCode === "verification_limit");
+const attemptError = { error: "attempt 只在 verification_limit 時有值", path: ["attempt"] };
+
+/** Run 停下來的原因與細節（API 版本 2，Needs You 與通知共用）。給人看的文字由 UI 依 `reasonCode` 在地化。 */
+export const StoppedRunInfo = z
+  .object(stoppedRunShape)
+  .refine(attemptOnlyForVerificationLimit, attemptError);
+export type StoppedRunInfo = z.infer<typeof StoppedRunInfo>;
+
+/** 停下來等人處理的 Run：Verification 重試超過上限（§5.1）、push 或開 PR 失敗、本機合併被擋下。 */
 export const NeedsYouStoppedRun = NeedsYouBase.extend({
   kind: z.literal("stopped_run"),
-  /** 停下來的原因，給人看的文字。 */
-  reason: z.string(),
-});
+  ...stoppedRunShape,
+}).refine(attemptOnlyForVerificationLimit, attemptError);
 export type NeedsYouStoppedRun = z.infer<typeof NeedsYouStoppedRun>;
 
 /**

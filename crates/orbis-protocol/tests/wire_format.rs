@@ -9,6 +9,7 @@ use std::path::Path;
 use orbis_protocol::control::{RunControlActionName, RunControlOutcome};
 use orbis_protocol::event::{EventEnvelope, EventKindName};
 use orbis_protocol::frame::{RunnerToServer, ServerToRunner};
+use orbis_protocol::repo_spec::RepoSpecCommitOutcome;
 use orbis_protocol::tool::{OrbisToolName, OrbisToolResult};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -113,6 +114,9 @@ fn every_frame_type_has_a_fixture() {
         "preview_end",
         "preview_reset",
         "preview_ws_close",
+        "terminal_output",
+        "terminal_exited",
+        "repo_spec_commit_result",
     ]
     .into();
     assert_eq!(runner_types, expected);
@@ -133,6 +137,11 @@ fn every_frame_type_has_a_fixture() {
         "preview_end",
         "preview_reset",
         "preview_ws_close",
+        "terminal_open",
+        "terminal_input",
+        "terminal_resize",
+        "terminal_close",
+        "repo_spec_commit",
     ]
     .into();
     assert_eq!(server_types, expected);
@@ -285,4 +294,51 @@ fn event_envelope_is_the_frame_without_type_and_dispatch_id() {
         let back: EventEnvelope = serde_json::from_value(envelope).unwrap();
         assert_eq!(back, frame.event, "{name}");
     }
+}
+
+#[test]
+fn every_repo_spec_commit_outcome_has_a_fixture() {
+    let outcomes: BTreeSet<_> =
+        parsed::<RunnerToServer>("runner_to_server.repo_spec_commit_result.")
+            .into_iter()
+            .map(|(name, _, frame)| {
+                let RunnerToServer::RepoSpecCommitResult(result) = frame else {
+                    panic!("{name} 不是 repo_spec_commit_result frame");
+                };
+                match result.outcome {
+                    RepoSpecCommitOutcome::Committed { .. } => "committed",
+                    RepoSpecCommitOutcome::Unchanged { .. } => "unchanged",
+                    RepoSpecCommitOutcome::Failed { .. } => "failed",
+                }
+            })
+            .collect();
+    assert_eq!(
+        outcomes,
+        ["committed", "failed", "unchanged"].into(),
+        "每一種 outcome 都要有 fixture"
+    );
+}
+
+/// 協定版本 3：DispatchOffer 的 repo 兩種 kind 都要有 fixture，而且方法取得的值和 JSON 一致。
+#[test]
+fn dispatch_repo_kinds_have_fixtures() {
+    let mut kinds = BTreeSet::new();
+    for (name, value) in fixtures("server_to_runner.dispatch_offer.") {
+        let ServerToRunner::DispatchOffer(offer) = serde_json::from_value(value.clone()).unwrap()
+        else {
+            panic!("{name} 不是 dispatch_offer frame");
+        };
+        let repo = &value["repo"];
+        assert_eq!(repo["kind"], offer.repo.kind().as_str(), "{name}");
+        assert_eq!(repo["name"], offer.repo.name(), "{name}");
+        assert_eq!(
+            repo["default_branch"],
+            offer.repo.default_branch(),
+            "{name}"
+        );
+        assert_eq!(repo["base_ref"], offer.repo.base_ref(), "{name}");
+        assert_eq!(repo["clone_url"].as_str(), offer.repo.clone_url(), "{name}");
+        kinds.insert(offer.repo.kind().as_str());
+    }
+    assert_eq!(kinds, ["github", "local"].into());
 }

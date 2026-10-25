@@ -42,8 +42,14 @@ export function policyFormValues(policy: ProjectPolicy): PolicyFormValues {
   };
 }
 
+/**
+ * 這個表單不管的欄位：預設 Permission Policy 另有表單；本機 Repo 的合併設定還沒有 UI
+ * （TODO(backend, local-repo)）。送出時省略，Server 保留原本的值。
+ */
+type OtherPolicyFields = "defaultPermissionPolicy" | "localMergeStrategy" | "localPushBase";
+
 export type PolicyFormResult =
-  | { ok: true; policy: Omit<ProjectPolicy, "defaultPermissionPolicy"> }
+  | { ok: true; policy: Omit<ProjectPolicy, OtherPolicyFields> }
   | { ok: false; errors: Partial<Record<keyof PolicyFormValues, string>> };
 
 /** 驗證並轉成要送出的政策（預設 Permission Policy 另有表單，不在這裡）。 */
@@ -59,7 +65,11 @@ export function validatePolicyForm(values: PolicyFormValues): PolicyFormResult {
     autoCreateIssues: values.autoCreateIssues,
     feedbackBotAllowlist: parseList(values.feedbackBotAllowlist),
   };
-  const result = ProjectPolicy.omit({ defaultPermissionPolicy: true }).safeParse(policy);
+  const result = ProjectPolicy.omit({
+    defaultPermissionPolicy: true,
+    localMergeStrategy: true,
+    localPushBase: true,
+  }).safeParse(policy);
   if (result.success) return { ok: true, policy: result.data };
   const errors: Partial<Record<keyof PolicyFormValues, string>> = {};
   for (const issue of result.error.issues) {

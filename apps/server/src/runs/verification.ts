@@ -371,7 +371,13 @@ export class VerificationService {
       kind: "stopped_run",
       taskId: task.id,
       runId: run.id,
-      payload: { reason, verificationId: verification.id },
+      payload: {
+        reason,
+        reasonCode: "verification_limit",
+        attempt: verification.attempt,
+        detail: null,
+        verificationId: verification.id,
+      },
     });
     await this.deps.notify.notify(uow, {
       kind: "verification_failed",

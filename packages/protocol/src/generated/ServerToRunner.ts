@@ -8,10 +8,15 @@ import type { PreviewOpen } from "./PreviewOpen";
 import type { PreviewReset } from "./PreviewReset";
 import type { PreviewWindow } from "./PreviewWindow";
 import type { PreviewWsClose } from "./PreviewWsClose";
+import type { RepoSpecCommit } from "./RepoSpecCommit";
 import type { RunControl } from "./RunControl";
+import type { TerminalClose } from "./TerminalClose";
+import type { TerminalInput } from "./TerminalInput";
+import type { TerminalOpen } from "./TerminalOpen";
+import type { TerminalResize } from "./TerminalResize";
 import type { ToolResultFrame } from "./ToolResultFrame";
 
 /**
  * Server 送給 Runner 的 frame。
  */
-export type ServerToRunner = { "type": "hello_ack" } & HelloAck | { "type": "hello_rejected" } & HelloRejected | { "type": "dispatch_offer" } & DispatchOffer | { "type": "run_control" } & RunControl | { "type": "event_ack" } & EventAck | { "type": "tool_result" } & ToolResultFrame | { "type": "preview_open" } & PreviewOpen | { "type": "preview_window" } & PreviewWindow | { "type": "preview_end" } & PreviewEnd | { "type": "preview_reset" } & PreviewReset | { "type": "preview_ws_close" } & PreviewWsClose;
+export type ServerToRunner = { "type": "hello_ack" } & HelloAck | { "type": "hello_rejected" } & HelloRejected | { "type": "dispatch_offer" } & DispatchOffer | { "type": "run_control" } & RunControl | { "type": "event_ack" } & EventAck | { "type": "tool_result" } & ToolResultFrame | { "type": "preview_open" } & PreviewOpen | { "type": "preview_window" } & PreviewWindow | { "type": "preview_end" } & PreviewEnd | { "type": "preview_reset" } & PreviewReset | { "type": "preview_ws_close" } & PreviewWsClose | { "type": "terminal_open" } & TerminalOpen | { "type": "terminal_input" } & TerminalInput | { "type": "terminal_resize" } & TerminalResize | { "type": "terminal_close" } & TerminalClose | { "type": "repo_spec_commit" } & RepoSpecCommit;

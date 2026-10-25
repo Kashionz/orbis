@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
             title: args.title.clone(),
         },
         run_seq: 1,
-        repo: DispatchRepo {
+        repo: DispatchRepo::Github {
             name: "dev-repo".into(),
             clone_url: args.repo.clone(),
             default_branch: default_branch.clone(),
@@ -179,6 +179,7 @@ async fn main() -> anyhow::Result<()> {
         consult_of_run_id: None,
         continuation: None,
         prompt_source: None,
+        effort: None,
     };
     send!(ServerToRunner::DispatchOffer(Box::new(offer(
         &run_id,
@@ -313,6 +314,7 @@ async fn main() -> anyhow::Result<()> {
                                         text: args.followup.clone(),
                                     }],
                                     source: None,
+                                    delivery: None,
                                 }
                             ));
                         } else {

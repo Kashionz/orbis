@@ -1,0 +1,12 @@
+# long-turn：第一個回合定時送出進度（給排隊與中斷用），第二個回合等測試建立 release.txt 才結束（run-prompt）。
+description: 長回合
+turns:
+  - steps:
+      - ticks: { count: 50, interval_ms: 20, message: 處理中 }
+      - message: 第一個回合完成
+  - steps:
+      - echo_prompt
+      - wait_for_file: release.txt
+      - message: 第二個回合完成
+  - steps:
+      - echo_prompt

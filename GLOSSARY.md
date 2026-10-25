@@ -23,13 +23,17 @@ _Avoid_: Permission level
 _Avoid_: Workspace、Board
 
 **Repo**：
-登記在 Project 底下的一個 GitHub repository。
+登記在 Project 底下的一個 GitHub repository，或本機 git repository（本機 Repo）。
 _Avoid_: Repository、Codebase
+
+**本機 Repo**：
+`kind` 為 `local` 的 Repo：只有名稱，路徑由各 Runner 的 `runner.toml` 對應，只能派到有對應的 Local Runner。核准後由 Runner 合併到本機 checkout 的基準分支（本機合併），不開 PR、不同步 Issues。可以單向連接到 GitHub，改成 GitHub Repo（ADR-0013）。
+_Avoid_: Offline repo、Private repo、Local project
 
 ### 工作
 
 **Task**：
-指派給 Member、可交由 Agent 執行的一件工作，只對應一個 Repo，有唯一的 Task Key（例如 `ORB-12`）。
+指派給 Member、可交由 Agent 執行的一件工作，只對應一個 Repo（可以先不指定，這時只能停在 Backlog），有唯一的 Task Key（例如 `ORB-12`）。
 _Avoid_: Issue、Ticket、Card
 
 **Draft Task**：
@@ -47,6 +51,10 @@ _Avoid_: AC、Definition of done、Checklist item
 **Gate**：
 Task 生命週期中需要人核准才能前進的關卡：Plan Gate（核准 plan）與 Review Gate（核准 diff）。
 _Avoid_: Approval step、Checkpoint
+
+**本機合併**：
+本機 Repo 的 Review Gate 核准後，Runner 把 Run 的分支合併到本機 checkout 的基準分支（squash 或 merge commit，依 Project 設定），Task 直接轉 Done。工作目錄有未 commit 的變更或衝突時不合併，Run 停下等人處理。
+_Avoid_: Local PR、Auto merge
 
 **結束（沒有變更）**：
 Review Gate 的 diff 為空時取代核准的決定：Task 轉 Done，不 push、不開 PR，Run 結束。只回答問題的 Task，或 Agent 沒有做事時都會遇到；後者應該退回。
@@ -110,6 +118,22 @@ _Avoid_: Ping、Keepalive
 Run 專屬的 git worktree，是 Run 的檔案隔離邊界。
 _Avoid_: Workspace、Sandbox、Checkout
 
+**排隊的訊息**：
+Run 在回合中或等待權限回覆時，人傳給 Agent 的訊息先排隊，回合結束後才送出（多則合併成一則）；還沒送出前可以收回。也可以選擇中斷目前的回合後立即送出。
+_Avoid_: Pending prompt、Draft message
+
+**換 Agent**：
+執行中把 Run 改由另一個 Agent 接手：留在同一個 Run 與 Worktree，用新的 Agent 開新的 session，並送出交接 prompt（ADR-0016）。只能換成同一台 Runner 上可以用的 Agent。
+_Avoid_: Reassign、Agent swap
+
+**交接 prompt**：
+換 Agent 時 Runner 依固定格式組出、交給新 Agent 的第一個 prompt：Task 的規格與驗收條件、人送出的 prompt、Agent 每個回合最後的回覆、目前的計畫、diff 摘要、還沒處理的審查留言。不請舊的 Agent 寫摘要。
+_Avoid_: Handoff summary、Context dump
+
+**互動式終端機**：
+在 Run 的 Worktree 中開的 shell，經由 Runner 通道顯示在工作區的終端機分頁。人自己下指令，不經過 Permission Policy；Local Runner 只限擁有者，Team Runner 只限 Admin 以上而且要 Team 設定打開（ADR-0014）。
+_Avoid_: Remote shell、Console、SSH
+
 ### Agent
 
 **Agent**：
@@ -141,6 +165,10 @@ _Avoid_: Deploy preview、Staging
 **Preview 網址**：
 Server 為 Run 的 Preview 產生的子網域網址 `https://<run-id>.<Preview 網域>/`，流量經由 Runner 通道轉送，只有能查看該 Run 的人登入後才能開啟。
 _Avoid_: Share link、Tunnel URL、Public URL
+
+**預覽邀請**：
+把一個 Run 的 Preview 分享給特定的人（GitHub 帳號或 email，可以不是 Team 的人）。對方登入並確認在名單上才能開，只看得到預覽頁面；各自有期限，可以撤銷。需要 Team 打開「允許對外分享預覽」（ADR-0015）。
+_Avoid_: Public link、Guest access
 
 **Preview 留言**：
 在 Preview 畫面上的留言，附截圖、URL，以及在 Electron 中選取的元素的 CSS selector。和 diff 行內留言一起在 Review Gate 退回時送回 Agent。
@@ -193,8 +221,20 @@ _Avoid_: Kanban、Task list
 _Avoid_: Run tree、Run history
 
 **Task 分享**：
-Task 層級的成員與角色（擁有者、可操作、可檢視），加上一般存取（僅受邀成員、Team 可檢視、Team 可操作）與以 Email 邀請還不是 Member 的人。後端還沒有實作，UI 先以 mock 提供（見 `apps/web/src/features/share`）。
+Task 層級的成員與角色，加上一般存取與 Task 邀請（ADR-0012）。Owner、Admin 永遠有完整權限；其他人在 Task 上的有效權限取 Task 角色與「一般存取限制後的 Role」中較高的一個。
 _Avoid_: Permission sharing、ACL
+
+**Task 角色**：
+Member 在某個 Task 上的角色：擁有者（建立 Task 的人，可以轉移，能管理分享）、可操作（編輯、派工、核准關卡、傳訊息）、可檢視。可以把 Team Viewer 在這個 Task 上調高。
+_Avoid_: Task permission、Collaborator role
+
+**一般存取**：
+Task 對不在 Task 成員中的人的限制：僅受邀成員（`invited`）、Team 可檢視（`team_view`）、Team 可操作（`team_edit`，預設）。
+_Avoid_: Visibility、Link sharing
+
+**Task 邀請**：
+以 email 邀請還不是 Member 的人加入某個 Task：對方以 GitHub 登入、已驗證的 email 相符時以 Viewer 身分加入 Team，再取得邀請的 Task 角色。7 天後過期，可以撤銷。
+_Avoid_: Team invite、Invite code
 
 **模型目錄**：
 每個 Agent 可以選的模型與它們的推理強度（可調整、固定、不支援），以及 Agent 是否已登入。輸入框的模型選單與設定的「代理」分頁共用。
@@ -278,5 +318,15 @@ _Avoid_: Scenario、Fixture
 | consult／branch（Delegation 的模式） | 諮詢（唯讀）／分支（子分支） | Consult (read-only)／Branch (child branch) |
 | Done 的 `completed`／`not_planned` | 已完成／不處理 | Completed／Not planned |
 | Task 分享 | 分享 | Share |
+| 擁有者／可操作／可檢視（Task 角色） | 擁有者／可操作／可檢視 | Owner／Can edit／Can view |
+| 一般存取 `invited`／`team_view`／`team_edit` | 僅受邀成員／`<團隊>` 可檢視／`<團隊>` 可操作 | Only people invited／`<Team>` can view／`<Team>` can edit |
+| Task 邀請 | 邀請 | Invite |
+| 本機 Repo | 本機儲存庫 | Local repo |
+| 本機合併 | 合併到本機 | Local merge |
+| 排隊的訊息 | 排隊中的訊息 | Queued message |
+| 換 Agent | 換代理 | Switch agent |
+| 交接 prompt | 換代理的交接 | Agent handoff |
+| 互動式終端機 | 終端機 | Terminal |
+| 預覽邀請 | 邀請檢視預覽 | Preview invite |
 | 模型目錄 | 模型 | Model |
 | 推理強度 | 推理強度（快速／標準／深度） | Reasoning effort（Fast／Standard／Deep） |

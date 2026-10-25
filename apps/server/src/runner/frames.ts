@@ -5,6 +5,10 @@
 import {
   AGENT_CAPABILITIES,
   DISPATCH_REJECT_REASONS,
+  EFFORTS,
+  LOGIN_HINT_KINDS,
+  MODEL_SOURCES,
+  MODEL_TAGS,
   RUN_CONTROL_REJECT_REASONS,
   type RunnerToServer,
 } from "@orbis/protocol";
@@ -56,9 +60,26 @@ export const AgentAvailabilityFrame = z.object({
             (AGENT_CAPABILITIES as readonly string[]).includes(v),
           ),
         ),
-      models: z.array(z.string()),
+      models: z.array(
+        z.object({
+          id: z.string().min(1),
+          name: z.string(),
+          tag: z.enum(MODEL_TAGS).nullable(),
+          effort: z.discriminatedUnion("kind", [
+            z.object({ kind: z.literal("adjustable") }),
+            z.object({ kind: z.literal("fixed"), level: z.enum(EFFORTS) }),
+            z.object({ kind: z.literal("unsupported") }),
+          ]),
+          source: z.enum(MODEL_SOURCES),
+        }),
+      ),
       permission_gaps: z.array(z.string()),
       credential: z.string().nullable(),
+      display_name: z.string(),
+      vendor: z.string().nullable(),
+      cli: z.string().nullable(),
+      signed_in: z.boolean().nullable(),
+      login_hint: z.object({ kind: z.enum(LOGIN_HINT_KINDS), command: z.string() }).nullable(),
     }),
   ),
   credentials: z.array(
@@ -68,6 +89,7 @@ export const AgentAvailabilityFrame = z.object({
       active_runs: z.number().int().nonnegative(),
     }),
   ),
+  mapped_repos: z.array(z.string()),
 }) satisfies z.ZodType<AgentAvailabilityFrame, unknown>;
 
 export const DispatchAcceptFrame = z.object({

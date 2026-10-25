@@ -10,6 +10,7 @@
   },
   "run_seq": 4,
   "repo": {
+    "kind": "github",
     "name": "web",
     "clone_url": "https://github.com/acme/web.git",
     "default_branch": "main",

@@ -1,6 +1,8 @@
 //! ACP v1 agent 本體：依劇本回應 `initialize`、`session/new`、`session/prompt`、`session/cancel`，
 //! 以及指定 session 保存目錄（[`Options::state_dir`]）時的 `session/load`、`session/resume`。
-//! 指定認證方式（[`Options::auth_methods`]）時，`authenticate` 之前的 `session/new` 回 auth_required。
+//! 指定認證方式（[`Options::auth_methods`] 或劇本的 `auth`）時，`authenticate` 之前的 `session/new`
+//! 回 auth_required。劇本宣告 `config_options` 時，建立或接續 session 時回報，並接受
+//! `session/set_config_option`。
 //!
 //! - 每個 session 各自從劇本的第一個回合開始，每次 `session/prompt` 消耗一個回合。
 //! - 有保存目錄時，每個 session 的回合進度寫在 `<目錄>/<session id>.json`；程序結束後，
@@ -22,10 +24,11 @@ use agent_client_protocol::schema::v1::{
     NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, Plan, PlanEntry,
     PromptCapabilities, PromptRequest, PromptResponse, RequestPermissionOutcome,
     RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
-    SessionId, SessionMode, SessionModeState, SessionNotification, SessionResumeCapabilities,
-    SessionUpdate, SetSessionModeRequest, SetSessionModeResponse, StopReason, ToolCall,
-    ToolCallContent, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
-    ToolKind, UsageUpdate,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
+    SessionMode, SessionModeState, SessionNotification, SessionResumeCapabilities, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+    SetSessionModeResponse, StopReason, ToolCall, ToolCallContent, ToolCallLocation,
+    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{self as acp, BoxFuture, Client, ConnectionTo, Responder};
 use serde_json::json;
@@ -35,7 +38,7 @@ use crate::mcp::McpConnection;
 use crate::paths;
 use crate::script::{
     EditStep, INTERNAL_ERROR_CODE, McpCallStep, PermissionStep, RATE_LIMIT_ERROR_TYPE, Script,
-    Step, ToolCallStep,
+    Step, TicksStep, ToolCallStep,
 };
 
 /// 權限請求固定提供的選項（option ID 與 kind 同名）。
@@ -92,6 +95,12 @@ pub const AUTHENTICATED_FILE: &str = "authenticated";
 /// `echo_session_mode` 回報的前綴。
 pub const SESSION_MODE_PREFIX: &str = "mode: ";
 
+/// `echo_config` 回報的前綴。
+pub const CONFIG_PREFIX: &str = "config: ";
+
+/// `wait_for_file` 檢查檔案是否出現的間隔。
+const WAIT_FOR_FILE_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
 /// `session/load` 恢復 session 後補送的訊息（ACP 規定 load 要重播對話；Fake Agent 只送這一則）。
 pub const LOADED_SESSION_TEXT: &str = "（已載入之前的 session）";
 
@@ -118,8 +127,18 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
         .on_receive_request(
             {
                 let agent = agent.clone();
-                async move |request: AuthenticateRequest, responder, _cx| {
-                    responder.respond_with_result(agent.authenticate(&request))
+                async move |request: AuthenticateRequest, responder, cx: ConnectionTo<Client>| {
+                    let delay = agent.script.auth.as_ref().map_or(0, |auth| auth.delay_ms);
+                    if delay == 0 {
+                        return responder.respond_with_result(agent.authenticate(&request));
+                    }
+                    // 不卡住 dispatch loop：等待期間仍能收到其他請求。
+                    let agent = agent.clone();
+                    cx.spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        let _ = responder.respond_with_result(agent.authenticate(&request));
+                        Ok(())
+                    })
                 }
             },
             acp::on_receive_request!(),
@@ -151,7 +170,10 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
                                     ContentBlock::from(LOADED_SESSION_TEXT.to_owned()),
                                 )),
                             ));
-                            responder.respond(LoadSessionResponse::new())
+                            responder.respond(
+                                LoadSessionResponse::new()
+                                    .config_options(agent.config_options_for(&request.session_id)),
+                            )
                         }
                         Err(error) => responder.respond_with_error(error),
                     }
@@ -170,7 +192,10 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
                         request.meta,
                         true,
                     ) {
-                    Ok(()) => responder.respond(ResumeSessionResponse::new()),
+                    Ok(()) => responder.respond(
+                        ResumeSessionResponse::new()
+                            .config_options(agent.config_options_for(&request.session_id)),
+                    ),
                     Err(error) => responder.respond_with_error(error),
                 }
             },
@@ -184,6 +209,15 @@ pub async fn serve_stdio_with(script: Script, options: Options) -> Result<(), ac
                 {
                     Ok(()) => responder.respond(SetSessionModeResponse::new()),
                     Err(error) => responder.respond_with_error(error),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = agent.clone();
+                async move |request: SetSessionConfigOptionRequest, responder, _cx| {
+                    responder.respond_with_result(agent.set_config_option(&request))
                 }
             },
             acp::on_receive_request!(),
@@ -238,6 +272,8 @@ struct Session {
     meta: Option<serde_json::Map<String, serde_json::Value>>,
     /// 目前的 session mode（`echo_session_mode` 步驟回報）。
     mode: Mutex<Option<String>>,
+    /// 各 config option 目前的值，依劇本宣告的順序（`echo_config` 步驟回報）。
+    config: Mutex<Vec<(String, String)>>,
     mcp_servers: Vec<McpServer>,
     slot: Mutex<TurnSlot>,
     runtime: tokio::sync::Mutex<SessionRuntime>,
@@ -287,8 +323,7 @@ impl FakeAgent {
                     .session_capabilities(sessions),
             )
             .auth_methods(
-                self.options
-                    .auth_methods
+                self.auth_methods()
                     .iter()
                     .map(|id| AuthMethod::Agent(AuthMethodAgent::new(id.clone(), id.clone())))
                     .collect(),
@@ -299,15 +334,32 @@ impl FakeAgent {
             ))
     }
 
+    /// 宣告的認證方式：劇本的 `auth.methods`，沒有時用 CLI 的 `--auth-methods`。
+    fn auth_methods(&self) -> &[String] {
+        match &self.script.auth {
+            Some(auth) if !auth.methods.is_empty() => &auth.methods,
+            _ => &self.options.auth_methods,
+        }
+    }
+
     /// `authenticate`：只接受宣告的認證方式；有保存目錄時寫下登入狀態。
+    /// 劇本的 `auth.error` 有值時一律失敗，不記下登入狀態。
     fn authenticate(
         &self,
         request: &AuthenticateRequest,
     ) -> Result<AuthenticateResponse, acp::Error> {
         let method = request.method_id.0.as_ref();
-        if !self.options.auth_methods.iter().any(|m| m == method) {
+        if !self.auth_methods().iter().any(|m| m == method) {
             return Err(acp::Error::invalid_params()
                 .data(json!({ "reason": "unknown auth method", "methodId": method })));
+        }
+        if let Some(message) = self
+            .script
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.error.as_ref())
+        {
+            return Err(acp::Error::new(INTERNAL_ERROR_CODE, message.clone()));
         }
         if let Some(dir) = &self.options.state_dir {
             std::fs::create_dir_all(dir)
@@ -326,10 +378,7 @@ impl FakeAgent {
             .state_dir
             .as_ref()
             .is_some_and(|d| d.join(AUTHENTICATED_FILE).is_file());
-        if self.options.auth_methods.is_empty()
-            || saved
-            || self.authenticated.load(Ordering::Relaxed)
-        {
+        if self.auth_methods().is_empty() || saved || self.authenticated.load(Ordering::Relaxed) {
             return Ok(());
         }
         Err(acp::Error::auth_required())
@@ -359,7 +408,57 @@ impl FakeAgent {
                     .collect(),
             )
         });
-        Ok(NewSessionResponse::new(id).modes(modes))
+        Ok(NewSessionResponse::new(id)
+            .modes(modes)
+            .config_options(session.config_options(&self.script)))
+    }
+
+    /// 某個 session 目前的 config option；沒有這個 session 或劇本沒有宣告時為 `None`。
+    fn config_options_for(&self, id: &SessionId) -> Option<Vec<SessionConfigOption>> {
+        self.session(id)
+            .and_then(|session| session.config_options(&self.script))
+    }
+
+    /// `session/set_config_option`：只接受劇本宣告的選項與值。
+    fn set_config_option(
+        &self,
+        request: &SetSessionConfigOptionRequest,
+    ) -> Result<SetSessionConfigOptionResponse, acp::Error> {
+        let Some(session) = self.session(&request.session_id) else {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown session", "session_id": request.session_id })));
+        };
+        let config_id = request.config_id.0.as_ref();
+        let Some(decl) = self
+            .script
+            .config_options
+            .iter()
+            .find(|o| o.id == config_id)
+        else {
+            return Err(acp::Error::invalid_params()
+                .data(json!({ "reason": "unknown config option", "configId": config_id })));
+        };
+        let Some(value) = request
+            .value
+            .as_value_id()
+            .map(|v| v.0.as_ref())
+            .filter(|v| decl.values.iter().any(|d| d.id == *v))
+        else {
+            return Err(acp::Error::invalid_params().data(json!({
+                "reason": "unknown config value",
+                "configId": config_id,
+                "value": request.value,
+            })));
+        };
+        if let Some(entry) = lock(&session.config)
+            .iter_mut()
+            .find(|(id, _)| id == config_id)
+        {
+            entry.1 = value.to_owned();
+        }
+        Ok(SetSessionConfigOptionResponse::new(
+            session.config_options(&self.script).unwrap_or_default(),
+        ))
     }
 
     /// `session/set_mode`：只接受 `modes` 中的 mode。
@@ -398,6 +497,13 @@ impl FakeAgent {
                     .initial_mode
                     .clone()
                     .or_else(|| self.options.modes.first().cloned()),
+            ),
+            config: Mutex::new(
+                self.script
+                    .config_options
+                    .iter()
+                    .map(|o| (o.id.clone(), o.current.clone()))
+                    .collect(),
             ),
             mcp_servers,
             slot: Mutex::new(TurnSlot {
@@ -494,6 +600,43 @@ impl FakeAgent {
 }
 
 impl Session {
+    /// 依劇本的宣告與目前的值組出 ACP 的 config option；劇本沒有宣告時為 `None`。
+    fn config_options(&self, script: &Script) -> Option<Vec<SessionConfigOption>> {
+        if script.config_options.is_empty() {
+            return None;
+        }
+        let current = lock(&self.config);
+        Some(
+            script
+                .config_options
+                .iter()
+                .map(|decl| {
+                    let value = current
+                        .iter()
+                        .find(|(id, _)| *id == decl.id)
+                        .map_or(decl.current.as_str(), |(_, v)| v.as_str());
+                    let values: Vec<_> = decl
+                        .values
+                        .iter()
+                        .map(|v| {
+                            SessionConfigSelectOption::new(
+                                v.id.clone(),
+                                v.name.clone().unwrap_or_else(|| v.id.clone()),
+                            )
+                        })
+                        .collect();
+                    SessionConfigOption::select(
+                        decl.id.clone(),
+                        decl.name.clone().unwrap_or_else(|| decl.id.clone()),
+                        value.to_owned(),
+                        values,
+                    )
+                    .category(decl.category.as_deref().map(category))
+                })
+                .collect(),
+        )
+    }
+
     fn begin_turn(&self) -> Result<(usize, watch::Receiver<bool>), acp::Error> {
         let mut slot = lock(&self.slot);
         if slot.cancel.is_some() {
@@ -583,6 +726,12 @@ fn prompt_text(prompt: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// 劇本中的類別字串轉成 ACP 的類別（不認得的放進 `Other`）。
+fn category(name: &str) -> SessionConfigOptionCategory {
+    serde_json::from_value(serde_json::Value::String(name.to_owned()))
+        .unwrap_or_else(|_| SessionConfigOptionCategory::Other(name.to_owned()))
 }
 
 /// 一個步驟執行完之後要繼續還是結束回合。
@@ -743,6 +892,33 @@ impl TurnRunner<'_> {
                 cancelled(self.cancel.clone()).await;
                 return Ok(Flow::Stop(StopReason::Cancelled));
             }
+            Step::Ticks(ticks) => return self.run_ticks(ticks).await,
+            Step::WaitForFile(path) => {
+                let path = paths::resolve_in_cwd(&self.session.cwd, path).map_err(|reason| {
+                    acp::Error::invalid_params().data(json!({ "reason": reason }))
+                })?;
+                while !path.exists() {
+                    tokio::select! {
+                        () = tokio::time::sleep(WAIT_FOR_FILE_POLL) => {}
+                        () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
+                    }
+                }
+            }
+            Step::EchoConfig => {
+                let current = lock(&self.session.config).clone();
+                let text = if current.is_empty() {
+                    "none".to_owned()
+                } else {
+                    current
+                        .iter()
+                        .map(|(id, value)| format!("{id}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from(format!("{CONFIG_PREFIX}{text}")),
+                )))?;
+            }
             Step::Error(error) => {
                 return Err(
                     acp::Error::new(error.code, error.message.clone()).data(error.data.clone())
@@ -764,6 +940,21 @@ impl TurnRunner<'_> {
                 return Err(acp::Error::new(rate_limit.code, message).data(data));
             }
             Step::Stop(reason) => return Ok(Flow::Stop(*reason)),
+        }
+        Ok(Flow::Continue)
+    }
+
+    /// `ticks`：定時送出訊息片段，可被取消。
+    async fn run_ticks(&self, ticks: &TicksStep) -> StepResult {
+        let message = ticks.message.as_deref().unwrap_or("tick");
+        for n in 1..=ticks.count {
+            tokio::select! {
+                () = tokio::time::sleep(std::time::Duration::from_millis(ticks.interval_ms)) => {}
+                () = cancelled(self.cancel.clone()) => return Ok(Flow::Stop(StopReason::Cancelled)),
+            }
+            self.notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                ContentBlock::from(format!("{message} {n}/{}", ticks.count)),
+            )))?;
         }
         Ok(Flow::Continue)
     }

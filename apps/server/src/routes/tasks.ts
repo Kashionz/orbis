@@ -84,7 +84,12 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         .where(eq(projects.id, scope.project.id))
         .for("update");
       if (!project) throw notFound("Project");
-      await requireRepoInProject(tx, input.repoId, project.id);
+      // TODO(backend, task-without-repo)：不指定 Repo 的 Task（ADR-0011）。
+      const repoId = input.repoId;
+      if (repoId === null) {
+        throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援不指定 Repo 的 Task");
+      }
+      await requireRepoInProject(tx, repoId, project.id);
       if (input.assigneeMemberId) await requireTeamMember(tx, actor, input.assigneeMemberId);
       await requireTasksInProject(tx, input.dependsOn, project.id);
 
@@ -93,14 +98,14 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
         .update(projects)
         .set({ nextTaskNumber: number + 1 })
         .where(eq(projects.id, project.id));
-      const repoSpecId = input.specPath ? await upsertSpec(tx, input.repoId, input.specPath) : null;
+      const repoSpecId = input.specPath ? await upsertSpec(tx, repoId, input.specPath) : null;
       const [row] = await tx
         .insert(tasks)
         .values({
           projectId: project.id,
           number,
           key: formatTaskKey(project.taskKeyPrefix, number),
-          repoId: input.repoId,
+          repoId,
           repoSpecId,
           title: input.title,
           description: input.description,
@@ -164,6 +169,10 @@ export function createTaskRoutes(s: Services): Hono<AppEnv> {
     const scope = await loadTaskScope(db, actor, readId(c, "taskId", "Task"));
     requireProjectCapability(actor, scope, "edit_task");
     const input = await readJson(c, UpdateTaskInput);
+    // TODO(backend, task-without-repo)：補指定 Repo（只接受從 null 補一次，ADR-0011）。
+    if (input.repoId !== undefined) {
+      throw new ApiError(400, "invalid_input", "這個版本的 Server 還不支援補指定 Task 的 Repo");
+    }
     const task = await inTransaction(db, async (uow) => {
       const { tx } = uow;
       await tx

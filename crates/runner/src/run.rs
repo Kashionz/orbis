@@ -481,7 +481,7 @@ impl Run {
             dispatch_id: self.offer.dispatch_id.to_string(),
             path: wt.path.clone(),
             root_checkout: wt.root_checkout.clone(),
-            clone_url: self.offer.repo.clone_url.clone(),
+            clone_url: crate::worktree::github_clone_url(&self.offer.repo).to_owned(),
             branch: wt.branch.clone(),
             base_commit: wt.base_commit.clone(),
             base_ref: wt.base_ref.clone(),
@@ -628,7 +628,7 @@ impl Run {
             .join("\n");
         let title = format!(
             "第一次執行 {} 的 {} 中的腳本（或內容已改變），需要核准：\n{scripts}",
-            self.offer.repo.name,
+            self.offer.repo.name(),
             crate::repo_config::config_path()
         );
         let options = vec![
@@ -645,11 +645,10 @@ impl Run {
             .await?;
         match chosen.as_str() {
             "allow_always" => {
-                if let Err(e) = self
-                    .ctx
-                    .home
-                    .trust(&self.offer.repo.clone_url, &wt.config.hash)
-                {
+                if let Err(e) = self.ctx.home.trust(
+                    crate::worktree::github_clone_url(&self.offer.repo),
+                    &wt.config.hash,
+                ) {
                     tracing::warn!(error = %e, "無法保存信任紀錄");
                 }
                 wt.scripts_approved = true;
@@ -1114,6 +1113,7 @@ impl Run {
                     self.emit(EventKind::PermissionResolved {
                         request_id: request_id.clone(),
                         selected_option_id: Some(option_id.clone()),
+                        control_id: None,
                     });
                     self.set_status(previous, None, None);
                     return Ok(option_id.clone());
@@ -1123,6 +1123,7 @@ impl Run {
                     self.emit(EventKind::PermissionResolved {
                         request_id,
                         selected_option_id: None,
+                        control_id: None,
                     });
                     return Err(Stop::Canceled);
                 }
@@ -1460,7 +1461,7 @@ impl Run {
                     // 退回的意見另外以 prompt 送出；在那之前維持 awaiting_gate（plan）。
                     self.applied(&control);
                 }
-                RunControlAction::Prompt { prompt, source } => {
+                RunControlAction::Prompt { prompt, source, .. } => {
                     self.applied(&control);
                     return Ok(PlanDecision::Revise(Prompt {
                         blocks: prompt.clone(),
@@ -1491,6 +1492,7 @@ impl Run {
         self.emit(EventKind::PromptSubmitted {
             prompt: prompt.blocks.clone(),
             source: prompt.source,
+            control_id: None,
         });
         let prompt = self.prompt_blocks(&prompt.blocks).await;
         self.set_status(RunStatus::Running, None, None);
@@ -1656,6 +1658,7 @@ impl Run {
                 self.emit(EventKind::PermissionResolved {
                     request_id: request_id.clone(),
                     selected_option_id: Some(option_id.clone()),
+                    control_id: None,
                 });
                 if self.pending.is_empty() {
                     self.set_status(RunStatus::Running, None, None);
@@ -1686,6 +1689,7 @@ impl Run {
                     EventKind::PermissionResolved {
                         request_id,
                         selected_option_id: None,
+                        control_id: None,
                     },
                 )
                 .ok();
@@ -2017,7 +2021,7 @@ impl Run {
                     }
                     return Ok(None);
                 }
-                RunControlAction::Prompt { prompt, source } => {
+                RunControlAction::Prompt { prompt, source, .. } => {
                     self.applied(&control);
                     return Ok(Some(Prompt {
                         blocks: prompt.clone(),
@@ -2052,6 +2056,16 @@ impl Run {
                     &control,
                     RunControlRejectReason::InvalidState,
                     "這個動作不經過 Run 處理",
+                ),
+                // TODO(backend, run-prompt, run-settings, agent-switch, local-repo)：協定 v3 的新動作，實作之前一律拒絕。
+                RunControlAction::WithdrawPrompt { .. }
+                | RunControlAction::SetSessionConfig { .. }
+                | RunControlAction::SetPermissionPolicy { .. }
+                | RunControlAction::SwitchAgent { .. }
+                | RunControlAction::MergeLocal { .. } => self.reject(
+                    &control,
+                    RunControlRejectReason::InvalidState,
+                    "這個版本的 Runner 還不支援這個動作",
                 ),
             }
         }

@@ -71,5 +71,6 @@ export function summarizeDispatchTarget(runners: RunnerAvailability[]): Dispatch
       }),
     )
     .sort((a, b) => a.id.localeCompare(b.id));
-  return { online: runners.some((r) => r.dispatchable), agents };
+  // TODO(backend, local-repo)：依 Task 的本機 Repo 與 Runner 的 mapped_repos 判斷 repo_not_mapped。
+  return { online: runners.some((r) => r.dispatchable), agents, unavailableReason: null };
 }

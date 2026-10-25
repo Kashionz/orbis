@@ -20,7 +20,10 @@ export const API_ROUTES = {
   projectRepos: "/api/projects/:projectId/repos",
   repo: "/api/repos/:repoId",
   projectTasks: "/api/projects/:projectId/tasks",
+  /** 查詢參數 `taskId`（選填）：依那個 Task 的 Repo 判斷能派到哪裡（本機 Repo）。 */
   projectDispatchOptions: "/api/projects/:projectId/dispatch-options",
+  /** GET：看板每個 Task 的最新主 Run 與驗收進度。 */
+  projectBoardSummary: "/api/projects/:projectId/board-summary",
 
   /** GET：Agent 提出、還沒確認的 Draft Task。 */
   projectDraftTasks: "/api/projects/:projectId/draft-tasks",
@@ -37,6 +40,8 @@ export const API_ROUTES = {
    * 與登記時不同時回 409，`error` 為 `repo_mismatch`。
    */
   repoRefreshInstallation: "/api/repos/:repoId/github/refresh",
+  /** POST：本機 Repo 改成 GitHub Repo（只能單向）。 */
+  repoConnectGithub: "/api/repos/:repoId/connect-github",
   /** GET／POST：Repo 的 Spec 清單與登記。 */
   repoSpecs: "/api/repos/:repoId/specs",
   repoSpec: "/api/repo-specs/:repoSpecId",
@@ -63,6 +68,18 @@ export const API_ROUTES = {
   draftTask: "/api/draft-tasks/:draftTaskId",
   draftTaskConfirm: "/api/draft-tasks/:draftTaskId/confirm",
   draftTaskDismiss: "/api/draft-tasks/:draftTaskId/dismiss",
+  /** GET：Task 的分享（成員、待接受的邀請、一般存取）。 */
+  taskShare: "/api/tasks/:taskId/share",
+  /** POST：加入 Task 成員。 */
+  taskShareMembers: "/api/tasks/:taskId/share/members",
+  /** PATCH／DELETE：改變成員的角色（含轉移擁有者）或移除。 */
+  taskShareMember: "/api/tasks/:taskId/share/members/:memberId",
+  /** PUT：一般存取。 */
+  taskShareGeneral: "/api/tasks/:taskId/share/general",
+  /** POST：以 email 邀請。 */
+  taskShareInvites: "/api/tasks/:taskId/share/invites",
+  /** DELETE：撤銷邀請。 */
+  taskShareInvite: "/api/tasks/:taskId/share/invites/:inviteId",
 
   run: "/api/runs/:runId",
   /** 查詢參數：`afterSeq`（不含，預設 0）、`limit`。 */
@@ -77,6 +94,20 @@ export const API_ROUTES = {
   runPreviewRestart: "/api/runs/:runId/preview/restart",
   /** POST（multipart）：上傳 Preview 留言的截圖。 */
   runPreviewScreenshots: "/api/runs/:runId/preview/screenshots",
+  /** GET／POST：預覽邀請。 */
+  runPreviewInvites: "/api/runs/:runId/preview-invites",
+  /** DELETE：撤銷預覽邀請。 */
+  runPreviewInvite: "/api/runs/:runId/preview-invites/:inviteId",
+  /** POST：執行中傳訊息給 Agent（排隊或中斷）。 */
+  runPrompts: "/api/runs/:runId/prompts",
+  /** DELETE：收回還在排隊的訊息。 */
+  runPrompt: "/api/runs/:runId/prompts/:controlId",
+  /** GET／PATCH：執行中的模型、推理強度、Permission Policy。 */
+  runSettings: "/api/runs/:runId/settings",
+  /** POST：換 Agent 並接續作業。 */
+  runSwitchAgent: "/api/runs/:runId/switch-agent",
+  /** POST：開互動式終端機。 */
+  runTerminals: "/api/runs/:runId/terminals",
   /** GET：換票後 302 到 Preview 子網域（Preview 網址需要登入）。 */
   previewAuthorize: "/api/preview/:runId/authorize",
   /** POST：人回答 Child Run 的 `ask_parent`。 */
@@ -100,6 +131,9 @@ export const API_ROUTES = {
   /** GET：Member 以上可以看。 */
   teamRunnerQueue: "/api/team-runner-queue",
 
+  /** GET：模型目錄（目前 Member 可用的 Runner 上的 Agent 與 model）。 */
+  agentCatalog: "/api/agent-catalog",
+
   runners: "/api/runners",
   runner: "/api/runners/:runnerId",
   pairingTokens: "/api/runner-pairing-tokens",
@@ -115,9 +149,25 @@ export const API_ROUTES = {
   ws: "/api/ws",
   /** 共同編輯（y-websocket 協定，文件名稱見 `collab.ts`）。 */
   collab: "/api/collab/:docName",
+  /** 互動式終端機的 WebSocket（訊息見 `terminal.ts`）。 */
+  terminalWs: "/api/terminals/:terminalId/ws",
+} as const;
+
+/**
+ * Server 處理、但不在 `/api` 之下的瀏覽器導覽路徑（邀請連結）。它們出現在信件與複製的連結中，所以放在
+ * Orbis 主網址的短路徑；Server 要在 Web 靜態檔的 SPA fallback 之前註冊。回應是 302，不是 JSON。
+ */
+export const PAGE_ROUTES = {
+  /** 登入後接受 Task 邀請，轉到 Task 的工作區（見 `share.ts`）。 */
+  inviteAccept: "/invites/:token",
+  /** 預覽邀請的受邀者登入後換票，轉到預覽子網域（見 `preview.ts`）。 */
+  previewInviteAccept: "/preview-invites/:token",
+  /** 邀請連結失敗時轉到的 Web 頁面，查詢參數 `code` 是 `INVITE_ERROR_CODES` 之一。 */
+  inviteError: "/invites/error",
 } as const;
 
 export type ApiRoute = (typeof API_ROUTES)[keyof typeof API_ROUTES];
+export type PageRoute = (typeof PAGE_ROUTES)[keyof typeof PAGE_ROUTES];
 
 /** 從路徑樣式取出參數名稱，例如 `/api/runs/:runId/events` → `"runId"`。 */
 export type RouteParams<Path extends string> = Path extends `${string}:${infer Param}/${infer Rest}`
@@ -133,7 +183,7 @@ export type RouteParams<Path extends string> = Path extends `${string}:${infer P
  * apiPath(API_ROUTES.taskByKey, { taskKey: "ORB-12" }) // "/api/tasks/by-key/ORB-12"
  * ```
  */
-export function apiPath<Path extends ApiRoute>(
+export function apiPath<Path extends ApiRoute | PageRoute>(
   path: Path,
   ...[params]: [RouteParams<Path>] extends [never]
     ? []

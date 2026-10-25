@@ -1,6 +1,7 @@
 // 待我處理（純函式）：依類型分組，每一列要前往的位置。
 
-import type { NeedsYouItem } from "@orbis/api-contract";
+import type { NeedsYouItem, NeedsYouStoppedRun } from "@orbis/api-contract";
+import type { Messages } from "../../i18n";
 import { VERIFICATION_FOCUS, type WorkspaceTab } from "../run/workspace/route-state";
 
 /** 分組的順序：權限請求、計畫關卡、審查關卡、停下來的 Run、Child Run 的問題。 */
@@ -60,4 +61,13 @@ export function targetOf(item: NeedsYouItem): NeedsYouTarget {
     case "child_question":
       return { ...base, run: item.childRunId };
   }
+}
+
+/** 停下來的 Run 的說明：依代碼在地化的原因，有原始的錯誤訊息時接在後面。 */
+export function stoppedRunSummary(item: NeedsYouStoppedRun, n: Messages["needsYou"]): string {
+  const reason =
+    item.reasonCode === "verification_limit"
+      ? n.stoppedReason.verification_limit(item.attempt)
+      : n.stoppedReason[item.reasonCode];
+  return item.detail ? n.stoppedWithDetail(reason, item.detail) : reason;
 }

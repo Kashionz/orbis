@@ -60,8 +60,8 @@ function hex(text: string): Uint8Array {
 }
 
 describe("W5–7 契約：協定版本與列舉", () => {
-  it("協定版本是 2", () => {
-    expect(PROTOCOL_VERSION).toBe(2);
+  it("協定版本至少是 2（之後的版本見 contract-v3.test.ts）", () => {
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(2);
   });
 
   it("Run 狀態加入 verifying", () => {

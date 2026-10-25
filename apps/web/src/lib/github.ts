@@ -7,6 +7,8 @@ import type { Repo } from "@orbis/api-contract";
  * App 已安裝、或 Server 沒有設定 GitHub App 時是 null。
  */
 export function appInstallUrl(repo: Pick<Repo, "github">): string | null {
+  // 本機 Repo 沒有 GitHub App 的狀態。
+  if (!repo.github) return null;
   const { installed, installUrl } = repo.github;
   if (installed || !installUrl) return null;
   try {

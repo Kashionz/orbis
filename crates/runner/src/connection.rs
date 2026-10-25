@@ -547,6 +547,34 @@ impl Session {
             | ServerToRunner::PreviewEnd(_)
             | ServerToRunner::PreviewReset(_)
             | ServerToRunner::PreviewWsClose(_) => {}
+            // TODO(backend, terminal, local-repo)：互動式終端機與本機 Repo Spec 提交（協定版本 3）
+            // 實作之前開終端機一律回 spawn_failed、提交一律回 repo_unavailable。
+            ServerToRunner::TerminalOpen(open) => {
+                let exited = orbis_protocol::terminal::TerminalExited {
+                    terminal_id: open.terminal_id,
+                    code: None,
+                    reason: orbis_protocol::terminal::TerminalExitReason::SpawnFailed,
+                    message: Some("這個版本的 Runner 還不支援終端機".into()),
+                };
+                self.conn
+                    .send(&RunnerToServer::TerminalExited(exited))
+                    .await?;
+            }
+            ServerToRunner::TerminalInput(_)
+            | ServerToRunner::TerminalResize(_)
+            | ServerToRunner::TerminalClose(_) => {}
+            ServerToRunner::RepoSpecCommit(commit) => {
+                let result = orbis_protocol::repo_spec::RepoSpecCommitResult {
+                    commit_id: commit.commit_id,
+                    outcome: orbis_protocol::repo_spec::RepoSpecCommitOutcome::Failed {
+                        reason: orbis_protocol::repo_spec::RepoSpecCommitFailure::RepoUnavailable,
+                        message: "這個版本的 Runner 還不支援本機 Repo".into(),
+                    },
+                };
+                self.conn
+                    .send(&RunnerToServer::RepoSpecCommitResult(result))
+                    .await?;
+            }
         }
         Ok(())
     }

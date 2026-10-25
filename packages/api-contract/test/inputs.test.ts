@@ -20,8 +20,12 @@ describe("CreateTaskInput", () => {
     });
   });
 
+  it("可以不指定 Repo（ADR-0011）", () => {
+    expect(CreateTaskInput.parse({ title: "新增登入頁" }).repoId).toBeNull();
+    expect(CreateTaskInput.parse({ repoId: null, title: "新增登入頁" }).repoId).toBeNull();
+  });
+
   it.each([
-    ["缺少 repoId", { title: "新增登入頁" }],
     ["空白標題", { repoId: "r1", title: "  " }],
     ["超過 200 字的標題", { repoId: "r1", title: "字".repeat(201) }],
     ["由 Server 產生的 Task Key", { repoId: "r1", title: "新增登入頁", key: "ORB-1" }],
@@ -37,9 +41,13 @@ describe("UpdateTaskInput", () => {
     expect(UpdateTaskInput.safeParse({ assigneeMemberId: null }).success).toBe(true);
   });
 
+  it("可以補指定 Repo（只能從 null 補一次，由 Server 檢查）", () => {
+    expect(UpdateTaskInput.safeParse({ repoId: "r2" }).success).toBe(true);
+  });
+
   it.each([
     ["空物件", {}],
-    ["更換 Repo", { repoId: "r2" }],
+    ["清除 Repo", { repoId: null }],
     ["直接改狀態", { status: "done" }],
     ["空白標題", { title: "" }],
   ])("拒絕%s", (_, input) => {

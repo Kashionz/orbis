@@ -95,3 +95,12 @@ string_id!(
     /// Child Run 以 `ask_parent` 提出的問題的 ID，由 Server 產生（UUID v7）。
     ChildQuestionId
 );
+string_id!(
+    /// 互動式終端機的 ID，由 Server 產生（UUID v7），即 DB `terminal_sessions.id`（協定版本 3）。
+    TerminalId
+);
+string_id!(
+    /// 一次本機 Repo Spec 提交的 ID，由 Server 產生（UUID v7），用來對應 Runner 回報的結果
+    /// （協定版本 3）。
+    RepoSpecCommitId
+);

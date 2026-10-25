@@ -2,7 +2,14 @@
 
 import { z } from "zod";
 import { Id, Timestamp } from "./common";
-import { DelegationMode, PermissionPolicy, RunnerKind, RunOrigin, RunStatus } from "./enums";
+import {
+  DelegationMode,
+  Effort,
+  PermissionPolicy,
+  RunnerKind,
+  RunOrigin,
+  RunStatus,
+} from "./enums";
 
 const TokenCount = z.number().int().nonnegative().nullable();
 
@@ -38,10 +45,12 @@ export const Run = z
     parentRunId: Id.nullable(),
     /** Child Run 的 Delegation 模式；頂層 Run 為 null。 */
     delegationMode: DelegationMode.nullable(),
-    /** Agent 的識別名稱，例如 `claude-code`。 */
+    /** Agent 的識別名稱，例如 `claude-code`。執行中換 Agent 後是目前的 Agent。 */
     agent: z.string().min(1),
     /** 使用的 model；Agent 尚未回報時為 null。 */
     model: z.string().min(1).nullable(),
+    /** 目前的推理強度；用 Agent 的預設值時為 null。 */
+    effort: Effort.nullable(),
     permissionPolicy: PermissionPolicy,
     /** 要在哪裡跑：`local`＝我的電腦，`team`＝Team Runner。 */
     runnerKind: RunnerKind,
@@ -54,6 +63,7 @@ export const Run = z
     /** 建立 Worktree 時的 base commit（diff 的比較對象）；Runner 建立 Worktree 之前為 null。 */
     baseCommit: z.string().min(1).nullable(),
     status: RunStatus,
+    /** 累計用量。換過 Agent 時是各段的合計（費用只合計相同幣別）。 */
     usage: RunUsage,
     /** 觸發這個 Run 的 Member；由 Delegation 產生的 Child Run 為 null。 */
     startedByMemberId: Id.nullable(),

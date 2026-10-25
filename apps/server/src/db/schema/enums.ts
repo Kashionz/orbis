@@ -4,17 +4,21 @@ import {
   ACCEPTANCE_CRITERION_KINDS,
   DELEGATION_MODES,
   DISPATCH_STATUSES,
+  EFFORTS,
   FEEDBACK_FIX_STATUSES,
   FEEDBACK_SOURCES,
   GATE_DECISIONS,
   GATE_KINDS,
+  GENERAL_ACCESS_LEVELS,
   GITHUB_WEBHOOK_DELIVERY_STATUSES,
+  LOCAL_MERGE_STRATEGIES,
   MENTION_SOURCES,
   NEEDS_YOU_KINDS,
   NOTIFICATION_KINDS,
   PERMISSION_POLICIES,
   PROMPT_SOURCES,
   PULL_REQUEST_STATES,
+  REPO_KINDS,
   REVIEW_COMMENT_KINDS,
   REVIEW_COMMENT_SIDES,
   ROLES,
@@ -24,6 +28,7 @@ import {
   RUNNER_KINDS,
   TASK_DONE_REASONS,
   TASK_NOTE_SOURCES,
+  TASK_SHARE_ROLES,
   TASK_STATUSES,
   VERIFICATION_OUTCOMES,
   VERIFICATION_RESOLUTIONS,
@@ -71,3 +76,10 @@ export const taskNoteSourceEnum = pgEnum("task_note_source", TASK_NOTE_SOURCES);
 export const feedbackSourceEnum = pgEnum("feedback_source", FEEDBACK_SOURCES);
 export const feedbackFixStatusEnum = pgEnum("feedback_fix_status", FEEDBACK_FIX_STATUSES);
 export const reviewCommentKindEnum = pgEnum("review_comment_kind", REVIEW_COMMENT_KINDS);
+
+// 新工作區介面的後端缺口（migration 0004）
+export const repoKindEnum = pgEnum("repo_kind", REPO_KINDS);
+export const effortEnum = pgEnum("effort", EFFORTS);
+export const taskShareRoleEnum = pgEnum("task_share_role", TASK_SHARE_ROLES);
+export const taskGeneralAccessEnum = pgEnum("task_general_access", GENERAL_ACCESS_LEVELS);
+export const localMergeStrategyEnum = pgEnum("local_merge_strategy", LOCAL_MERGE_STRATEGIES);

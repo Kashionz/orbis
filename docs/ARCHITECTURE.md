@@ -64,14 +64,16 @@
 
 ```
 Team 1─* Member（Role）
-Team 1─* Project 1─* Repo
-Project 1─* Task *─1 Repo
+Team 1─* Project 1─* Repo（GitHub Repo 或本機 Repo）
+Project 1─* Task *─0..1 Repo（可以先不指定，補指定一次後不能再換）
+Task 1─* TaskMember（Task 角色）*─1 Member
 Task 1─* AcceptanceCriterion
 Task *─0..1 RepoSpec（repo 內的 markdown spec，可以被多個 Task 連結）
 Task *─* Task（depends_on）
 Task 1─* Run 1─* Run（Child Run，深度 ≤ 2）
 Run 1─* Event
 Run 1─* Dispatch
+Run 1─* AgentSegment（換 Agent 時依 Agent 分段的用量）
 Runner *─1 Member（Local）| Team（Team Runner）
 Runner 1─* AgentAvailability（這台 Runner 能跑哪些 Agent，以及各 Credential 的並行上限）
 ```
@@ -100,13 +102,19 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 | Verifying | Agent 回報完成 | Server 送 `verify` 給 Runner，自動檢查 `command`、`agent`、`browser` 類型的條件（§5.1） |
 | Review Gate | Verification 全數通過 | 人工 review diff；行內留言與 Preview 留言可以退回 Running（**同一個 Worktree、同一個 session**）；`manual` 條件全部打勾才能核准 |
 | PR Open | Review Gate 通過 | 自動 push 並開 PR |
-| Done | PR merge（webhook），或 Review Gate 結束（沒有變更） | 自動轉換 |
+| Done | PR merge（webhook）、Review Gate 結束（沒有變更），或本機 Repo 的本機合併完成 | 自動轉換 |
 
 - **手動轉換**：看板上只能把 Task 在 Backlog 與 Ready 之間移動。拖到 Running 欄會打開派工對話框，派工成功才轉換。其他轉換都由系統觸發：派工、Runner 的 Event、Gate 的決定、GitHub webhook。合法的轉換表定義在 `packages/api-contract`，Server 的狀態機與 Web 共用同一份。
 - **進入 Ready 的條件**：已指定 Repo、描述不為空或有連結的 Spec、至少一條 Acceptance Criterion。`depends_on` 中還有 Task 沒有 Done 時，不能派工。
+  - **不指定 Repo 的 Task**（[ADR-0011](adr/0011-one-repo-per-task.md) 的修訂）：建立時可以不指定 Repo，這種 Task 只能停在 Backlog（移到 Ready 回 409 `repo_required`），也不同步到 GitHub Issues。之後可以補指定一次，指定之後不能再換（`repo_already_set`）。
 - **Run 失敗，或在 Review Gate 被中止**：Task 回到 Ready，可以重新派工。
 - **回合結束**：Agent 結束回合後，Runner 先送出 Run 的完整 diff（§10），再回報等待 Review Gate。Review Gate 期間 Run 不會結束，退回時在同一個 session 繼續。
 - **核准之後**：Task 立刻進入 PR Open。Runner 結束 Agent 程序、push 分支，**push 成功後 Run 才算 `completed`**。push 失敗時 Run 不會是 `completed`，並加入 Needs You。
+- **本機 Repo 核准之後**（[ADR-0013](adr/0013-local-repo-and-connect-to-github.md)）：Server 送 RunControl `merge_local`，Runner 結束 Agent、自動 commit 未提交的變更，把 Run 的分支合併到本機 checkout 的基準分支（`local_merged` Event），Task 直接轉 Done（trigger `local_merge`，關閉原因 `completed`），接著封存 Worktree。
+  - 基準分支沒有在 checkout 中簽出：在暫時的 worktree 中合併。已簽出且工作目錄乾淨：直接在 checkout 中合併。
+  - 工作目錄有未 commit 的變更或合併衝突：不合併，Run 停下（Needs You 的 `reasonCode` 為 `local_merge_blocked`，`detail` 是 git 的輸出），處理後重試。
+  - 合併方式是 Project 設定：squash（預設）或 merge commit。checkout 有 `origin` 時，Project 可以設定合併後 push 基準分支（預設關閉）；push 失敗不影響合併。
+- **停下來的 Run**：Needs You 的 `stopped_run` 以代碼表示原因（`verification_limit`、`push_failed`、`pr_open_failed`、`local_merge_blocked`），附第幾輪（只有 `verification_limit`）與原始的錯誤訊息；給人看的文字由 UI 依代碼在地化。
 - **diff 為空時**（Review Gate 送審的那份 diff 沒有任何檔案變更）：沒有東西可以 push，不能核准，改為**結束（沒有變更）**，也可以退回或中止。
   - Task 轉 Done，關閉原因是 `completed`（同步到 Issue 時一樣以 `completed` 關閉）；不 push、不開 PR。
   - Server 送 RunControl `cancel` 結束 Run（`canceled`），Worktree 與分支和中止一樣保留。
@@ -190,8 +198,8 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 
   | 方向 | frame |
   |---|---|
-  | Runner → Server | `hello`、`heartbeat`、`agent_availability`、`dispatch_accept`、`dispatch_reject`、`event`、`run_control_result`、`tool_call`、`preview_response` |
-  | Server → Runner | `hello_ack`、`hello_rejected`、`dispatch_offer`、`run_control`、`event_ack`、`tool_result`、`preview_open` |
+  | Runner → Server | `hello`、`heartbeat`、`agent_availability`、`dispatch_accept`、`dispatch_reject`、`event`、`run_control_result`、`tool_call`、`preview_response`、`terminal_output`、`terminal_exited`、`repo_spec_commit_result` |
+  | Server → Runner | `hello_ack`、`hello_rejected`、`dispatch_offer`、`run_control`、`event_ack`、`tool_result`、`preview_open`、`terminal_open`、`terminal_input`、`terminal_resize`、`terminal_close`、`repo_spec_commit` |
   | 雙向 | `preview_window`、`preview_end`、`preview_reset`、`preview_ws_close` |
 
   - 協定版本 2（W5–7）新增 `tool_call`／`tool_result`（Orbis MCP 工具呼叫，§9）與 `preview_*`（Preview 通道，§13）。Preview 的資料（HTTP body、WebSocket 訊息）走 WebSocket binary 訊息：`[kind u8][stream_id u32 big-endian][payload]`，以 credit 控制背壓。
@@ -199,12 +207,19 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
     - 初始 credit：Server→Runner 方向固定 256 KiB；Runner→Server 方向由 `preview_open` 的 `window` 指定。
     - `worktree_ready` 帶 `preview_port`（沒有設定 `[preview]` 時缺少），Server 據此顯示 Preview 是「沒有設定」還是「啟動中」。
   - `run_control` 的動作：取消、後續 prompt（帶來源，例如 Review Gate 退回、Verification 重試、Feedback Loop）、回覆權限請求、Gate 結果、push 分支、`verify`（§5.1）、`archive`（§6.2 的封存）、`restart_preview`。
+  - 協定版本 3（新工作區介面的後端缺口）：
+    - `run_control` 新增 `withdraw_prompt`、`set_session_config`、`set_permission_policy`、`switch_agent`、`merge_local`（§5、§7）；`prompt` 加 `delivery`（`queue`／`interrupt`）。
+    - Event 新增 `prompt_queued`、`prompt_withdrawn`、`run_settings_changed`、`agent_switched`、`local_merged`；`prompt_submitted` 與 `permission_resolved` 帶觸發它的 `control_id`，Server 據此填入 API Event 的 `actorMemberId`（Run 的第一個 prompt 的作者是派工的人）。
+    - `agent_availability` 的 `models` 改成帶顯示名稱、標記與推理強度能力的物件，另帶 Agent 的顯示名稱、廠商、CLI 代號、登入狀態、登入方式（§7），以及 `runner.toml` 對應到本機 checkout 的 Repo key（`mapped_repos`，不含路徑）。
+    - `dispatch_offer` 加 `effort`；`repo` 改成以 `kind` 區分 `github`（帶 clone URL）與 `local`（只有名稱），本機 Repo 在 `runner.toml` 找不到對應時以 `repo_unavailable` 拒絕。
+    - 終端機的 frame 見 §6.5；`repo_spec_commit` 見 §12.1。
 
   - 連線後 Runner 先送 `hello`（協定版本與 Pairing token，或已配對的 Runner token）。Server 回 `hello_ack`（Runner ID、第一次 Pairing 時發的 Runner token、心跳間隔、各 Run 已收到的最後 seq），或回 `hello_rejected` 並附上原因。
   - Runner 收到 `hello_ack` 後，先送 `agent_availability`，接著依間隔送 `heartbeat`。
   - 分支名稱由 Server 產生，放在 `dispatch_offer` 中。Worktree 路徑由 Runner 依 §6.2 計算，建好後以 `worktree_ready` Event 回報。
   - 改派時，`dispatch_offer` 帶上該 Run 已收到的最後 seq，新的 Dispatch 從下一個 seq 接續。
   - 每個 `run_control`（取消、後續 prompt、回覆權限請求、Gate 結果、push 分支）都會收到一個 `run_control_result`，以 `control_id` 對應。Run 因此產生的後續變化仍以 Event 回報。
+- **本機 Repo 的派工**（[ADR-0013](adr/0013-local-repo-and-connect-to-github.md)）：本機 Repo 只派給 `runner.toml` 有對應這個 Repo 名稱的 Local Runner（依 `agent_availability` 的 `mapped_repos` 判斷），Team Runner 不能選；派工對話框以 `repo_not_mapped` 標示不能派。Team 的其他人在自己的 `runner.toml` 設了同名對應，也可以派到自己的電腦。
 - **Runner 的本機目錄**（`~/.orbis/`）：
   - `runner.toml` 給人編輯：Server 網址、Runner 名稱、Worktree 根目錄、port 範圍、Repo 對應到本機 checkout（`[repos.<key>] path`）、額外的 ACP Agent（`[agents.<id>] command／args／env`）。
   - `runner/` 是狀態目錄：依 Server 網址分開保存的 Runner token、port 分配、信任核准紀錄、Event 暫存、Runner 代管安裝的 ACP adapter。
@@ -232,6 +247,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
   - Member 可以在 Runner 的本機設定中，把 Repo 對應到自己的 checkout（例如 `D:\code\web`）。有對應時，Worktree 從那份 checkout 開出，`copy` 也從那裡複製。
   - 沒有對應時 `copy` 不生效，因為 Runner 自己的 clone 中沒有 `.env` 這類檔案。
   - `ORBIS_ROOT_PATH` 是這份來源 repo 的路徑。
+  - **本機 Repo**：只依 `runner.toml` 的 `[repos.<名稱>]` 找 checkout，不 clone、不 fetch remote；Worktree 從基準分支（`base_ref` 就是基準分支本身）開出。
 - **分支名稱**：由 Server 產生，格式是 `orbis/<task-key>-<slug>`。Child Run 的分支是 `orbis/<task-key>-<slug>--c<n>`。同一個 Task 的第 2 個以後的 Run（例如失敗後重新派工），分支加上 `-r<序號>`，例如 `orbis/ORB-12-login-fix-r2`，避免和前一個 Run 保留下來的分支衝突。
   - slug 取自 Task 標題：NFKC 正規化後保留字母與數字（含中文等 Unicode 字母，不做音譯），其他字元換成 `-`，最多 40 個字元；全是符號時用 `task`。所以分支名稱不會有 git 不允許的字元。
   - **注意**：分支名稱不可以用 `/c<n>` 當後綴，因為 git 不允許 `a` 與 `a/b` 兩個分支同時存在。
@@ -316,6 +332,18 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
 - **port**：Preview 的 port 從 `runner.toml` 的 `port_range`（預設 41000–41999）中挑，分配時實際 bind IPv4 與 IPv6 的 loopback 確認沒被占用；Windows 保留的範圍（Hyper-V、WSL 等，`netsh int ipv4 show excludedportrange protocol=tcp`）bind 會被拒絕，所以會被跳過。範圍用完時的錯誤訊息列出和範圍重疊的保留範圍並提示改 `port_range`。預設範圍不和 Windows、macOS 的 ephemeral 範圍（49152–65535）重疊；Linux 的 ephemeral 範圍（32768–60999）包含它，Linux 上要改 `port_range`（Linux 不在 Phase 1 驗證）。
 - **無人值守**：關閉 git 的互動式憑證提示（`GIT_TERMINAL_PROMPT=0` 與 `GCM_INTERACTIVE=never`）。
 
+### 6.5 互動式終端機
+
+（[ADR-0014](adr/0014-interactive-terminal-through-runner.md)）
+
+- Runner 在 Run 的 Worktree 中開 PTY（`portable-pty`，Windows 用 ConPTY），輸入輸出經由 Runner 通道到 Server，再經由專用的 WebSocket（`/api/terminals/<terminal-id>/ws`）到 Web 的終端機分頁（xterm.js）。
+- **frame**：Server→Runner `terminal_open { terminal_id, run_id, cols, rows }`、`terminal_input`、`terminal_resize`、`terminal_close`；Runner→Server `terminal_output`、`terminal_exited { code, reason }`。資料以 base64 傳送，單一 frame 解碼後最多 64 KiB；沒有 credit 背壓，Runner 送出時排在 Event、control 與 Heartbeat 之後。每個 `terminal_open` 最後恰好有一個 `terminal_exited`（開不起來時也是，`reason` 說明原因）。
+- **誰能用**：Local Runner 只限那台 Runner 的擁有者（和權限回覆的規則相同）；Team Runner 只限 Admin 以上，而且 Team 設定「允許 Team Runner 的終端機」預設關閉。Server 把 `terminal_id` 綁定到開啟者的 session，只轉送那個人的輸入；Runner 只接受自己開過的 `terminal_id`。
+- 終端機是人自己下指令，不經過 Permission Policy。Server 只記錄誰在什麼時候開、關（`terminal_sessions`），不記錄按鍵與輸出。
+- Worktree 存在期間都能用（Run 結束後也可以，Runner 依本機的 Worktree 紀錄找到路徑）；閒置 30 分鐘自動關閉；每個 Run 最多同時 3 個（`terminal_limit`）。Worktree 已封存時回 `worktree_archived`。
+- WebSocket 關閉即關閉終端機，不支援重新接上。
+- shell：Windows 預設 PowerShell，其他平台用 `$SHELL`；Runner 設定可以覆寫。
+
 ---
 
 ## 7. Agent 整合
@@ -355,6 +383,15 @@ commit_message = "{task_key}: {title}"     # push 前自動 commit 未提交的�
   - 登入成功後，Runner 在狀態目錄記一個只有時間的標記（`agents/<agent>.login`）。沒有標記時，AgentAvailability 回報這個 Agent 無法使用（原因是要執行的登入指令），派工也以 `agent_unavailable` 拒絕。否則沒登入的 Agent 會被當成可用，Web 的派工對話框可能預設選到它。在其他 ACP client（例如 Zed）登入過的人也要再執行一次。
   - 之後 Run 遇到 ACP `auth_required`（例如認證過期）時，以 `agent_start_failed` 結束並提示登入指令，同時清掉標記，重送的 AgentAvailability 改成無法使用。
   - 其他 Agent 用自己的 CLI 登入。
+  - **重新登入**：Agent Profile 提供登入方式（AgentAvailability 的 `login_hint`）：`runner`＝Desktop 在那台電腦上執行 `<Runner> login <agent>`；`cli`＝顯示在終端機要執行的指令。Team Runner 無法遠端互動登入，只顯示要在伺服器上執行的指令（限 Admin 以上）。
+- **執行中傳訊息**：Run 在回合中或等待權限回覆時，人送出的訊息（RunControl `prompt`，`delivery = queue`）先排隊（`prompt_queued`），回合結束後 Runner 不進入 Gate，直接以排隊的訊息開始下一個回合，多則依序以空行合併成一則（每則各送一筆帶自己 `control_id` 的 `prompt_submitted`）。還在排隊的訊息可以收回（`withdraw_prompt`、`prompt_withdrawn`）。`interrupt` 先 `session/cancel` 目前的回合，回合結束後立即送出。Gate 等待時不用這條路，改用 Gate 的退回。
+- **模型目錄與推理強度**：ACP 沒有 `session/set_model`，模型與推理強度屬於 `session/set_config_option` 的選項（類別 `model`、`thought_level`）。
+  - Agent Profile 內建一份靜態清單：模型 id、顯示名稱、標記、推理強度能力（可調整／固定為某個等級／不支援），以及快速、標準、深度各自對應的 config option 值。Runner 記下每個 Agent 最近一次真實 session 回傳的 config option，之後回報以那一份為準（`source = session`），存在 Runner home。
+  - Server 彙整目前 Member 可用的 Runner 回報的 AgentAvailability，提供模型目錄 API。
+  - 派工時可以指定推理強度（`dispatch_offer` 的 `effort`），Runner 在 session 建立後以 config option 套用。
+- **執行中切換設定**：模型與推理強度（`set_session_config`）在下一個回合開始前生效；Permission Policy（`set_permission_policy`）立即生效，從下一個權限請求開始套用。生效時 Runner 送 `run_settings_changed`，Agent 不支援的項目列在 `not_applied`。
+- **換 Agent**（[ADR-0016](adr/0016-agent-switch-handoff.md)）：`switch_agent` 只在回合之間生效（回合中送出時等回合結束），只能換成同一台 Runner 上可以用的 Agent。Run id 與 Worktree 不變，Runner 結束舊的 session，以新的 Agent 開新的 session、依新 Agent 的 Agent Profile 重新套用 session mode，送出交接 prompt（來源 `handoff`）並送 `agent_switched`。用量與費用依 Agent 分段記錄：`agent_switched` 之後的 `usage` 是新的一段從 0 開始的累計值。Child Run 不受影響。
+  - 交接 prompt 依序是：Task 的規格與驗收條件、人送出的所有 prompt、Agent 每個回合最後的回覆、目前的計畫、diff 摘要（改了哪些檔案、各增減幾行）、還沒處理的審查留言。規格、驗收條件與審查留言由 Server 放在 `switch_agent` 的 `handoff` 中，其他由 Runner 從 Event 與 Worktree 組出。不請舊的 Agent 寫摘要。
 - **能力旗標與版本**：Runner 啟動後在背景對每個可用的 Agent 跑一次 `initialize`（不建立 session），把能力旗標與版本放進 AgentAvailability；無法啟動的 Agent 回報無法使用。Runner 代管、還沒安裝的 adapter 在第一次派工後更新。內容改變（能力旗標、並行數）時重送一次完整清單。
 - **使用者全域設定**：Claude Code 見 §8。Codex（`~/.codex`）、Antigravity（`~/.gemini/antigravity-acp/settings.json`、`~/.gemini/config/mcp_config.json`）、Grok Build（`~/.grok`）沒有在 ACP 中關閉使用者設定的選項，它們設定中允許的工具不會詢問 Runner，列在各自的 Permission Policy 落差中。
 - **Credential**（[ADR-0005](adr/0005-shared-subscription-on-team-runner.md)、[ADR-0007](adr/0007-no-agent-credentials-on-server.md)）：
@@ -400,6 +437,7 @@ Runner 一律以「會詢問」的模式啟動 Agent，再**由 Runner 依政策
   - Local Runner 上的權限請求，只有該 Runner 的擁有者能回覆。
   - Team Runner 上的權限請求，Project 中 Role 至少是 Member 的人都能回覆。
   - 設定的信任核准（§6.2）一律只有 Project 中 Admin 以上能回覆，不論 Runner 種類：Local Runner 上的 Run 也一樣，Runner 擁有者不是 Admin 時不能回覆。
+- **執行中切換**：Run 執行中也可以換 Permission Policy（RunControl `set_permission_policy`），規則和派工時能不能選這個策略相同；從下一個權限請求開始套用。
 - **派工時的選擇**：
   - 能派工的人都可以選 `manual` 或 `auto`，預設為 Project 的預設政策。
   - `yolo` 只能在「在我的電腦跑」時選，UI 會顯示警告。Team Runner 的 `yolo` 留到 Phase 2。
@@ -498,6 +536,12 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
       - GitHub 上同名 repo 的 id 與登記時不同（刪掉後重建）時，不自動改綁。
       - App 確實沒有安裝時清掉 installation；repo 改名造成以名稱查不到時不清。
 - **PR 與 Task**：PR merge → Task 轉 Done，關閉原因為 `completed`；PR 沒有 merge 就關閉 → Task 退回 Review Gate。
+  - `pr_merged` webhook 記下 merge 的時間；API 的 Task 帶 PR 的號碼、網址、狀態、開出與 merge 的時間，事件串流依時間插入「開出合併請求」與「已合併」兩列。
+- **本機 Repo**（[ADR-0013](adr/0013-local-repo-and-connect-to-github.md)）：沒有 GitHub 的 id 與 App 安裝狀態，不提供 Issues 同步與 Feedback Loop，相關 UI 隱藏；Repo Spec 直接 commit 到基準分支（§12.1）。
+  - **連接到 GitHub**：Project 設定中的本機 Repo 填 owner 與 name，Server 確認 GitHub App 已安裝在那個 repo 上之後，`kind` 從 `local` 改成 `github`，只能單向（`manage_project`）。App 沒有安裝回 409 `repo_not_connected`（附安裝網址）；同一個 Project 已有這個 GitHub repo 回 409 `repo_exists`。
+  - 前置條件：本機 checkout 的 `origin` 指向那個 GitHub repo，而且基準分支已 push。Orbis 不幫忙建立 GitHub repo（需要個人帳號的 `repo` scope，權限太大），畫面顯示可以照著執行的指令（例如 `gh repo create <name> --source . --push`）。
+  - 之後以前的 Task 與 Run 照舊；新的 Run 核准後走 push 與開 PR；Issues 同步、Feedback Loop、Repo Spec 的 PR 從此啟用。連接時停在審查關卡的 Run，核准時依新的 `kind` 開 PR。
+- **Member 的 email**：GitHub OAuth 請求 `user:email`，每次登入時以 `GET /user/emails` 取主要且已驗證的 email，寫進這個 GitHub 帳號所有的 Member 紀錄；沒有已驗證的 email 時為 null。已登入的人不強制登出，下次登入時補上。Task 邀請與預覽邀請以此比對。
 - **不串 GitHub Projects。**
 
 ---
@@ -516,6 +560,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     - 同一份 Spec 已經有開著的 PR 時，在同一個分支上再 commit 一次並沿用 PR。內容沒變時不 commit。
     - repo 中的檔案在上一次提交之後被別人改過時照常開 PR，但在 PR 與回應中警告會覆蓋那些修改。
   - **版本**：Repo Spec 有一個整數版本，從 Orbis 提交的 PR 每 merge 一次 +1，並記錄 merge commit。PR 沒有 merge 就關閉時，版本不變。
+  - **本機 Repo**：沒有 PR，「提交到 repo」直接 commit 到基準分支，版本在 commit 時 +1（內容沒變時不 commit）。Server 碰不到本機 checkout，所以把內容交給提交者自己、`runner.toml` 有對應這個 Repo 的 Local Runner（frame `repo_spec_commit`／`repo_spec_commit_result`），commit 的位置規則和本機合併相同（§5）；那台 Runner 不在線時回 409 `runner_offline`。
 - **不做**程式碼的共同編輯。
 
 ### 12.2 Role
@@ -535,6 +580,13 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - 只有 Owner 能指派或移除 Owner；不能移除或降級最後一位 Owner。
 - 新增 Member 時，先以 GitHub login 查出數字 user id 再保存，之後一律以 user id 比對，因為 login 可以改名。
 - 權限檢查只在 Server 端做；UI 只負責隱藏沒有權限的操作。
+- **Task 分享**（[ADR-0012](adr/0012-task-sharing-and-invites.md)）：Task 上另有一層成員與一般存取。
+  - **Task 角色**：擁有者（建立 Task 的人，可以轉移）、可操作、可檢視。「可操作」的人在這個 Task 上可以編輯、派工、核准關卡、送 prompt，所以可以把 Team Viewer 在這個 Task 上調高；「可檢視」只能看。
+  - **一般存取**：`invited`（僅受邀成員）、`team_view`（Team 可檢視）、`team_edit`（Team 可操作，預設，和沒有 Task 分享時相同）。限制時，不在 Task 成員中的人在這個 Task 上的權限降到對應的程度（`invited` 時看不到）。
+  - **有效權限**：Owner、Admin 永遠完整，不受 Task 分享影響（避免 Task 被鎖住）；其他人取「Task 角色」與「一般存取限制後的 Team／Project Role」中較高的一個。Admin 層級的能力（權限策略、設定信任、Team Runner、Project 設定）不受 Task 角色影響。
+  - `authorize()` 需要 Task 的能力（`edit_task`、`dispatch_*`、`approve_gate`、`view`）時一併傳入 Task；看板、待我處理、搜尋等列表濾掉看不到的 Task。API 的 Task 帶目前登入者在這個 Task 的有效權限（`viewerAccess`），Web UI 依它隱藏操作。
+  - 管理分享：Task 的擁有者、Admin 以上。
+  - **Task 邀請**：以 email 邀請還不是 Member 的人。邀請產生一條連結（只在建立時回傳一次，Server 只存 hash），有設定 SMTP（`<前綴>_SMTP_URL`、`<前綴>_SMTP_FROM`）時也寄信。對方以 GitHub 登入、已驗證的 email 等於受邀的 email 時，以 Viewer 身分加入 Team，再取得邀請時選的 Task 角色；不符時回 `invite_email_mismatch`。邀請 7 天後過期，可以撤銷。email 已經是某位 Member 的已驗證 email 時直接加進 Task，不產生邀請。
 
 ### 12.3 通知與 @mention
 
@@ -594,6 +646,13 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
     3. callback 設定 host-only、HttpOnly 的 preview cookie，再導回原本的路徑。
   - preview session 綁定 Orbis 的 session：登出或 session 過期後，最多 5 秒內失效。preview session 與 ticket 只存在 Server 的記憶體中，Server 重新啟動後使用者會自動重新換票。
   - Server 對寫入型 API 檢查 `Origin`，避免 same-site 的 Preview 頁面帶著 Orbis 的 cookie 送出請求。
+- **分享給團隊**：複製 Preview 網址即可，Team 裡能查看這個 Run 的人登入後就能開。
+- **預覽邀請**（[ADR-0015](adr/0015-preview-invites.md)）：把 Preview 分享給特定的人（可以是其他 Team 的人或不屬於任何 Team 的人）。
+  - Team 設定「允許對外分享預覽」，預設關閉，由 Admin（`manage_team`）打開；打開後，對這個 Task 有操作權限（`edit_task`）的人可以邀請與撤銷。關閉時回 403 `preview_sharing_disabled`。
+  - 以 GitHub 帳號（邀請時查出 GitHub user id 並保存，登入時以 id 比對）或 email（以 Member 的已驗證 email 比對）指定。每位受邀者各自一條邀請連結（Orbis 主網址的 `/preview-invites/<token>`，有設定 SMTP 時也寄信，沒有時由邀請人複製連結）。
+  - 受邀者從連結進入、以 GitHub 登入，Server 確認在名單上而且邀請有效才發 ticket、轉到預覽子網域（和上面的換票流程相同）。不在名單上的人拿到連結也打不開。
+  - 期限：1 小時、24 小時（預設）、7 天，可以個別撤銷；預覽停止或 Worktree 封存後全部失效。受邀者只能看預覽頁面，不會因此加入 Team，也看不到 Task。
+  - 預覽分頁顯示受邀名單、期限與最後一次開啟的時間。Preview 的存取判斷除了 Project 的 `view`，也接受有效的邀請。
 - **轉送**（[ADR-0010](adr/0010-preview-through-runner-channel.md)）：
   - Runner 把 Preview 的 HTTP 與 WebSocket（含 HMR）流量**經由既有的 Runner 通道**多工轉送：Server 依 Host 把 Preview 網址的請求交給對應 Run 的 Runner，每個請求或 WebSocket 是一條 stream。控制用 JSON frame，資料用 binary 訊息，避免 base64 的膨脹。
   - **背壓**：雙向以 credit 控制，每條 stream 的初始 window 是 256 KiB，每個 chunk 最大 64 KiB。接收端把資料寫出去（Server 寫給瀏覽器、Runner 寫給 dev server）後才補 credit。Runner 送往 Server 時，Preview 的資料排在 Event、control 與 Heartbeat 之後，大檔案不會卡住它們。

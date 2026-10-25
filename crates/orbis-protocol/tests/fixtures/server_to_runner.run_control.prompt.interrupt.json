@@ -1,0 +1,15 @@
+{
+  "type": "run_control",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c2",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "action": "prompt",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "順便把錯誤訊息改成中文。"
+    }
+  ],
+  "source": "user",
+  "delivery": "interrupt"
+}

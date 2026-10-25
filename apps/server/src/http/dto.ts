@@ -15,6 +15,8 @@ import type {
   Run,
   RunEvent,
   RunUsage,
+  StoppedRunInfo,
+  StoppedRunReason,
   Task,
   TaskNote,
   Team,
@@ -52,6 +54,8 @@ export function toTeam(row: typeof teams.$inferSelect): Team {
   return {
     id: row.id,
     name: row.name,
+    allowExternalPreview: row.allowExternalPreview,
+    allowTeamRunnerTerminal: row.allowTeamRunnerTerminal,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -65,6 +69,7 @@ export function toMember(row: typeof members.$inferSelect): Member {
     githubLogin: row.githubLogin,
     name: row.name,
     avatarUrl: row.avatarUrl,
+    email: row.email,
     role: row.role,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
@@ -89,6 +94,8 @@ export function toProject(row: typeof projects.$inferSelect, viewerRole: Role): 
       autoCreateIssues: row.autoCreateIssues,
       verificationMaxRetries: row.verificationMaxRetries,
       feedbackBotAllowlist: row.feedbackBotAllowlist,
+      localMergeStrategy: row.localMergeStrategy,
+      localPushBase: row.localPushBase,
     },
     viewerRole,
     createdAt: iso(row.createdAt),
@@ -105,11 +112,12 @@ export function toRepo(row: typeof repos.$inferSelect, installUrl: string | null
   return {
     id: row.id,
     projectId: row.projectId,
+    kind: row.kind,
     owner: row.githubOwner,
     name: row.githubName,
     // 契約要求非空；建立 Repo 時一律寫入 default branch。
     defaultBranch: row.defaultBranch ?? "main",
-    github: { installed, installUrl: installed ? null : installUrl },
+    github: row.kind === "github" ? { installed, installUrl: installed ? null : installUrl } : null,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };
@@ -151,6 +159,11 @@ export async function toTasks(db: Executor, rows: TaskRow[]): Promise<Task[]> {
       .sort(),
     planGateEnabled: row.planGateEnabled,
     createdByMemberId: row.createdByMemberId,
+    // TODO(backend, task-pull-request)：從 pull_requests 查出 PR。
+    pullRequest: null,
+    generalAccess: row.generalAccess,
+    // TODO(backend, task-sharing)：依 Task 角色、一般存取與 Role 算出目前登入者的有效權限。
+    viewerAccess: "edit",
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   }));
@@ -201,6 +214,7 @@ export function toRun(row: typeof runs.$inferSelect): Run {
     delegationMode: row.parentRunId ? row.delegationMode : null,
     agent: row.agent,
     model: row.model,
+    effort: row.effort,
     permissionPolicy: row.permissionPolicy,
     runnerKind: row.target,
     runnerId: row.runnerId,
@@ -227,6 +241,8 @@ export function toRunEvent(row: typeof runEvents.$inferSelect): RunEvent {
     seq: row.seq,
     ts: iso(row.ts),
     event: row.payload as RunEvent["event"],
+    // TODO(backend, event-actor)：依 Event 的 control_id 查出 run_controls.requested_by_member_id。
+    actorMemberId: null,
   };
 }
 
@@ -336,7 +352,7 @@ export function toNeedsYou(
     case "gate":
       return { ...base, kind: "gate", gateKind: context.gateKind ?? "review" };
     case "stopped_run":
-      return { ...base, kind: "stopped_run", reason: String(payload.reason ?? "") };
+      return { ...base, kind: "stopped_run", ...stoppedRunInfo(payload) };
     // W5–7 契約新增，B2 建立這種項目時把問題與 Child Run 放進 payload。
     case "child_question":
       return {
@@ -458,7 +474,47 @@ export function toNotification(
     title: row.title,
     body: row.body,
     url: row.url,
+    // TODO(backend, stopped-run-reason)：建立 run_stopped 通知時寫入 stopped_run。
+    stoppedRun: (row.stoppedRun as StoppedRunInfo | null) ?? null,
     readAt: isoOrNull(row.readAt),
     createdAt: iso(row.createdAt),
   };
+}
+
+/**
+ * Needs You `stopped_run` 的 payload 轉成契約的 StoppedRunInfo。migration 0004 之前建立的項目只有
+ * 中文的 `reason`，依原因文字推回代碼（見 `legacyStoppedRunInfo`）。
+ */
+export function stoppedRunInfo(payload: Record<string, unknown>): StoppedRunInfo {
+  if (typeof payload.reasonCode === "string") {
+    return {
+      reasonCode: payload.reasonCode as StoppedRunReason,
+      attempt: typeof payload.attempt === "number" ? payload.attempt : null,
+      detail: typeof payload.detail === "string" ? payload.detail : null,
+    };
+  }
+  return legacyStoppedRunInfo(String(payload.reason ?? ""), payload.verificationId !== undefined);
+}
+
+/**
+ * migration 0004 之前的原因文字：`Verification 連續失敗 N 次`、`開 PR 失敗：<錯誤>`、
+ * `push 分支失敗：<錯誤>`（或沒有錯誤的 `push 分支失敗`）。冒號後面的錯誤放進 detail；
+ * 解析不到 Verification 的次數時 attempt 為 null（不給錯的數字）。
+ */
+export function legacyStoppedRunInfo(reason: string, hasVerification: boolean): StoppedRunInfo {
+  const separator = reason.indexOf("：");
+  const detail = separator >= 0 ? reason.slice(separator + 1).trim() || null : null;
+  if (hasVerification || reason.startsWith("Verification")) {
+    const count = /連續失敗 (\d+) 次/.exec(reason)?.[1];
+    return {
+      reasonCode: "verification_limit",
+      attempt: count === undefined ? null : Number(count),
+      detail: null,
+    };
+  }
+  if (reason.startsWith("開 PR 失敗"))
+    return { reasonCode: "pr_open_failed", attempt: null, detail };
+  if (reason.startsWith("push 分支失敗"))
+    return { reasonCode: "push_failed", attempt: null, detail };
+  return { reasonCode: "push_failed", attempt: null, detail: reason || null };
 }

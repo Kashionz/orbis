@@ -42,10 +42,12 @@ describe("catalogFromDispatchOptions", () => {
       defaultPermissionPolicy: "auto",
       local: {
         online: true,
+        unavailableReason: null,
         agents: [agent("codex", false, []), agent("claude-code", true, ["claude-opus-5-5"])],
       },
       team: {
         online: true,
+        unavailableReason: null,
         agents: [
           agent("codex", true, ["gpt-5"]),
           agent("claude-code", true, ["claude-sonnet-5-5"]),

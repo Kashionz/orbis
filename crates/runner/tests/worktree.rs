@@ -4,6 +4,7 @@ mod support;
 
 use std::path::Path;
 
+use orbis_protocol::dispatch::DispatchRepo;
 use orbis_protocol::event::RunErrorCode;
 use orbis_protocol::names;
 use orbis_runner::paths;
@@ -248,7 +249,10 @@ async fn base_ref_不存在時以_git_failed_失敗() {
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
     let mut req = request(&remote, "ORB-9", 1, Some(branch("x").as_str()));
-    req.repo.base_ref = "origin/does-not-exist".into();
+    let DispatchRepo::Github { base_ref, .. } = &mut req.repo else {
+        unreachable!("測試的 Repo 是 GitHub Repo")
+    };
+    *base_ref = "origin/does-not-exist".into();
     let err = manager.create(&req).await.unwrap_err();
     assert_eq!(err.code, RunErrorCode::GitFailed);
 }
@@ -259,7 +263,10 @@ async fn repo_名稱不可以跳出_worktree_根目錄() {
     let home = TestHome::new("");
     let manager = WorktreeManager::new(home.home.clone());
     let mut req = request(&remote, "ORB-10", 1, Some(branch("x").as_str()));
-    req.repo.name = "../../etc".into();
+    let DispatchRepo::Github { name, .. } = &mut req.repo else {
+        unreachable!("測試的 Repo 是 GitHub Repo")
+    };
+    *name = "../../etc".into();
     assert_eq!(
         manager.create(&req).await.unwrap_err().code,
         RunErrorCode::WorktreeFailed
@@ -435,8 +442,14 @@ async fn 拒絕會被當成_git_選項的值() {
         assert_eq!(err.code, RunErrorCode::WorktreeFailed, "{branch}");
     }
     let mut req = request(&remote, "ORB-22", 1, Some(branch("ok").as_str()));
-    req.repo.clone_url = "--upload-pack=touch /tmp/pwned".into();
-    req.repo.name = "other".into();
+    let DispatchRepo::Github {
+        clone_url, name, ..
+    } = &mut req.repo
+    else {
+        unreachable!("測試的 Repo 是 GitHub Repo")
+    };
+    *clone_url = "--upload-pack=touch /tmp/pwned".into();
+    *name = "other".into();
     assert_eq!(
         manager.create(&req).await.unwrap_err().code,
         RunErrorCode::WorktreeFailed

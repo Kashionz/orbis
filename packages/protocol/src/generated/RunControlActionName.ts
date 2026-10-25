@@ -3,4 +3,4 @@
 /**
  * [`RunControlAction`] 的 `action` 值。TS 端的 `RUN_CONTROL_ACTIONS` 由此產生。
  */
-export type RunControlActionName = "cancel" | "prompt" | "permission_response" | "gate_result" | "push_branch" | "verify" | "archive" | "restart_preview";
+export type RunControlActionName = "cancel" | "prompt" | "permission_response" | "gate_result" | "push_branch" | "verify" | "archive" | "restart_preview" | "withdraw_prompt" | "set_session_config" | "set_permission_policy" | "switch_agent" | "merge_local";

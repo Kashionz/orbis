@@ -29,7 +29,13 @@ import { useT } from "../../i18n";
 import { relativeTime } from "../run/stream/time-format";
 import { useNow } from "../run/workspace/use-now";
 import { MainColumn } from "../shell/WorkspaceLayout";
-import { groupNeedsYou, groupOf, type NeedsYouGroupKind, targetOf } from "./needs-you-model";
+import {
+  groupNeedsYou,
+  groupOf,
+  type NeedsYouGroupKind,
+  stoppedRunSummary,
+  targetOf,
+} from "./needs-you-model";
 import "../run/scope.css";
 import "../run/stream/stream.css";
 import "./needs-you.css";
@@ -160,7 +166,7 @@ function Row({
       : item.kind === "gate"
         ? n.summary[item.gateKind === "plan" ? "plan_gate" : "review_gate"]
         : item.kind === "stopped_run"
-          ? item.reason
+          ? stoppedRunSummary(item, n)
           : item.question;
 
   return (

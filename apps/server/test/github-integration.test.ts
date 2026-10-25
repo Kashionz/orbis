@@ -72,7 +72,7 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
       apiPath(API_ROUTES.projectRepos, { projectId: project.body.id }),
       { owner: "acme", name: "app" },
     );
-    expect(expectContract(Repo, repo.body).github.installed).toBe(true);
+    expect(expectContract(Repo, repo.body).github?.installed).toBe(true);
     repoId = expectContract(Repo, repo.body).id;
   });
 

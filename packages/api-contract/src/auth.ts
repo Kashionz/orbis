@@ -9,6 +9,8 @@ export const CurrentMember = z.object({
   teamId: z.string(),
   teamName: z.string(),
   role: Role,
+  /** GitHub 帳號主要且已驗證的 email；沒有時為 null。 */
+  email: z.string().nullable(),
 });
 export type CurrentMember = z.infer<typeof CurrentMember>;
 

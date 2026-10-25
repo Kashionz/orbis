@@ -14,19 +14,21 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
-use crate::availability::{AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS};
+use crate::availability::{
+    AgentCapability, DEFAULT_MAX_CONCURRENT_RUNS, LoginHintKind, ModelSource, ModelTag,
+};
 use crate::control::{
     RunControlAction, RunControlActionName, RunControlOutcome, RunControlRejectReason,
 };
 use crate::dispatch::DispatchRejectReason;
 use crate::enums::{
-    AcceptanceCriterionKind, DelegationMode, GateDecision, GateKind, PermissionPolicy,
-    PromptSource, RunOrigin, RunStatus, RunnerKind,
+    AcceptanceCriterionKind, DelegationMode, Effort, GateDecision, GateKind, LocalMergeStrategy,
+    PermissionPolicy, PromptDelivery, PromptSource, RepoKind, RunOrigin, RunStatus, RunnerKind,
 };
 use crate::event::{
     EventEnvelope, EventKind, EventKindName, FileChange, MergeOutcome, PermissionOptionKind,
     PermissionPurpose, PlanEntryStatus, PlanSource, PreviewStopReason, RunErrorCode,
-    ToolCallStatus, ToolKind,
+    RunSettingName, ToolCallStatus, ToolKind,
 };
 use crate::frame::{RunnerToServer, ServerToRunner};
 use crate::names::Names;
@@ -35,9 +37,13 @@ use crate::preview::{
     PREVIEW_MAX_STREAMS_PER_RUN, PREVIEW_MAX_WS_MESSAGE, PreviewDataKind, PreviewResetReason,
     PreviewStreamKind,
 };
+use crate::repo_spec::{RepoSpecCommitFailure, RepoSpecCommitOutcome};
 use crate::sidecar::{
     SIDECAR_EXIT_NEEDS_PAIRING, SIDECAR_EXIT_VERSION_MISMATCH, SIDECAR_FLAG, SidecarCommand,
     SidecarConnectionState, SidecarOutput,
+};
+use crate::terminal::{
+    TERMINAL_IDLE_TIMEOUT_SECS, TERMINAL_MAX_CHUNK, TERMINAL_MAX_PER_RUN, TerminalExitReason,
 };
 use crate::tool::{DelegationPurpose, OrbisToolErrorCode, OrbisToolName};
 use crate::verification::{VerificationEvidence, VerificationKind, VerificationOutcome};
@@ -101,6 +107,10 @@ fn export_roots(cfg: &Config) -> Result<(), ts_rs::ExportError> {
     VerificationOutcome::export_all(cfg)?;
     VerificationEvidence::export_all(cfg)?;
     OrbisToolName::export_all(cfg)?;
+    Effort::export_all(cfg)?;
+    PromptDelivery::export_all(cfg)?;
+    RepoKind::export_all(cfg)?;
+    LocalMergeStrategy::export_all(cfg)?;
     // `#[serde(flatten)]` 的型別會被 ts-rs 內嵌到外層，不會自己產生檔案，所以要列在這裡。
     EventEnvelope::export_all(cfg)?;
     EventKind::export_all(cfg)?;
@@ -108,6 +118,7 @@ fn export_roots(cfg: &Config) -> Result<(), ts_rs::ExportError> {
     RunControlAction::export_all(cfg)?;
     RunControlActionName::export_all(cfg)?;
     RunControlOutcome::export_all(cfg)?;
+    RepoSpecCommitOutcome::export_all(cfg)?;
     // Desktop ↔ Runner 的 sidecar 協定不在 Runner↔Server 的 frame 中，要另外列出。
     SidecarOutput::export_all(cfg)?;
     SidecarCommand::export_all(cfg)?;
@@ -335,6 +346,66 @@ fn value_lists() -> Vec<ValueList> {
             PreviewResetReason::ALL.iter().copied(),
             PreviewResetReason::as_str,
         ),
+        list(
+            "EFFORTS",
+            "Effort",
+            Effort::ALL.iter().copied(),
+            Effort::as_str,
+        ),
+        list(
+            "PROMPT_DELIVERIES",
+            "PromptDelivery",
+            PromptDelivery::ALL.iter().copied(),
+            PromptDelivery::as_str,
+        ),
+        list(
+            "REPO_KINDS",
+            "RepoKind",
+            RepoKind::ALL.iter().copied(),
+            RepoKind::as_str,
+        ),
+        list(
+            "LOCAL_MERGE_STRATEGIES",
+            "LocalMergeStrategy",
+            LocalMergeStrategy::ALL.iter().copied(),
+            LocalMergeStrategy::as_str,
+        ),
+        list(
+            "MODEL_TAGS",
+            "ModelTag",
+            ModelTag::ALL.iter().copied(),
+            ModelTag::as_str,
+        ),
+        list(
+            "MODEL_SOURCES",
+            "ModelSource",
+            ModelSource::ALL.iter().copied(),
+            ModelSource::as_str,
+        ),
+        list(
+            "LOGIN_HINT_KINDS",
+            "LoginHintKind",
+            LoginHintKind::ALL.iter().copied(),
+            LoginHintKind::as_str,
+        ),
+        list(
+            "RUN_SETTING_NAMES",
+            "RunSettingName",
+            RunSettingName::ALL.iter().copied(),
+            RunSettingName::as_str,
+        ),
+        list(
+            "TERMINAL_EXIT_REASONS",
+            "TerminalExitReason",
+            TerminalExitReason::ALL.iter().copied(),
+            TerminalExitReason::as_str,
+        ),
+        list(
+            "REPO_SPEC_COMMIT_FAILURES",
+            "RepoSpecCommitFailure",
+            RepoSpecCommitFailure::ALL.iter().copied(),
+            RepoSpecCommitFailure::as_str,
+        ),
     ]
 }
 
@@ -419,6 +490,24 @@ export const PREVIEW_DATA_HEADER_LEN = {PREVIEW_DATA_HEADER_LEN};"
         out,
         "
 export const PREVIEW_MAX_WS_MESSAGE = {PREVIEW_MAX_WS_MESSAGE};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const TERMINAL_MAX_PER_RUN = {TERMINAL_MAX_PER_RUN};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const TERMINAL_IDLE_TIMEOUT_SECS = {TERMINAL_IDLE_TIMEOUT_SECS};"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "
+export const TERMINAL_MAX_CHUNK = {TERMINAL_MAX_CHUNK};"
     )
     .unwrap();
     // Preview binary 訊息第一個 byte 的值（見 crates/orbis-protocol/src/preview.rs）。
