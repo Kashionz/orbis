@@ -9,7 +9,6 @@ import { useRef, useState } from "react";
 import { type MenuGroup, Popover } from "../../../components/Popover";
 import { useToast } from "../../../components/Toast";
 import { useT } from "../../../i18n";
-import { isFeatureEnabled } from "../../../lib/features";
 import { useNow } from "../workspace/use-now";
 import { contextUsage, elapsedMs, formatCost, formatElapsed, shortenPath } from "./run-meter";
 
@@ -80,7 +79,6 @@ export function EnvBar({ run, usage, live, onOpenTerminalTab }: EnvBarProps) {
     }
   }
 
-  const explorerReady = isFeatureEnabled("revealInExplorer") && bridge !== null;
   const groups: MenuGroup<PathAction>[] = [
     {
       title: path ?? "",
@@ -93,7 +91,8 @@ export function EnvBar({ run, usage, live, onOpenTerminalTab }: EnvBarProps) {
                 value: "explorer" as const,
                 label: c.openInExplorer,
                 icon: <FolderOpen {...ICON} />,
-                disabled: !explorerReady,
+                // TODO(backend, reveal-in-explorer)：Desktop bridge 加上方法後開放
+                disabled: true,
                 disabledReason: t.common.notAvailableYet,
               },
             ]

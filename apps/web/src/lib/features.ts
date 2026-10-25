@@ -29,8 +29,6 @@ export const FEATURE_NAMES = [
   "taskPullRequest",
   /** 看板每列的 Run 與驗收進度一次取得（沒有時逐 Task 取得）。 */
   "boardSummary",
-  /** 在檔案總管開啟 Worktree（Desktop bridge 還沒有）。 */
-  "revealInExplorer",
 ] as const;
 export type FeatureName = (typeof FEATURE_NAMES)[number];
 

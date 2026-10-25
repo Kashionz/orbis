@@ -35,8 +35,9 @@ export async function drop(page: Page): Promise<void> {
   await page.mouse.up();
 }
 
+/** 看板分欄檢視中的一欄。 */
 export function column(page: Page, status: string): Locator {
-  return page.locator(`[data-status="${status}"].board-column`);
+  return page.locator(`[data-status="${status}"].bd-column`);
 }
 
 export function card(page: Page, taskKey: string): Locator {
@@ -51,12 +52,21 @@ export async function mockState<T = Record<string, unknown>>(page: Page): Promis
   );
 }
 
-/** 從 Task 頁派工（預設選項），等到進入 Run 頁。 */
+/** 在 Task 的工作區派工（預設選項），等到工作區切到新的 Run。 */
 export async function dispatchTask(page: Page, taskKey: string): Promise<void> {
   await page.goto(`/tasks/${taskKey}`);
-  await page.getByRole("button", { name: "派工" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "派工" }).click();
-  await expect(page).toHaveURL(/\/runs\/run-\d+$/);
+  await page.getByRole("form", { name: "派工" }).getByRole("button", { name: "派工" }).click();
+  await expect(page).toHaveURL(new RegExp(`/tasks/${taskKey}\\?run=run-\\d+$`));
+}
+
+/** 工作區的事件串流。 */
+export function stream(page: Page): Locator {
+  return page.getByTestId("timeline");
+}
+
+/** 事件串流中等待回覆的權限請求。 */
+export function permissionRow(page: Page): Locator {
+  return stream(page).locator(".st-perm").last();
 }
 
 /** 在頁面中呼叫 API（經過 MSW 假後端），用來準備測試資料。 */
@@ -82,12 +92,11 @@ export async function apiCall(
   );
 }
 
-/** 允許時間軸上等待中的權限請求。 */
+/** 允許事件串流中等待中的權限請求。 */
 export async function allowPermission(page: Page): Promise<void> {
-  await page
-    .getByTestId("timeline")
-    .locator('.event-permission[data-resolved="false"]')
-    .getByRole("button", { name: "允許" })
+  await stream(page)
+    .locator('.st-perm[data-resolved="false"]')
+    .getByRole("button", { name: "允許一次" })
     .click();
 }
 

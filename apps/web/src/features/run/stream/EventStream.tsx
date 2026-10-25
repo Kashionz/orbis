@@ -24,12 +24,10 @@ import {
   VerificationRow,
 } from "./StreamRows";
 import { useStreamEnv } from "./stream-context";
-import type { StreamItem, StreamTail } from "./stream-model";
+import { STREAM_WINDOW, type StreamItem, type StreamTail } from "./stream-model";
 import { ToolGroupView } from "./ToolGroupView";
 import "./stream.css";
 
-/** 一次顯示的項目數。 */
-export const STREAM_WINDOW = 300;
 /** 距離底部多少 px 以內算是「在底部」。 */
 const FOLLOW_THRESHOLD_PX = 48;
 /** focus 的項目標示多久。 */

@@ -116,6 +116,9 @@ export interface StreamTail {
   turnSeconds: number;
 }
 
+/** 事件串流一次顯示的項目數；上方的「載入較早」每次多顯示這麼多。 */
+export const STREAM_WINDOW = 300;
+
 const LIVE_STATUSES: readonly RunStatus[] = ["starting", "running", "verifying"];
 
 /** Run 正在執行（Agent 或 Verification 在動）。 */
