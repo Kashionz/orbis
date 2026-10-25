@@ -5,4 +5,9 @@ import type { CredentialInfo } from "./CredentialInfo";
 /**
  * 這台 Runner 能跑哪些 Agent，以及各 Credential 的並行狀況（Runner→Server）。
  */
-export type AgentAvailability = { agents: Array<AgentInfo>, credentials: Array<CredentialInfo>, };
+export type AgentAvailability = { agents: Array<AgentInfo>, credentials: Array<CredentialInfo>, 
+/**
+ * `runner.toml` 中 `[repos.<key>]` 的 key（clone URL 或 Repo 名稱），不含本機路徑（協定版本 3）。
+ * Server 據此判斷哪台 Local Runner 能接本機 Repo 的 Run：本機 Repo 以名稱比對。
+ */
+mapped_repos: Array<string>, };

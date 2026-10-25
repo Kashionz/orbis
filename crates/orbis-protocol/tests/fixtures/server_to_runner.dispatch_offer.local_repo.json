@@ -1,0 +1,36 @@
+{
+  "type": "dispatch_offer",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "expires_at": "2026-10-23T08:00:30.000Z",
+  "task": {
+    "task_id": "0192f3a0-0000-7000-8000-0000000000f1",
+    "task_key": "ORB-12",
+    "title": "新增登入頁"
+  },
+  "run_seq": 1,
+  "repo": {
+    "kind": "local",
+    "name": "notes",
+    "default_branch": "main",
+    "base_ref": "main"
+  },
+  "branch": "orbis/ORB-12-add-login",
+  "agent": "claude-code",
+  "model": null,
+  "permission_policy": "auto",
+  "prompt": [
+    {
+      "type": "text",
+      "text": "依照 Spec 實作登入頁。"
+    },
+    {
+      "type": "resource_link",
+      "uri": "docs/specs/login.md",
+      "name": "login.md"
+    }
+  ],
+  "plan_gate": true,
+  "delegation": null,
+  "last_event_seq": 0
+}

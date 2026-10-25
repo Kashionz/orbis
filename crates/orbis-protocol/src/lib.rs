@@ -17,7 +17,9 @@ pub mod frame;
 pub mod ids;
 pub mod names;
 pub mod preview;
+pub mod repo_spec;
 pub mod sidecar;
+pub mod terminal;
 pub mod tool;
 pub mod typescript;
 pub mod verification;
@@ -27,7 +29,9 @@ pub mod verification;
 ///
 /// - 1：M1（W2–4）。
 /// - 2：W5–7 新增 Verification、Orbis MCP 工具呼叫、Preview 通道等 frame 與 Event。
-pub const PROTOCOL_VERSION: u32 = 2;
+/// - 3：新工作區介面的後端缺口：執行中傳訊息、切換設定與 Agent、本機 Repo、互動式終端機、
+///   模型目錄等（`AgentInfo.models` 與 `DispatchOffer.repo` 的形狀改變）。
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Server 上給 Runner 連線的 WebSocket 路徑，例如 `ws://localhost:4000/runner`。
 pub const RUNNER_WS_PATH: &str = "/runner";

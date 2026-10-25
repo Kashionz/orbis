@@ -11,6 +11,10 @@ use crate::event::{EventAck, EventFrame};
 use crate::preview::{
     PreviewEnd, PreviewOpen, PreviewReset, PreviewResponse, PreviewWindow, PreviewWsClose,
 };
+use crate::repo_spec::{RepoSpecCommit, RepoSpecCommitResult};
+use crate::terminal::{
+    TerminalClose, TerminalExited, TerminalInput, TerminalOpen, TerminalOutput, TerminalResize,
+};
 use crate::tool::{ToolCallFrame, ToolResultFrame};
 
 /// Runner 送給 Server 的 frame。
@@ -32,6 +36,11 @@ pub enum RunnerToServer {
     PreviewEnd(PreviewEnd),
     PreviewReset(PreviewReset),
     PreviewWsClose(PreviewWsClose),
+    // 互動式終端機（協定版本 3），見 [`crate::terminal`]。
+    TerminalOutput(TerminalOutput),
+    TerminalExited(TerminalExited),
+    /// 本機 Repo Spec 提交的結果（協定版本 3），見 [`crate::repo_spec`]。
+    RepoSpecCommitResult(RepoSpecCommitResult),
 }
 
 /// Server 送給 Runner 的 frame。
@@ -52,6 +61,13 @@ pub enum ServerToRunner {
     PreviewEnd(PreviewEnd),
     PreviewReset(PreviewReset),
     PreviewWsClose(PreviewWsClose),
+    // 互動式終端機（協定版本 3），見 [`crate::terminal`]。
+    TerminalOpen(TerminalOpen),
+    TerminalInput(TerminalInput),
+    TerminalResize(TerminalResize),
+    TerminalClose(TerminalClose),
+    /// 本機 Repo Spec 提交（協定版本 3），見 [`crate::repo_spec`]。
+    RepoSpecCommit(RepoSpecCommit),
 }
 
 impl RunnerToServer {
@@ -71,6 +87,9 @@ impl RunnerToServer {
             Self::PreviewEnd(_) => "preview_end",
             Self::PreviewReset(_) => "preview_reset",
             Self::PreviewWsClose(_) => "preview_ws_close",
+            Self::TerminalOutput(_) => "terminal_output",
+            Self::TerminalExited(_) => "terminal_exited",
+            Self::RepoSpecCommitResult(_) => "repo_spec_commit_result",
         }
     }
 }
@@ -90,6 +109,11 @@ impl ServerToRunner {
             Self::PreviewEnd(_) => "preview_end",
             Self::PreviewReset(_) => "preview_reset",
             Self::PreviewWsClose(_) => "preview_ws_close",
+            Self::TerminalOpen(_) => "terminal_open",
+            Self::TerminalInput(_) => "terminal_input",
+            Self::TerminalResize(_) => "terminal_resize",
+            Self::TerminalClose(_) => "terminal_close",
+            Self::RepoSpecCommit(_) => "repo_spec_commit",
         }
     }
 }

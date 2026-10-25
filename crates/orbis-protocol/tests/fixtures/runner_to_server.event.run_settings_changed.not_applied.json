@@ -1,0 +1,16 @@
+{
+  "type": "event",
+  "dispatch_id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "run_id": "0192f3a0-0000-7000-8000-0000000000aa",
+  "seq": 25,
+  "ts": "2026-10-23T08:00:00.000Z",
+  "kind": "run_settings_changed",
+  "control_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "model": null,
+  "effort": null,
+  "permission_policy": null,
+  "not_applied": [
+    "effort"
+  ],
+  "message": "Agent 沒有 thought_level 選項"
+}

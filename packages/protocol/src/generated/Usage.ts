@@ -3,6 +3,7 @@ import type { Cost } from "./Cost";
 
 /**
  * Run 的用量。每次都送 **Run 開始至今的累計值**，取代前一次的內容。
+ * 換 Agent（`agent_switched`）之後改為新 Agent 這一段開始至今的累計值（協定版本 3）。
  * Agent 沒有回報的項目為 `null`。單位都是 token，`cost` 除外。
  * 彈性：各 Agent 能回報的項目差異很大，之後可能增加欄位。
  */

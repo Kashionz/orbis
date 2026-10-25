@@ -1,5 +1,6 @@
 {
   "type": "agent_availability",
   "agents": [],
-  "credentials": []
+  "credentials": [],
+  "mapped_repos": []
 }

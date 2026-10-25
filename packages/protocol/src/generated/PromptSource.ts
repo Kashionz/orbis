@@ -3,4 +3,4 @@
 /**
  * 送給 Agent 的 prompt 的來源，UI 與 log 用來標示。
  */
-export type PromptSource = "user" | "plan_gate" | "review_gate" | "verification_retry" | "feedback_review" | "feedback_ci" | "child_question";
+export type PromptSource = "user" | "plan_gate" | "review_gate" | "verification_retry" | "feedback_review" | "feedback_ci" | "child_question" | "handoff";

@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::enums::{
-    AcceptanceCriterionKind, DelegationMode, PermissionPolicy, PromptSource, RunOrigin, wire_enum,
+    AcceptanceCriterionKind, DelegationMode, Effort, PermissionPolicy, PromptSource, RepoKind,
+    RunOrigin, wire_enum,
 };
 use crate::event::ContentBlock;
 use crate::ids::{AcceptanceCriterionId, DispatchId, RunId, TaskId, Timestamp};
@@ -73,6 +74,13 @@ pub struct DispatchOffer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub prompt_source: Option<PromptSource>,
+
+    // 以下是協定版本 3 新增的欄位，缺少時視為括號中的值。
+    /// 推理強度（缺少＝Agent 的預設值）。Runner 在 session 建立後以 config option 套用，
+    /// 並送 `run_settings_changed`（`control_id` 為 `null`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<Effort>,
 }
 
 /// DispatchOffer 中的一條 Acceptance Criterion。
@@ -109,18 +117,69 @@ pub struct DispatchTask {
     pub title: String,
 }
 
-/// DispatchOffer 中 Repo 的資訊。
+/// DispatchOffer 中 Repo 的資訊，以 `kind` 區分（協定版本 3）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-pub struct DispatchRepo {
-    /// Repo 名稱（不含 owner），用於 Worktree 路徑 `<repo>`（§6.2）。
-    /// 彈性：不同 owner 的同名 Repo 會共用目錄，之後可能改成帶 owner。
-    pub name: String,
-    /// `git clone` 用的網址。Runner 用本機的 git 認證存取，Server 不提供 token。
-    pub clone_url: String,
-    pub default_branch: String,
-    /// Run 從這個 ref 開出 Worktree，預設是 `origin/<default_branch>`。
-    /// `branch` 模式的 Child Run 改從父 Run 當下的 HEAD 開出，忽略這個欄位。
-    pub base_ref: String,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DispatchRepo {
+    /// GitHub repository。
+    Github {
+        /// Repo 名稱（不含 owner），用於 Worktree 路徑 `<repo>`（§6.2）。
+        /// 彈性：不同 owner 的同名 Repo 會共用目錄，之後可能改成帶 owner。
+        name: String,
+        /// `git clone` 用的網址。Runner 用本機的 git 認證存取，Server 不提供 token。
+        clone_url: String,
+        default_branch: String,
+        /// Run 從這個 ref 開出 Worktree，預設是 `origin/<default_branch>`。
+        /// `branch` 模式的 Child Run 改從父 Run 當下的 HEAD 開出，忽略這個欄位。
+        base_ref: String,
+    },
+    /// 本機 Repo：Runner 只依 `runner.toml` 的 `[repos.<name>]` 找 checkout，找不到時以
+    /// `repo_unavailable` 拒絕。不 clone、不 fetch remote。
+    Local {
+        /// Repo 名稱，即 `runner.toml` 的 key，也用於 Worktree 路徑。
+        name: String,
+        /// 基準分支，核准後合併到這裡（RunControl `merge_local`）。
+        default_branch: String,
+        /// Run 從這個 ref 開出 Worktree，即基準分支本身。
+        base_ref: String,
+    },
+}
+
+impl DispatchRepo {
+    pub const fn kind(&self) -> RepoKind {
+        match self {
+            Self::Github { .. } => RepoKind::Github,
+            Self::Local { .. } => RepoKind::Local,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Github { name, .. } | Self::Local { name, .. } => name,
+        }
+    }
+
+    /// GitHub Repo 的 clone URL；本機 Repo 為 `None`。
+    pub fn clone_url(&self) -> Option<&str> {
+        match self {
+            Self::Github { clone_url, .. } => Some(clone_url),
+            Self::Local { .. } => None,
+        }
+    }
+
+    pub fn default_branch(&self) -> &str {
+        match self {
+            Self::Github { default_branch, .. } | Self::Local { default_branch, .. } => {
+                default_branch
+            }
+        }
+    }
+
+    pub fn base_ref(&self) -> &str {
+        match self {
+            Self::Github { base_ref, .. } | Self::Local { base_ref, .. } => base_ref,
+        }
+    }
 }
 
 /// Child Run 的 Delegation 資訊（ARCHITECTURE §9）。
@@ -170,6 +229,8 @@ wire_enum! {
         Duplicate => "duplicate",
         /// Offer 要求這台 Runner 不支援的功能，例如 Delegation 模式。
         Unsupported => "unsupported",
+        /// 本機 Repo 在 `runner.toml` 中沒有對應的 checkout（協定版本 3）。
+        RepoUnavailable => "repo_unavailable",
         Internal => "internal",
     }
 }

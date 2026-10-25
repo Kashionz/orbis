@@ -1,0 +1,9 @@
+{
+  "type": "repo_spec_commit",
+  "commit_id": "0192f3a0-0000-7000-8000-0000000000b2",
+  "repo": "notes",
+  "base_branch": "main",
+  "path": "docs/specs/login.md",
+  "content": "# 登入\n",
+  "message": "docs: 更新登入的 Spec\n\nCo-authored-by: Alice <alice@example.com>"
+}

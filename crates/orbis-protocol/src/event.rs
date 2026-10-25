@@ -16,9 +16,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::enums::{GateKind, PromptSource, RunStatus, wire_enum};
+use crate::enums::{Effort, GateKind, PermissionPolicy, PromptSource, RunStatus, wire_enum};
 use crate::ids::{
-    BlobId, DispatchId, PermissionRequestId, RunId, Timestamp, ToolCallId, VerificationId,
+    BlobId, DispatchId, PermissionRequestId, RunControlId, RunId, Timestamp, ToolCallId,
+    VerificationId,
 };
 use crate::verification::{VerificationOutcome, VerificationResult};
 
@@ -83,6 +84,11 @@ pub enum EventKind {
         request_id: PermissionRequestId,
         /// 被選擇的 [`PermissionOption::option_id`]；請求被取消時為 `null`。
         selected_option_id: Option<String>,
+        /// 人回覆時，觸發它的 RunControl `permission_response` 的 `control_id`（協定版本 3），
+        /// Server 據此找出回覆的人。依 Permission Policy 自動回覆、被取消或協定版本 2 的 Runner 為 `null`。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        control_id: Option<RunControlId>,
     },
     /// Agent 目前的 plan。每次都送完整清單，取代前一次的內容（同 ACP `plan`）。
     Plan { entries: Vec<PlanEntry> },
@@ -167,9 +173,15 @@ pub enum EventKind {
     /// Runner 建立或恢復 ACP session 後回報 session id。Feedback Loop 的新 Run 以此 resume。
     AgentSession { session_id: String },
     /// Runner 把一個 prompt 交給 Agent（包含第一個 prompt），Run 頁用來重播。
+    /// 排隊的訊息合併成一個回合送出時，每則訊息各送一筆（各自的 `prompt` 與 `control_id`）。
     PromptSubmitted {
         prompt: Vec<ContentBlock>,
         source: PromptSource,
+        /// 觸發它的 RunControl `prompt` 的 `control_id`（協定版本 3），Server 據此找出送出的人。
+        /// DispatchOffer 的第一個 prompt、Runner 自己產生的 prompt（例如交接 prompt）為 `null`。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        control_id: Option<RunControlId>,
     },
     /// Preview 的 dev server 停止了（ARCHITECTURE §13）。Run 結束時一併停止不會送這個 Event。
     PreviewStopped {
@@ -178,6 +190,48 @@ pub enum EventKind {
         exit_code: Option<i32>,
         /// 輸出的最後一段（已遮蔽 secret）。
         output: String,
+    },
+
+    // 以下是協定版本 3 新增的 kind。
+    /// 回合中送出的 prompt 已排進佇列，回合結束後才交給 Agent（RunControl `prompt` 的 `queue`）。
+    PromptQueued {
+        control_id: RunControlId,
+        prompt: Vec<ContentBlock>,
+    },
+    /// 排隊中的 prompt 被收回（RunControl `withdraw_prompt`），不會送出。
+    PromptWithdrawn { control_id: RunControlId },
+    /// 模型、推理強度或 Permission Policy 已生效（RunControl `set_session_config`、
+    /// `set_permission_policy`，或派工時的 `effort`）。有值的欄位是生效後的新值，`null` 表示沒有改變。
+    RunSettingsChanged {
+        /// 觸發的 RunControl；派工時的設定為 `null`。
+        control_id: Option<RunControlId>,
+        model: Option<String>,
+        effort: Option<Effort>,
+        permission_policy: Option<PermissionPolicy>,
+        /// 要求了但 Agent 不支援、沒有套用的項目；全部套用時為空陣列。
+        not_applied: Vec<RunSettingName>,
+        /// `not_applied` 不是空的時候給人看的說明，例如 Agent 回報的錯誤；其他為 `null`。
+        message: Option<String>,
+    },
+    /// 已換成另一個 Agent（RunControl `switch_agent`）。之後的 `usage` 是新 Agent 這一段從 0 開始的累計值，
+    /// Server 依此把用量與費用分段記錄。新的 session 另以 `agent_session` 回報。
+    AgentSwitched {
+        /// 換之前的 Agent Profile id。
+        from: String,
+        /// 換之後的 Agent Profile id。
+        to: String,
+        /// 新 Agent 使用的 model；用 Agent 的預設值時為 `null`。
+        model: Option<String>,
+        control_id: Option<RunControlId>,
+    },
+    /// 本機 Repo 的 Run 分支已合併到本機 checkout 的基準分支（RunControl `merge_local`）。
+    LocalMerged {
+        /// 合併後基準分支的 HEAD（40 個十六進位字元）。
+        commit_sha: String,
+        /// 基準分支的名稱。
+        base_branch: String,
+        /// 是否已 push 基準分支（`push_base` 為 `true` 而且 push 成功）。
+        pushed: bool,
     },
 }
 
@@ -205,6 +259,11 @@ wire_enum! {
         AgentSession => "agent_session",
         PromptSubmitted => "prompt_submitted",
         PreviewStopped => "preview_stopped",
+        PromptQueued => "prompt_queued",
+        PromptWithdrawn => "prompt_withdrawn",
+        RunSettingsChanged => "run_settings_changed",
+        AgentSwitched => "agent_switched",
+        LocalMerged => "local_merged",
     }
 }
 
@@ -233,7 +292,21 @@ impl EventKind {
             Self::AgentSession { .. } => EventKindName::AgentSession,
             Self::PromptSubmitted { .. } => EventKindName::PromptSubmitted,
             Self::PreviewStopped { .. } => EventKindName::PreviewStopped,
+            Self::PromptQueued { .. } => EventKindName::PromptQueued,
+            Self::PromptWithdrawn { .. } => EventKindName::PromptWithdrawn,
+            Self::RunSettingsChanged { .. } => EventKindName::RunSettingsChanged,
+            Self::AgentSwitched { .. } => EventKindName::AgentSwitched,
+            Self::LocalMerged { .. } => EventKindName::LocalMerged,
         }
+    }
+}
+
+wire_enum! {
+    /// 執行中可以切換的設定（`run_settings_changed` 的 `not_applied`）。
+    RunSettingName {
+        Model => "model",
+        Effort => "effort",
+        PermissionPolicy => "permission_policy",
     }
 }
 
@@ -452,6 +525,7 @@ wire_enum! {
 }
 
 /// Run 的用量。每次都送 **Run 開始至今的累計值**，取代前一次的內容。
+/// 換 Agent（`agent_switched`）之後改為新 Agent 這一段開始至今的累計值（協定版本 3）。
 /// Agent 沒有回報的項目為 `null`。單位都是 token，`cost` 除外。
 /// 彈性：各 Agent 能回報的項目差異很大，之後可能增加欄位。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

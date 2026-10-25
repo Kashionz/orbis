@@ -3,4 +3,4 @@
 /**
  * Runner 拒絕 Dispatch 的理由。
  */
-export type DispatchRejectReason = "concurrency_limit" | "rate_limited" | "agent_unavailable" | "expired" | "duplicate" | "unsupported" | "internal";
+export type DispatchRejectReason = "concurrency_limit" | "rate_limited" | "agent_unavailable" | "expired" | "duplicate" | "unsupported" | "repo_unavailable" | "internal";

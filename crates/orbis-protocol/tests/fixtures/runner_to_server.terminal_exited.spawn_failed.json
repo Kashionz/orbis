@@ -1,0 +1,7 @@
+{
+  "type": "terminal_exited",
+  "terminal_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "code": null,
+  "reason": "spawn_failed",
+  "message": "找不到 pwsh"
+}

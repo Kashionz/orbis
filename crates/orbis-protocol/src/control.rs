@@ -13,8 +13,12 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::enums::{GateDecision, GateKind, PromptSource, wire_enum};
-use crate::event::ContentBlock;
+use crate::dispatch::DispatchCriterion;
+use crate::enums::{
+    Effort, GateDecision, GateKind, LocalMergeStrategy, PermissionPolicy, PromptDelivery,
+    PromptSource, wire_enum,
+};
+use crate::event::{ContentBlock, TextBody};
 use crate::ids::{DispatchId, PermissionRequestId, RunControlId, RunId};
 use crate::verification::VerificationRequest;
 
@@ -36,13 +40,25 @@ pub enum RunControlAction {
     /// 中止 Run：結束整個程序樹，Run 進入 `canceled`。處理完回 `applied`。
     Cancel,
     /// 送出後續 prompt，在**同一個 session** 繼續（例如 Review Gate 退回的行內留言、
-    /// Verification 失敗的原因、在 Preview 上的留言）。Agent 接收後回 `applied`。
+    /// Verification 失敗的原因、在 Preview 上的留言、執行中人傳給 Agent 的訊息）。
+    ///
+    /// - Gate 等待時：照舊立即交給 Agent，`delivery` 不適用。
+    /// - 回合中或等待權限回覆時（協定版本 3）：依 `delivery` 排隊或中斷。排隊時 Runner 先送
+    ///   `prompt_queued`，回合結束後不進入 Gate，直接以排隊的訊息開始下一個回合（多則依序以空行
+    ///   合併成一則），並對每則排隊的訊息各送一筆帶自己 `control_id` 的 `prompt_submitted`。
+    ///   `interrupt` 先 `session/cancel` 目前的回合，回合結束後立即送出（接在已排隊的訊息之後）。
+    ///
+    /// Runner 收下（交給 Agent 或排進佇列）後回 `applied`。
     Prompt {
         prompt: Vec<ContentBlock>,
         /// prompt 的來源；缺少時視為 `user`（W5–7 之前的 Server 不會送這個欄位）。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         source: Option<PromptSource>,
+        /// 回合中送出時的處理方式；缺少時視為 `queue`（協定版本 3）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        delivery: Option<PromptDelivery>,
     },
     /// 回覆 `permission_request` Event。轉給 Agent 後回 `applied`。
     PermissionResponse {
@@ -69,6 +85,81 @@ pub enum RunControlAction {
     /// 重新啟動 Preview 的 dev server（ARCHITECTURE §13）。重新啟動後回 `applied`，
     /// 就緒時照常送 `preview_ready`。這個 Run 沒有設定 Preview 時回 `rejected`（`invalid_state`）。
     RestartPreview,
+
+    // 以下是協定版本 3 新增的動作。
+    /// 收回還在排隊的 prompt（`prompt_control_id` 是當初 `prompt` 的 `control_id`）。
+    /// 收回後送 `prompt_withdrawn` 並回 `applied`；已經交給 Agent 或不在佇列中時回
+    /// `rejected`（`invalid_state`）。欄位不叫 `control_id`，因為會和 [`RunControl::control_id`] 撞名。
+    WithdrawPrompt { prompt_control_id: RunControlId },
+    /// 切換模型與推理強度（至少一個有值）。Runner 收下就回 `applied`，在下一個回合開始前
+    /// （閒置時立即）以 ACP `session/set_config_option` 套用，套用後送 `run_settings_changed`；
+    /// Agent 不支援的項目列在該 Event 的 `not_applied`。
+    SetSessionConfig {
+        model: Option<String>,
+        effort: Option<Effort>,
+    },
+    /// 換掉 Run 的 Permission Policy，從下一個權限請求開始套用。處理後送
+    /// `run_settings_changed` 並回 `applied`。
+    SetPermissionPolicy { policy: PermissionPolicy },
+    /// 換 Agent 並接續作業（同一個 Run、同一個 Worktree）。只在回合之間生效：回合中收到時
+    /// 和排隊的 prompt 一樣等回合結束。Runner 結束舊 Agent 的 session，以新的 Agent 開新的 session，
+    /// 依新 Agent 的 Agent Profile 重新套用 session mode，送出交接 prompt（來源 `handoff`），
+    /// 並送 `agent_switched`。Child Run 不受影響。收下就回 `applied`；這台 Runner 沒有這個 Agent
+    /// 時回 `rejected`（`failed`）。
+    SwitchAgent {
+        /// 新的 Agent Profile id。
+        agent: String,
+        /// 新 Agent 的 model；`null` 表示用 Agent 的預設值。
+        model: Option<String>,
+        effort: Option<Effort>,
+        /// Server 選定的 Credential（同 DispatchOffer 的 `credential`）；`null` 時由 Runner 決定。
+        credential: Option<String>,
+        /// 交接 prompt 中只有 Server 知道的部分，見 [`HandoffContext`]。
+        handoff: HandoffContext,
+    },
+    /// 本機 Repo 核准後，把 Run 的分支合併到本機 checkout 的基準分支（ARCHITECTURE §5）。
+    /// 和 `push_branch` 一樣先結束 Agent、自動 commit 未提交的變更。
+    /// - 基準分支沒有在 checkout 中簽出：在暫時的 worktree 中合併。
+    /// - 已簽出且工作目錄乾淨：直接在 checkout 中合併。
+    /// - 工作目錄有未 commit 的變更，或合併衝突：不合併（衝突時還原），回 `rejected`（`failed`），
+    ///   `message` 是 git 的輸出（Server 據此讓 Run 停下，`local_merge_blocked`）。
+    ///
+    /// 成功後送 `local_merged` 並回 `applied`。`push_base` 為 `true` 而且 checkout 有 `origin` 時，
+    /// 合併後 push 基準分支；push 失敗不影響合併的結果，另送非 fatal 的 `error`（`git_failed`）。
+    MergeLocal {
+        strategy: LocalMergeStrategy,
+        push_base: bool,
+    },
+}
+
+/// 換 Agent 的交接 prompt 中只有 Server 知道的部分（ARCHITECTURE §7、ADR-0016）。
+///
+/// Runner 依固定格式組出交接 prompt，依序是：
+/// 1. Task 的規格與驗收條件（這裡的 `task_spec`、`acceptance_criteria`）
+/// 2. 人送出的所有 prompt（依時間，取自 Run 的 `prompt_submitted`）
+/// 3. Agent 每個回合最後的回覆（`final_message`）
+/// 4. 目前的計畫（最新的 `plan_proposed`／`plan`）
+/// 5. diff 摘要：改了哪些檔案、各增減幾行（Runner 自己從 Worktree 算出）
+/// 6. 還沒處理的審查留言（這裡的 `review_comments`）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct HandoffContext {
+    /// Task 目前的規格：Task 描述，或連結的 Repo Spec 內容（markdown）。
+    pub task_spec: TextBody,
+    pub acceptance_criteria: Vec<DispatchCriterion>,
+    /// 目前 Review Gate 上還沒送回 Agent 的留言；沒有時為空陣列。
+    pub review_comments: Vec<HandoffReviewComment>,
+}
+
+/// 交接 prompt 中一則還沒處理的審查留言。diff 行內留言有 `path` 與 `line`；Preview 留言有 `url`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct HandoffReviewComment {
+    /// 相對於 Worktree 根目錄、以 `/` 分隔的路徑。
+    pub path: Option<String>,
+    /// 從 1 開始的行號。
+    pub line: Option<u32>,
+    /// 留言時 Preview 的網址。
+    pub url: Option<String>,
+    pub body: String,
 }
 
 wire_enum! {
@@ -82,6 +173,11 @@ wire_enum! {
         Verify => "verify",
         Archive => "archive",
         RestartPreview => "restart_preview",
+        WithdrawPrompt => "withdraw_prompt",
+        SetSessionConfig => "set_session_config",
+        SetPermissionPolicy => "set_permission_policy",
+        SwitchAgent => "switch_agent",
+        MergeLocal => "merge_local",
     }
 }
 
@@ -97,6 +193,11 @@ impl RunControlAction {
             Self::Verify(_) => RunControlActionName::Verify,
             Self::Archive => RunControlActionName::Archive,
             Self::RestartPreview => RunControlActionName::RestartPreview,
+            Self::WithdrawPrompt { .. } => RunControlActionName::WithdrawPrompt,
+            Self::SetSessionConfig { .. } => RunControlActionName::SetSessionConfig,
+            Self::SetPermissionPolicy { .. } => RunControlActionName::SetPermissionPolicy,
+            Self::SwitchAgent { .. } => RunControlActionName::SwitchAgent,
+            Self::MergeLocal { .. } => RunControlActionName::MergeLocal,
         }
     }
 }
@@ -115,7 +216,7 @@ pub struct RunControlResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum RunControlOutcome {
-    /// `push_branch` 以外的動作處理成功。
+    /// `push_branch` 以外的動作處理成功（`merge_local` 的合併結果另以 `local_merged` 回報）。
     Applied,
     /// `push_branch` 成功。
     BranchPushed {

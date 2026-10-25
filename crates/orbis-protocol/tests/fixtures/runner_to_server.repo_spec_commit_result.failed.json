@@ -1,0 +1,7 @@
+{
+  "type": "repo_spec_commit_result",
+  "commit_id": "0192f3a0-0000-7000-8000-0000000000b2",
+  "outcome": "failed",
+  "reason": "working_tree_dirty",
+  "message": "main 已簽出而且有未 commit 的變更"
+}
