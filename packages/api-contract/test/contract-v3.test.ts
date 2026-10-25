@@ -80,7 +80,7 @@ describe("API 版本 2 與協定一致的列舉", () => {
     expectValid(ApiError, {
       error: "repo_not_connected",
       message: "GitHub App 沒有安裝在這個 repo 上",
-      installUrl: "https://github.com/apps/orbis/installations/new",
+      installUrl: "https://github.com/apps/acme-app/installations/new",
     });
   });
 
@@ -351,7 +351,9 @@ describe("local-repo 與 repo-connect-github", () => {
       expect(LocalRepoName.safeParse(name).success, name).toBe(false);
     }
     expectInvalid(CreateRepoInput, { kind: "local", owner: "acme", name: "notes" });
-    expectInvalid(CreateRepoInput, { owner: "acme", name: "web" });
+    // 省略 kind 時是 GitHub Repo（和 API 版本 1 相容）
+    expect(CreateRepoInput.parse({ owner: "acme", name: "web" }).kind).toBe("github");
+    expectInvalid(CreateRepoInput, { kind: "local", name: "notes", defaultBranch: "--x" });
   });
 
   it("Project 的本機合併設定", () => {

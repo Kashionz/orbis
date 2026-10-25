@@ -168,7 +168,7 @@ describe("Project 與 Repo 的輸入", () => {
 
   it("預設分支可以不填（App 已安裝時由 Server 從 GitHub 讀取）", () => {
     expect(
-      CreateRepoInput.parse({ kind: "github", owner: "Kashionz", name: "orbis" }).defaultBranch,
+      CreateRepoInput.parse({ owner: "Kashionz", name: "orbis" }).defaultBranch,
     ).toBeUndefined();
     expect(
       CreateRepoInput.parse({

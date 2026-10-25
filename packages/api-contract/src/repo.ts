@@ -96,15 +96,15 @@ export const LocalRepoName = z
   );
 
 /**
- * 登記 Repo（Admin 以上），以 `kind` 區分：
+ * 登記 Repo（Admin 以上），以 `kind` 區分（省略時是 `github`，和 API 版本 1 相容）：
  * - `github`：GitHub App 已安裝時，Server 從 GitHub 讀取 default branch；還沒安裝時用 `defaultBranch`，
  *   沒有指定就用 `main`（§11）。
  * - `local`：本機 Repo，只有名稱，Server 不保存路徑；基準分支用 `defaultBranch`，沒有指定就用 `main`。
  */
-export const CreateRepoInput = z.discriminatedUnion("kind", [
+export const CreateRepoInput = z.union([
   z
     .object({
-      kind: z.literal("github"),
+      kind: z.literal("github").default("github"),
       owner: GitHubOwnerName,
       name: GitHubRepoName,
       defaultBranch: GitBranchName.optional(),
