@@ -144,4 +144,8 @@ export const BRIDGE_IPC = {
   previewPickElement: "desktop:preview-pick-element",
   /** main → 主視窗：內嵌瀏覽器的狀態（PreviewNavState）。 */
   previewNavState: "desktop:preview-nav-state",
+  loginAgent: "desktop:login-agent",
+  revealWorktree: "desktop:reveal-worktree",
+  getNotificationsEnabled: "desktop:get-notifications-enabled",
+  setNotificationsEnabled: "desktop:set-notifications-enabled",
 } as const;

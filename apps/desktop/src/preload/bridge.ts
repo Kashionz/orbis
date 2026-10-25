@@ -16,6 +16,12 @@ const bridge: DesktopBridge = {
   openWorktreeInTerminal: (worktreePath) =>
     ipcRenderer.invoke(BRIDGE_IPC.openWorktreeInTerminal, String(worktreePath)),
   beforeLogout: () => ipcRenderer.invoke(BRIDGE_IPC.beforeLogout),
+  loginAgent: (agentId) => ipcRenderer.invoke(BRIDGE_IPC.loginAgent, String(agentId)),
+  revealWorktree: (worktreePath) =>
+    ipcRenderer.invoke(BRIDGE_IPC.revealWorktree, String(worktreePath)),
+  getNotificationsEnabled: () => ipcRenderer.invoke(BRIDGE_IPC.getNotificationsEnabled),
+  setNotificationsEnabled: (enabled) =>
+    ipcRenderer.invoke(BRIDGE_IPC.setNotificationsEnabled, Boolean(enabled)),
   preview: {
     show: (runId, bounds) => ipcRenderer.invoke(BRIDGE_IPC.previewShow, String(runId), bounds),
     setBounds: (bounds) => ipcRenderer.invoke(BRIDGE_IPC.previewSetBounds, bounds),

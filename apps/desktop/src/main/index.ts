@@ -1,6 +1,7 @@
 // Desktop 的 main 程序：載入 Web UI、登入後自動 Pairing、代管 Runner sidecar、系統匣、Needs You 通知
 // （ARCHITECTURE §16、ADR-0008）。各部分的邏輯在各自的模組中，這裡只負責和 Electron 接起來。
 
+import { spawn } from "node:child_process";
 import { existsSync, lstatSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -38,6 +39,7 @@ import {
   type ToolChoice,
   terminalPresets,
 } from "./local-tools/presets";
+import { revealWorktree } from "./local-tools/reveal";
 import { checkWorktreePath } from "./local-tools/worktree-path";
 import { APP_USER_MODEL_ID, DESKTOP_ENV, SESSION_COOKIE } from "./names";
 import { decideNavigation, isTrustedSender } from "./navigation-policy";
@@ -56,7 +58,9 @@ import {
 import { checkServerHealth, normalizeServerUrl, resolveRunnerServerUrl } from "./server-url";
 import { createServerApi, type ServerApi, UnauthorizedError } from "./session/server-api";
 import { SessionController } from "./session/session-controller";
+import { AgentLogin } from "./sidecar/agent-login";
 import { RotatingLogFile } from "./sidecar/log-file";
+import { killProcessTree } from "./sidecar/process-tree";
 import { buildRunnerLaunch, resolveRunnerCommand } from "./sidecar/runner-command";
 import { RunnerSupervisor } from "./sidecar/supervisor";
 import { installTestHooks } from "./test-hooks";
@@ -186,6 +190,32 @@ const runnerCommand = () =>
     appPath: app.getAppPath(),
     platform: process.platform,
   });
+
+// Agent 重新登入（agent-relogin）：sidecar 同一個 Runner 執行檔與狀態目錄的 `login <agent>`。
+const agentLogin = new AgentLogin({
+  command: runnerCommand,
+  baseEnv: process.env,
+  stateDir: runnerStateDir,
+  spawn: (launch) => {
+    const child = spawn(launch.command, launch.args, {
+      env: launch.env,
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+      // macOS／Linux：自成一個 process group，逾時時才能結束整個程序樹
+      detached: process.platform !== "win32",
+    });
+    child.stderr?.setEncoding("utf8");
+    return {
+      pid: child.pid,
+      onStderr: (listener) => child.stderr?.on("data", listener),
+      onExit: (listener) => {
+        child.once("error", (error) => listener(null, error));
+        child.once("exit", (code) => listener(code));
+      },
+    };
+  },
+  killTree: (pid) => killProcessTree(pid),
+});
 
 const supervisor = new RunnerSupervisor({
   launch: () => {
@@ -437,7 +467,10 @@ const poller = new NeedsYouPoller({
   list: () => api.listNeedsYou(),
   onItems: (items, newItems) => {
     needsYouCount = items.length;
-    for (const item of newItems) showNotification(needsYouNotification(item));
+    // 桌面通知總開關（desktop-notify-toggle）：關閉時照常輪詢、更新系統匣，只是不發原生通知
+    if (config.get().notificationsEnabled) {
+      for (const item of newItems) showNotification(needsYouNotification(item));
+    }
     renderTray();
   },
   onError: (error) => {
@@ -781,12 +814,9 @@ const launcher: Launcher = testHooksEnabled
     }
   : spawnLauncher;
 
-async function openWorktree(
-  input: unknown,
-  build: (choice: ToolChoice, path: string, env: CommandEnv) => LaunchResult,
-  choice: ToolChoice,
-): Promise<DesktopActionResult> {
-  const checked = checkWorktreePath(input, {
+/** Worktree 路徑的檢查（Worktree 根目錄底下剛好兩層、解析 symlink 後仍在根目錄內）。 */
+function checkWorktree(input: unknown) {
+  return checkWorktreePath(input, {
     platform: process.platform,
     home: homedir(),
     isDirectory: (p) => {
@@ -798,6 +828,14 @@ async function openWorktree(
     },
     realpath: (p) => realpathSync.native(p),
   });
+}
+
+async function openWorktree(
+  input: unknown,
+  build: (choice: ToolChoice, path: string, env: CommandEnv) => LaunchResult,
+  choice: ToolChoice,
+): Promise<DesktopActionResult> {
+  const checked = checkWorktree(input);
   if (!checked.ok) return { ok: false, message: checked.message };
   const launch = build(choice, checked.path, commandEnv());
   if (!launch.ok) return launch;
@@ -819,6 +857,32 @@ function registerIpc(): void {
   ipcMain.handle(BRIDGE_IPC.beforeLogout, (event) => {
     if (!fromMainWindow(event)) throw new Error(denied.message);
     return sessionController.prepareLogout();
+  });
+  ipcMain.handle(BRIDGE_IPC.revealWorktree, (event, path: unknown) =>
+    fromMainWindow(event)
+      ? revealWorktree(path, {
+          check: checkWorktree,
+          openPath: async (target) => {
+            if (testHooksEnabled) {
+              testState.openedPaths.push(target);
+              return "";
+            }
+            return shell.openPath(target);
+          },
+        })
+      : denied,
+  );
+  ipcMain.handle(BRIDGE_IPC.loginAgent, (event, agentId: unknown) =>
+    fromMainWindow(event) ? agentLogin.login(agentId) : denied,
+  );
+  ipcMain.handle(BRIDGE_IPC.getNotificationsEnabled, (event) => {
+    if (!fromMainWindow(event)) throw new Error(denied.message);
+    return config.get().notificationsEnabled;
+  });
+  ipcMain.handle(BRIDGE_IPC.setNotificationsEnabled, (event, enabled: unknown) => {
+    if (!fromMainWindow(event)) throw new Error(denied.message);
+    if (typeof enabled !== "boolean") throw new Error("enabled 必須是 true 或 false");
+    config.update({ notificationsEnabled: enabled });
   });
   registerPreviewIpc(denied);
 
