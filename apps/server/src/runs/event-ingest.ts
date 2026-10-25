@@ -304,6 +304,10 @@ export class EventIngest {
         const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
         if (!run) return;
         const columns = await recordAgentSwitched(tx, run, body, this.clock.now());
+        if (!columns) {
+          this.logger.warn({ runId, seq }, "agent_switched 不是 Server 要求的換 Agent，略過副作用");
+          return;
+        }
         await tx.update(runs).set(columns).where(eq(runs.id, runId));
         return;
       }
