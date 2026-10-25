@@ -10,10 +10,11 @@ import {
   primaryKey,
   text,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { createdAt, id, updatedAt } from "./columns";
-import { permissionPolicyEnum, roleEnum } from "./enums";
+import { localMergeStrategyEnum, permissionPolicyEnum, repoKindEnum, roleEnum } from "./enums";
 import { members, teams } from "./team";
 
 /**
@@ -58,6 +59,10 @@ export const projects = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /** 本機 Repo 核准後合併到基準分支的方式（ADR-0013）。 */
+    localMergeStrategy: localMergeStrategyEnum("local_merge_strategy").notNull().default("squash"),
+    /** 本機 Repo 合併後是否 push 基準分支（checkout 有 `origin` 時才有作用）。 */
+    localPushBase: boolean("local_push_base").notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -84,7 +89,11 @@ export const projectMemberRoles = pgTable(
   (t) => [primaryKey({ columns: [t.projectId, t.memberId] })],
 );
 
-/** Repo：登記在 Project 底下的一個 GitHub repository。 */
+/**
+ * Repo：登記在 Project 底下的一個 GitHub repository，或本機 git repository（本機 Repo，ADR-0013）。
+ * 本機 Repo 只有名稱（github_name），沒有 owner 與 GitHub 的 id；路徑由各 Runner 的 runner.toml 對應，
+ * Server 不保存。本機 Repo 連接到 GitHub 後 kind 改成 github（只能單向）。
+ */
 export const repos = pgTable(
   "repos",
   {
@@ -92,7 +101,10 @@ export const repos = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    githubOwner: text("github_owner").notNull(),
+    kind: repoKindEnum("kind").notNull().default("github"),
+    /** GitHub 上的擁有者；本機 Repo 為 null。 */
+    githubOwner: text("github_owner"),
+    /** GitHub 上的 repository 名稱，或本機 Repo 的名稱。 */
     githubName: text("github_name").notNull(),
     /** GitHub 的 repository id；登記時由 D 軌讀取，改名後仍可對應。 */
     githubRepoId: bigint("github_repo_id", { mode: "number" }),
@@ -103,10 +115,17 @@ export const repos = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
-    unique("repos_project_id_github_owner_github_name_unique").on(
-      t.projectId,
-      t.githubOwner,
-      t.githubName,
+    // GitHub Repo 以 (Project, owner, name) 唯一；本機 Repo 以 (Project, name) 唯一。
+    uniqueIndex("repos_project_id_github_owner_github_name_unique")
+      .on(t.projectId, t.githubOwner, t.githubName)
+      .where(sql`${t.kind} = 'github'`),
+    uniqueIndex("repos_project_id_local_name_unique")
+      .on(t.projectId, t.githubName)
+      .where(sql`${t.kind} = 'local'`),
+    check("repos_github_has_owner", sql`(${t.kind} = 'github') = (${t.githubOwner} IS NOT NULL)`),
+    check(
+      "repos_local_has_no_github_ids",
+      sql`${t.kind} = 'github' OR (${t.githubRepoId} IS NULL AND ${t.githubInstallationId} IS NULL)`,
     ),
   ],
 );

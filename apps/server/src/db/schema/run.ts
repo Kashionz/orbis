@@ -6,16 +6,20 @@ import {
   bigint,
   check,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
   text,
+  unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
 import {
   delegationModeEnum,
   dispatchStatusEnum,
+  effortEnum,
   permissionPolicyEnum,
   promptSourceEnum,
   runControlActionEnum,
@@ -50,6 +54,8 @@ export const runs = pgTable(
     /** Agent 的識別名稱，例如 `claude-code`。 */
     agent: text("agent").notNull(),
     model: text("model"),
+    /** 推理強度；null 表示 Agent 的預設值。執行中切換後是目前的值。 */
+    effort: effortEnum("effort"),
     permissionPolicy: permissionPolicyEnum("permission_policy").notNull(),
     status: runStatusEnum("status").notNull().default("queued"),
     /** 要在哪裡跑：`local`＝負責人的 Local Runner，`team`＝Team 佇列。 */
@@ -103,6 +109,36 @@ export const runs = pgTable(
       sql`${t.parentRunId} IS NULL OR ${t.delegationMode} IS NOT NULL`,
     ),
     check("runs_not_own_parent", sql`${t.parentRunId} IS NULL OR ${t.parentRunId} <> ${t.id}`),
+  ],
+);
+
+/**
+ * Run 的 Agent 分段（ADR-0016）：執行中換 Agent 時，用量與費用依 Agent 分段記錄。
+ * Run 開始時建立第一段；每次 `agent_switched` 結束目前這一段、開新的一段。usage 是這一段的累計值
+ * （協定的 `usage` Event 在換 Agent 後從 0 重新累計），runs.usage 是各段的合計。
+ */
+export const runAgentSegments = pgTable(
+  "run_agent_segments",
+  {
+    id: id(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    /** 在 Run 中的順序，從 1 開始。 */
+    position: integer("position").notNull(),
+    agent: text("agent").notNull(),
+    model: text("model"),
+    effort: effortEnum("effort"),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+    /** 換成下一個 Agent 或 Run 結束的時間；目前這一段為 null。 */
+    endedAt: timestamptz("ended_at"),
+    /** 這一段的累計用量（格式同 runs.usage）。 */
+    usage: jsonb("usage").notNull().default(sql`'{}'::jsonb`),
+  },
+  (t) => [
+    unique("run_agent_segments_run_id_position_unique").on(t.runId, t.position),
+    uniqueIndex("run_agent_segments_one_open_per_run").on(t.runId).where(sql`${t.endedAt} IS NULL`),
+    check("run_agent_segments_position_positive", sql`${t.position} >= 1`),
   ],
 );
 

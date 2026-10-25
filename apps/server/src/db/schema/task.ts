@@ -14,13 +14,18 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
-import { acceptanceCriterionKindEnum, taskDoneReasonEnum, taskStatusEnum } from "./enums";
+import {
+  acceptanceCriterionKindEnum,
+  taskDoneReasonEnum,
+  taskGeneralAccessEnum,
+  taskStatusEnum,
+} from "./enums";
 import { projects, repoSpecs, repos } from "./project";
 import { runs } from "./run";
 import { members } from "./team";
 
 /**
- * Task：指派給 Member、可交由 Agent 執行的一件工作。只對應一個 Repo（ADR-0011）。
+ * Task：指派給 Member、可交由 Agent 執行的一件工作。只對應一個 Repo（ADR-0011），可以不指定。
  * Task Key（例如 `ORB-12`）在建立時由 Project 前綴與流水號組成並保存下來，之後不隨前綴變動。
  */
 export const tasks = pgTable(
@@ -35,8 +40,8 @@ export const tasks = pgTable(
     /** Task Key，例如 `ORB-12`。 */
     key: text("key").notNull(),
     /**
-     * 這個 Task 對應的 Repo。Backlog 階段可以還沒決定，所以允許 null；
-     * 進入 Ready 前必須設定（由應用層檢查）。
+     * 這個 Task 對應的 Repo。可以不指定（只能停在 Backlog），之後補指定一次就不能再換；
+     * 進入 Ready 前必須設定（都由應用層檢查）。
      */
     repoId: uuid("repo_id").references(() => repos.id),
     /** 連結的 Repo 內 Spec；小 Task 的 Spec 就是 description。 */
@@ -57,6 +62,8 @@ export const tasks = pgTable(
     labels: text("labels").array().notNull().default(sql`'{}'::text[]`),
     /** Plan Gate 的個別覆寫；null 表示沿用 projects.plan_gate_enabled。 */
     planGateEnabled: boolean("plan_gate_enabled"),
+    /** 一般存取（Task 分享，ADR-0012）；Task 成員在 task_members。 */
+    generalAccess: taskGeneralAccessEnum("general_access").notNull().default("team_edit"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

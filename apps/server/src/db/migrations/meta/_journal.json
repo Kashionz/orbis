@@ -29,6 +29,13 @@
       "when": 1792777594498,
       "tag": "0003_w5_contracts",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792913333298,
+      "tag": "0004_v3_backend_gaps",
+      "breakpoints": true
     }
   ]
 }

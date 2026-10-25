@@ -1,6 +1,6 @@
 // 組織：Team 與 Member（ARCHITECTURE §4、§12.2）。
 
-import { bigint, index, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, index, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
 import { createdAt, id, updatedAt } from "./columns";
 import { roleEnum } from "./enums";
 
@@ -8,6 +8,10 @@ import { roleEnum } from "./enums";
 export const teams = pgTable("teams", {
   id: id(),
   name: text("name").notNull(),
+  /** 是否允許以預覽邀請把 Preview 分享給 Team 以外的人（ADR-0015）。 */
+  allowExternalPreview: boolean("allow_external_preview").notNull().default(false),
+  /** 是否允許在 Team Runner 上開互動式終端機（ADR-0014）。 */
+  allowTeamRunnerTerminal: boolean("allow_team_runner_terminal").notNull().default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -27,6 +31,11 @@ export const members = pgTable(
     githubLogin: text("github_login").notNull(),
     name: text("name"),
     avatarUrl: text("avatar_url"),
+    /**
+     * GitHub 帳號主要且已驗證的 email（OAuth 的 `user:email`），每次登入時寫進這個 GitHub 帳號所有的
+     * Member 紀錄；沒有已驗證的 email 或還沒登入過時為 null。Task 邀請與預覽邀請以此比對。
+     */
+    email: text("email"),
     /** Team 層級的 Role；Project 可以用 project_member_roles 覆寫。 */
     role: roleEnum("role").notNull(),
     createdAt: createdAt(),

@@ -1,7 +1,7 @@
 // 通知與個人的通知設定（ARCHITECTURE §12.3）。
 
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, pgTable, text, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
 import { createdAt, id, timestamptz, updatedAt } from "./columns";
 import { notificationKindEnum } from "./enums";
 import { gates } from "./gate";
@@ -29,6 +29,8 @@ export const notifications = pgTable(
     }),
     title: text("title").notNull(),
     body: text("body"),
+    /** `run_stopped` 的原因（API 的 StoppedRunInfo：reasonCode、attempt、detail）；其他種類為 null。 */
+    stoppedRun: jsonb("stopped_run"),
     /** 點擊後前往的 Web 路徑或網址。 */
     url: text("url"),
     desktop: boolean("desktop").notNull().default(false),

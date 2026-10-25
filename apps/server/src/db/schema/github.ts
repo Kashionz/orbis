@@ -99,6 +99,8 @@ export const pullRequests = pgTable(
     headSha: text("head_sha").notNull(),
     url: text("url").notNull(),
     state: pullRequestStateEnum("state").notNull().default("open"),
+    /** merge 的時間，由 `pr_merged` webhook 寫入；還沒 merge（或 migration 0004 之前 merge）時為 null。 */
+    mergedAt: timestamptz("merged_at"),
     /** CI 失敗觸發的自動修正次數。W5–7 起不再使用，次數由 feedback_fixes 數出（保留欄位，不刪除）。 */
     ciFixCount: integer("ci_fix_count").notNull().default(0),
     /** review 留言觸發的自動修正次數。W5–7 起不再使用，次數由 feedback_fixes 數出（保留欄位，不刪除）。 */
