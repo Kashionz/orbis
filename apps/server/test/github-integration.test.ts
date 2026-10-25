@@ -4,6 +4,7 @@
 import {
   API_ROUTES,
   apiPath,
+  type GeneralAccess,
   ImportableIssue,
   ImportIssueResult,
   NAMES,
@@ -181,6 +182,67 @@ describe.skipIf(dbSkipReason !== null)("GitHub App 整合", () => {
       expect(
         await database.db.select().from(taskIssueLinks).where(eq(taskIssueLinks.taskId, task.id)),
       ).toHaveLength(0);
+    });
+  });
+
+  describe("僅受邀成員的 Task（ADR-0012）", () => {
+    const setAccess = async (taskId: string, generalAccess: GeneralAccess) => {
+      const res = await as("member").put(apiPath(API_ROUTES.taskShareGeneral, { taskId }), {
+        generalAccess,
+      });
+      expect(res.status).toBe(200);
+      await ctx.services.githubIdle();
+    };
+
+    it("不自動建立 Issue；改回 Team 可見後才建立", async () => {
+      await as("admin").patch(`/api/projects/${projectId}`, {
+        policy: { autoCreateIssues: false },
+      });
+      const task = await createTask();
+      await setAccess(task.id, "invited");
+      await as("admin").patch(`/api/projects/${projectId}`, {
+        policy: { autoCreateIssues: true },
+      });
+      await as("member").patch(`/api/tasks/${task.id}`, { title: "不公開的工作" });
+      await ctx.services.githubIdle();
+      expect(gh.github.callsTo("createIssue")).toHaveLength(0);
+
+      await setAccess(task.id, "team_view");
+      expect(await issueOf(task.id)).toMatchObject({ title: "不公開的工作", state: "open" });
+    });
+
+    it("已有 Issue 的改成僅受邀成員：保留 Issue 但不再更新；GitHub 的回寫照常；改回後補寫", async () => {
+      const task = await createTask();
+      const { number } = await issueOf(task.id);
+      await setAccess(task.id, "invited");
+      const updates = gh.github.callsTo("updateIssue").length;
+      const comments =
+        gh.github.callsTo("updateIssueComment").length +
+        gh.github.callsTo("createIssueComment").length;
+
+      await as("member").patch(`/api/tasks/${task.id}`, { description: "內部細節" });
+      await ctx.services.githubIdle();
+      expect(gh.github.callsTo("updateIssue")).toHaveLength(updates);
+      expect(
+        gh.github.callsTo("updateIssueComment").length +
+          gh.github.callsTo("createIssueComment").length,
+      ).toBe(comments);
+      expect((await issueOf(task.id)).body).not.toContain("內部細節");
+
+      // GitHub → Orbis 不受影響
+      const edited = gh.github.humanEdit(GITHUB_REPO_ID, number, { title: "GitHub 上改的標題" });
+      await deliver("issues", {
+        ...issuePayload("edited", edited, memberOnGitHub),
+        changes: { title: { from: "新增登入頁" } },
+      });
+      // 僅受邀成員的 Task 只有成員看得到，以擁有者讀取
+      const own = await as("member").get<{ title: string }>(`/api/tasks/${task.id}`);
+      expect(own.body.title).toBe("GitHub 上改的標題");
+
+      await setAccess(task.id, "team_edit");
+      const issue = await issueOf(task.id);
+      expect(issue.body).toContain("內部細節");
+      expect(issue.title).toBe("GitHub 上改的標題");
     });
   });
 

@@ -121,6 +121,38 @@ describe("Task 同步到 GitHub Issue", () => {
     expect(body).not.toContain("不處理");
   });
 
+  it("僅受邀成員的 Task 不建立也不更新 Issue；改回 Team 可見後依快照補寫", async () => {
+    const w = createWorld();
+    const hidden = w.addTask({ generalAccess: "invited" });
+    expect(await w.integration.onTaskChanged(hidden.id)).toEqual({
+      kind: "skipped",
+      reason: "task_invited_only",
+    });
+    expect(w.github.callsTo("createIssue")).toHaveLength(0);
+
+    const linked = w.addTask();
+    await w.integration.onTaskChanged(linked.id);
+    w.domain.editTask(linked.id, { generalAccess: "invited", title: "不公開的標題" });
+    w.github.calls.length = 0;
+    expect(await w.integration.onTaskChanged(linked.id)).toEqual({
+      kind: "skipped",
+      reason: "task_invited_only",
+    });
+    expect(w.github.calls).toHaveLength(0);
+
+    w.domain.editTask(linked.id, { generalAccess: "team_view" });
+    expect(await w.integration.onTaskChanged(linked.id)).toMatchObject({
+      kind: "synced",
+      created: false,
+      wrote: ["title"],
+    });
+    w.domain.editTask(hidden.id, { generalAccess: "team_edit" });
+    expect(await w.integration.onTaskChanged(hidden.id)).toMatchObject({
+      kind: "synced",
+      created: true,
+    });
+  });
+
   it("Project 關閉「自動建立 Issue」時不建立 Issue，已對應的 Issue 照常同步", async () => {
     const w = createWorld();
     const linked = w.addTask();

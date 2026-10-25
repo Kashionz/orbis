@@ -229,6 +229,17 @@ export function createTaskShareRoutes(s: Services): Hono<AppEnv> {
       .update(tasks)
       .set({ generalAccess: input.generalAccess })
       .where(eq(tasks.id, scope.task.id));
+    if (input.generalAccess !== scope.task.generalAccess) {
+      // 改回 Team 可見時恢復同步到 GitHub Issue（invited 的 Task 不同步，ADR-0012）
+      void s.events.emit({
+        type: "task.updated",
+        taskId: scope.task.id,
+        projectId: scope.task.projectId,
+        fields: ["generalAccess"],
+        source: "api",
+        actorMemberId: actor.memberId,
+      });
+    }
     return c.json(await loadTaskShare(db, scope.task.id, clock.now()));
   });
 

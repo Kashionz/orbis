@@ -10,6 +10,7 @@ import type {
   AcceptanceCriterionResult,
   FeedbackFixStatus,
   FeedbackSource,
+  GeneralAccess,
   NotificationKind,
   PullRequestState,
   TaskDoneReason,
@@ -36,6 +37,8 @@ export interface TaskRecord {
   labels: string[];
   /** Repo 內 Spec 的路徑（以 `/` 分隔）；沒有時為 null。 */
   specPath: string | null;
+  /** 一般存取（ADR-0012）；`invited` 的 Task 不同步到 GitHub Issue。 */
+  generalAccess: GeneralAccess;
   updatedAt: Date;
 }
 

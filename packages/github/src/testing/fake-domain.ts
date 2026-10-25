@@ -91,6 +91,7 @@ export class FakeDomainService implements DomainService {
       createdByMemberId: null,
       labels: [],
       specPath: null,
+      generalAccess: "team_edit",
       updatedAt: this.clock.now(),
       ...task,
       doneReason: task.doneReason ?? null,

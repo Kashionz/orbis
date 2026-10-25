@@ -5,6 +5,9 @@
 //   兩邊同一欄位都改過時，以最後寫入者為準（Issue 的 updated_at 對上 Task 的 updatedAt）。
 // - 回音：App 自己的寫入造成的 webhook 以 sender 辨認並略過；就算沒有略過，
 //   payload 與快照相同（或不比快照新）也不會寫入。
+// - 一般存取是 `invited`（僅受邀成員，ADR-0012）的 Task 不寫到 GitHub：不建立 Issue，已有的 Issue 保留但不再
+//   更新（含狀態摘要留言）。快照停在最後一次同步，改回 Team 可見後依快照補寫，沒有 Issue 的那時建立。
+//   GitHub→Orbis 的回寫與 Issue 匯入不受影響。
 
 import { createHash } from "node:crypto";
 import { senderCanWrite } from "../authz";
@@ -37,7 +40,12 @@ import {
 export type PushOutcome =
   | {
       kind: "skipped";
-      reason: "task_not_found" | "no_repo" | "repo_not_connected" | "auto_create_disabled";
+      reason:
+        | "task_not_found"
+        | "no_repo"
+        | "repo_not_connected"
+        | "auto_create_disabled"
+        | "task_invited_only";
     }
   | { kind: "synced"; issueNumber: number; created: boolean; wrote: SyncedField[] };
 
@@ -181,6 +189,7 @@ async function pushTaskLocked(
 ): Promise<PushOutcome> {
   const task = await ctx.domain.getTask(taskId);
   if (!task) return { kind: "skipped", reason: "task_not_found" };
+  if (task.generalAccess === "invited") return { kind: "skipped", reason: "task_invited_only" };
   if (!task.repoId) return { kind: "skipped", reason: "no_repo" };
   const record = await ctx.domain.getRepo(task.repoId);
   const repo = record && connectedRepo(record);

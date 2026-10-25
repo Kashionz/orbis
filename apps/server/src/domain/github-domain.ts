@@ -92,6 +92,7 @@ export class GitHubDomainService implements DomainService {
       createdByMemberId: row.createdByMemberId,
       labels: row.labels,
       specPath,
+      generalAccess: row.generalAccess,
       updatedAt: row.updatedAt,
     };
   }

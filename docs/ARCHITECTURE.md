@@ -528,6 +528,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - Agent 專用的欄位只存在 Orbis，Issue 上只放一則狀態摘要留言，並且持續更新。
   - **同步範圍**：
     - 有 Repo 的 Task 自動建立對應的 Issue。Project 可以關閉「自動建立 Issue」，預設開啟。
+    - 一般存取是「僅受邀成員」的 Task（ADR-0012）不寫到 GitHub：不建立 Issue；已有 Issue 的保留原 Issue，但不再更新它與狀態摘要留言。改回 Team 可檢視／可操作後恢復同步（依上次同步的快照補寫，沒有 Issue 的那時建立）。GitHub→Orbis 的回寫與 Issue 匯入不受影響。
     - Draft Task 確認、進入 Backlog 之後才建立 Issue。
     - GitHub 上新開的 Issue 不會自動變成 Task，要在 Orbis 中匯入，因為同一個 repo 可能登記在多個 Project。
   - **狀態對應**：
