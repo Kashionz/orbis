@@ -31,7 +31,7 @@ test.describe("Delegation（完整系統）", () => {
     await stack?.stop();
   });
 
-  test("父 Run 以 delegate 開出 consult 與 branch 的 Child Run，Run 樹顯示 Agent、模式與狀態，點節點看即時檢視", async ({
+  test("父 Run 以 delegate 開出 consult 與 branch 的 Child Run，執行紀錄顯示 Agent、模式與狀態，點節點切換工作區", async ({
     browser,
   }) => {
     const ready = stack.ready;

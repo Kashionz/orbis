@@ -76,7 +76,7 @@ test.describe("Feedback Loop（完整系統）", () => {
     await stack?.stop();
   });
 
-  test("PR Open 後：review 留言觸發修正並 push；CI 失敗觸發第二次修正；Task 頁顯示 Feedback Loop 的 Run 與 Task note", async ({
+  test("PR Open 後：review 留言觸發修正並 push；CI 失敗觸發第二次修正；執行紀錄顯示 Feedback Loop 的 Run 與 Task note", async ({
     browser,
   }) => {
     const ready = stack.ready;

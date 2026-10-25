@@ -104,7 +104,7 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     await expect(page.getByRole("button", { name: "開啟差異審查" })).toHaveCount(0);
   }
 
-  test("兩輪失敗後停在 Verifying；Needs You 的「前往 Run」開 Verification 分頁；略過失敗 → Review Gate → 核准", async ({
+  test("兩輪失敗後停在 Verifying；待我處理的「前往決定」開任務分頁的驗收紀錄；略過失敗 → Review Gate → 核准", async ({
     browser,
   }) => {
     const context = await browser.newContext({ baseURL });
@@ -120,7 +120,8 @@ test.describe("Verification 超過重試上限（完整系統）", () => {
     // 待我處理：停下來的 Run，一鍵直接開任務分頁的驗收紀錄（#53 的觀察）
     await page.goto("/needs-you");
     const stopped = page.locator('.ny-row[data-kind="stopped_run"]', { hasText: task.key });
-    await expect(stopped).toContainText("超過重試上限");
+    // 原因是 Server 給的文字（契約沒有原因代碼，UI 原樣顯示）
+    await expect(stopped).toContainText("連續失敗 2 次");
     await stopped.getByRole("button", { name: "前往決定" }).click();
     await expect(page).toHaveURL(
       new RegExp(`/tasks/${task.key}[?]run=${runId}&tab=task&focus=verification$`),
