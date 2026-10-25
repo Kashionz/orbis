@@ -112,7 +112,7 @@ Backlog → Ready → Planning → [Plan Gate] → Running → Verifying → [Re
 - **核准之後**：Task 立刻進入 PR Open。Runner 結束 Agent 程序、push 分支，**push 成功後 Run 才算 `completed`**。push 失敗時 Run 不會是 `completed`，並加入 Needs You。
 - **本機 Repo 核准之後**（[ADR-0013](adr/0013-local-repo-and-connect-to-github.md)）：Server 送 RunControl `merge_local`，Runner 結束 Agent、自動 commit 未提交的變更，把 Run 的分支合併到本機 checkout 的基準分支（`local_merged` Event），Task 直接轉 Done（trigger `local_merge`，關閉原因 `completed`），接著封存 Worktree。
   - 基準分支沒有在 checkout 中簽出：在暫時的 worktree 中合併。已簽出且工作目錄乾淨：直接在 checkout 中合併。
-  - 工作目錄有未 commit 的變更或合併衝突：不合併，Run 停下（Needs You 的 `reasonCode` 為 `local_merge_blocked`，`detail` 是 git 的輸出），處理後重試。
+  - 工作目錄有未 commit 的變更或合併衝突：不合併，Run 停下（Needs You 的 `reasonCode` 為 `local_merge_blocked`，`detail` 是 git 的輸出）。Runner 保留這個 Run；人處理好本機 checkout 後在待我處理按「重試」（`POST /api/runs/<run-id>/merge-local`，權限同核准 Review Gate），Server 以 Project 目前的設定重送 `merge_local`。
   - 合併方式是 Project 設定：squash（預設）或 merge commit。checkout 有 `origin` 時，Project 可以設定合併後 push 基準分支（預設關閉）；push 失敗不影響合併。
 - **停下來的 Run**：Needs You 的 `stopped_run` 以代碼表示原因（`verification_limit`、`push_failed`、`pr_open_failed`、`local_merge_blocked`），附第幾輪（只有 `verification_limit`）與原始的錯誤訊息；給人看的文字由 UI 依代碼在地化。
 - **diff 為空時**（Review Gate 送審的那份 diff 沒有任何檔案變更）：沒有東西可以 push，不能核准，改為**結束（沒有變更）**，也可以退回或中止。
@@ -588,7 +588,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
   - **有效權限**：Owner、Admin 永遠完整，不受 Task 分享影響（避免 Task 被鎖住）；其他人取「Task 角色」與「一般存取限制後的 Team／Project Role」中較高的一個。Admin 層級的能力（權限策略、設定信任、Team Runner、Project 設定）不受 Task 角色影響。
   - `authorize()` 需要 Task 的能力（`edit_task`、`dispatch_*`、`approve_gate`、`view`）時一併傳入 Task；看板、待我處理、搜尋等列表濾掉看不到的 Task。API 的 Task 帶目前登入者在這個 Task 的有效權限（`viewerAccess`），Web UI 依它隱藏操作。
   - 管理分享：Task 的擁有者、Admin 以上。
-  - **Task 邀請**：以 email 邀請還不是 Member 的人。邀請產生一條連結（只在建立時回傳一次，Server 只存 hash），有設定 SMTP（`<前綴>_SMTP_URL`、`<前綴>_SMTP_FROM`）時也寄信。對方以 GitHub 登入、已驗證的 email 等於受邀的 email 時，以 Viewer 身分加入 Team，再取得邀請時選的 Task 角色；不符時回 `invite_email_mismatch`。邀請 7 天後過期，可以撤銷。email 已經是某位 Member 的已驗證 email 時直接加進 Task，不產生邀請。
+  - **Task 邀請**：以 email 邀請還不是 Member 的人。邀請產生一條連結（只在建立時回傳一次，Server 只存 hash），有設定 SMTP（`<前綴>_SMTP_URL`、`<前綴>_SMTP_FROM`）時也寄信。對方以 GitHub 登入、已驗證的 email 等於受邀的 email 時（登入時 GitHub 帳號主要且已驗證的 email 存在 session 與這個帳號所有的 Member 紀錄中，還不是 Member 的人以 session 的比對），以 Viewer 身分加入 Team，再取得邀請時選的 Task 角色；不符時回 `invite_email_mismatch`。邀請 7 天後過期，可以撤銷。email 已經是某位 Member 的已驗證 email 時直接加進 Task，不產生邀請。
 
 ### 12.3 通知與 @mention
 
@@ -651,7 +651,7 @@ Runner 在每個 ACP session 的 `session/new` 中注入 **Orbis MCP server**（
 - **分享給團隊**：複製 Preview 網址即可，Team 裡能查看這個 Run 的人登入後就能開。
 - **預覽邀請**（[ADR-0015](adr/0015-preview-invites.md)）：把 Preview 分享給特定的人（可以是其他 Team 的人或不屬於任何 Team 的人）。
   - Team 設定「允許對外分享預覽」，預設關閉，由 Admin（`manage_team`）打開；打開後，對這個 Task 有操作權限（`edit_task`）的人可以邀請與撤銷。關閉時回 403 `preview_sharing_disabled`。
-  - 以 GitHub 帳號（邀請時查出 GitHub user id 並保存，登入時以 id 比對）或 email（以 Member 的已驗證 email 比對）指定。每位受邀者各自一條邀請連結（Orbis 主網址的 `/preview-invites/<token>`，有設定 SMTP 時也寄信，沒有時由邀請人複製連結）。
+  - 以 GitHub 帳號（邀請時查出 GitHub user id 並保存，登入時以 id 比對）或 email（以登入者 session 中的已驗證 email 比對）指定。每位受邀者各自一條邀請連結（Orbis 主網址的 `/preview-invites/<token>`，有設定 SMTP 時也寄信，沒有時由邀請人複製連結）。
   - 受邀者從連結進入、以 GitHub 登入，Server 確認在名單上而且邀請有效才發 ticket、轉到預覽子網域（和上面的換票流程相同）。不在名單上的人拿到連結也打不開。
   - 期限：1 小時、24 小時（預設）、7 天，可以個別撤銷；預覽停止或 Worktree 封存後全部失效。受邀者只能看預覽頁面，不會因此加入 Team，也看不到 Task。
   - 預覽分頁顯示受邀名單、期限與最後一次開啟的時間。Preview 的存取判斷除了 Project 的 `view`，也接受有效的邀請。

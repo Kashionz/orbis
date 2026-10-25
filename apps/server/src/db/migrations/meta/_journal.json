@@ -36,6 +36,13 @@
       "when": 1792913333298,
       "tag": "0004_v3_backend_gaps",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792936212113,
+      "tag": "0005_session_email",
+      "breakpoints": true
     }
   ]
 }

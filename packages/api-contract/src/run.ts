@@ -87,3 +87,16 @@ export const Run = z
     path: ["delegationMode"],
   });
 export type Run = z.infer<typeof Run>;
+
+/**
+ * `POST` runMergeLocal 的回應（202）：本機 Repo 的合併被擋下（Needs You `stopped_run`，
+ * `reasonCode` 為 `local_merge_blocked`）後，人處理好本機 checkout 再重試（ADR-0013）。
+ * - 權限和核准 Review Gate 相同（`approve_gate`）。request 沒有 body。
+ * - Server 以 Project 目前的本機合併設定重送 RunControl `merge_local`；結果以 `local_merged` Event
+ *   （Task 轉 Done）或再一次停下（新的 Needs You 項目）為準。原本的 Needs You 項目在送出時標示為已處理。
+ * - Run 沒有被擋下、等待重試的本機合併 → 409 `conflict`；Run 已結束 → 409 `run_finished`。
+ * - Runner 離線時照常接受，RunControl 等 Runner 重新連上後補送。
+ * `controlId` 是送出的 `merge_local` 的 `control_id`。
+ */
+export const LocalMergeRetryRequested = z.object({ controlId: Id });
+export type LocalMergeRetryRequested = z.infer<typeof LocalMergeRetryRequested>;
