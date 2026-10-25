@@ -615,7 +615,11 @@ function ManualChecks({
       <h3 id="rp-manual-heading" className="rp-section-title">
         {w.manualCriteria}
       </h3>
-      {skipped && <p className="rp-notice">{w.skippedFailures}</p>}
+      {skipped && (
+        <p className="rp-notice" role="note">
+          {w.skippedFailures}
+        </p>
+      )}
       <ul className="rp-checks">
         {criteria
           .filter((c) => c.kind === "manual")

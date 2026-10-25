@@ -689,10 +689,73 @@
 
 .rp-round {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.rp-round-head {
+  display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
   align-items: baseline;
   font-size: 12px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rp-results {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: o-fade var(--dur-hover) ease-out both;
+}
+
+.rp-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rp-result-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.rp-result-desc {
+  flex: 1;
+  min-width: 0;
+  color: var(--oe8e9eb);
+}
+
+.rp-result-outcome {
+  font-size: 12px;
+  color: var(--o8b9098);
+  flex: none;
+}
+
+.rp-result[data-outcome="passed"] .rp-result-outcome {
+  color: var(--o4fb86a);
+}
+
+.rp-result[data-outcome="failed"] .rp-result-outcome,
+.rp-result[data-outcome="error"] .rp-result-outcome {
+  color: var(--oef6b62);
+}
+
+.rp-result-summary {
+  margin: 0 0 0 22px;
+}
+
+.rp-result > .rp-evidence,
+.rp-result > .rp-link {
+  margin-left: 22px;
 }
 
 .rp-round-title {

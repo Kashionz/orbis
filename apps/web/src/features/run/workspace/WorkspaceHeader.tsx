@@ -79,6 +79,12 @@ export function WorkspaceHeader({
           {runStatusLabel(t, status, gate)}
         </span>
       )}
+      {run && run.origin !== "dispatch" && (
+        <span className="wk-header-origin" data-testid="run-origin">
+          {t.labels.runOrigin[run.origin]}
+          {run.delegationMode && ` ${t.labels.delegationMode[run.delegationMode]}`}
+        </span>
+      )}
       {run?.parentRunId && (
         <Link
           to="/runs/$runId"
