@@ -108,6 +108,8 @@ export const API_ROUTES = {
   runSwitchAgent: "/api/runs/:runId/switch-agent",
   /** POST：開互動式終端機。 */
   runTerminals: "/api/runs/:runId/terminals",
+  /** POST：本機合併被擋下（`local_merge_blocked`）後重試，body 為空（回應見 `run.ts` 的 `LocalMergeRetryRequested`）。 */
+  runMergeLocal: "/api/runs/:runId/merge-local",
   /** GET：換票後 302 到 Preview 子網域（Preview 網址需要登入）。 */
   previewAuthorize: "/api/preview/:runId/authorize",
   /** POST：人回答 Child Run 的 `ask_parent`。 */

@@ -18,6 +18,11 @@ export const sessions = pgTable(
     githubLogin: text("github_login").notNull(),
     githubName: text("github_name"),
     githubAvatarUrl: text("github_avatar_url"),
+    /**
+     * 登入時 GitHub 帳號主要且已驗證的 email（小寫，OAuth 的 `user:email`）；沒有時為 null。
+     * 還不是 Member 的人接受 Task 邀請、以 email 受邀的人開預覽邀請時，以此比對（ADR-0012、ADR-0015）。
+     */
+    verifiedEmail: text("verified_email"),
     currentTeamId: uuid("current_team_id").references(() => teams.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     expiresAt: timestamptz("expires_at").notNull(),
