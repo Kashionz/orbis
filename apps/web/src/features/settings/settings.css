@@ -146,7 +146,7 @@
   color: var(--o8b9098);
 }
 
-.settings-list {
+.settings-items {
   display: flex;
   flex-direction: column;
 }

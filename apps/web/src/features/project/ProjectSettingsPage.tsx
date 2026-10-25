@@ -18,6 +18,7 @@ import {
   reposQuery,
   updateProject,
 } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
 import { useT } from "../../i18n";
@@ -32,6 +33,7 @@ import { RepoSpecsSection } from "../repo-spec/RepoSpecsSection";
  * 成員、Role 覆寫、Team Runner 與其他政策的修改在管理頁（C2）。
  */
 export function ProjectSettingsPage({ projectId }: { projectId: string }) {
+  const t = useT();
   const { data: project } = useSuspenseQuery(projectQuery(projectId));
   const permissions = usePermissions(project);
 
@@ -42,10 +44,10 @@ export function ProjectSettingsPage({ projectId }: { projectId: string }) {
           {project.name}
         </Link>
         <span aria-hidden="true"> / </span>
-        <span>設定</span>
+        <span>{t.project.settings}</span>
       </nav>
       <header className="page-header">
-        <h1>Project 設定</h1>
+        <h1>{t.project.title}</h1>
       </header>
       <div className="settings-layout">
         <BasicInfoSection
@@ -81,6 +83,7 @@ function useUpdateProject(project: Project) {
 }
 
 function BasicInfoSection({ project, canEdit }: { project: Project; canEdit: boolean }) {
+  const t = useT();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description);
   const update = useUpdateProject(project);
@@ -88,7 +91,7 @@ function BasicInfoSection({ project, canEdit }: { project: Project; canEdit: boo
 
   return (
     <section className="section" aria-labelledby="settings-basic">
-      <h2 id="settings-basic">基本資料</h2>
+      <h2 id="settings-basic">{t.project.basicInfo}</h2>
       {canEdit ? (
         <form
           className="settings-form"
@@ -98,32 +101,37 @@ function BasicInfoSection({ project, canEdit }: { project: Project; canEdit: boo
           }}
         >
           <TextField
-            label="名稱"
+            label={t.project.name}
             value={name}
             onChange={setName}
-            error={name.trim() === "" ? "名稱不能是空白" : undefined}
+            error={name.trim() === "" ? t.project.nameRequired : undefined}
           />
-          <TextField label="描述" value={description} onChange={setDescription} multiline />
+          <TextField
+            label={t.project.description}
+            value={description}
+            onChange={setDescription}
+            multiline
+          />
           <p>
-            Task Key 前綴：<code>{project.keyPrefix}</code>
-            <span className="hint">（建立後不能修改）</span>
+            <span>{t.project.keyPrefix}</span> <code>{project.keyPrefix}</code>{" "}
+            <span className="hint">{t.project.keyPrefixLocked}</span>
           </p>
           <ErrorText error={update.error} />
-          <button
+          <Button
             type="submit"
-            className="primary"
+            variant="primary"
             disabled={!changed || name.trim() === "" || update.isPending}
           >
-            儲存
-          </button>
+            {t.common.save}
+          </Button>
         </form>
       ) : (
         <dl className="settings-list">
-          <dt>名稱</dt>
+          <dt>{t.project.name}</dt>
           <dd>{project.name}</dd>
-          <dt>描述</dt>
-          <dd>{project.description || <span className="hint">沒有描述</span>}</dd>
-          <dt>Task Key 前綴</dt>
+          <dt>{t.project.description}</dt>
+          <dd>{project.description || <span className="hint">{t.project.noDescription}</span>}</dd>
+          <dt>{t.project.keyPrefix}</dt>
           <dd>
             <code>{project.keyPrefix}</code>
           </dd>
@@ -134,20 +142,21 @@ function BasicInfoSection({ project, canEdit }: { project: Project; canEdit: boo
 }
 
 function ReposSection({ project, canRegister }: { project: Project; canRegister: boolean }) {
+  const t = useT();
   const { data: repos, error } = useQuery(reposQuery(project.id));
 
   return (
     <section className="section" aria-labelledby="settings-repos">
-      <h2 id="settings-repos">Repo</h2>
+      <h2 id="settings-repos">{t.project.repos}</h2>
       <ErrorText error={error} />
-      {repos?.length === 0 && <p className="empty">還沒有登記任何 Repo。</p>}
+      {repos?.length === 0 && <p className="empty">{t.project.noRepos}</p>}
       {repos && repos.length > 0 && (
         <table className="run-table repo-table">
           <thead>
             <tr>
-              <th scope="col">Repo</th>
-              <th scope="col">Default branch</th>
-              <th scope="col">GitHub App</th>
+              <th scope="col">{t.project.repoColumn}</th>
+              <th scope="col">{t.project.defaultBranchColumn}</th>
+              <th scope="col">{t.project.githubAppColumn}</th>
             </tr>
           </thead>
           <tbody>
@@ -178,6 +187,7 @@ function ReposSection({ project, canRegister }: { project: Project; canRegister:
  * 只能刪除後重新登記。
  */
 function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const installUrl = appInstallUrl(repo);
@@ -195,19 +205,19 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
   });
   const mismatch = refresh.error instanceof ApiError && refresh.error.code === "repo_mismatch";
 
-  if (repo.github.installed) return <>已安裝</>;
+  if (repo.github.installed) return <>{t.project.installed}</>;
   return (
     <div className="repo-installation">
-      未安裝
+      {t.project.notInstalled}
       {installUrl ? (
         <>
           {" "}
           <a href={installUrl} target="_blank" rel="noreferrer">
-            安裝 GitHub App
+            {t.project.installApp}
           </a>
         </>
       ) : (
-        <span className="hint">（Server 沒有設定 GitHub App）</span>
+        <span className="hint"> {t.project.appNotConfigured}</span>
       )}
       {/* 重新檢查與登記 Repo 相同：Admin 以上（Server 的 manage_project） */}
       {canManage && (
@@ -217,27 +227,25 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
           disabled={refresh.isPending}
           onClick={() => refresh.mutate()}
         >
-          {refresh.isPending ? "檢查中…" : "重新檢查 App 安裝狀態"}
+          {refresh.isPending ? t.project.checking : t.project.refreshInstallation}
         </button>
       )}
       {refresh.isSuccess && !refresh.data.github.installed && (
         <p className="hint" role="status">
-          GitHub 上仍然沒有安裝。安裝完成後再按一次。
+          {t.project.stillNotInstalled}
         </p>
       )}
       {mismatch ? (
         <div className="notice-inline" role="alert">
-          GitHub 上的 {repo.owner}/{repo.name} 與登記時不是同一個 repo（可能被刪除後重建或改名）。
-          請刪除這個 Repo 後重新登記。
+          {t.project.repoMismatch(`${repo.owner}/${repo.name}`)}
           {canManage && (
-            <button
-              type="button"
-              className="danger"
+            <Button
+              variant="danger-ghost"
               disabled={remove.isPending}
               onClick={() => (confirmDelete ? remove.mutate() : setConfirmDelete(true))}
             >
-              {confirmDelete ? "確定刪除這個 Repo" : "刪除這個 Repo"}
-            </button>
+              {confirmDelete ? t.project.confirmDeleteRepo : t.project.deleteRepo}
+            </Button>
           )}
           <ErrorText error={remove.error} />
         </div>
@@ -251,6 +259,7 @@ function RepoInstallation({ repo, canManage }: { repo: Repo; canManage: boolean 
 const EMPTY_REPO_FORM: RepoFormValues = { owner: "", name: "", defaultBranch: "" };
 
 function RegisterRepoForm({ project }: { project: Project }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const [values, setValues] = useState(EMPTY_REPO_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof RepoFormValues, string>>>({});
@@ -277,33 +286,33 @@ function RegisterRepoForm({ project }: { project: Project }) {
         if (result.ok) mutation.mutate(result.input);
       }}
     >
-      <h3 id="settings-register-repo">登記 Repo</h3>
+      <h3 id="settings-register-repo">{t.project.registerRepo}</h3>
       <div className="repo-form-fields">
         <TextField
-          label="Owner"
+          label={t.project.owner}
           value={values.owner}
           onChange={set("owner")}
           error={errors.owner}
-          placeholder="GitHub 使用者或組織"
+          placeholder={t.project.ownerPlaceholder}
         />
         <TextField
-          label="Repo 名稱"
+          label={t.project.repoName}
           value={values.name}
           onChange={set("name")}
           error={errors.name}
         />
         <TextField
-          label="Default branch"
+          label={t.project.defaultBranch}
           value={values.defaultBranch}
           onChange={set("defaultBranch")}
           error={errors.defaultBranch}
-          hint="可以不填：GitHub App 已安裝時用 GitHub 上的設定，否則用 main。"
+          hint={t.project.defaultBranchHint}
         />
       </div>
       <ErrorText error={mutation.error} />
-      <button type="submit" className="primary" disabled={mutation.isPending}>
-        登記
-      </button>
+      <Button type="submit" variant="primary" disabled={mutation.isPending}>
+        {t.project.register}
+      </Button>
     </form>
   );
 }
@@ -319,16 +328,16 @@ function PolicySection({
 }) {
   const t = useT();
   const { policy } = project;
-  const yesNo = (value: boolean) => (value ? "是" : "否");
+  const yesNo = (value: boolean) => (value ? t.project.yes : t.project.no);
 
   return (
     <section className="section" aria-labelledby="settings-policy">
-      <h2 id="settings-policy">政策</h2>
+      <h2 id="settings-policy">{t.project.policy}</h2>
       {canEditPermissionPolicy ? (
         <PermissionPolicyForm key={policy.defaultPermissionPolicy} project={project} />
       ) : (
         <dl className="settings-list">
-          <dt>預設 Permission Policy</dt>
+          <dt>{t.project.defaultPermissionPolicy}</dt>
           <dd data-testid="default-permission-policy">
             {t.labels.permissionPolicy[policy.defaultPermissionPolicy]}
           </dd>
@@ -337,27 +346,29 @@ function PolicySection({
       {canEditPolicies ? (
         <OtherPoliciesForm key={project.updatedAt} project={project} />
       ) : (
-        <dl className="settings-list" aria-label="其他政策">
-          <dt>Plan Gate</dt>
-          <dd>{policy.planGateEnabled ? "開啟" : "關閉"}</dd>
-          <dt>允許 Delegation</dt>
+        <dl className="settings-list" aria-label={t.project.otherPolicies}>
+          <dt>{t.project.planGate}</dt>
+          <dd>{policy.planGateEnabled ? t.project.on : t.project.off}</dd>
+          <dt>{t.project.delegationEnabled}</dt>
           <dd>{yesNo(policy.delegationEnabled)}</dd>
           {policy.delegationEnabled && (
             <>
-              <dt>可以分派的 Agent</dt>
-              <dd>{policy.delegationAgents?.join("、") ?? "不限制"}</dd>
+              <dt>{t.project.delegationAgents}</dt>
+              <dd>{policy.delegationAgents?.join(t.common.listSeparator) ?? t.project.noLimit}</dd>
             </>
           )}
-          <dt>禁止 Member 核准自己的 Task</dt>
+          <dt>{t.project.forbidSelfApproval}</dt>
           <dd>{yesNo(policy.forbidSelfApproval)}</dd>
-          <dt>Member 可以派工到 Team Runner</dt>
+          <dt>{t.project.memberCanDispatchToTeamRunner}</dt>
           <dd>{yesNo(policy.memberCanDispatchToTeamRunner)}</dd>
-          <dt>自動建立 GitHub Issue</dt>
+          <dt>{t.project.autoCreateIssues}</dt>
           <dd>{yesNo(policy.autoCreateIssues)}</dd>
-          <dt>Verification 自動重試上限</dt>
-          <dd>{policy.verificationMaxRetries} 次</dd>
-          <dt>會觸發 Feedback Loop 的 bot</dt>
-          <dd>{policy.feedbackBotAllowlist.join("、") || "（沒有）"}</dd>
+          <dt>{t.project.verificationMaxRetries}</dt>
+          <dd>{t.project.retries(policy.verificationMaxRetries)}</dd>
+          <dt>{t.project.feedbackBots}</dt>
+          <dd>
+            {policy.feedbackBotAllowlist.join(t.common.listSeparator) || t.project.noFeedbackBots}
+          </dd>
         </dl>
       )}
     </section>
@@ -366,6 +377,7 @@ function PolicySection({
 
 /** 預設 Permission Policy 以外的政策（Admin 以上，§12.2）。 */
 function OtherPoliciesForm({ project }: { project: Project }) {
+  const t = useT();
   const [values, setValues] = useState(() => policyFormValues(project.policy));
   const [errors, setErrors] = useState<Partial<Record<keyof PolicyFormValues, string>>>({});
   const update = useUpdateProject(project);
@@ -385,7 +397,7 @@ function OtherPoliciesForm({ project }: { project: Project }) {
   return (
     <form
       className="settings-form"
-      aria-label="其他政策"
+      aria-label={t.project.otherPolicies}
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
@@ -394,39 +406,39 @@ function OtherPoliciesForm({ project }: { project: Project }) {
         if (result.ok) update.mutate({ policy: result.policy });
       }}
     >
-      {checkbox("planGateEnabled", "需要 Plan Gate（Task 可以個別覆寫）")}
+      {checkbox("planGateEnabled", t.project.requirePlanGate)}
       <TextField
-        label="Verification 自動重試上限"
+        label={t.project.verificationMaxRetries}
         value={values.verificationMaxRetries}
         onChange={(value) => set("verificationMaxRetries", value)}
         error={errors.verificationMaxRetries}
-        hint="第一輪之後最多自動重試幾次（1–10），超過就停下來等人決定。"
+        hint={t.project.verificationMaxRetriesHint}
       />
-      {checkbox("delegationEnabled", "允許 Delegation")}
+      {checkbox("delegationEnabled", t.project.delegationEnabled)}
       {values.delegationEnabled && (
         <TextField
-          label="可以分派的 Agent"
+          label={t.project.delegationAgents}
           value={values.delegationAgents}
           onChange={(value) => set("delegationAgents", value)}
           error={errors.delegationAgents}
-          hint="以逗號分隔，例如 claude-code, codex；留空表示不限制。"
+          hint={t.project.delegationAgentsHint}
         />
       )}
-      {checkbox("forbidSelfApproval", "禁止 Member 核准自己的 Task")}
-      {checkbox("memberCanDispatchToTeamRunner", "Member 可以派工到 Team Runner")}
-      {checkbox("autoCreateIssues", "自動建立 GitHub Issue")}
+      {checkbox("forbidSelfApproval", t.project.forbidSelfApproval)}
+      {checkbox("memberCanDispatchToTeamRunner", t.project.memberCanDispatchToTeamRunner)}
+      {checkbox("autoCreateIssues", t.project.autoCreateIssues)}
       <TextField
-        label="會觸發 Feedback Loop 的 bot"
+        label={t.project.feedbackBots}
         value={values.feedbackBotAllowlist}
         onChange={(value) => set("feedbackBotAllowlist", value)}
         error={errors.feedbackBotAllowlist}
         multiline
-        hint="GitHub login，一行一個，例如 coderabbitai[bot]。其他 bot 的留言不觸發。"
+        hint={t.project.feedbackBotsHint}
       />
       <ErrorText error={update.error} />
-      <button type="submit" className="primary" disabled={update.isPending}>
-        儲存其他政策
-      </button>
+      <Button type="submit" variant="primary" disabled={update.isPending}>
+        {t.project.saveOtherPolicies}
+      </Button>
     </form>
   );
 }
@@ -450,7 +462,7 @@ function PermissionPolicyForm({ project }: { project: Project }) {
       }}
     >
       <label className="field">
-        預設 Permission Policy
+        {t.project.defaultPermissionPolicy}
         <select
           value={value}
           onChange={(event) => setValue(event.target.value as PermissionPolicy)}
@@ -462,13 +474,11 @@ function PermissionPolicyForm({ project }: { project: Project }) {
           ))}
         </select>
       </label>
-      <p className="hint">
-        派工時的預設值，派工的人仍可以改。Team Runner 不提供 yolo，會改用 auto。
-      </p>
+      <p className="hint">{t.project.permissionPolicyHint}</p>
       <ErrorText error={update.error} />
-      <button type="submit" className="primary" disabled={value === current || update.isPending}>
-        儲存政策
-      </button>
+      <Button type="submit" variant="primary" disabled={value === current || update.isPending}>
+        {t.project.savePolicy}
+      </Button>
     </form>
   );
 }

@@ -11,6 +11,7 @@ import {
   setProjectRole,
   updateMemberRole,
 } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
 import { useT } from "../../i18n";
@@ -42,15 +43,15 @@ export function MembersSection({ myRole, myMemberId }: { myRole: Role; myMemberI
 
   return (
     <section className="section" aria-labelledby="admin-members">
-      <h2 id="admin-members">成員與 Role</h2>
+      <h2 id="admin-members">{t.admin.members}</h2>
       <ErrorText error={error} />
       <table className="run-table member-table">
         <thead>
           <tr>
-            <th scope="col">成員</th>
-            <th scope="col">Role</th>
+            <th scope="col">{t.admin.memberColumns.member}</th>
+            <th scope="col">{t.admin.memberColumns.role}</th>
             <th scope="col">
-              <span className="visually-hidden">操作</span>
+              <span className="visually-hidden">{t.admin.memberColumns.actions}</span>
             </th>
           </tr>
         </thead>
@@ -68,15 +69,15 @@ export function MembersSection({ myRole, myMemberId }: { myRole: Role; myMemberI
       </table>
       <form
         className="settings-form inline-form"
-        aria-label="新增成員"
+        aria-label={t.admin.addMember}
         onSubmit={(event) => {
           event.preventDefault();
           if (login.trim() !== "") add.mutate();
         }}
       >
-        <TextField label="GitHub login" value={login} onChange={setLogin} />
+        <TextField label={t.admin.githubLogin} value={login} onChange={setLogin} />
         <label className="field">
-          Role
+          {t.admin.role}
           <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
             {assignableRoles(myRole).map((r) => (
               <option key={r} value={r}>
@@ -85,9 +86,9 @@ export function MembersSection({ myRole, myMemberId }: { myRole: Role; myMemberI
             ))}
           </select>
         </label>
-        <button type="submit" className="primary" disabled={add.isPending || login.trim() === ""}>
-          新增成員
-        </button>
+        <Button type="submit" variant="primary" disabled={add.isPending || login.trim() === ""}>
+          {t.admin.addMember}
+        </Button>
         <ErrorText error={add.error} />
       </form>
     </section>
@@ -121,12 +122,12 @@ function MemberRow({
       <td>
         {label}
         {member.name && <span className="hint"> {member.name}</span>}
-        {isMe && <span className="tag">你</span>}
+        {isMe && <span className="tag">{t.admin.self}</span>}
       </td>
       <td>
         {editable ? (
           <select
-            aria-label={`${label} 的 Role`}
+            aria-label={t.admin.roleOf(label)}
             value={member.role}
             disabled={update.isPending}
             onChange={(event) => update.mutate(event.target.value as Role)}
@@ -144,14 +145,13 @@ function MemberRow({
       </td>
       <td>
         {editable && (
-          <button
-            type="button"
-            className="danger"
+          <Button
+            variant="danger-ghost"
             disabled={remove.isPending}
             onClick={() => (confirming ? remove.mutate() : setConfirming(true))}
           >
-            {confirming ? `確定移除 ${label}` : "移除"}
-          </button>
+            {confirming ? t.admin.confirmRemove(label) : t.admin.remove}
+          </Button>
         )}
         <ErrorText error={remove.error} />
       </td>
@@ -194,27 +194,27 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
 
   return (
     <section className="section" aria-labelledby="admin-project-roles">
-      <h2 id="admin-project-roles">Project 的 Role 覆寫</h2>
+      <h2 id="admin-project-roles">{t.admin.projectRoles}</h2>
       <label className="field-inline">
-        Project
+        {t.admin.project}
         <select value={projectId} onChange={(event) => setProjectId(event.target.value)}>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}（{p.keyPrefix}）
+              {t.admin.projectOption(p.name, p.keyPrefix)}
             </option>
           ))}
         </select>
       </label>
       <ErrorText error={error ?? set.error ?? remove.error} />
       {overrides.length === 0 ? (
-        <p className="empty">這個 Project 沒有 Role 覆寫，所有人沿用 Team 的 Role。</p>
+        <p className="empty">{t.admin.noOverrides}</p>
       ) : (
-        <ul className="role-overrides" aria-label="Role 覆寫">
+        <ul className="role-overrides" aria-label={t.admin.overridesList}>
           {overrides.map((o) => (
             <li key={o.memberId} data-member={loginOf(o.memberId)}>
               @{loginOf(o.memberId)}：
               <select
-                aria-label={`@${loginOf(o.memberId)} 在這個 Project 的 Role`}
+                aria-label={t.admin.roleInProject(`@${loginOf(o.memberId)}`)}
                 value={o.role}
                 onChange={(event) =>
                   set.mutate({
@@ -235,7 +235,7 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
                 disabled={remove.isPending}
                 onClick={() => remove.mutate(o.memberId)}
               >
-                取消覆寫
+                {t.admin.clearOverride}
               </button>
             </li>
           ))}
@@ -244,26 +244,31 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
       {candidates.length > 0 && (
         <form
           className="settings-form inline-form"
-          aria-label="新增 Role 覆寫"
+          aria-label={t.admin.addOverride}
           onSubmit={(event) => {
             event.preventDefault();
             if (memberId !== "") set.mutate({ id: memberId, value: role });
           }}
         >
           <label className="field-inline">
-            成員
-            <select value={memberId} onChange={(event) => setMemberId(event.target.value)}>
-              <option value="">選擇成員</option>
+            {t.admin.member}
+            <select
+              aria-label={t.admin.member}
+              value={memberId}
+              onChange={(event) => setMemberId(event.target.value)}
+            >
+              <option value="">{t.admin.chooseMember}</option>
               {candidates.map((m) => (
                 <option key={m.id} value={m.id}>
-                  @{m.githubLogin}（Team：{t.labels.role[m.role]}）
+                  {t.admin.memberWithTeamRole(`@${m.githubLogin}`, t.labels.role[m.role])}
                 </option>
               ))}
             </select>
           </label>
           <label className="field-inline">
-            覆寫成
+            {t.admin.overrideTo}
             <select
+              aria-label={t.admin.overrideTo}
               value={role}
               onChange={(event) => setRole(event.target.value as (typeof OVERRIDE_ROLES)[number])}
             >
@@ -274,9 +279,9 @@ export function ProjectRolesSection({ projects }: { projects: readonly Project[]
               ))}
             </select>
           </label>
-          <button type="submit" disabled={memberId === "" || set.isPending}>
-            新增覆寫
-          </button>
+          <Button type="submit" disabled={memberId === "" || set.isPending}>
+            {t.admin.submitOverride}
+          </Button>
         </form>
       )}
     </section>

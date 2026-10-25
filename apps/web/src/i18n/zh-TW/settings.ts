@@ -28,7 +28,7 @@ export default {
   autoExpandTools: "自動展開工具步驟",
   version: "版本",
   versionDesktop: (version: string) => `Desktop ${version}`,
-  versionServer: (version: string) => `Server ${version}`,
+  versionServer: (version: string) => `伺服器 ${version}`,
 
   noRunners: "還沒有任何執行器完成配對",
   runnerOnline: "已連線",

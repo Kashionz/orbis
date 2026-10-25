@@ -21,6 +21,7 @@ import {
   reposQuery,
   updateDraftTask,
 } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
 import { useT } from "../../i18n";
@@ -41,6 +42,7 @@ function groupByBatch(drafts: readonly DraftTask[]): [string, DraftTask[]][] {
  * 可以逐筆或批次確認（進入 Backlog）、修改、捨棄。
  */
 export function DraftTasksPage({ projectId }: { projectId: string }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: project } = useSuspenseQuery(projectQuery(projectId));
   const { data: drafts = [], error } = useQuery(draftTasksQuery(projectId));
@@ -90,40 +92,35 @@ export function DraftTasksPage({ projectId }: { projectId: string }) {
           {project.name}
         </Link>
         <span aria-hidden="true"> / </span>
-        <span>Draft Task</span>
+        <span>{t.draftTasks.title}</span>
       </nav>
       <header className="page-header">
-        <h1>Draft Task</h1>
+        <h1>{t.draftTasks.title}</h1>
         <span className="spacer" />
         {canEdit && (
           <div className="form-actions">
-            <button
-              type="button"
-              className="primary"
+            <Button
+              variant="primary"
               disabled={selectedCount === 0 || batch.isPending}
               onClick={() => batch.mutate("confirm")}
             >
-              確認選取的（{selectedCount}）
-            </button>
-            <button
-              type="button"
-              className="danger"
+              {t.draftTasks.confirmSelected(selectedCount)}
+            </Button>
+            <Button
+              variant="danger-ghost"
               disabled={selectedCount === 0 || batch.isPending}
               onClick={() => batch.mutate("dismiss")}
             >
-              捨棄選取的（{selectedCount}）
-            </button>
+              {t.draftTasks.dismissSelected(selectedCount)}
+            </Button>
           </div>
         )}
       </header>
-      <p className="hint">
-        Agent 提出的 Task，確認後才會進入
-        Backlog。依賴同一批的其他草稿（#n）時，要先確認或一起確認被依賴的。
-      </p>
+      <p className="hint">{t.draftTasks.intro}</p>
       <ErrorText error={error ?? batch.error} />
       {confirmed.length > 0 && (
         <div className="notice-inline" role="status">
-          已確認：
+          {t.draftTasks.confirmed}
           {confirmed.map((task) => (
             <Link key={task.key} to="/tasks/$taskKey" params={{ taskKey: task.key }}>
               {task.key} {task.title}
@@ -131,9 +128,9 @@ export function DraftTasksPage({ projectId }: { projectId: string }) {
           ))}
         </div>
       )}
-      {drafts.length === 0 && <p className="empty">沒有等待確認的 Draft Task。</p>}
+      {drafts.length === 0 && <p className="empty">{t.draftTasks.empty}</p>}
       {groupByBatch(drafts).map(([batchId, list]) => (
-        <section key={batchId} className="draft-batch" aria-label={`批次 ${batchId}`}>
+        <section key={batchId} className="draft-batch" aria-label={t.draftTasks.batch(batchId)}>
           <header className="draft-batch-header">
             {canEdit && (
               <label className="field-inline">
@@ -144,17 +141,18 @@ export function DraftTasksPage({ projectId }: { projectId: string }) {
                     for (const d of list) toggle(d.id, event.target.checked);
                   }}
                 />
-                全選這一批
+                {t.draftTasks.selectBatch}
               </label>
             )}
             {list[0]?.proposedByRunId && (
               <Link to="/runs/$runId" params={{ runId: list[0].proposedByRunId }}>
-                提出的 Run
+                {t.draftTasks.proposedBy}
               </Link>
             )}
             {list[0]?.spec && (
               <span className="hint">
-                Spec：<code>{list[0].spec}</code>
+                {t.draftTasks.spec}
+                <code>{list[0].spec}</code>
               </span>
             )}
           </header>
@@ -220,14 +218,14 @@ function DraftTaskItem({
         {canEdit && (
           <input
             type="checkbox"
-            aria-label={`選取 ${label}`}
+            aria-label={t.draftTasks.select(label)}
             checked={selected}
             onChange={(event) => onSelect(event.target.checked)}
           />
         )}
         <span className="task-key">#{draft.position}</span>
         <strong>{draft.title}</strong>
-        <span className="hint">{repo ? `${repo.owner}/${repo.name}` : "還沒有指定 Repo"}</span>
+        <span className="hint">{repo ? `${repo.owner}/${repo.name}` : t.draftTasks.noRepo}</span>
       </div>
       {editing ? (
         <DraftTaskForm
@@ -245,7 +243,7 @@ function DraftTaskItem({
               <Markdown>{draft.description}</Markdown>
             </div>
           )}
-          <ul className="draft-criteria" aria-label="Acceptance Criterion">
+          <ul className="draft-criteria" aria-label={t.draftTasks.acceptanceCriteria}>
             {draft.acceptanceCriteria.map((criterion, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: 草稿的條件沒有 id
               <li key={index}>
@@ -257,7 +255,7 @@ function DraftTaskItem({
           </ul>
           {draft.dependsOn.length > 0 && (
             <p className="draft-depends">
-              依賴：
+              {t.draftTasks.dependsOnPrefix}
               {draft.dependsOn.map((dep) => (
                 <DependencyLabel key={dep} dep={dep} batch={batch} />
               ))}
@@ -265,25 +263,21 @@ function DraftTaskItem({
           )}
           {canEdit && (
             <div className="form-actions">
-              <button
-                type="button"
-                className="primary"
+              <Button
+                variant="primary"
                 disabled={confirm.isPending}
                 onClick={() => confirm.mutate()}
               >
-                確認
-              </button>
-              <button type="button" onClick={() => setEditing(true)}>
-                修改
-              </button>
-              <button
-                type="button"
-                className="danger"
+                {t.draftTasks.confirm}
+              </Button>
+              <Button onClick={() => setEditing(true)}>{t.draftTasks.edit}</Button>
+              <Button
+                variant="danger-ghost"
                 disabled={dismiss.isPending}
                 onClick={() => dismiss.mutate()}
               >
-                捨棄
-              </button>
+                {t.draftTasks.dismiss}
+              </Button>
             </div>
           )}
           <ErrorText error={confirm.error ?? dismiss.error} />
@@ -295,12 +289,13 @@ function DraftTaskItem({
 
 /** `#n` 顯示同一批草稿的標題；Task Key 連到 Task 頁。 */
 function DependencyLabel({ dep, batch }: { dep: string; batch: readonly DraftTask[] }) {
+  const t = useT();
   if (dep.startsWith("#")) {
     const target = batch.find((d) => `#${d.position}` === dep);
     return (
       <span className="tag" data-dependency={dep}>
         {dep}
-        {target ? ` ${target.title}` : "（已不在這一批）"}
+        {target ? ` ${target.title}` : t.draftTasks.notInBatch}
       </span>
     );
   }
@@ -367,18 +362,28 @@ function DraftTaskForm({
   return (
     <form
       className="settings-form draft-task-form"
-      aria-label={`修改 #${draft.position}`}
+      aria-label={t.draftTasks.editForm(draft.position)}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
-      <TextField label="標題" value={title} onChange={setTitle} maxLength={200} />
-      <TextField label="描述" value={description} onChange={setDescription} multiline />
+      <TextField
+        label={t.draftTasks.titleLabel}
+        value={title}
+        onChange={setTitle}
+        maxLength={200}
+      />
+      <TextField
+        label={t.draftTasks.descriptionLabel}
+        value={description}
+        onChange={setDescription}
+        multiline
+      />
       <label className="field">
-        Repo
+        {t.draftTasks.repo}
         <select value={repoId} onChange={(event) => setRepoId(event.target.value)}>
-          <option value="">還沒有指定</option>
+          <option value="">{t.draftTasks.repoNone}</option>
           {repos.map((repo) => (
             <option key={repo.id} value={repo.id}>
               {repo.owner}/{repo.name}
@@ -387,12 +392,12 @@ function DraftTaskForm({
         </select>
       </label>
       <fieldset className="draft-criteria-editor">
-        <legend>Acceptance Criterion</legend>
+        <legend>{t.draftTasks.acceptanceCriteria}</legend>
         {criteria.map((criterion, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: 編輯中的條件沒有 id
           <div key={index} className="draft-criterion-row">
             <select
-              aria-label={`第 ${index + 1} 條的類型`}
+              aria-label={t.draftTasks.criterionKind(index + 1)}
               value={criterion.kind}
               onChange={(event) =>
                 setCriterion(index, { kind: event.target.value as AcceptanceCriterionKind })
@@ -405,14 +410,14 @@ function DraftTaskForm({
               ))}
             </select>
             <input
-              aria-label={`第 ${index + 1} 條的條件`}
+              aria-label={t.draftTasks.criterionDescription(index + 1)}
               value={criterion.description}
               onChange={(event) => setCriterion(index, { description: event.target.value })}
             />
             {criterion.kind === "command" && (
               <input
-                aria-label={`第 ${index + 1} 條的指令`}
-                placeholder="留空：沿用 Repo 設定檔的 verify"
+                aria-label={t.draftTasks.criterionCommand(index + 1)}
+                placeholder={t.draftTasks.commandPlaceholder}
                 value={criterion.command}
                 onChange={(event) => setCriterion(index, { command: event.target.value })}
               />
@@ -422,7 +427,7 @@ function DraftTaskForm({
               className="link-button"
               onClick={() => setCriteria((current) => current.filter((_, i) => i !== index))}
             >
-              移除
+              {t.common.remove}
             </button>
           </div>
         ))}
@@ -433,14 +438,14 @@ function DraftTaskForm({
             setCriteria((current) => [...current, { kind: "manual", description: "", command: "" }])
           }
         >
-          新增一條
+          {t.draftTasks.addCriterion}
         </button>
       </fieldset>
       <TextField
-        label="依賴"
+        label={t.draftTasks.dependsOn}
         value={dependsOn}
         onChange={setDependsOn}
-        hint="以逗號分隔：同一批的 #n，或既有的 Task Key（例如 ORB-12）。"
+        hint={t.draftTasks.dependsOnHint}
       />
       {issues.length > 0 && (
         <ul className="error-text" role="alert">
@@ -451,12 +456,12 @@ function DraftTaskForm({
       )}
       <ErrorText error={save.error} />
       <div className="form-actions">
-        <button type="submit" className="primary" disabled={save.isPending}>
-          儲存
-        </button>
-        <button type="button" onClick={() => void onDone(false)}>
-          取消
-        </button>
+        <Button type="submit" variant="primary" disabled={save.isPending}>
+          {t.common.save}
+        </Button>
+        <Button variant="ghost" onClick={() => void onDone(false)}>
+          {t.common.cancel}
+        </Button>
       </div>
     </form>
   );

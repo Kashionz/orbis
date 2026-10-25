@@ -88,7 +88,7 @@ test.describe("Diff review", () => {
       },
     ]);
     await expect(page.getByTestId("timeline")).toContainText("收到 review 留言");
-    await expect(page.getByTestId("run-status")).toHaveText("等待 Gate");
+    await expect(page.getByTestId("run-status")).toHaveText("等待關卡");
   });
 
   test("核准後 Run 完成、Task 進入 PR Open", async ({ page }) => {
@@ -97,7 +97,7 @@ test.describe("Diff review", () => {
     await expect(page).toHaveURL(/\/runs\/run-\d+$/);
     await expect(page.getByTestId("run-status")).toHaveText("已完成");
     await page.getByRole("link", { name: /ORB-4/ }).click();
-    await expect(page.locator(".page-header .status-badge")).toHaveText("PR Open");
+    await expect(page.locator(".page-header .status-badge")).toHaveText("合併請求已開啟");
   });
 
   test.describe("禁止核准自己的 Task（Member）", () => {
@@ -137,7 +137,7 @@ test.describe("Diff review", () => {
     const state = await mockState<MockState>(page);
     expect(state.reviews[runId]).toEqual([{ action: "abort" }]);
     await page.getByRole("link", { name: /ORB-4/ }).click();
-    await expect(page.locator(".page-header .status-badge")).toHaveText("Ready");
+    await expect(page.locator(".page-header .status-badge")).toHaveText("就緒");
   });
 
   test.describe("大檔與二進位檔案", () => {

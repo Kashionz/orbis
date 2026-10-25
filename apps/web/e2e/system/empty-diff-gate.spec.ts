@@ -67,7 +67,7 @@ test.describe("Review Gate 的 diff 為空（完整系統）", () => {
     await page.getByRole("dialog").getByRole("button", { name: "派工" }).click();
     await expect(page).toHaveURL(/\/runs\/[^/?]+$/);
     const runId = new URL(page.url()).pathname.split("/").at(-1) ?? "";
-    await expect(page.getByTestId("run-status")).toHaveText("等待 Gate", { timeout: 120_000 });
+    await expect(page.getByTestId("run-status")).toHaveText("等待關卡", { timeout: 120_000 });
 
     // Review Gate：diff 為空，看得到 Agent 最後的回覆，沒有「核准並開 PR」
     await page.getByRole("link", { name: "Diff review" }).click();
@@ -101,7 +101,7 @@ test.describe("Review Gate 的 diff 為空（完整系統）", () => {
     expect(refs.trim()).toBe("");
 
     await page.getByRole("link", { name: new RegExp(task.key) }).click();
-    await expect(page.locator(".page-header .status-badge")).toHaveText("Done");
+    await expect(page.locator(".page-header .status-badge")).toHaveText("完成");
     await context.close();
   });
 });

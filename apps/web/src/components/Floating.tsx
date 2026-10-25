@@ -60,7 +60,7 @@ export function Floating({
 
   useEffect(() => {
     if (!open || !style) return;
-    (initialFocusRef?.current ?? ref.current)?.focus();
+    (initialFocusRef?.current ?? ref.current)?.focus({ preventScroll: true });
   }, [open, style, initialFocusRef]);
 
   useEffect(() => {

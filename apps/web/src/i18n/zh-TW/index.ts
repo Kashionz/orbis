@@ -4,11 +4,13 @@ import admin from "./admin";
 import auth from "./auth";
 import board from "./board";
 import common from "./common";
+import draftTasks from "./draftTasks";
 import labels from "./labels";
 import needsYou from "./needsYou";
 import newTask from "./newTask";
 import notifications from "./notifications";
 import project from "./project";
+import repoSpec from "./repoSpec";
 import settings from "./settings";
 import share from "./share";
 import shell from "./shell";
@@ -24,6 +26,8 @@ export const zhTW = {
   share,
   admin,
   project,
+  draftTasks,
+  repoSpec,
   notifications,
   auth,
   version,

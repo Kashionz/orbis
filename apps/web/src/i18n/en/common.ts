@@ -38,5 +38,7 @@ export default {
   signedOut: "Not signed in",
   forbidden: (message: string) => `Not allowed: ${message}`,
   notReadyMissing: (missing: string) => `Can't move to Ready yet. Missing: ${missing}`,
+  usageContext: (value: string) => `context ${value}`,
+  usageOutput: (value: string) => `output ${value}`,
   listSeparator: ", ",
 } satisfies Messages["common"];

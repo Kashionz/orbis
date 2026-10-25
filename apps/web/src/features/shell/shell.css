@@ -369,9 +369,16 @@
 }
 
 .profile-menu-identity {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.profile-menu-role {
+  flex: none;
+  font-size: 12px;
+  color: var(--o8b9098);
 }
 
 .profile-menu-name {
@@ -506,4 +513,44 @@
   flex-direction: column;
   background: var(--o131417);
   border-left: 1px solid var(--o1e2024);
+}
+
+/* ---------- 主欄頁面的標題列與內容（看板、待我處理、通知等） ---------- */
+
+.page-bar {
+  height: 60px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 28px;
+  min-width: 0;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  white-space: nowrap;
+}
+
+.page-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.page-empty {
+  margin: 0;
+  padding: 64px 0;
+  text-align: center;
+  color: var(--o8b9098);
+}
+
+@media (max-width: 640px) {
+  .page-bar {
+    padding: 0 16px;
+    gap: 8px;
+  }
 }

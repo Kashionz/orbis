@@ -19,6 +19,8 @@ import { Switch } from "../components/Switch";
 import { useToast } from "../components/Toast";
 import { Tooltip } from "../components/Tooltip";
 import { ShareCluster } from "../features/share/ShareCluster";
+import { usePanel } from "../features/shell/use-panel";
+import { WorkspaceLayout } from "../features/shell/WorkspaceLayout";
 import { parseNumberIn, persistentState, usePersistentState } from "../lib/storage";
 
 const galleryWidth = persistentState<number>("gallery-w", 240, parseNumberIn(160, 400));
@@ -97,7 +99,7 @@ export function ComponentGallery() {
       </section>
 
       <section aria-label="tooltip" style={{ display: "flex", gap: 12 }}>
-        <Tooltip text="完整路徑 D:\\work\\repo\\ORB-42" mono>
+        <Tooltip text={"完整路徑 D:\\work\\repo\\ORB-42"} mono>
           <button type="button">有 Tooltip 的按鈕</button>
         </Tooltip>
         <button type="button" title="原生 title 也會換成 Tooltip">
@@ -229,6 +231,8 @@ export function ComponentGallery() {
 
       <GalleryShare />
 
+      <GalleryWorkspace />
+
       <section aria-label="bottom" style={{ marginTop: "auto", paddingTop: 400 }}>
         <Button ref={bottomMenu.anchorRef} {...bottomMenu.triggerProps}>
           底部的選單
@@ -261,6 +265,27 @@ function GalleryShare() {
       </select>
       <span style={{ flex: 1 }} />
       {task && <ShareCluster task={task} headerWidth={width} />}
+    </section>
+  );
+}
+
+/** 工作區的兩欄：右側面板的開關與分割線（寬度是容器的 26%–62%）。 */
+function GalleryWorkspace() {
+  const panel = usePanel();
+  return (
+    <section aria-label="workspace" style={{ width: 1000, height: 240, display: "flex" }}>
+      <WorkspaceLayout
+        header={
+          <>
+            <span>標題列</span>
+            <span style={{ flex: 1 }} />
+            <Button onClick={panel.toggle}>{panel.open ? "隱藏面板" : "顯示面板"}</Button>
+          </>
+        }
+        panel={<div data-testid="workspace-panel">面板</div>}
+      >
+        <div data-testid="workspace-main">串流</div>
+      </WorkspaceLayout>
     </section>
   );
 }

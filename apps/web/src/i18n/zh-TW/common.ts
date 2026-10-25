@@ -40,5 +40,7 @@ export default {
   signedOut: "尚未登入",
   forbidden: (message: string) => `沒有權限：${message}`,
   notReadyMissing: (missing: string) => `還不能進入就緒，缺少：${missing}`,
+  usageContext: (value: string) => `上下文 ${value}`,
+  usageOutput: (value: string) => `輸出 ${value}`,
   listSeparator: "、",
 };

@@ -3,9 +3,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { createProject, queryKeys } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import { ErrorText } from "../../components/ErrorText";
 import { TextField } from "../../components/TextField";
+import { useT } from "../../i18n";
 import { type ProjectFormValues, validateProjectForm } from "../../lib/project-forms";
 
 interface CreateProjectDialogProps {
@@ -15,14 +17,16 @@ interface CreateProjectDialogProps {
 
 /** 建立 Project（Team Role 是 Admin 以上），建立後切換到它的看板。 */
 export function CreateProjectDialog({ open, onClose }: CreateProjectDialogProps) {
+  const t = useT();
   return (
-    <Dialog title="新增 Project" open={open} onClose={onClose}>
+    <Dialog title={t.project.createProject} open={open} onClose={onClose}>
       {open && <CreateProjectForm onClose={onClose} />}
     </Dialog>
   );
 }
 
 function CreateProjectForm({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [values, setValues] = useState<ProjectFormValues>({
@@ -54,24 +58,34 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         if (result.ok) mutation.mutate(result.input);
       }}
     >
-      <TextField label="名稱" value={values.name} onChange={set("name")} error={errors.name} />
       <TextField
-        label="Task Key 前綴"
+        label={t.project.name}
+        value={values.name}
+        onChange={set("name")}
+        error={errors.name}
+      />
+      <TextField
+        label={t.project.keyPrefix}
         value={values.keyPrefix}
         onChange={set("keyPrefix")}
         error={errors.keyPrefix}
-        hint="例如 ORB，Task Key 會是 ORB-1、ORB-2…。2–10 個大寫英文字母或數字，以字母開頭，建立後不能修改。"
+        hint={t.project.keyPrefixHint}
         maxLength={10}
       />
-      <TextField label="描述" value={values.description} onChange={set("description")} multiline />
+      <TextField
+        label={t.project.description}
+        value={values.description}
+        onChange={set("description")}
+        multiline
+      />
       <ErrorText error={mutation.error} />
       <div className="dialog-actions">
-        <button type="button" onClick={onClose}>
-          取消
-        </button>
-        <button type="submit" className="primary" disabled={mutation.isPending}>
-          建立
-        </button>
+        <Button variant="ghost" onClick={onClose}>
+          {t.common.cancel}
+        </Button>
+        <Button type="submit" variant="primary" disabled={mutation.isPending}>
+          {t.common.create}
+        </Button>
       </div>
     </form>
   );

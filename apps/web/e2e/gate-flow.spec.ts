@@ -23,7 +23,7 @@ test("Plan Gate → Verification 失敗後重試 → 通過 → manual 打勾 �
 
   // Verification 第一輪失敗、自動重試、第二輪通過
   await expect(timeline).toContainText("第 1 輪 Verification 結束：失敗");
-  await expect(timeline).toContainText("送出 prompt（Verification 重試）");
+  await expect(timeline).toContainText("送出 prompt（驗收重試）");
   await expect(timeline).toContainText("第 2 輪 Verification 結束：通過");
   await page.getByRole("tab", { name: "Verification" }).click();
   await expect(

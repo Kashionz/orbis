@@ -128,7 +128,18 @@
 .notice {
   max-width: 32rem;
   margin: 4rem auto;
-  padding: 0 1rem;
+  padding: 0 16px;
+}
+
+.login h1,
+.notice h1 {
+  font-size: 16px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.notice p {
+  color: var(--o8b9098);
 }
 
 .spacer {
@@ -141,13 +152,16 @@
   border-radius: 50%;
 }
 
-.role-badge,
 .tag,
 .status-badge {
-  padding: 0 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 0.75rem;
+  display: inline-block;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--o22242a);
+  color: var(--o8b9098);
+  font-size: 11px;
+  line-height: 18px;
   white-space: nowrap;
 }
 
@@ -160,13 +174,13 @@
 
 .hint {
   color: var(--muted);
-  font-size: 0.85em;
+  font-size: 12px;
 }
 
 .empty {
   margin: 0;
-  font-size: 0.85rem;
-  opacity: 0.6;
+  font-size: 12px;
+  color: var(--o8b9098);
 }
 
 .error-text {
@@ -209,17 +223,20 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  gap: 12px;
+  padding: 16px 28px 12px;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 1.3rem;
+  font-size: 16px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
 }
 
 .breadcrumb {
-  font-size: 0.85rem;
+  font-size: 12px;
+  color: var(--o8b9098);
 }
 
 .toolbar {
@@ -233,8 +250,14 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-bottom: 0.75rem;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.field :is(input, textarea, select) {
+  color: var(--oe8e9eb);
 }
 
 .field-error {
@@ -354,7 +377,7 @@
 .task-page .breadcrumb,
 .run-page .breadcrumb,
 .settings-page .breadcrumb {
-  padding: 0.75rem 1rem 0;
+  padding: 16px 28px 0;
 }
 
 .task-heading {
@@ -389,7 +412,7 @@
 }
 
 .section {
-  margin-bottom: 1.5rem;
+  margin-bottom: 28px;
 }
 
 .section-header {
@@ -399,7 +422,15 @@
 }
 
 .section h2 {
-  font-size: 1rem;
+  font-size: 14px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+}
+
+.section h3 {
+  font-size: 13px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
 }
 
 .tabs {
@@ -474,21 +505,27 @@
 .run-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 12px;
 }
 
 .run-table th,
 .run-table td {
-  padding: 0.3rem 0.5rem;
-  border-bottom: 1px solid var(--border);
+  padding: 8px;
+  border-bottom: 1px solid var(--o1e2024);
   text-align: left;
+}
+
+.run-table th {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--o8b9098);
 }
 
 /* Project 設定頁 */
 
 .settings-layout {
   max-width: 48rem;
-  padding: 0 1rem 2rem;
+  padding: 0 28px 32px;
 }
 
 .settings-form {
@@ -1069,7 +1106,7 @@
 
 .draft-tasks-page {
   max-width: 60rem;
-  padding: 0 1rem 2rem;
+  padding: 0 28px 32px;
 }
 
 .draft-batch {
@@ -1114,45 +1151,6 @@
 }
 
 /* ---------- C2：通知與 @mention ---------- */
-
-.notifications-page {
-  max-width: 50rem;
-  padding: 0 1rem 2rem;
-}
-
-.notification-list {
-  list-style: none;
-  margin: 0.75rem 0;
-  padding: 0;
-}
-
-.notification {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.notification-open {
-  flex: 1;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  border: none;
-  background: none;
-  text-align: left;
-}
-
-.notification[data-read="false"] .notification-open {
-  font-weight: 600;
-  border-left: 3px solid var(--accent);
-}
-
-.quiet-hours {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: center;
-}
 
 .mention-input {
   position: relative;
@@ -1345,7 +1343,7 @@
 
 .repo-spec-page {
   max-width: 60rem;
-  padding: 0 1rem 2rem;
+  padding: 0 28px 32px;
 }
 
 .repo-specs h3 {
@@ -1361,7 +1359,7 @@
 
 .admin-page {
   max-width: 70rem;
-  padding: 0 1rem 2rem;
+  padding: 0 28px 32px;
 }
 
 .inline-form {

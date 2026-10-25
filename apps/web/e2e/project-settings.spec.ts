@@ -1,6 +1,6 @@
 import { NAMES, type Role } from "@orbis/api-contract";
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, openNewTask, test } from "./fixtures";
 
 const INSTALL_URL = `https://github.com/apps/${NAMES.productSlug}/installations/new`;
 
@@ -12,26 +12,26 @@ test.describe("建立 Project", () => {
   test("從看板新增 Project：驗證錯誤、前綴重複（409），建立後切換到它的看板", async ({ page }) => {
     await page.goto("/board");
     await page.getByRole("button", { name: "新增 Project" }).click();
-    const dialog = page.getByRole("dialog", { name: "新增 Project" });
+    const dialog = page.getByRole("dialog", { name: "新增專案" });
 
     // 表單驗證：每個欄位標出契約的規則
-    await dialog.getByLabel("Task Key 前綴").fill("1x");
+    await dialog.getByLabel("任務編號前綴").fill("1x");
     await dialog.getByRole("button", { name: "建立" }).click();
     await expect(dialog.getByLabel("名稱")).toHaveAttribute("aria-invalid", "true");
-    await expect(dialog.getByLabel("Task Key 前綴")).toHaveAttribute("aria-invalid", "true");
+    await expect(dialog.getByLabel("任務編號前綴")).toHaveAttribute("aria-invalid", "true");
     await expect(dialog).toContainText(
       "Project 前綴必須是 2–10 個大寫英文字母或數字，並以字母開頭",
     );
 
     // 前綴已被使用：顯示 Server 的 409
     await dialog.getByLabel("名稱").fill("網站");
-    await dialog.getByLabel("Task Key 前綴").fill("orb");
+    await dialog.getByLabel("任務編號前綴").fill("orb");
     await dialog.getByLabel("描述").fill("官方網站");
     await dialog.getByRole("button", { name: "建立" }).click();
     await expect(dialog.getByRole("alert")).toHaveText("Task Key 前綴 ORB 已被使用");
-    await expect(dialog.getByLabel("Task Key 前綴")).not.toHaveAttribute("aria-invalid");
+    await expect(dialog.getByLabel("任務編號前綴")).not.toHaveAttribute("aria-invalid");
 
-    await dialog.getByLabel("Task Key 前綴").fill("web");
+    await dialog.getByLabel("任務編號前綴").fill("web");
     await dialog.getByRole("button", { name: "建立" }).click();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/\/board\?project=project-\d+$/);
@@ -44,13 +44,12 @@ test.describe("建立 Project", () => {
     await expect(page.locator(".task-card")).toHaveCount(0);
     await expect(page.getByPlaceholder("用 Task Key 搜尋，例如 WEB-1")).toBeVisible();
 
-    // 還沒有 Repo：新增 Task 時提示先到 Project 設定登記
-    await page.getByRole("button", { name: "新增 Task" }).click();
-    const createTask = page.getByRole("dialog", { name: "新增 Task" });
-    await expect(createTask.locator(".warning")).toContainText("這個 Project 還沒有登記 Repo");
-    await createTask.getByRole("link", { name: "Project 設定" }).click();
+    // 還沒有 Repo：新增任務時提示先到專案設定登記
+    const createTask = await openNewTask(page);
+    await expect(createTask).toContainText("這個專案還沒有登記儲存庫");
+    await createTask.getByRole("link", { name: "專案設定" }).click();
     await expect(page).toHaveURL(/\/projects\/project-\d+\/settings$/);
-    await expect(page.getByText("還沒有登記任何 Repo。")).toBeVisible();
+    await expect(page.getByText("還沒有登記任何儲存庫。")).toBeVisible();
     await expect(page.getByLabel("名稱", { exact: true })).toHaveValue("網站");
     await expect(page.getByLabel("描述")).toHaveValue("官方網站");
   });
@@ -62,9 +61,9 @@ test.describe("建立 Project", () => {
       await page.goto("/board");
       await expect(page.getByRole("heading", { name: "還沒有任何 Project" })).toBeVisible();
       await page.getByRole("button", { name: "新增 Project" }).click();
-      const dialog = page.getByRole("dialog", { name: "新增 Project" });
+      const dialog = page.getByRole("dialog", { name: "新增專案" });
       await dialog.getByLabel("名稱").fill(NAMES.productName);
-      await dialog.getByLabel("Task Key 前綴").fill("ORB");
+      await dialog.getByLabel("任務編號前綴").fill("ORB");
       await dialog.getByRole("button", { name: "建立" }).click();
       await expect(
         page.getByRole("combobox", { name: "Project", exact: true }).locator("option:checked"),
@@ -81,27 +80,27 @@ test.describe("Project 設定頁", () => {
     await expect(page).toHaveURL(/\/projects\/project-1\/settings$/);
     await expect(repoRow(page, "acme/demo")).toContainText("已安裝");
 
-    const form = page.getByRole("form", { name: "登記 Repo" });
+    const form = page.getByRole("form", { name: "登記儲存庫" });
 
     // 表單驗證
-    await form.getByLabel("Owner").fill("-acme");
-    await form.getByLabel("Repo 名稱").fill("..");
+    await form.getByLabel("帳號或組織").fill("-acme");
+    await form.getByLabel("儲存庫名稱").fill("..");
     await form.getByRole("button", { name: "登記" }).click();
     await expect(form).toContainText("不是合法的 GitHub 使用者或組織名稱");
     await expect(form).toContainText("不是合法的 GitHub repository 名稱");
 
     // App 已安裝：default branch 以 GitHub 為準
-    await form.getByLabel("Owner").fill("acme");
-    await form.getByLabel("Repo 名稱").fill("api");
-    await form.getByLabel("Default branch").fill("develop");
+    await form.getByLabel("帳號或組織").fill("acme");
+    await form.getByLabel("儲存庫名稱").fill("api");
+    await form.getByLabel("預設分支").fill("develop");
     await form.getByRole("button", { name: "登記" }).click();
     await expect(repoRow(page, "acme/api")).toContainText("main");
     await expect(repoRow(page, "acme/api")).toContainText("已安裝");
-    await expect(form.getByLabel("Owner")).toHaveValue("");
+    await expect(form.getByLabel("帳號或組織")).toHaveValue("");
 
     // App 未安裝：default branch 不填時用 main，顯示安裝連結（在外部瀏覽器開啟）
-    await form.getByLabel("Owner").fill("octocat");
-    await form.getByLabel("Repo 名稱").fill("tools");
+    await form.getByLabel("帳號或組織").fill("octocat");
+    await form.getByLabel("儲存庫名稱").fill("tools");
     await form.getByRole("button", { name: "登記" }).click();
     const tools = repoRow(page, "octocat/tools");
     await expect(tools).toContainText("main");
@@ -112,17 +111,21 @@ test.describe("Project 設定頁", () => {
     await expect(repoRow(page, "acme/demo").getByRole("link")).toHaveCount(0);
 
     // 重複登記：顯示 Server 的 409
-    await form.getByLabel("Owner").fill("octocat");
-    await form.getByLabel("Repo 名稱").fill("tools");
+    await form.getByLabel("帳號或組織").fill("octocat");
+    await form.getByLabel("儲存庫名稱").fill("tools");
     await form.getByRole("button", { name: "登記" }).click();
     await expect(form.getByRole("alert")).toHaveText("octocat/tools 已經登記在這個 Project");
 
-    // 新登記的 Repo 可以在新增 Task 時選
+    // 新登記的 Repo 可以在新增任務時選
     await page.getByRole("link", { name: "核心產品" }).click();
-    await page.getByRole("button", { name: "新增 Task" }).click();
-    await expect(
-      page.getByRole("dialog", { name: "新增 Task" }).getByLabel("Repo").locator("option"),
-    ).toHaveText(["acme/demo", "acme/api", "octocat/tools"]);
+    const dialog = await openNewTask(page);
+    await dialog.getByRole("button", { name: /^儲存庫/ }).click();
+    await expect(page.getByRole("menu", { name: "儲存庫" }).getByRole("menuitemradio")).toHaveText([
+      "acme/demo",
+      "acme/api",
+      "octocat/tools",
+      "尚未指定",
+    ]);
   });
 
   test("修改名稱、描述與預設 Permission Policy；派工對話框跟著用新的預設", async ({ page }) => {
@@ -140,12 +143,10 @@ test.describe("Project 設定頁", () => {
 
     // 其他政策另有表單（plan-gate.spec.ts 測修改）
     await expect(
-      page
-        .getByRole("form", { name: "其他政策" })
-        .getByLabel("需要 Plan Gate（Task 可以個別覆寫）"),
+      page.getByRole("form", { name: "其他政策" }).getByLabel("需要計畫關卡（任務可以個別覆寫）"),
     ).not.toBeChecked();
 
-    await page.getByLabel("預設 Permission Policy").selectOption("manual");
+    await page.getByLabel("預設權限策略").selectOption("manual");
     await page.getByRole("button", { name: "儲存政策" }).click();
     await expect(page.getByRole("button", { name: "儲存政策" })).toBeDisabled();
 
@@ -156,7 +157,7 @@ test.describe("Project 設定頁", () => {
     await page.goto("/tasks/ORB-2");
     await page.getByRole("button", { name: "派工" }).click();
     const dispatch = page.getByRole("dialog", { name: "派工 ORB-2" });
-    await expect(dispatch.getByRole("radio", { name: /^manual/ })).toBeChecked();
+    await expect(dispatch.getByRole("radio", { name: /^逐一確認/ })).toBeChecked();
   });
 });
 
@@ -166,15 +167,15 @@ test.describe("重新檢查 GitHub App 安裝狀態（#56）", () => {
 
     test("未安裝的 Repo 重新檢查後變成已安裝", async ({ page }) => {
       await page.goto("/projects/project-1/settings");
-      const form = page.getByRole("form", { name: "登記 Repo" });
-      await form.getByLabel("Owner").fill("octocat");
-      await form.getByLabel("Repo 名稱").fill("tools");
+      const form = page.getByRole("form", { name: "登記儲存庫" });
+      await form.getByLabel("帳號或組織").fill("octocat");
+      await form.getByLabel("儲存庫名稱").fill("tools");
       await form.getByRole("button", { name: "登記" }).click();
       const tools = repoRow(page, "octocat/tools");
       await expect(tools).toContainText("未安裝");
       await expect(repoRow(page, "acme/demo").getByRole("button")).toHaveCount(0);
 
-      await tools.getByRole("button", { name: "重新檢查 App 安裝狀態" }).click();
+      await tools.getByRole("button", { name: "重新檢查 GitHub App 安裝狀態" }).click();
       await expect(tools.locator("[data-installed]")).toHaveAttribute("data-installed", "true");
       await expect(tools).toContainText("已安裝");
       await page.reload();
@@ -184,12 +185,12 @@ test.describe("重新檢查 GitHub App 安裝狀態（#56）", () => {
 
   test("仍然沒有安裝時提示安裝後再試", async ({ page }) => {
     await page.goto("/projects/project-1/settings");
-    const form = page.getByRole("form", { name: "登記 Repo" });
-    await form.getByLabel("Owner").fill("octocat");
-    await form.getByLabel("Repo 名稱").fill("tools");
+    const form = page.getByRole("form", { name: "登記儲存庫" });
+    await form.getByLabel("帳號或組織").fill("octocat");
+    await form.getByLabel("儲存庫名稱").fill("tools");
     await form.getByRole("button", { name: "登記" }).click();
     const tools = repoRow(page, "octocat/tools");
-    await tools.getByRole("button", { name: "重新檢查 App 安裝狀態" }).click();
+    await tools.getByRole("button", { name: "重新檢查 GitHub App 安裝狀態" }).click();
     await expect(tools.getByRole("status")).toHaveText(
       "GitHub 上仍然沒有安裝。安裝完成後再按一次。",
     );
@@ -200,16 +201,16 @@ test.describe("重新檢查 GitHub App 安裝狀態（#56）", () => {
 
     test("409 repo_mismatch 時提示刪除後重新登記，可以直接刪除", async ({ page }) => {
       await page.goto("/projects/project-1/settings");
-      const form = page.getByRole("form", { name: "登記 Repo" });
-      await form.getByLabel("Owner").fill("octocat");
-      await form.getByLabel("Repo 名稱").fill("tools");
+      const form = page.getByRole("form", { name: "登記儲存庫" });
+      await form.getByLabel("帳號或組織").fill("octocat");
+      await form.getByLabel("儲存庫名稱").fill("tools");
       await form.getByRole("button", { name: "登記" }).click();
       const tools = repoRow(page, "octocat/tools");
-      await tools.getByRole("button", { name: "重新檢查 App 安裝狀態" }).click();
+      await tools.getByRole("button", { name: "重新檢查 GitHub App 安裝狀態" }).click();
       const alert = tools.getByRole("alert");
-      await expect(alert).toContainText("請刪除這個 Repo 後重新登記");
-      await alert.getByRole("button", { name: "刪除這個 Repo" }).click();
-      await alert.getByRole("button", { name: "確定刪除這個 Repo" }).click();
+      await expect(alert).toContainText("請刪除這個儲存庫後重新登記");
+      await alert.getByRole("button", { name: "刪除這個儲存庫" }).click();
+      await alert.getByRole("button", { name: "確定刪除這個儲存庫" }).click();
       await expect(repoRow(page, "octocat/tools")).toHaveCount(0);
     });
   });
@@ -227,12 +228,10 @@ for (const role of ["member", "viewer"] as const satisfies readonly Role[]) {
 
       await page.getByRole("link", { name: "Project 設定" }).click();
       await expect(repoRow(page, "acme/demo")).toContainText("已安裝");
-      await expect(page.getByRole("form", { name: "登記 Repo" })).toHaveCount(0);
+      await expect(page.getByRole("form", { name: "登記儲存庫" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "儲存" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "儲存政策" })).toHaveCount(0);
-      await expect(page.getByTestId("default-permission-policy")).toHaveText(
-        "auto：Worktree 內自動允許，其他問我",
-      );
+      await expect(page.getByTestId("default-permission-policy")).toHaveText("自動");
     });
   });
 
@@ -255,12 +254,12 @@ test.describe("Project 的 Role 覆寫", () => {
     await page.goto("/board");
     await expect(page.getByRole("button", { name: "新增 Project" })).toBeVisible();
     await page.getByRole("link", { name: "Project 設定" }).click();
-    await expect(page.getByRole("form", { name: "登記 Repo" })).toHaveCount(0);
+    await expect(page.getByRole("form", { name: "登記儲存庫" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "儲存政策" })).toHaveCount(0);
 
     // 沒有被覆寫的 Project 仍是 Admin
     await page.goto("/projects/project-2/settings");
-    await expect(page.getByRole("form", { name: "登記 Repo" })).toBeVisible();
+    await expect(page.getByRole("form", { name: "登記儲存庫" })).toBeVisible();
     await expect(page.getByRole("button", { name: "儲存政策" })).toBeVisible();
   });
 });

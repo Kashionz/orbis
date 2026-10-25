@@ -8,6 +8,7 @@ import {
   teamRunnerQueueQuery,
   updateRunnerCredential,
 } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
 import { useT } from "../../i18n";
 import { formatTime } from "../../lib/format";
@@ -20,25 +21,24 @@ const tokens = (value: number | null) => (value === null ? "—" : numberFormat.
  * Member 以上都看得到（Server 依 Runner 的可見規則過濾）；只有 Admin 以上能覆寫並行上限。
  */
 export function CredentialsSection({ canOverride }: { canOverride: boolean }) {
+  const t = useT();
   const { data: credentials = [], error, isSuccess } = useQuery(credentialsQuery);
   return (
     <section className="section" aria-labelledby="admin-credentials">
-      <h2 id="admin-credentials">Credential</h2>
+      <h2 id="admin-credentials">{t.admin.credentials}</h2>
       <ErrorText error={error} />
-      {isSuccess && credentials.length === 0 && (
-        <p className="empty">還沒有 Runner 回報任何 Credential。</p>
-      )}
+      {isSuccess && credentials.length === 0 && <p className="empty">{t.admin.noCredentials}</p>}
       {credentials.length > 0 && (
         <table className="run-table credential-table">
           <thead>
             <tr>
-              <th scope="col">Credential</th>
-              <th scope="col">Runner</th>
-              <th scope="col">Agent</th>
-              <th scope="col">並行</th>
-              <th scope="col">排隊</th>
-              <th scope="col">Rate limit</th>
-              <th scope="col">最近 24 小時</th>
+              <th scope="col">{t.admin.credentialColumns.credential}</th>
+              <th scope="col">{t.admin.credentialColumns.runner}</th>
+              <th scope="col">{t.admin.credentialColumns.agent}</th>
+              <th scope="col">{t.admin.credentialColumns.concurrency}</th>
+              <th scope="col">{t.admin.credentialColumns.queued}</th>
+              <th scope="col">{t.admin.credentialColumns.rateLimit}</th>
+              <th scope="col">{t.admin.credentialColumns.last24h}</th>
             </tr>
           </thead>
           <tbody>
@@ -87,14 +87,14 @@ function CredentialRow({
         <span className="hint">
           {" "}
           {t.labels.runnerKind[c.runnerKind]}
-          {c.online ? "" : "（離線）"}
+          {c.online ? "" : t.admin.offlineSuffix}
         </span>
       </td>
-      <td>{c.agents.join("、")}</td>
+      <td>{c.agents.join(t.common.listSeparator)}</td>
       <td data-testid="concurrency">
         {c.activeRuns} / {c.maxConcurrentRuns}
         {c.maxConcurrentRunsOverride !== null && (
-          <span className="hint">（覆寫；Runner 回報 {c.reportedMaxConcurrentRuns}）</span>
+          <span className="hint">{t.admin.overrideNote(c.reportedMaxConcurrentRuns)}</span>
         )}
         {canOverride && editing === null && (
           <button
@@ -102,13 +102,13 @@ function CredentialRow({
             className="link-button"
             onClick={() => setEditing(String(c.maxConcurrentRuns))}
           >
-            覆寫上限
+            {t.admin.overrideLimit}
           </button>
         )}
         {canOverride && editing !== null && (
           <form
             className="inline-form"
-            aria-label={`覆寫 ${c.credential} 的並行上限`}
+            aria-label={t.admin.overrideFormLabel(c.credential)}
             onSubmit={(event) => {
               event.preventDefault();
               if (valid) save.mutate(parsed);
@@ -118,21 +118,21 @@ function CredentialRow({
               type="number"
               min={1}
               max={1000}
-              aria-label="並行上限"
+              aria-label={t.admin.concurrencyLimit}
               value={editing}
               onChange={(event) => setEditing(event.target.value)}
             />
-            <button type="submit" className="primary" disabled={!valid || save.isPending}>
-              儲存
-            </button>
+            <Button type="submit" variant="primary" disabled={!valid || save.isPending}>
+              {t.common.save}
+            </Button>
             {c.maxConcurrentRunsOverride !== null && (
-              <button type="button" disabled={save.isPending} onClick={() => save.mutate(null)}>
-                取消覆寫
-              </button>
+              <Button disabled={save.isPending} onClick={() => save.mutate(null)}>
+                {t.admin.clearOverride}
+              </Button>
             )}
-            <button type="button" onClick={() => setEditing(null)}>
-              取消
-            </button>
+            <Button variant="ghost" onClick={() => setEditing(null)}>
+              {t.common.cancel}
+            </Button>
           </form>
         )}
         <ErrorText error={save.error} />
@@ -140,15 +140,25 @@ function CredentialRow({
       <td>{c.queuedRuns}</td>
       <td>
         {c.rateLimitedUntil ? (
-          <span className="tag rate-limited">至 {formatTime(c.rateLimitedUntil)}</span>
+          <span className="tag rate-limited">
+            {t.admin.rateLimitedUntil(formatTime(c.rateLimitedUntil))}
+          </span>
         ) : (
-          "正常"
+          t.admin.rateLimitNormal
         )}
       </td>
       <td>
-        {c.usage24h.runs} 個 Run · 輸入 {tokens(c.usage24h.inputTokens)} · 輸出{" "}
-        {tokens(c.usage24h.outputTokens)}
-        {c.usage24h.cost && ` · ${c.usage24h.cost.currency} ${c.usage24h.cost.amount.toFixed(2)}`}
+        <span>{t.admin.usageRuns(c.usage24h.runs)}</span>{" "}
+        <span>{t.admin.usageInput(tokens(c.usage24h.inputTokens))}</span>{" "}
+        <span>{t.admin.usageOutput(tokens(c.usage24h.outputTokens))}</span>
+        {c.usage24h.cost && (
+          <>
+            {" "}
+            <span>
+              {c.usage24h.cost.currency} {c.usage24h.cost.amount.toFixed(2)}
+            </span>
+          </>
+        )}
       </td>
     </tr>
   );
@@ -160,19 +170,19 @@ export function TeamRunnerQueueSection() {
   const { data: queue = [], error, isSuccess } = useQuery(teamRunnerQueueQuery);
   return (
     <section className="section" aria-labelledby="admin-queue">
-      <h2 id="admin-queue">Team Runner 佇列</h2>
+      <h2 id="admin-queue">{t.admin.queue}</h2>
       <ErrorText error={error} />
-      {isSuccess && queue.length === 0 && <p className="empty">佇列是空的。</p>}
+      {isSuccess && queue.length === 0 && <p className="empty">{t.admin.queueEmpty}</p>}
       {queue.length > 0 && (
         <table className="run-table queue-table">
           <thead>
             <tr>
-              <th scope="col">順位</th>
-              <th scope="col">Task</th>
-              <th scope="col">Agent</th>
-              <th scope="col">Credential</th>
-              <th scope="col">等待原因</th>
-              <th scope="col">排入時間</th>
+              <th scope="col">{t.admin.queueColumns.position}</th>
+              <th scope="col">{t.admin.queueColumns.task}</th>
+              <th scope="col">{t.admin.queueColumns.agent}</th>
+              <th scope="col">{t.admin.queueColumns.credential}</th>
+              <th scope="col">{t.admin.queueColumns.reason}</th>
+              <th scope="col">{t.admin.queueColumns.queuedAt}</th>
             </tr>
           </thead>
           <tbody>

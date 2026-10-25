@@ -9,7 +9,9 @@ import {
   repoSpecQuery,
   reposQuery,
 } from "../../api/resources";
+import { Button } from "../../components/Button";
 import { ErrorText } from "../../components/ErrorText";
+import { useT } from "../../i18n";
 import { usePermissions } from "../auth/use-permissions";
 import { CollabEditor } from "../collab/CollabEditor";
 import { safeHref } from "../run/TimelineItemView";
@@ -19,6 +21,7 @@ import { safeHref } from "../run/TimelineItemView";
  * 開 PR（已經有開著的 Spec PR 時更新它）；PR merge 後版本加 1。
  */
 export function RepoSpecPage({ repoSpecId }: { repoSpecId: string }) {
+  const t = useT();
   const queryClient = useQueryClient();
   const { data: spec } = useSuspenseQuery(repoSpecQuery(repoSpecId));
   const { data: projects } = useSuspenseQuery(projectsQuery);
@@ -51,39 +54,41 @@ export function RepoSpecPage({ repoSpecId }: { repoSpecId: string }) {
             {project.name}
           </Link>
         ) : (
-          <span>Project</span>
+          <span>{t.repoSpec.projectFallback}</span>
         )}
         <span aria-hidden="true"> / </span>
-        <span>{repo ? `${repo.owner}/${repo.name}` : "Repo"}</span>
+        <span>{repo ? `${repo.owner}/${repo.name}` : t.repoSpec.repoFallback}</span>
       </nav>
       <header className="page-header">
         <div>
           <h1>{spec.title ?? spec.path}</h1>
           <div className="hint">
-            <code>{spec.path}</code>，第 {spec.version} 版
+            <code>{spec.path}</code> <span>{t.repoSpec.version(spec.version)}</span>
             {spec.committedSha && (
               <>
-                ，<code>{spec.committedSha.slice(0, 7)}</code>
+                {" "}
+                <code>{spec.committedSha.slice(0, 7)}</code>
               </>
             )}
           </div>
         </div>
       </header>
-      <p className="hint">
-        這是 Spec 的草稿，所有人可以一起編輯；按下「提交到 repo」才會開 PR。Agent 要修改 Spec
-        時會另外開 PR，不會直接覆蓋草稿。
-      </p>
+      <p className="hint">{t.repoSpec.draftHint}</p>
       {project && (
         <CollabEditor
           docRef={{ kind: "repo-spec-draft", id: spec.id }}
-          label="Spec 草稿"
+          label={t.repoSpec.editorLabel}
           canEdit={canEdit}
           projectId={project.id}
         />
       )}
       {pr && (
         <p className="spec-pr" role="status">
-          {result ? (result.created ? "已開 PR：" : "已更新 PR：") : "開著的 Spec PR："}
+          {result
+            ? result.created
+              ? t.repoSpec.prCreated
+              : t.repoSpec.prUpdated
+            : t.repoSpec.prOpen}
           {prHref ? (
             <a href={prHref} target="_blank" rel="noreferrer">
               #{pr.number}
@@ -95,32 +100,31 @@ export function RepoSpecPage({ repoSpecId }: { repoSpecId: string }) {
       )}
       {result?.overwritesUpstreamChanges && (
         <p className="notice-inline" role="alert">
-          default branch 上的 {spec.path} 在上次版本之後被修改過，這個 PR
-          會覆蓋那些修改，合併前請確認。
+          {t.repoSpec.overwritesUpstream(spec.path)}
         </p>
       )}
       {canEdit && (
         <form
           className="settings-form"
-          aria-label="提交到 repo"
+          aria-label={t.repoSpec.commit}
           onSubmit={(event) => {
             event.preventDefault();
             commit.mutate();
           }}
         >
           <label className="field">
-            commit 訊息（選填）
+            {t.repoSpec.commitMessage}
             <input
               value={message}
               maxLength={200}
-              placeholder={`docs: 更新 ${spec.path}`}
+              placeholder={t.repoSpec.commitPlaceholder(spec.path)}
               onChange={(event) => setMessage(event.target.value)}
             />
           </label>
           <ErrorText error={commit.error} />
-          <button type="submit" className="primary" disabled={commit.isPending}>
-            提交到 repo
-          </button>
+          <Button type="submit" variant="primary" disabled={commit.isPending}>
+            {t.repoSpec.commit}
+          </Button>
         </form>
       )}
     </main>

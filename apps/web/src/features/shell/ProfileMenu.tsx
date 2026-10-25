@@ -122,6 +122,11 @@ function ProfileMenu({
           {/* TODO(backend, member-email)：/api/auth/me 沒有 email，先顯示 GitHub login */}
           <span className="profile-menu-sub">@{me.githubLogin}</span>
         </div>
+        {me.member && (
+          <span className="profile-menu-role" data-testid="member-role">
+            {t.labels.role[me.member.role]}
+          </span>
+        )}
       </div>
       <hr className="profile-menu-separator" />
       <FluidList className="profile-menu-items" role="none">

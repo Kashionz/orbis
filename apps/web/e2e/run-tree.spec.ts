@@ -16,8 +16,8 @@ test("樹狀顯示 Agent、model、狀態、來源；點節點顯示即時檢視
   await expect(api).toContainText("codex");
   await expect(api).toContainText("gpt-5");
   await expect(api).toContainText("執行中");
-  await expect(api).toContainText("Delegation");
-  await expect(api).toContainText("branch（子分支）");
+  await expect(api).toContainText("委派");
+  await expect(api).toContainText("分支（子分支）");
   await expect(tree.locator('[data-run-id="run-child-api-review"]')).toHaveAttribute(
     "data-depth",
     "2",
@@ -45,9 +45,9 @@ test("可以單獨中止 Child Run，父 Run 與 Task 不受影響", async ({ pa
   await expect(api).toContainText("已中止");
   await expect(api.getByRole("button", { name: "中止" })).toHaveCount(0);
   await expect(page.locator(".run-node").first().locator("> .run-node-row")).toContainText(
-    "等待 Gate",
+    "等待關卡",
   );
-  await expect(page.locator(".page-header .status-badge")).toHaveText("Review Gate");
+  await expect(page.locator(".page-header .status-badge")).toHaveText("審查關卡");
   // 已完成的節點沒有中止按鈕
   await expect(row(page, "run-child-docs").getByRole("button", { name: "中止" })).toHaveCount(0);
 });
@@ -73,7 +73,7 @@ test("Child Run 的問題在 Needs You 由人回答", async ({ page }) => {
   await item.getByRole("button", { name: "回答" }).click();
   await expect(item).toHaveCount(0);
   await page.goto("/runs/run-child-ask");
-  await expect(page.getByTestId("timeline")).toContainText("送出 prompt（回答 Child Run 的問題）");
+  await expect(page.getByTestId("timeline")).toContainText("送出 prompt（回答子執行的問題）");
 });
 
 test.describe("Viewer", () => {

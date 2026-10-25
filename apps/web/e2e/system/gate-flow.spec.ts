@@ -97,7 +97,7 @@ test.describe("Plan Gate 到核准（完整系統）", () => {
 
     // 第一輪失敗，自動重試後第二輪通過
     await expect(timeline).toContainText("第 1 輪 Verification 結束：失敗", { timeout: 120_000 });
-    await expect(timeline).toContainText("送出 prompt（Verification 重試）");
+    await expect(timeline).toContainText("送出 prompt（驗收重試）");
     await expect(timeline).toContainText("第 2 輪 Verification 結束：通過", { timeout: 120_000 });
     await page.getByRole("tab", { name: "Verification" }).click();
     const first = page.getByTestId("verification-1");

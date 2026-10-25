@@ -20,15 +20,15 @@ test("從 UI 建立 Project、登記 Repo：前綴重複時顯示 409，App 未�
 
   await page.goto("/board");
   await page.getByRole("button", { name: "新增 Project" }).click();
-  const dialog = page.getByRole("dialog", { name: "新增 Project" });
+  const dialog = page.getByRole("dialog", { name: "新增專案" });
   await dialog.getByLabel("名稱").fill("從 UI 建立的 Project");
-  await dialog.getByLabel("Task Key 前綴").fill(stack.projectKey);
+  await dialog.getByLabel("任務編號前綴").fill(stack.projectKey);
   await dialog.getByRole("button", { name: "建立" }).click();
   await expect(dialog.getByRole("alert")).toHaveText(`Task Key 前綴 ${stack.projectKey} 已被使用`);
 
   // Task Key 前綴在 Team 內唯一；每次啟動的 stack 都是新的 Team
   const prefix = "WEB";
-  await dialog.getByLabel("Task Key 前綴").fill(prefix);
+  await dialog.getByLabel("任務編號前綴").fill(prefix);
   await dialog.getByRole("button", { name: "建立" }).click();
   await expect(dialog).toBeHidden();
   await expect(
@@ -36,10 +36,10 @@ test("從 UI 建立 Project、登記 Repo：前綴重複時顯示 409，App 未�
   ).toHaveText(`從 UI 建立的 Project（${prefix}）`);
 
   await page.getByRole("link", { name: "Project 設定" }).click();
-  await expect(page.getByText("還沒有登記任何 Repo。")).toBeVisible();
-  const form = page.getByRole("form", { name: "登記 Repo" });
-  await form.getByLabel("Owner").fill("octocat");
-  await form.getByLabel("Repo 名稱").fill("tools");
+  await expect(page.getByText("還沒有登記任何儲存庫。")).toBeVisible();
+  const form = page.getByRole("form", { name: "登記儲存庫" });
+  await form.getByLabel("帳號或組織").fill("octocat");
+  await form.getByLabel("儲存庫名稱").fill("tools");
   await form.getByRole("button", { name: "登記" }).click();
 
   const row = page.locator('tr[data-repo="octocat/tools"]');
@@ -50,8 +50,8 @@ test("從 UI 建立 Project、登記 Repo：前綴重複時顯示 409，App 未�
     /^https:\/\/github\.com\/apps\/[^/]+\/installations\/new$/,
   );
 
-  await form.getByLabel("Owner").fill("octocat");
-  await form.getByLabel("Repo 名稱").fill("tools");
+  await form.getByLabel("帳號或組織").fill("octocat");
+  await form.getByLabel("儲存庫名稱").fill("tools");
   await form.getByRole("button", { name: "登記" }).click();
   await expect(form.getByRole("alert")).toHaveText("octocat/tools 已經登記在這個 Project");
 });

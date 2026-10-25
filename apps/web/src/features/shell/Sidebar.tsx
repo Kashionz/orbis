@@ -209,7 +209,10 @@ function SidebarBody() {
                             {row.task.title}
                           </span>
                         </span>
-                        <span className="sidebar-row-key">{row.task.key}</span>
+                        {/* Task Key 只是視覺上的識別，連結名稱用標題（避免和頁面中以 Key 命名的連結重複） */}
+                        <span className="sidebar-row-key" aria-hidden="true">
+                          {row.task.key}
+                        </span>
                       </Link>
                     );
                   })}

@@ -24,7 +24,7 @@ export function AgentsSection() {
       {!isLoading && catalog.length === 0 && (
         <p className="settings-empty">{t.settings.noAgents}</p>
       )}
-      <div className="settings-list">
+      <div className="settings-items">
         {catalog.map((entry) => (
           <AgentRow key={entry.agentId} entry={entry} />
         ))}

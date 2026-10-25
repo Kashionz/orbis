@@ -149,7 +149,7 @@ export function Popover<V>({
     if (!open || !placement) return;
     const items = focusableItems(menuRef.current);
     const checked = items.find((item) => item.getAttribute("aria-checked") === "true");
-    (checked ?? items[0])?.focus({ preventScroll: false });
+    (checked ?? items[0])?.focus({ preventScroll: true });
   }, [open, placement]);
 
   // 點外面關閉（點觸發按鈕交給按鈕自己切換）
@@ -164,12 +164,15 @@ export function Popover<V>({
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [open, onClose, anchorRef]);
 
-  // 視窗大小改變或外層捲動時關閉，避免選單和按鈕分開
+  // 視窗大小改變，或外層捲動讓按鈕移動時關閉，避免選單和按鈕分開
   useEffect(() => {
     if (!open) return;
+    const start = anchorRef.current?.getBoundingClientRect();
     const onScroll = (event: Event) => {
       if (menuRef.current?.contains(event.target as Node)) return;
-      onClose();
+      const now = anchorRef.current?.getBoundingClientRect();
+      if (!start || !now) return;
+      if (Math.abs(now.top - start.top) > 2 || Math.abs(now.left - start.left) > 2) onClose();
     };
     window.addEventListener("resize", onClose);
     document.addEventListener("scroll", onScroll, true);
@@ -177,7 +180,7 @@ export function Popover<V>({
       window.removeEventListener("resize", onClose);
       document.removeEventListener("scroll", onScroll, true);
     };
-  }, [open, onClose]);
+  }, [open, onClose, anchorRef]);
 
   if (!open || !placement) return null;
 

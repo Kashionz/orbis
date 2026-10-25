@@ -1,18 +1,17 @@
 // M1 路徑在 MSW 假後端上走一次（開發期間的鷹架）。
 // 完成條件要求的版本跑在真實 Server + Runner + Fake Agent 上：e2e/system/m1-path.spec.ts。
 
-import { card, column, dragTo, drop, expect, test } from "./fixtures";
+import { card, column, createTask, dragTo, drop, expect, test } from "./fixtures";
 
 test("M1 路徑：建立 Task → 派工 → 即時 Event → 回覆權限請求 → diff 留言退回 → 核准", async ({
   page,
 }) => {
   // 建立 Task
   await page.goto("/board");
-  await page.getByRole("button", { name: "新增 Task" }).click();
-  const create = page.getByRole("dialog", { name: "新增 Task" });
-  await create.getByLabel("標題").fill("M1：新增 hello.txt");
-  await create.getByLabel("描述（markdown）").fill("新增 `hello.txt`，並更新 README。");
-  await create.getByRole("button", { name: "建立" }).click();
+  await createTask(page, {
+    title: "M1：新增 hello.txt",
+    description: "新增 `hello.txt`，並更新 README。",
+  });
   await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
 
   // 進入 Ready 需要至少一條 Acceptance Criterion

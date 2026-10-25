@@ -18,7 +18,7 @@ test.describe("失敗一次後自動重試", () => {
     await dispatchTask(page, "ORB-2");
     await allowPermission(page);
     await expect(timeline(page)).toContainText("第 1 輪 Verification 結束：失敗");
-    await expect(timeline(page)).toContainText("送出 prompt（Verification 重試）");
+    await expect(timeline(page)).toContainText("送出 prompt（驗收重試）");
     await expect(timeline(page)).toContainText("依 Verification 的失敗原因修正。");
     await expect(timeline(page)).toContainText("第 2 輪 Verification 結束：通過");
     await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
@@ -73,8 +73,8 @@ test("agent 與 browser 條件的證據：判定理由、判定 Run、截圖與�
 
   // 判定的 consult Run 標示來源
   await agent.getByRole("link", { name: "判定的 Agent Run" }).click();
-  await expect(page.locator(".run-meta")).toContainText("Verification");
-  await expect(page.locator(".run-meta")).toContainText("consult（唯讀）");
+  await expect(page.locator(".run-meta")).toContainText("驗收");
+  await expect(page.locator(".run-meta")).toContainText("諮詢（唯讀）");
 });
 
 test.describe("超過重試上限", () => {
@@ -149,6 +149,6 @@ test.describe("超過重試上限", () => {
     await form.getByRole("button", { name: "中止 Run" }).click();
     await expect(page.getByTestId("run-status")).toHaveText("已中止");
     await page.getByRole("link", { name: /ORB-2/ }).click();
-    await expect(page.locator(".page-header .status-badge")).toHaveText("Ready");
+    await expect(page.locator(".page-header .status-badge")).toHaveText("就緒");
   });
 });

@@ -39,7 +39,7 @@ export function RunnersSettingsSection() {
     <>
       <ErrorText error={error} />
       {runners.length === 0 && <p className="settings-empty">{t.settings.noRunners}</p>}
-      <div className="settings-list">
+      <div className="settings-items">
         {runners.map((runner) => (
           <RunnerRow key={runner.id} runner={runner} />
         ))}

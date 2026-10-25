@@ -1,3 +1,73 @@
 import type { Messages } from "../types";
 
-export default {} satisfies Messages["project"];
+export default {
+  settings: "Settings",
+  title: "Project settings",
+  basicInfo: "Basics",
+  name: "Name",
+  nameRequired: "Name can't be blank",
+  description: "Description",
+  noDescription: "No description",
+  keyPrefix: "Task key prefix",
+  keyPrefixLocked: "Can't be changed after creation",
+
+  repos: "Repos",
+  noRepos: "No repos registered yet.",
+  repoColumn: "Repo",
+  defaultBranchColumn: "Default branch",
+  githubAppColumn: "GitHub App",
+  installed: "Installed",
+  notInstalled: "Not installed",
+  installApp: "Install GitHub App",
+  appNotConfigured: "The server has no GitHub App configured",
+  checking: "Checking",
+  refreshInstallation: "Check GitHub App installation again",
+  stillNotInstalled: "Still not installed on GitHub. Check again after installing.",
+  repoMismatch: (fullName: string) =>
+    `${fullName} on GitHub is not the repo that was registered (it may have been recreated or renamed). Delete this repo and register it again.`,
+  deleteRepo: "Delete this repo",
+  confirmDeleteRepo: "Confirm deleting this repo",
+
+  registerRepo: "Register a repo",
+  owner: "Owner",
+  ownerPlaceholder: "GitHub user or organization",
+  repoName: "Repo name",
+  defaultBranch: "Default branch",
+  defaultBranchHint:
+    "Optional: uses the GitHub setting when the GitHub App is installed, otherwise main.",
+  register: "Register",
+
+  policy: "Policies",
+  defaultPermissionPolicy: "Default permission policy",
+  permissionPolicyHint:
+    "Default when dispatching; the dispatcher can still change it. Team runners don't allow Allow all and use Auto instead.",
+  savePolicy: "Save policy",
+  otherPolicies: "Other policies",
+  planGate: "Plan Gate",
+  on: "On",
+  off: "Off",
+  yes: "Yes",
+  no: "No",
+  requirePlanGate: "Require Plan Gate (tasks can override)",
+  delegationEnabled: "Allow delegation",
+  delegationAgents: "Agents that can be delegated to",
+  noLimit: "No limit",
+  delegationAgentsHint: "Comma-separated, e.g. claude-code, codex. Leave blank for no limit.",
+  forbidSelfApproval: "Members can't approve their own tasks",
+  memberCanDispatchToTeamRunner: "Members can dispatch to team runners",
+  autoCreateIssues: "Create GitHub issues automatically",
+  verificationMaxRetries: "Verification retry limit",
+  verificationMaxRetriesHint:
+    "How many automatic retries after the first round (1–10) before stopping for a person.",
+  retryLimitInvalid: "The retry limit must be a whole number from 1 to 10",
+  retries: (n: number) => `${n} ${n === 1 ? "retry" : "retries"}`,
+  feedbackBots: "Bots that trigger the feedback loop",
+  feedbackBotsHint:
+    "GitHub logins, one per line, e.g. coderabbitai[bot]. Comments from other bots don't trigger it.",
+  noFeedbackBots: "None",
+  saveOtherPolicies: "Save other policies",
+
+  createProject: "New project",
+  keyPrefixHint:
+    "For example ORB gives task keys ORB-1, ORB-2. 2–10 uppercase letters or digits, starting with a letter. Can't be changed later.",
+} satisfies Messages["project"];

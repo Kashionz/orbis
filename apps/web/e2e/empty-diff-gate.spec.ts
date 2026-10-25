@@ -42,7 +42,7 @@ test.describe("Review Gate 的 diff 為空", () => {
     });
 
     await page.goto(`/tasks/${taskKey}`);
-    await expect(page.locator(".page-header .status-badge")).toHaveText("Done");
+    await expect(page.locator(".page-header .status-badge")).toHaveText("完成");
     await expect(page.locator(".page-header .done-reason")).toHaveText("已完成");
 
     // 之後再打開 diff review：只能檢視，並說明已結束（沒有變更）
