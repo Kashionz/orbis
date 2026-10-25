@@ -28,12 +28,14 @@ import { NotificationService } from "./notifications/service";
 import { createPreviewService, type PreviewService } from "./preview";
 import { Dispatcher } from "./runner/dispatcher";
 import { RunnerHub } from "./runner/hub";
+import { RepoSpecCommits } from "./runner/repo-spec-commits";
 import { ArchiveService } from "./runs/archive";
 import { EventIngest } from "./runs/event-ingest";
 import { EventStore } from "./runs/event-store";
 import { FeedbackRunService } from "./runs/feedback";
 import { RunControlService } from "./runs/run-control";
 import { VerificationService } from "./runs/verification";
+import { TerminalHub } from "./terminal/hub";
 import { delegationToolHandlers } from "./tools/delegation-tools";
 import { RunWatch } from "./tools/run-watch";
 import { OrbisToolService } from "./tools/service";
@@ -81,6 +83,10 @@ export interface Services {
   mailer: Mailer;
   /** Web 的 origin：邀請連結、信件中的網址。 */
   publicUrl: string;
+  /** 互動式終端機的轉送。 */
+  terminals: TerminalHub;
+  /** 本機 Repo 的 Spec 提交（等 Local Runner 的結果）。 */
+  repoSpecCommits: RepoSpecCommits;
 }
 
 export interface ServicesOptions {
@@ -230,6 +236,8 @@ export function createServices(options: ServicesOptions): Services {
       publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
     }),
     mailer: options.mailer ?? NO_MAILER,
+    terminals: new TerminalHub({ db, hub, clock, logger }),
+    repoSpecCommits: new RepoSpecCommits(hub),
     publicUrl: options.publicUrl ?? DEFAULT_PUBLIC_URL,
   };
 }

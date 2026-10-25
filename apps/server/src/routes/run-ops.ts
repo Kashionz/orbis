@@ -1,15 +1,19 @@
 // 執行中的 Run 操作（ARCHITECTURE §7）：傳訊息與收回、切換模型／推理強度／Permission Policy、換 Agent，
-// 以及模型目錄。切換以 RunControl 送給 Runner，生效時 Runner 送 Event，所以 API 回 202。
+// 互動式終端機與模型目錄。切換以 RunControl 送給 Runner，生效時 Runner 送 Event，所以 API 回 202。
 
 import {
   type AgentSwitchRequested,
   API_ROUTES,
+  apiPath,
   CreateRunPromptInput,
+  CreateTerminalInput,
   type Effort,
   type RunPromptCreated,
   type RunSettingsUpdated,
   type RunStatus,
   SwitchAgentInput,
+  TERMINAL_MAX_PER_RUN,
+  type TerminalCreated,
   UpdateRunSettingsInput,
 } from "@orbis/api-contract";
 import type {
@@ -20,6 +24,8 @@ import type {
 } from "@orbis/protocol";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { v7 as uuidv7 } from "uuid";
+import { roleAtLeast } from "../authz/capabilities";
 import { loadRunScope, type RunScope, requireProjectCapability } from "../authz/scope";
 import {
   acceptanceCriteria,
@@ -29,13 +35,17 @@ import {
   reviewComments,
   runControls,
   runEvents,
+  runners,
+  teams,
+  terminalSessions,
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
 import { isTerminalRunStatus } from "../domain/run-status";
-import { ApiError, notFound, readId, readJson } from "../http/errors";
+import { ApiError, forbidden, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
 import { agentCatalog } from "../runner/agent-catalog";
 import type { AvailabilityDetails } from "../runner/dispatch-options";
+import { currentDispatch } from "../runs/run-control";
 import { loadRunSettings } from "../runs/run-settings";
 import type { Services } from "../services";
 
@@ -275,6 +285,88 @@ export function createRunOpsRoutes(s: Services): Hono<AppEnv> {
       },
     ]);
     return c.json({ controlId } as AgentSwitchRequested, 202);
+  });
+
+  /**
+   * 開互動式終端機（ADR-0014）。Local Runner 只限那台 Runner 的擁有者；Team Runner 只限 Admin 以上，
+   * 而且 Team 設定要打開。Worktree 存在期間都能用（Run 結束後也可以）。
+   */
+  app.post(API_ROUTES.runTerminals, auth, async (c) => {
+    const actor = c.get("actor");
+    const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
+    const input = await readJson(c, CreateTerminalInput);
+    const dispatch = await currentDispatch(db, scope.run.id);
+    const [runner] = dispatch
+      ? await db.select().from(runners).where(eq(runners.id, dispatch.runnerId))
+      : [];
+    if (!dispatch || !runner) {
+      throw new ApiError(409, "runner_offline", "這個 Run 還沒有在 Runner 上執行過");
+    }
+    if (runner.kind === "local") {
+      if (runner.memberId !== actor.memberId) {
+        throw forbidden("只有這台 Local Runner 的擁有者能開終端機");
+      }
+    } else {
+      if (!roleAtLeast(scope.role, "admin")) {
+        throw forbidden("Team Runner 的終端機只限 Admin 以上");
+      }
+      const [team] = await db
+        .select({ allowed: teams.allowTeamRunnerTerminal })
+        .from(teams)
+        .where(eq(teams.id, actor.teamId));
+      if (!team?.allowed) {
+        throw new ApiError(403, "terminal_disabled", "Team 設定沒有打開 Team Runner 的終端機");
+      }
+    }
+    const [archived] = await db
+      .select({ id: runControls.controlId })
+      .from(runControls)
+      .where(
+        and(
+          eq(runControls.runId, scope.run.id),
+          eq(runControls.action, "archive"),
+          eq(runControls.outcome, "applied"),
+        ),
+      )
+      .limit(1);
+    if (archived) throw new ApiError(409, "worktree_archived", "Worktree 已封存");
+    if (s.terminals.activeCount(scope.run.id) >= TERMINAL_MAX_PER_RUN) {
+      throw new ApiError(
+        409,
+        "terminal_limit",
+        `每個 Run 最多同時開 ${TERMINAL_MAX_PER_RUN} 個終端機`,
+      );
+    }
+    if (!s.hub.isOnline(runner.id)) {
+      throw new ApiError(409, "runner_offline", "Runner 不在線上");
+    }
+    const terminalId = uuidv7();
+    await db.insert(terminalSessions).values({
+      id: terminalId,
+      runId: scope.run.id,
+      memberId: actor.memberId,
+      runnerId: runner.id,
+      openedAt: s.clock.now(),
+    });
+    if (
+      !s.terminals.open({
+        terminalId,
+        runId: scope.run.id,
+        runnerId: runner.id,
+        sessionId: actor.sessionId,
+        cols: input.cols,
+        rows: input.rows,
+      })
+    ) {
+      throw new ApiError(409, "runner_offline", "Runner 不在線上");
+    }
+    return c.json(
+      {
+        terminalId,
+        wsUrl: apiPath(API_ROUTES.terminalWs, { terminalId }),
+      } satisfies TerminalCreated,
+      201,
+    );
   });
 
   app.get(API_ROUTES.agentCatalog, auth, async (c) => {

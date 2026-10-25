@@ -14,6 +14,7 @@ import { createPreviewHost } from "./preview/host";
 import { PreviewRelayService } from "./preview/relay";
 import { attachRunnerEndpoint, type RunnerEndpoint } from "./runner/endpoint";
 import { createServices, type Services, type ServicesOptions } from "./services";
+import { attachTerminalEndpoint } from "./terminal/endpoint";
 import { attachWebEndpoint, type WebEndpoint } from "./web/ws";
 import { UpgradeRouter } from "./ws-upgrade";
 
@@ -108,7 +109,14 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
     heartbeatIntervalMs: services.heartbeatIntervalMs,
     helloTimeoutMs: deps.helloTimeoutMs,
     preview: previewRelay,
+    terminals: services.terminals,
+    repoSpecCommits: services.repoSpecCommits,
   });
+  const terminalEndpoint = attachTerminalEndpoint(router, services, {
+    publicUrl: deps.config.publicUrl,
+  });
+  // 上次沒有關閉的終端機紀錄一律結束（連線都已不存在）。
+  await services.terminals.closeStale();
   const webEndpoint = attachWebEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,
     authzRecheckMs: deps.webAuthzRecheckMs,
@@ -155,6 +163,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
       await runnerEndpoint.close();
       await webEndpoint.close();
       await collabEndpoint.close();
+      await terminalEndpoint.close();
       await services.collab.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
