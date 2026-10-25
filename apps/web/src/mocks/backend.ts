@@ -298,13 +298,14 @@ export class MockBackend {
           step.event.kind === "status_changed" &&
           step.event.status === "awaiting_gate" &&
           step.event.gate === "review";
-        const diff: EventKind[] = enteringReview
-          ? [
-              { kind: "final_message", text: { type: "inline", text: this.turnText(runId) } },
-              { kind: "run_diff", ...this.computeDiff(runId) },
-            ]
-          : [];
-        if (diff.length > 0) this.append(runId, diff);
+        // 回合結束前送出排隊的訊息（Runner 不進入 Gate，直接開始下一個回合）
+        if (enteringReview && this.flushQueuedPrompts(runId, step)) continue;
+        if (enteringReview) {
+          this.append(runId, [
+            { kind: "final_message", text: { type: "inline", text: this.turnText(runId) } },
+            { kind: "run_diff", ...this.computeDiff(runId) },
+          ]);
+        }
         // 派工的第一個 prompt 是派工的人送的；其他依劇本步驟記下的作者
         const run = this.run(runId);
         const actor =
@@ -312,8 +313,6 @@ export class MockBackend {
           (step.event.kind === "prompt_submitted" && step.event.source === "user"
             ? run.startedByMemberId
             : null);
-        // 回合結束前送出排隊的訊息（Runner 不進入 Gate，直接開始下一個回合）
-        if (enteringReview && this.flushQueuedPrompts(runId, step)) continue;
         this.append(runId, [step.event], actor);
       } else {
         simulation.waiting = step;

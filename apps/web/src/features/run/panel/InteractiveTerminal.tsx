@@ -75,33 +75,41 @@ export function InteractiveTerminal({
     } catch {
       // 容器還沒有大小（例如分頁隱藏中）
     }
-    const socket = new WebSocket(terminalSocketUrl(wsUrl));
+    let socket: WebSocket | null = null;
     const send = (message: TerminalClientMessage) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     };
+    // 卸載時自己關閉的 WebSocket 不算終端機結束
+    let disposed = false;
     const finish = (end: TerminalEnd) => {
+      if (disposed) return;
       setEnded((current) => current ?? end);
       onEndRef.current(end);
     };
-    socket.addEventListener("open", () => {
-      send({ type: "resize", cols: term.cols, rows: term.rows });
-      term.focus();
-    });
-    socket.addEventListener("message", (event) => {
-      let parsed: TerminalServerMessage;
-      try {
-        parsed = TerminalServerMessage.parse(JSON.parse(String(event.data)));
-      } catch {
-        return;
-      }
-      if (parsed.type === "output") term.write(decodeBase64(parsed.data));
-      else if (parsed.type === "exited") {
-        finish({ kind: "exited", code: parsed.code, reason: parsed.reason });
-      } else finish({ kind: "error", message: parsed.message });
-    });
-    socket.addEventListener("close", () =>
-      finish({ kind: "exited", code: null, reason: "closed" }),
-    );
+    const connect = () => {
+      const ws = new WebSocket(terminalSocketUrl(wsUrl));
+      socket = ws;
+      ws.addEventListener("open", () => {
+        send({ type: "resize", cols: term.cols, rows: term.rows });
+        term.focus();
+      });
+      ws.addEventListener("message", (event) => {
+        let parsed: TerminalServerMessage;
+        try {
+          parsed = TerminalServerMessage.parse(JSON.parse(String(event.data)));
+        } catch {
+          return;
+        }
+        if (parsed.type === "output") term.write(decodeBase64(parsed.data));
+        else if (parsed.type === "exited") {
+          finish({ kind: "exited", code: parsed.code, reason: parsed.reason });
+        } else finish({ kind: "error", message: parsed.message });
+      });
+      ws.addEventListener("close", () => finish({ kind: "exited", code: null, reason: "closed" }));
+    };
+    // 延後一個 tick 才連線：WebSocket 斷線時 Server 就關閉終端機，React StrictMode 的重複掛載會在這之前
+    // 先卸載一次，不能讓那一次的連線關掉終端機
+    const connectTimer = setTimeout(connect, 0);
     const input = term.onData((data) => send({ type: "input", data: encodeBase64(data) }));
     const resize = term.onResize(({ cols, rows }) => send({ type: "resize", cols, rows }));
     const observer = new ResizeObserver(() => {
@@ -113,12 +121,16 @@ export function InteractiveTerminal({
     });
     observer.observe(container);
     return () => {
+      disposed = true;
       observer.disconnect();
       input.dispose();
       resize.dispose();
-      socket.close();
-      term.dispose();
+      clearTimeout(connectTimer);
+      socket?.close();
       fitRef.current = null;
+      // xterm.js 在 open() 時排了一個 setTimeout 同步捲軸；馬上卸載時（例如 React StrictMode 的重複掛載）
+      // 要等它執行完再 dispose，否則它會讀到已釋放的 render service
+      setTimeout(() => term.dispose(), 0);
     };
   }, [wsUrl]);
 

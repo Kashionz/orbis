@@ -121,3 +121,18 @@ test.describe("登出", () => {
     await expect(page.getByRole("button", { name: "個人選單" })).toBeVisible();
   });
 });
+
+test.describe("邀請連結失敗的頁面", () => {
+  test("依代碼顯示原因；email 不符時可以換帳號登入", async ({ page }) => {
+    await page.goto("/invites/error?code=invite_expired");
+    await expect(page.getByRole("alert")).toHaveText("這個邀請已經過期，請對方重新邀請。");
+    await expect(page.getByRole("link")).toHaveCount(0);
+
+    await page.goto("/invites/error?code=invite_email_mismatch");
+    await expect(page.getByRole("alert")).toContainText("已驗證的 email 不符");
+    await expect(page.getByRole("link", { name: "用其他 GitHub 帳號登入" })).toBeVisible();
+
+    await page.goto("/invites/error?code=whatever");
+    await expect(page.getByTestId("invite-error")).toBeVisible();
+  });
+});

@@ -64,7 +64,8 @@ export function createWorkspaceHandlers(backend: MockBackend) {
             send({ type: "output", data: toBase64("\r\n") });
             send({ type: "exited", code: 0, reason: "exited" });
             terminals.delete(terminalId);
-            client.close();
+            // 和 Server 相同：送出 exited 之後才關閉（MSW 的 close 可能比排隊中的訊息先到）
+            setTimeout(() => client.close(), 50);
             return;
           }
           send({

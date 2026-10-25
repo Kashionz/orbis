@@ -138,6 +138,29 @@ test("瀏覽器中沒有桌面通知總開關", async ({ page }) => {
   await expect(dialog.getByRole("switch", { name: "桌面通知" })).toHaveCount(0);
 });
 
+test("帳號：Team 的分享設定（對外分享預覽、團隊執行器的終端機）", async ({ page }) => {
+  const dialog = await openSettings(page, "帳號");
+  const preview = dialog.getByRole("switch", { name: "允許對外分享預覽" });
+  const terminal = dialog.getByRole("switch", { name: "允許團隊執行器的終端機" });
+  await expect(preview).toHaveAttribute("aria-checked", "true");
+  await expect(terminal).toHaveAttribute("aria-checked", "false");
+  await preview.click();
+  await terminal.click();
+  await expect(preview).toHaveAttribute("aria-checked", "false");
+  await expect(terminal).toHaveAttribute("aria-checked", "true");
+
+  await page.reload();
+  const reopened = await openSettings(page, "帳號");
+  await expect(reopened.getByRole("switch", { name: "允許對外分享預覽" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await expect(reopened.getByRole("switch", { name: "允許團隊執行器的終端機" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+});
+
 test("帳號：修改團隊名稱後側欄跟著換；可以登出", async ({ page }) => {
   const dialog = await openSettings(page, "帳號");
   await expect(dialog).toContainText("@octocat");
