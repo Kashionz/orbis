@@ -13,7 +13,9 @@ test("從看板進入，依批次列出 Draft Task、Acceptance Criterion 與相
   await expect(page).toHaveURL(/\/projects\/project-1\/draft-tasks$/);
   await expect(page.locator(".draft-task")).toHaveCount(3);
   await expect(draft(page, 1)).toContainText("建立登入 API");
-  await expect(draft(page, 1).getByRole("list", { name: "驗收條件" })).toContainText("pnpm test");
+  await expect(draft(page, 1).getByRole("list", { name: "Acceptance Criterion" })).toContainText(
+    "pnpm test",
+  );
   await expect(draft(page, 2).locator('[data-dependency="#1"]')).toHaveText("#1 建立登入 API");
   await expect(draft(page, 3).locator('[data-dependency="ORB-1"]')).toHaveAttribute(
     "href",
@@ -34,8 +36,8 @@ test("依賴的草稿還沒確認時不能確認；確認後同一批的 #n 改�
   await expect(draft(page, 2).locator('[data-dependency="ORB-8"]')).toBeVisible();
 
   await status.getByRole("link", { name: /ORB-8/ }).click();
-  await expect(page.locator(".page-header .status-badge")).toHaveText("待辦");
-  await expect(page.locator(".ac-list > li")).toHaveCount(2);
+  await expect(page.locator(".rp-status")).toHaveText("待辦");
+  await expect(page.locator(".rp-criterion")).toHaveCount(2);
 });
 
 test("批次確認依相依順序建立；捨棄時移除同一批指向它的相依", async ({ page }) => {
@@ -67,7 +69,7 @@ test("修改 Draft Task：標題、Acceptance Criterion 與相依；格式不對
   await form.getByRole("button", { name: "儲存" }).click();
   await expect(form).toHaveCount(0);
   await expect(draft(page, 3)).toContainText("登入流程的 e2e（Playwright）");
-  await expect(draft(page, 3).getByRole("list", { name: "驗收條件" })).toContainText(
+  await expect(draft(page, 3).getByRole("list", { name: "Acceptance Criterion" })).toContainText(
     "畫面截圖正確",
   );
   await expect(draft(page, 3).locator('[data-dependency="ORB-1"]')).toHaveCount(0);
