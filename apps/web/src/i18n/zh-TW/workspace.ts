@@ -198,6 +198,9 @@ export default {
     criterionPlaceholder: "條件描述",
     command: "指令",
     commandPlaceholder: "沿用儲存庫設定檔的 verify",
+    commandInherited: "沿用儲存庫設定的 verify",
+    commandEmptyWarning: (configPath: string) =>
+      `指令留空會沿用儲存庫設定檔 ${configPath} 的 [verify].commands；儲存庫沒有設定時，這條條件每次驗收都會「無法判定」`,
     addCriterion: "新增條件",
     remove: "移除",
     criterionKind: "條件類型",

@@ -2,7 +2,11 @@
 // Acceptance Criterion 的草稿。「未儲存」、取消、儲存、Ctrl+Enter、Esc 只作用在標題與條件（協調者 Q3）。
 
 import type { AcceptanceCriterion, Mention, Project, Task } from "@orbis/api-contract";
-import { ACCEPTANCE_CRITERION_KINDS, type AcceptanceCriterionKind } from "@orbis/api-contract";
+import {
+  ACCEPTANCE_CRITERION_KINDS,
+  type AcceptanceCriterionKind,
+  NAMES,
+} from "@orbis/api-contract";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, X } from "lucide-react";
 import { type KeyboardEvent, useRef, useState } from "react";
@@ -282,6 +286,12 @@ function DraftRow({
             value={draft.command}
             onChange={(event) => onChange({ command: event.target.value })}
           />
+        )}
+        {draft.kind === "command" && draft.command.trim() === "" && (
+          // Server 不讀 Repo 的設定檔（只有 Runner 在 base commit 讀），這裡只能提醒
+          <p className="rp-warn" role="alert">
+            {w.commandEmptyWarning(`${NAMES.configDir}/${NAMES.configFile}`)}
+          </p>
         )}
         <Popover<AcceptanceCriterionKind>
           anchorRef={kindRef}

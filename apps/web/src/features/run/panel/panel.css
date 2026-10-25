@@ -619,6 +619,7 @@
 
 .rp-draft-sub {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding-left: 22px;
@@ -662,6 +663,13 @@
 
 .rp-command:focus {
   border-color: var(--o7fb0fa);
+}
+
+.rp-warn {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--od9a845);
 }
 
 .rp-add {

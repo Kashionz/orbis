@@ -93,7 +93,9 @@ function CriterionRow({
           <span className="rp-criterion-desc">{criterion.description}</span>
           <span className="rp-criterion-meta">
             <span className="rp-mono">{t.labels.acKind[criterion.kind]}</span>
-            {criterion.command && <span className="rp-mono rp-ellipsis">{criterion.command}</span>}
+            {criterion.kind === "command" && (
+              <span className="rp-mono rp-ellipsis">{criterion.command ?? w.commandInherited}</span>
+            )}
             <span className="rp-criterion-result" data-result={criterion.result}>
               {t.labels.acResult[criterion.result]}
             </span>

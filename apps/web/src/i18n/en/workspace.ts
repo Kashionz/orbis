@@ -194,6 +194,9 @@ export default {
     criterionPlaceholder: "Criterion",
     command: "Command",
     commandPlaceholder: "Uses verify from the repo config",
+    commandInherited: "Uses verify from the repo config",
+    commandEmptyWarning: (configPath: string) =>
+      `An empty command uses [verify].commands from ${configPath}; if the repo doesn’t set it, this criterion can’t be judged in every acceptance round`,
     addCriterion: "Add criterion",
     remove: "Remove",
     criterionKind: "Criterion type",
