@@ -115,7 +115,8 @@ pub enum RunControlAction {
         /// Server 選定的 Credential（同 DispatchOffer 的 `credential`）；`null` 時由 Runner 決定。
         credential: Option<String>,
         /// 交接 prompt 中只有 Server 知道的部分，見 [`HandoffContext`]。
-        handoff: HandoffContext,
+        /// 放在 `Box` 中避免整個 RunControlAction 變大（JSON 形狀不受影響）。
+        handoff: Box<HandoffContext>,
     },
     /// 本機 Repo 核准後，把 Run 的分支合併到本機 checkout 的基準分支（ARCHITECTURE §5）。
     /// 和 `push_branch` 一樣先結束 Agent、自動 commit 未提交的變更。

@@ -48,5 +48,6 @@ model: string | null, effort: Effort | null,
 credential: string | null, 
 /**
  * 交接 prompt 中只有 Server 知道的部分，見 [`HandoffContext`]。
+ * 放在 `Box` 中避免整個 RunControlAction 變大（JSON 形狀不受影響）。
  */
 handoff: HandoffContext, } | { "action": "merge_local", strategy: LocalMergeStrategy, push_base: boolean, });
