@@ -1,4 +1,5 @@
-// Run 頁面的 Preview 分頁（ARCHITECTURE §13）。C 軌的 Run 頁面掛載 `<PreviewPanel runId />`。
+// 工作區的預覽分頁（ARCHITECTURE §13、README「Preview」）：重新載入、狀態、網址、桌面／行動裝置寬度、
+// 分享給團隊。
 // - Desktop：經由 bridge 在這個區塊疊上內嵌瀏覽器（自己的 Run 開 localhost，別人的 Run 開 Preview 網址），
 //   可以選取元素留言（附截圖、selector 與 URL）。
 // - 一般瀏覽器：以 iframe 開 Preview 網址，不能選取元素，只能附整頁截圖。
@@ -9,12 +10,23 @@ import {
   type PreviewNavState,
 } from "@orbis/desktop/bridge";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import { ErrorText } from "../../components/ErrorText";
 import {
+  ArrowLeft,
+  ArrowRight,
+  Monitor,
+  MousePointerClick,
+  RotateCw,
+  Share2,
+  Smartphone,
+} from "lucide-react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { ErrorText } from "../../components/ErrorText";
+import { type Messages, useT } from "../../i18n";
+import {
+  type PreviewState,
   previewStateQuery,
   restartPreview,
-  unavailableMessage,
+  unavailableReason,
   uploadScreenshot,
 } from "./preview-api";
 import {
@@ -25,6 +37,8 @@ import {
 } from "./preview-drafts";
 import { canCaptureTab, captureElement, imageFromClipboard } from "./screenshot";
 import "./preview.css";
+
+const ICON = { size: 14, strokeWidth: 1.75, "aria-hidden": true } as const;
 
 /** 在 Preview 上擷取的內容，交給留言框（Preview 留言的附件）。 */
 export interface PreviewCapture {
@@ -42,14 +56,35 @@ export interface PreviewPanelProps {
   canRestart: boolean;
 }
 
+type Width = "desktop" | "mobile";
+
+function stateLabel(t: Messages, state: PreviewState): { label: string; tone: string } {
+  const p = t.workspace.preview;
+  switch (state.status) {
+    case "ready":
+      return { label: p.stateLive, tone: "success" };
+    case "starting":
+      return { label: p.stateStarting, tone: "accent" };
+    case "stopped":
+      return { label: p.stateStopped, tone: "danger" };
+    default:
+      return { label: p.stateNone, tone: "muted" };
+  }
+}
+
 export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProps) {
+  const t = useT();
+  const p = t.workspace.preview;
   const [bridge] = useState(() => getDesktopBridge()?.preview ?? null);
   const queryClient = useQueryClient();
   const query = previewStateQuery(runId);
   const { data: state, error } = useQuery(query);
   const [capture, setCapture] = useState<PreviewCapture | null>(null);
   const [drafts, setDrafts] = useState(() => loadPreviewDrafts(runId));
-  // Review 頁退回後會清掉草稿：跟著更新
+  const [width, setWidth] = useState<Width>("desktop");
+  const [reloads, setReloads] = useState(0);
+  const [copied, setCopied] = useState(false);
+  // 差異分頁退回後會清掉草稿：跟著更新
   useEffect(
     () => subscribePreviewDrafts(runId, () => setDrafts(loadPreviewDrafts(runId))),
     [runId],
@@ -59,36 +94,142 @@ export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProp
     onSuccess: () => queryClient.invalidateQueries({ queryKey: query.queryKey }),
   });
   if (error) return <ErrorText error={error} />;
-  if (!state) return <p className="preview-message">載入中…</p>;
-  const restartButton = canRestart && state.status !== "not_configured" && (
-    <button type="button" disabled={restart.isPending} onClick={() => restart.mutate()}>
-      重新啟動 Preview
-    </button>
+  if (!state) return <div className="pv-center pv-muted">{t.common.loading}</div>;
+
+  const reason = unavailableReason(state, bridge !== null);
+  const { label, tone } = stateLabel(t, state);
+  const url = state.shareUrl ?? state.localUrl ?? "";
+  const onCapture = canComment ? setCapture : undefined;
+  const update = (next: PreviewCommentDraft[]) => savePreviewDrafts(runId, next);
+
+  function share() {
+    if (!state?.shareUrl) return;
+    void navigator.clipboard?.writeText(state.shareUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    });
+  }
+
+  const toolbar = (extra?: ReactNode) => (
+    <div className="pv-toolbar">
+      {!bridge && (
+        <button
+          type="button"
+          className="pv-icon-btn"
+          aria-label={p.reload}
+          data-tip={p.reload}
+          onClick={() => setReloads((n) => n + 1)}
+        >
+          <RotateCw {...ICON} />
+        </button>
+      )}
+      <span className="pv-state" data-tone={tone}>
+        <span className="pv-state-dot" />
+        {label}
+      </span>
+      {extra ?? (
+        <a
+          className="pv-url"
+          href={url || undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-tip={url}
+          data-tip-mono=""
+        >
+          {url}
+        </a>
+      )}
+      <div className="pv-width" role="radiogroup" aria-label={p.width}>
+        {(["desktop", "mobile"] as const).map((value) => (
+          // biome-ignore lint/a11y/useSemanticElements: 圖示分段按鈕
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={width === value}
+            aria-label={p[value]}
+            data-tip={p[value]}
+            className="pv-width-btn"
+            onClick={() => setWidth(value)}
+          >
+            {value === "desktop" ? <Monitor {...ICON} /> : <Smartphone {...ICON} />}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="pv-btn"
+        aria-disabled={!state.shareUrl || undefined}
+        data-tip={state.shareUrl ? undefined : t.common.notAvailableYet}
+        onClick={share}
+      >
+        <Share2 {...ICON} />
+        {copied ? t.common.copied : p.share}
+      </button>
+    </div>
   );
-  const message = unavailableMessage(state, bridge !== null);
-  if (message) {
+
+  if (reason) {
     return (
-      <div className="preview-tab">
-        <p className="preview-message">{message}</p>
-        {state.status === "stopped" && state.stopped?.output && (
-          <pre className="preview-output">{state.stopped.output}</pre>
-        )}
-        {state.status === "stopped" && restartButton}
-        <ErrorText error={restart.error} />
+      <div className="pv">
+        {toolbar(<span className="pv-url" />)}
+        <div className="pv-center">
+          {reason === "starting" ? (
+            <div className="pv-progress" role="progressbar" aria-label={p.stateStarting}>
+              <div className="pv-progress-bar" />
+            </div>
+          ) : (
+            <span className="pv-muted">
+              {reason === "stopped"
+                ? state.stopped
+                  ? p.stoppedWith(
+                      t.labels.previewStopReason[state.stopped.reason],
+                      state.stopped.exitCode,
+                    )
+                  : p.notStarted
+                : reason === "not_configured"
+                  ? p.notConfigured
+                  : p.noDomain}
+            </span>
+          )}
+          {state.status === "stopped" && state.stopped?.output && (
+            <pre className="pv-output">{state.stopped.output}</pre>
+          )}
+          {state.status === "stopped" && canRestart && (
+            <button
+              type="button"
+              className="o-btn"
+              data-variant="secondary"
+              disabled={restart.isPending}
+              onClick={() => restart.mutate()}
+            >
+              {state.stopped ? p.restart : p.start}
+            </button>
+          )}
+          <ErrorText error={restart.error} />
+        </div>
       </div>
     );
   }
 
-  const onCapture = canComment ? setCapture : undefined;
-  const update = (next: PreviewCommentDraft[]) => savePreviewDrafts(runId, next);
   return (
-    <div className="preview-tab">
-      {restartButton && <div className="preview-toolbar">{restartButton}</div>}
-      <ErrorText error={restart.error} />
+    <div className="pv">
       {bridge ? (
-        <DesktopPreview runId={runId} bridge={bridge} onCapture={onCapture} />
+        <DesktopPreview
+          runId={runId}
+          bridge={bridge}
+          width={width}
+          toolbar={toolbar}
+          onCapture={onCapture}
+        />
       ) : (
-        <BrowserPreview url={state.shareUrl ?? ""} onCapture={onCapture} />
+        <BrowserPreview
+          url={state.shareUrl ?? ""}
+          width={width}
+          reloads={reloads}
+          toolbar={toolbar}
+          onCapture={onCapture}
+        />
       )}
       {/* 留言框與草稿放在 Preview 下方：Desktop 的內嵌瀏覽器疊在上面的區塊，不會蓋住它們 */}
       {capture && (
@@ -103,23 +244,31 @@ export function PreviewPanel({ runId, canComment, canRestart }: PreviewPanelProp
         />
       )}
       {drafts.length > 0 && (
-        <section className="preview-drafts" aria-label="Preview 留言草稿">
-          <h3>Preview 留言草稿（{drafts.length}）</h3>
-          <p className="preview-message">Review Gate 退回時，會和 diff 行內留言一起送給 Agent。</p>
+        <section className="pv-drafts" aria-label={p.drafts}>
+          <div className="pv-drafts-head">
+            <span className="pv-drafts-title">{p.drafts}</span>
+            <span className="pv-mono-muted">{drafts.length}</span>
+          </div>
+          <span className="pv-muted">{p.draftsHint}</span>
           <ul>
             {drafts.map((draft, index) => (
               // 每則草稿的截圖都是剛上傳的 blob，ID 不會重複
               <li key={draft.screenshotBlobId ?? `${draft.url}|${draft.body}`}>
-                <span>{draft.body}</span>
-                {draft.selector && <code>{draft.selector}</code>}
-                <button type="button" onClick={() => update(drafts.filter((_, i) => i !== index))}>
-                  刪除
+                <span className="pv-draft-body">{draft.body}</span>
+                {draft.selector && <code className="pv-mono-muted">{draft.selector}</code>}
+                <button
+                  type="button"
+                  className="pv-text-btn"
+                  onClick={() => update(drafts.filter((_, i) => i !== index))}
+                >
+                  {t.common.delete}
                 </button>
               </li>
             ))}
           </ul>
         </section>
       )}
+      <ErrorText error={restart.error} />
     </div>
   );
 }
@@ -136,6 +285,8 @@ function PreviewCommentForm({
   onSaved: (draft: PreviewCommentDraft) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
+  const p = t.workspace.preview;
   const [body, setBody] = useState("");
   const [image] = useState(() => URL.createObjectURL(capture.screenshot));
   useEffect(() => () => URL.revokeObjectURL(image), [image]);
@@ -150,38 +301,45 @@ function PreviewCommentForm({
   });
   return (
     <form
-      className="preview-comment"
-      aria-label="Preview 留言"
+      className="pv-comment"
+      aria-label={p.commentForm}
       onSubmit={(event) => {
         event.preventDefault();
         save.mutate();
       }}
     >
-      <img className="preview-comment-shot" src={image} alt="Preview 的截圖" />
-      <dl>
+      <img className="pv-comment-shot" src={image} alt={p.shot} />
+      <dl className="pv-comment-meta">
         {capture.selector && (
           <>
-            <dt>元素</dt>
+            <dt>{p.element}</dt>
             <dd>
               <code>{capture.selector}</code>
             </dd>
           </>
         )}
-        <dt>網址</dt>
+        <dt>{p.url}</dt>
         <dd>{capture.url}</dd>
       </dl>
       <textarea
-        aria-label="留言內容"
+        className="pv-textarea"
+        aria-label={p.commentBody}
+        placeholder={p.commentBody}
         value={body}
         onChange={(event) => setBody(event.target.value)}
       />
       <ErrorText error={save.error} />
-      <div className="preview-toolbar">
-        <button type="submit" disabled={body.trim() === "" || save.isPending}>
-          {save.isPending ? "上傳截圖中…" : "加入 Review 留言草稿"}
+      <div className="pv-actions">
+        <button type="button" className="o-btn" data-variant="ghost" onClick={onCancel}>
+          {t.common.cancel}
         </button>
-        <button type="button" onClick={onCancel}>
-          取消
+        <button
+          type="submit"
+          className="o-btn"
+          data-variant="primary"
+          disabled={body.trim() === "" || save.isPending}
+        >
+          {save.isPending ? p.uploading : p.addDraft}
         </button>
       </div>
     </form>
@@ -197,12 +355,18 @@ function boundsOf(element: Element) {
 function DesktopPreview({
   runId,
   bridge,
+  width,
+  toolbar,
   onCapture,
 }: {
   runId: string;
   bridge: DesktopPreviewBridge;
+  width: Width;
+  toolbar: (extra?: ReactNode) => ReactNode;
   onCapture?: (capture: PreviewCapture) => void;
 }) {
+  const t = useT();
+  const p = t.workspace.preview;
   const area = useRef<HTMLDivElement>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [nav, setNav] = useState<PreviewNavState | null>(null);
@@ -218,7 +382,7 @@ function DesktopPreview({
       setFailure(result.ok ? null : result.message);
       if (result.ok) setAddress(result.url);
     });
-    // 版面改變（視窗大小、側欄、捲動）時更新內嵌瀏覽器的位置
+    // 版面改變（視窗大小、側欄、分割線、寬度切換、捲動）時更新內嵌瀏覽器的位置
     const update = () => void bridge.setBounds(boundsOf(element));
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -265,58 +429,82 @@ function DesktopPreview({
   }
 
   return (
-    <section className="preview-panel" aria-label="Preview">
-      <form className="preview-toolbar" onSubmit={go}>
-        <button
-          type="button"
-          aria-label="上一頁"
-          disabled={!nav?.canGoBack}
-          onClick={() => void bridge.goBack()}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          aria-label="下一頁"
-          disabled={!nav?.canGoForward}
-          onClick={() => void bridge.goForward()}
-        >
-          →
-        </button>
-        <button type="button" aria-label="重新整理" onClick={() => void bridge.reload()}>
-          ⟳
-        </button>
-        <input
-          className="preview-address"
-          aria-label="網址"
-          value={address}
-          onChange={(event) => setAddress(event.target.value)}
-        />
-        <button type="button" onClick={() => void bridge.openDevTools()}>
-          DevTools
+    <section className="pv-panel" aria-label={p.title}>
+      {toolbar(
+        <form className="pv-nav" onSubmit={go}>
+          <button
+            type="button"
+            className="pv-icon-btn"
+            aria-label={p.back}
+            data-tip={p.back}
+            disabled={!nav?.canGoBack}
+            onClick={() => void bridge.goBack()}
+          >
+            <ArrowLeft {...ICON} />
+          </button>
+          <button
+            type="button"
+            className="pv-icon-btn"
+            aria-label={p.forward}
+            data-tip={p.forward}
+            disabled={!nav?.canGoForward}
+            onClick={() => void bridge.goForward()}
+          >
+            <ArrowRight {...ICON} />
+          </button>
+          <button
+            type="button"
+            className="pv-icon-btn"
+            aria-label={p.reload}
+            data-tip={p.reload}
+            onClick={() => void bridge.reload()}
+          >
+            <RotateCw {...ICON} />
+          </button>
+          <input
+            className="pv-address"
+            aria-label={p.address}
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+        </form>,
+      )}
+      <div className="pv-subbar">
+        <button type="button" className="pv-text-btn" onClick={() => void bridge.openDevTools()}>
+          {p.devTools}
         </button>
         {onCapture && (
-          <button type="button" disabled={picking} onClick={() => void pick()}>
-            {picking ? "點選元素（Esc 取消）" : "選取元素留言"}
+          <button type="button" className="pv-btn" disabled={picking} onClick={() => void pick()}>
+            <MousePointerClick {...ICON} />
+            {picking ? p.picking : p.pick}
           </button>
         )}
-      </form>
-      {failure && <p className="preview-message">{failure}</p>}
-      {/* 內嵌瀏覽器由 Desktop 疊在這個區塊上 */}
-      <div ref={area} className="preview-frame" data-testid="preview-area" />
+      </div>
+      {failure && <p className="pv-muted pv-failure">{failure}</p>}
+      <div className="pv-stage">
+        {/* 內嵌瀏覽器由 Desktop 疊在這個區塊上 */}
+        <div ref={area} className="pv-frame" data-width={width} data-testid="preview-area" />
+      </div>
     </section>
   );
 }
 
 function BrowserPreview({
   url,
+  width,
+  reloads,
+  toolbar,
   onCapture,
 }: {
   url: string;
+  width: Width;
+  reloads: number;
+  toolbar: (extra?: ReactNode) => ReactNode;
   onCapture?: (capture: PreviewCapture) => void;
 }) {
+  const t = useT();
+  const p = t.workspace.preview;
   const frame = useRef<HTMLIFrameElement>(null);
-  const [reloads, setReloads] = useState(0);
   const [captureError, setCaptureError] = useState<unknown>(null);
   const [pasting, setPasting] = useState(false);
 
@@ -340,49 +528,49 @@ function BrowserPreview({
   }
 
   return (
-    <section className="preview-panel" aria-label="Preview">
-      <div className="preview-toolbar">
-        <button type="button" aria-label="重新整理" onClick={() => setReloads((n) => n + 1)}>
-          ⟳
-        </button>
-        <a className="preview-address" href={url} target="_blank" rel="noopener noreferrer">
-          {url}
-        </a>
-        {onCapture && (
+    <section className="pv-panel" aria-label={p.title}>
+      {toolbar()}
+      {onCapture && (
+        <div className="pv-subbar">
           <button
             type="button"
+            className="pv-btn"
             onClick={() => (canCaptureTab() ? void capture() : setPasting(true))}
           >
-            附上整頁截圖留言
+            <MousePointerClick {...ICON} />
+            {p.capture}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {pasting && (
         <div
-          className="preview-paste"
+          className="pv-paste"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: 要能接收貼上
           tabIndex={0}
           onPaste={(event) => attachImage(imageFromClipboard(event.clipboardData))}
         >
           {captureError ? <ErrorText error={captureError} /> : null}
-          <p>無法自動截圖。請在這裡貼上截圖，或選擇圖片檔：</p>
+          <p>{p.pasteHint}</p>
           <input
             type="file"
             accept="image/*"
-            aria-label="選擇截圖"
+            aria-label={p.chooseImage}
             onChange={(event) => attachImage(event.target.files?.[0])}
           />
         </div>
       )}
-      <iframe
-        key={reloads}
-        ref={frame}
-        className="preview-frame"
-        title="Preview"
-        src={url}
-        // Preview 是 Agent 寫的程式：跑在自己的 origin（Preview 網址），不給 top navigation
-        sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
-      />
+      <div className="pv-stage">
+        <iframe
+          key={reloads}
+          ref={frame}
+          className="pv-frame"
+          data-width={width}
+          title={p.title}
+          src={url}
+          // Preview 是 Agent 寫的程式：跑在自己的 origin（Preview 網址），不給 top navigation
+          sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
+        />
+      </div>
     </section>
   );
 }

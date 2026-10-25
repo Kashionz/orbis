@@ -62,7 +62,7 @@ test("「建立」留在原頁面；Esc 關閉對話框", async ({ page }) => {
   await expect(dialog).toHaveCount(0);
   await expect(page).toHaveURL(/\/board/);
   await expect(page.locator('.sidebar-row:has-text("ORB-8")')).toHaveCount(0);
-  await page.getByRole("button", { name: /^待辦/ }).click();
+  await page.locator(".sidebar").getByRole("button", { name: /^待辦/ }).click();
   await expect(page.locator(".sidebar-row", { hasText: "只有標題" })).toBeVisible();
 
   dialog = await openNewTask(page);

@@ -14,7 +14,7 @@ import { ErrorText } from "../../components/ErrorText";
 import { useT } from "../../i18n";
 import { usePermissions } from "../auth/use-permissions";
 import { CollabEditor } from "../collab/CollabEditor";
-import { safeHref } from "../run/TimelineItemView";
+import { safeHref } from "../run/stream/safe-href";
 
 /**
  * Repo 內 Spec 的草稿（ARCHITECTURE §12.1）：在 UI 中共同編輯，按下「提交到 repo」後由 GitHub App

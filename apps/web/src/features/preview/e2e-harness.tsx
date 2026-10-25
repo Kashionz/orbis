@@ -36,7 +36,8 @@ function Harness() {
         退回
       </button>
       <output id="result">{result}</output>
-      <div style={{ flex: 1, minHeight: 0 }}>
+      {/* PreviewPanel 在工作區是直向 flex 的子元素：這裡照樣給它撐滿的空間 */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <PreviewPanel runId={runId} canComment canRestart />
       </div>
     </main>

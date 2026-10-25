@@ -1,24 +1,70 @@
+// 待我處理（README「Needs You」）：依類型分組（權限請求、計畫關卡、審查關卡，以及停下來的執行、
+// 子執行的問題），每一列可以直接處理或前往工作區中的位置。Server 只列出本人有權處理的項目。
+
 import type { NeedsYouItem } from "@orbis/api-contract";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import type { PermissionOptionKind } from "@orbis/protocol";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  Check,
+  ChevronRight,
+  FileDiff,
+  ListChecks,
+  MessageCircleQuestion,
+  OctagonAlert,
+  ShieldAlert,
+} from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   answerChildQuestion,
   needsYouQuery,
   queryKeys,
   respondToPermission,
+  runQuery,
+  taskQuery,
 } from "../../api/resources";
+import { AgentLogo } from "../../components/AgentLogo";
 import { ErrorText } from "../../components/ErrorText";
-import { getMessages } from "../../i18n";
-import { formatTime } from "../../lib/format";
+import { useT } from "../../i18n";
+import { relativeTime } from "../run/stream/time-format";
+import { useNow } from "../run/workspace/use-now";
+import { MainColumn } from "../shell/WorkspaceLayout";
+import { groupNeedsYou, groupOf, type NeedsYouGroupKind, targetOf } from "./needs-you-model";
+import "../run/scope.css";
+import "../run/stream/stream.css";
+import "./needs-you.css";
 
-/**
- * Needs You 清單（交付 5）：等待自己處理的權限請求、Gate、停下來的 Run。
- * Server 只列出本人有權處理的項目，所以權限請求一律顯示回覆按鈕。
- */
+const ICON = { size: 14, strokeWidth: 1.75, "aria-hidden": true } as const;
+
+const GROUP_ICONS: Record<NeedsYouGroupKind, ReactNode> = {
+  permission: <ShieldAlert {...ICON} />,
+  plan_gate: <ListChecks {...ICON} />,
+  review_gate: <FileDiff {...ICON} />,
+  stopped_run: <OctagonAlert {...ICON} />,
+  child_question: <MessageCircleQuestion {...ICON} />,
+};
+
+function optionVariant(kind: PermissionOptionKind): "primary" | "secondary" | "danger" {
+  if (kind === "allow_once") return "primary";
+  if (kind === "allow_always") return "secondary";
+  return "danger";
+}
+
 export function NeedsYouPage() {
+  const t = useT();
+  const n = t.needsYou;
   const queryClient = useQueryClient();
   const { data: items = [], error, isPending } = useQuery(needsYouQuery);
+  const groups = groupNeedsYou(items);
+  const now = useNow(30_000);
+
+  // 每一列的 Task 標題與 Run 的代理（同一個 Task、Run 只取一次）
+  const taskIds = useMemo(() => [...new Set(items.map((i) => i.taskId))], [items]);
+  const runIds = useMemo(() => [...new Set(items.map((i) => i.runId))], [items]);
+  const tasks = useQueries({ queries: taskIds.map((id) => taskQuery(id)) });
+  const runs = useQueries({ queries: runIds.map((id) => runQuery(id)) });
+  const titleOf = (taskId: string) => tasks[taskIds.indexOf(taskId)]?.data?.title ?? "";
+  const agentOf = (runId: string) => runs[runIds.indexOf(runId)]?.data?.agent ?? null;
 
   const respond = useMutation({
     mutationFn: ({
@@ -32,104 +78,142 @@ export function NeedsYouPage() {
   });
 
   return (
-    <main className="needs-you-page">
-      <h1>Needs You</h1>
-      <ErrorText error={error ?? respond.error} />
-      {!isPending && items.length === 0 && <p className="empty">目前沒有等待你處理的項目。</p>}
-      <ul className="needs-you-list">
-        {items.map((item) => (
-          <li
-            key={item.id}
-            className="needs-you-item"
-            data-kind={item.kind}
-            data-purpose={item.kind === "permission_request" ? item.purpose : undefined}
-          >
-            <div className="needs-you-main">
-              <span className="tag">{kindLabel(item)}</span>
-              <Link to="/tasks/$taskKey" params={{ taskKey: item.taskKey }} className="task-key">
-                {item.taskKey}
-              </Link>
-              <span>{summary(item)}</span>
-              <span className="hint">{formatTime(item.createdAt)}</span>
+    <MainColumn className="ny">
+      <div className="ny-column">
+        <div className="ny-head">
+          <h1 className="ny-title">{n.title}</h1>
+          <span className="ny-count">{items.length}</span>
+        </div>
+        <ErrorText error={error ?? respond.error} />
+        {!isPending && items.length === 0 && (
+          <div className="ny-empty">
+            <span className="ny-empty-icon">
+              <Check {...ICON} />
+            </span>
+            <span>{n.empty}</span>
+          </div>
+        )}
+        {groups.map((group) => (
+          <section key={group.kind} className="ny-group" aria-labelledby={`ny-${group.kind}`}>
+            <div className="ny-group-head">
+              <span className="ny-group-icon">{GROUP_ICONS[group.kind]}</span>
+              <h2 id={`ny-${group.kind}`} className="ny-group-title">
+                {n.group[group.kind]}
+              </h2>
+              <span className="ny-count">{group.items.length}</span>
             </div>
-            <div className="needs-you-actions">
-              {item.kind === "permission_request" &&
-                item.options.map((option) => (
-                  <button
-                    key={option.optionId}
-                    type="button"
-                    className={option.kind.startsWith("allow") ? "primary" : "danger"}
-                    disabled={respond.isPending}
-                    onClick={() => respond.mutate({ item, optionId: option.optionId })}
-                  >
-                    {option.name}
-                  </button>
-                ))}
-              <JumpLink item={item} />
-            </div>
-            {item.kind === "child_question" && <ChildQuestionForm item={item} />}
-          </li>
+            <ul className="ny-list">
+              {group.items.map((item) => (
+                <Row
+                  key={item.id}
+                  item={item}
+                  title={titleOf(item.taskId)}
+                  agent={agentOf(item.runId)}
+                  now={now}
+                  responding={respond.isPending && respond.variables?.item.id === item.id}
+                  onRespond={(optionId) => {
+                    if (item.kind === "permission_request") respond.mutate({ item, optionId });
+                  }}
+                />
+              ))}
+            </ul>
+          </section>
         ))}
-      </ul>
-    </main>
+      </div>
+    </MainColumn>
   );
 }
 
-function kindLabel(item: NeedsYouItem): string {
-  const t = getMessages();
-  switch (item.kind) {
-    case "permission_request":
-      return t.labels.permissionPurpose[item.purpose];
-    case "gate":
-      return item.gateKind === "plan" ? "Plan Gate" : "Review Gate";
-    case "stopped_run":
-      return "Run 已停下";
-    case "child_question":
-      return "Child Run 的問題";
-  }
-}
+function Row({
+  item,
+  title,
+  agent,
+  now,
+  responding,
+  onRespond,
+}: {
+  item: NeedsYouItem;
+  title: string;
+  agent: string | null;
+  now: number;
+  responding: boolean;
+  onRespond: (optionId: string) => void;
+}) {
+  const t = useT();
+  const n = t.needsYou;
+  const navigate = useNavigate();
+  const kind = groupOf(item);
+  const target = targetOf(item);
+  const go = () =>
+    void navigate({
+      to: "/tasks/$taskKey",
+      params: { taskKey: target.taskKey },
+      search: {
+        run: target.run,
+        ...(target.tab && { tab: target.tab }),
+        ...(target.focus && { focus: target.focus }),
+      },
+    });
+  const summary =
+    item.kind === "permission_request"
+      ? item.title
+      : item.kind === "gate"
+        ? n.summary[item.gateKind === "plan" ? "plan_gate" : "review_gate"]
+        : item.kind === "stopped_run"
+          ? item.reason
+          : item.question;
 
-function summary(item: NeedsYouItem): string {
-  switch (item.kind) {
-    case "permission_request":
-      return item.title;
-    case "gate":
-      return item.gateKind === "plan" ? "等待核准 plan" : "等待 review diff";
-    case "stopped_run":
-      return item.reason;
-    case "child_question":
-      return item.question;
-  }
-}
-
-/** 一鍵跳到要處理的位置。 */
-function JumpLink({ item }: { item: NeedsYouItem }) {
-  if (item.kind === "gate" && item.gateKind === "review") {
-    return (
-      <Link to="/runs/$runId/review" params={{ runId: item.runId }} className="button">
-        前往 diff review
-      </Link>
-    );
-  }
-  // Plan Gate 的面板、Verification 的決定都在 Run 頁；
-  // 「Run 已停下」（Verification 超過重試上限）直接開 Verification 分頁，決定的按鈕就在那裡
-  const focus =
-    item.kind === "permission_request" ? `permission-${item.permissionRequestId}` : undefined;
-  const tab = item.kind === "stopped_run" ? "verification" : undefined;
   return (
-    <Link
-      to="/runs/$runId"
-      params={{ runId: item.runId }}
-      search={{ ...(focus && { focus }), ...(tab && { tab }) }}
-      className="button"
+    <li
+      className="ny-row"
+      data-kind={item.kind}
+      data-purpose={item.kind === "permission_request" ? item.purpose : undefined}
     >
-      前往 Run
-    </Link>
+      <div className="ny-main">
+        <button type="button" className="ny-line" onClick={go}>
+          <span className="ny-key">{item.taskKey}</span>
+          <span className="ny-task-title">{title}</span>
+        </button>
+        <div className="ny-detail">
+          {agent && <AgentLogo agent={agent} size={14} />}
+          {item.kind === "permission_request" && (
+            <span className="ny-purpose">{t.labels.permissionPurpose[item.purpose]}</span>
+          )}
+          <span className="ny-summary">{summary}</span>
+        </div>
+        {item.kind === "permission_request" && (
+          <div className="ny-options">
+            {item.options.map((option) => (
+              <button
+                key={option.optionId}
+                type="button"
+                className="st-option"
+                data-variant={optionVariant(option.kind)}
+                disabled={responding}
+                onClick={() => onRespond(option.optionId)}
+              >
+                {t.workspace.permissionOption[option.kind] ?? option.name}
+              </button>
+            ))}
+          </div>
+        )}
+        {item.kind === "child_question" && <ChildQuestionForm item={item} />}
+      </div>
+      <div className="ny-side">
+        <span className="ny-ago">{relativeTime(item.createdAt, now, t.common)}</span>
+        <button type="button" className="ny-go" onClick={go}>
+          {n.go[kind]}
+          <ChevronRight {...ICON} />
+        </button>
+      </div>
+    </li>
   );
 }
 
-/** Child Run 以 `ask_parent` 提出、父 Run 的回合已經結束而改由人回答的問題（§9）。 */
+/** 子執行以 `ask_parent` 提出、父執行的回合已經結束而改由人回答的問題（§9）。 */
 function ChildQuestionForm({ item }: { item: NeedsYouItem & { kind: "child_question" } }) {
+  const t = useT();
+  const n = t.needsYou;
   const queryClient = useQueryClient();
   const [answer, setAnswer] = useState("");
   const send = useMutation({
@@ -138,26 +222,32 @@ function ChildQuestionForm({ item }: { item: NeedsYouItem & { kind: "child_quest
   });
   return (
     <form
-      className="child-question-form"
-      aria-label={`回答 ${item.taskKey} 的 Child Run`}
+      className="ny-answer"
+      aria-label={n.answerLabel(item.taskKey)}
       onSubmit={(event) => {
         event.preventDefault();
         if (answer.trim() !== "") send.mutate();
       }}
     >
-      <Link to="/runs/$runId" params={{ runId: item.childRunId }}>
-        提問的 Child Run
-      </Link>
       <textarea
-        aria-label="回答"
+        className="ny-textarea"
+        aria-label={n.answer}
+        placeholder={n.answerPlaceholder}
         rows={2}
         value={answer}
         onChange={(event) => setAnswer(event.target.value)}
       />
       <ErrorText error={send.error} />
-      <button type="submit" className="primary" disabled={send.isPending || answer.trim() === ""}>
-        回答
-      </button>
+      <div>
+        <button
+          type="submit"
+          className="o-btn"
+          data-variant="primary"
+          disabled={send.isPending || answer.trim() === ""}
+        >
+          {n.answer}
+        </button>
+      </div>
     </form>
   );
 }

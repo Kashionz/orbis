@@ -72,6 +72,6 @@ test("依事件類型關閉後不再收到；勿擾時段可以設定，開始�
 
   await dispatchTask(page, "ORB-2");
   await allowPermission(page);
-  await expect(page.getByRole("link", { name: "Diff review" })).toBeVisible();
+  await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡");
   await expect(page.getByTestId("notification-count")).toContainText("1");
 });

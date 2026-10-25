@@ -31,6 +31,10 @@ interface ItemBase {
   key: string;
   /** 這個項目第一筆 Event 的 seq。 */
   seq: number;
+  /** 這個項目第一筆 Event 的時間。 */
+  ts: string;
+  /** 最後一筆更新這個項目的 Event 的時間（合併的片段、tool call 的更新、權限回覆）。 */
+  lastTs: string;
 }
 
 export type TimelineItem =
@@ -76,6 +80,8 @@ export type TimelineItem =
       type: "run_diff";
       /** 有變更的檔案數。完整內容由 review diff 端點取得，不放進時間軸。 */
       fileCount: number;
+      /** 有變更的檔案路徑（訊息中的檔名連到差異分頁用）。 */
+      paths: string[];
     })
   /** Agent 提出 plan，等待 Plan Gate（全文在 Run 頁的 plan 面板）。 */
   | (ItemBase & { type: "plan_proposed"; body: TextBody; source: PlanSource })
@@ -157,16 +163,20 @@ function appendBlock(blocks: ContentBlock[], block: ContentBlock): ContentBlock[
   return [...blocks, block];
 }
 
-function applyOne(draft: Draft, { seq, event }: RunEvent): void {
+function applyOne(draft: Draft, { seq, ts, event }: RunEvent): void {
   const last = draft.items.at(-1);
   const lastIndex = draft.items.length - 1;
-  const base = { key: `${event.kind}-${seq}`, seq };
+  const base = { key: `${event.kind}-${seq}`, seq, ts, lastTs: ts };
 
   switch (event.kind) {
     case "message_chunk":
       // 連續的訊息片段合併成一則訊息
       if (last?.type === "message") {
-        draft.items[lastIndex] = { ...last, blocks: appendBlock(last.blocks, event.content) };
+        draft.items[lastIndex] = {
+          ...last,
+          blocks: appendBlock(last.blocks, event.content),
+          lastTs: ts,
+        };
       } else {
         draft.items.push({ ...base, type: "message", blocks: [event.content] });
       }
@@ -174,7 +184,7 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
 
     case "thought_chunk":
       if (last?.type === "thought") {
-        draft.items[lastIndex] = { ...last, text: last.text + event.text };
+        draft.items[lastIndex] = { ...last, text: last.text + event.text, lastTs: ts };
       } else {
         draft.items.push({ ...base, type: "thought", text: event.text });
       }
@@ -192,6 +202,7 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
           status: event.status ?? existing.status,
           content: event.content ?? existing.content,
           locations: event.locations ?? existing.locations,
+          lastTs: ts,
         };
         return;
       }
@@ -199,6 +210,8 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
       draft.items.push({
         key: `tool_call-${event.tool_call_id}`,
         seq,
+        ts,
+        lastTs: ts,
         type: "tool_call",
         toolCallId: event.tool_call_id,
         title: event.title ?? event.tool_call_id,
@@ -216,6 +229,8 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
       draft.items.push({
         key: `permission-${event.request_id}`,
         seq,
+        ts,
+        lastTs: ts,
         type: "permission",
         requestId: event.request_id,
         toolCallId: event.tool_call_id,
@@ -234,6 +249,7 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
       draft.items[index] = {
         ...existing,
         resolved: { selectedOptionId: event.selected_option_id },
+        lastTs: ts,
       };
       return;
     }
@@ -294,7 +310,12 @@ function applyOne(draft: Draft, { seq, event }: RunEvent): void {
       return;
 
     case "run_diff":
-      draft.items.push({ ...base, type: "run_diff", fileCount: event.files.length });
+      draft.items.push({
+        ...base,
+        type: "run_diff",
+        fileCount: event.files.length,
+        paths: event.files.map((file) => file.path),
+      });
       return;
 
     case "plan_proposed":

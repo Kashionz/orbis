@@ -5,6 +5,7 @@
 import { formatMentionTargetId, type MentionCandidates } from "@orbis/api-contract";
 import Mention from "@tiptap/extension-mention";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
+import { getMessages } from "../../i18n";
 import { type MentionOption, mentionOptions } from "../../lib/mention-input";
 
 const MAX_OPTIONS = 8;
@@ -80,7 +81,7 @@ class SuggestionPopup {
   constructor() {
     this.element.className = "mention-options collab-mention-options";
     this.element.setAttribute("role", "listbox");
-    this.element.setAttribute("aria-label", "提及的對象");
+    this.element.setAttribute("aria-label", getMessages().workspace.collab.mentionOptions);
     document.body.append(this.element);
   }
 

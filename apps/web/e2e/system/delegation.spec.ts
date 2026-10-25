@@ -31,7 +31,7 @@ test.describe("Delegation（完整系統）", () => {
     await stack?.stop();
   });
 
-  test("父 Run 以 delegate 開出 consult 與 branch 的 Child Run，Run 樹顯示 Agent、模式與狀態，點節點看即時檢視", async ({
+  test("父 Run 以 delegate 開出 consult 與 branch 的 Child Run，執行紀錄顯示 Agent、模式與狀態，點節點切換工作區", async ({
     browser,
   }) => {
     const ready = stack.ready;
@@ -83,35 +83,33 @@ test.describe("Delegation（完整系統）", () => {
     });
     const parent = Run.parse(await dispatched.json());
 
-    // Task 頁的 Run 樹：父 Run 底下兩個 Child Run（Agent 是 fake-child、來源 Delegation、各自的模式）
+    // 任務分頁的執行紀錄：父 Run 底下兩個 Child Run（Agent 是 fake-child、來源委派、各自的模式）
     await page.goto(`/tasks/${task.key}`);
-    const tree = page.getByRole("list", { name: "Run 與 Child Run" });
-    await expect(tree.locator(".run-node")).toHaveCount(3, { timeout: 120_000 });
-    const children = tree.locator(`[data-run-id="${parent.id}"] .run-node[data-depth="1"]`);
+    const tree = page.getByRole("list", { name: "執行紀錄" });
+    await expect(tree.locator(".rp-run")).toHaveCount(3, { timeout: 120_000 });
+    const children = tree.locator('.rp-run[data-depth="1"]');
     await expect(children).toHaveCount(2);
     const consult = children.filter({ hasText: "諮詢（唯讀）" });
     const branch = children.filter({ hasText: "分支（子分支）" });
     await expect(consult).toHaveCount(1);
     await expect(branch).toHaveCount(1);
     for (const child of [consult, branch]) {
-      await expect(child.locator("> .run-node-row")).toContainText("fake-child");
-      await expect(child.locator("> .run-node-row")).toContainText("委派");
+      await expect(child).toContainText("fake-child");
+      await expect(child).toContainText("委派");
       // Child Run 不經過 Review Gate，回合結束就完成
-      await expect(child.locator("> .run-node-row .status-badge")).toHaveText("已完成", {
-        timeout: 120_000,
-      });
+      await expect(child).toContainText("已完成", { timeout: 120_000 });
     }
     // 父 Run 結束回合後進入 Review Gate；Child Run 的狀態不會改變 Task 的狀態
-    await expect(
-      tree.locator(`[data-run-id="${parent.id}"] > .run-node-row .status-badge`),
-    ).toHaveText("等待關卡", { timeout: 120_000 });
-    await expect(page.locator(".page-header .status-badge")).toHaveText("審查關卡");
+    const parentRow = tree.locator(`.rp-run[data-run-id="${parent.id}"]`);
+    await expect(parentRow).toHaveAttribute("data-depth", "0");
+    await expect(parentRow).toContainText("等待關卡", { timeout: 120_000 });
+    await expect(page.locator(".rp-status")).toHaveText("審查關卡");
 
-    // 點 consult 的節點：即時檢視顯示 Child Run 的回覆
+    // 點 consult 的節點：工作區切換到 Child Run，事件串流顯示它的回覆
     const consultId = (await consult.getAttribute("data-run-id")) ?? "";
-    await consult.locator("> .run-node-row").getByRole("button", { name: consultId }).click();
-    const live = page.getByRole("region", { name: `Run ${consultId} 的即時檢視` });
-    await expect(live.getByTestId("timeline")).toContainText("我是 Child Run");
+    await consult.locator(".rp-run-open").click();
+    await expect(page).toHaveURL(new RegExp(`[?]run=${consultId}$`));
+    await expect(page.getByTestId("timeline")).toContainText("我是 Child Run");
 
     // API：Child Run 的 parentRunId、模式與分支（branch 模式是父分支加上 --c<n>）
     const listed = z
@@ -127,10 +125,10 @@ test.describe("Delegation（完整系統）", () => {
     expect(branchRun?.branch).toBe(`${parent.branch}--c2`);
 
     // 父 Run 的 diff 只有它自己改的檔案
-    await page.getByRole("link", { name: "開啟 Run 頁" }).first().click();
-    await page.getByRole("link", { name: "Diff review" }).click();
+    await parentRow.locator(".rp-run-open").click();
+    await page.getByRole("tab", { name: /差異/ }).click();
     await expect(
-      page.locator(".file-list").getByRole("button", { name: /parent\.txt/ }),
+      page.locator(".rp-file-tabs").getByRole("button", { name: /parent\.txt/ }),
     ).toBeVisible();
     await context.close();
   });

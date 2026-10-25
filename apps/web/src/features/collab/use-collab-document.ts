@@ -22,12 +22,6 @@ const FAILURES: Record<number, CollabFailure> = {
   [COLLAB_CLOSE_CODES.notFound]: "not_found",
 };
 
-export const COLLAB_FAILURE_MESSAGES: Record<CollabFailure, string> = {
-  unauthorized: "登入已失效，請重新登入後再編輯。",
-  forbidden: "沒有權限查看這份文件。",
-  not_found: "找不到這份文件。",
-};
-
 /** 在線的人（awareness 的 `user` 欄位）。 */
 export interface CollabUser {
   name: string;

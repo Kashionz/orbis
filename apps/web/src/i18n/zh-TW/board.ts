@@ -1,3 +1,40 @@
-// U2 的 board 字典（新工作區介面）。key 由 U2 新增，en/board.ts 要有相同的 key。
+// U2 的 board 字典（看板）。key 由 U2 新增，en/board.ts 要有相同的 key。顯示文字照原型。
 
-export default {};
+export default {
+  title: "看板",
+  project: "專案",
+  projectSettings: "專案設定",
+  draftTasks: "草稿任務",
+  newProject: "新增專案",
+  noProjects: "還沒有任何專案",
+  askAdmin: "請團隊的擁有者或管理員建立專案",
+  filter: {
+    label: "篩選",
+    all: "全部",
+    needs: "待我處理",
+    mine: "指派給我",
+  },
+  view: {
+    label: "檢視",
+    list: "列表",
+    columns: "分欄",
+  },
+  newTask: "新增任務",
+  empty: "沒有符合的任務",
+  emptyColumn: "沒有任務",
+  column: {
+    key: "編號",
+    title: "標題",
+    run: "執行",
+    agent: "代理",
+    acceptance: "驗收",
+    assignee: "指派",
+    updated: "更新",
+  },
+  draft: "草稿",
+  blockedBy: (keys: string) => `依賴 ${keys}`,
+  awaitingPlanGate: "等待計畫關卡",
+  awaitingReviewGate: "等待審查關卡",
+  needs: "待我處理",
+  group: (label: string, count: number) => `${label} ${count}`,
+};

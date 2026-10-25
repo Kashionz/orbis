@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type KeyboardEvent, type Ref, useId, useLayoutEffect, useRef, useState } from "react";
 import { mentionCandidatesQuery } from "../../api/resources";
+import { useT } from "../../i18n";
 import {
   activeMentionQuery,
   insertMention,
@@ -36,6 +37,7 @@ export function MentionTextarea({
   placeholder,
   textareaRef,
 }: MentionTextareaProps) {
+  const t = useT();
   const listId = useId();
   const local = useRef<HTMLTextAreaElement | null>(null);
   const [query, setQuery] = useState<MentionQuery | null>(null);
@@ -110,7 +112,12 @@ export function MentionTextarea({
         onBlur={() => setQuery(null)}
       />
       {open && (
-        <div id={listId} role="listbox" className="mention-options" aria-label="提及的對象">
+        <div
+          id={listId}
+          role="listbox"
+          className="mention-options"
+          aria-label={t.workspace.collab.mentionOptions}
+        >
           {options.map((option, index) => (
             // 用 mousedown，在 textarea 失去焦點（關閉清單）之前插入
             <div

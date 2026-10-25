@@ -42,6 +42,7 @@ import { ZodError, type z } from "zod";
 import { type MockBackend, MockError } from "./backend";
 import { MockCollabServer } from "./collab";
 import { createPrototypeHandlers } from "./prototype-features";
+import { createWorkspaceHandlers } from "./workspace";
 
 /** 重播時每則 `run_events` 最多帶幾筆 Event（同 Server）。 */
 const REPLAY_BATCH_SIZE = 500;
@@ -175,6 +176,7 @@ export function createHandlers(backend: MockBackend) {
   return [
     eventsHandler,
     collabHandler,
+    ...createWorkspaceHandlers(backend),
 
     // 版本相容（ARCHITECTURE §16）：依設定回不同的版本
     http.get(API_ROUTES.health, () => {

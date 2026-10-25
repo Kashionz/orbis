@@ -19,6 +19,16 @@ export const FEATURE_NAMES = [
   "desktopNotifyToggle",
   /** 不指定 Repo 建立 Task（新增任務的「尚未指定」）。 */
   "taskWithoutRepo",
+  /** 執行中傳訊息給代理（輸入框）。 */
+  "runPrompt",
+  /** 執行中切換模型、推理強度、權限策略（輸入框的選單）。 */
+  "runSettings",
+  /** prompt 與權限回覆的作者（事件串流的頭像）。 */
+  "eventActors",
+  /** Task 的 PR（事件串流的系統事件）。 */
+  "taskPullRequest",
+  /** 看板每列的 Run 與驗收進度一次取得（沒有時逐 Task 取得）。 */
+  "boardSummary",
 ] as const;
 export type FeatureName = (typeof FEATURE_NAMES)[number];
 

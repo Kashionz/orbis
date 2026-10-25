@@ -1,0 +1,196 @@
+/* 工作區的標題列與還沒有執行時的主欄。 */
+
+.wk-header {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  padding-left: 4px;
+}
+
+.wk-header-dot {
+  width: 12px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+}
+
+.wk-header-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--o8b9098);
+  flex: none;
+}
+
+.wk-header-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  color: var(--oe8e9eb);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.wk-header-status {
+  flex: 0 2 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.wk-header-origin {
+  flex: 0 3 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--o8b9098);
+}
+
+.wk-header-parent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-size: 12px;
+  color: var(--o8b9098);
+  text-decoration: none;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 5px;
+}
+
+.wk-header-parent:hover {
+  background: var(--o1c1e22);
+  color: var(--oe8e9eb);
+  text-decoration: none;
+}
+
+.wk-header-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.wk-header-cancel,
+.wk-header-panel {
+  appearance: none;
+  border: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--o8b9098);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  transition:
+    background-color var(--dur-hover) ease-out,
+    color var(--dur-hover) ease-out,
+    transform var(--dur-hover) var(--ease-fluid);
+}
+
+.wk-header-cancel:hover:not(:disabled) {
+  background: var(--tint-danger);
+  color: var(--oef6b62);
+}
+
+.wk-header-panel:hover {
+  background: var(--o202227);
+  color: var(--oe8e9eb);
+}
+
+.wk-header-panel[aria-pressed="true"] {
+  background: var(--o1e2024);
+}
+
+.wk-header-cancel:active,
+.wk-header-panel:active {
+  transform: scale(var(--press-scale));
+}
+
+/* ---------- 還沒有執行 ---------- */
+
+.wk-norun {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wk-norun-column {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 72px 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.wk-norun-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 550;
+  font-variation-settings: var(--fvs-semibold);
+  color: var(--oe8e9eb);
+}
+
+.wk-norun-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wk-muted {
+  font-size: 13px;
+  color: var(--o8b9098);
+}
+
+.wk-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--oe8e9eb);
+}
+
+.wk-checklist {
+  margin: 6px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.wk-checklist li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  line-height: 28px;
+  color: var(--oe8e9eb);
+}
+
+.wk-check-glyph {
+  color: var(--o8b9098);
+  width: 14px;
+  text-align: center;
+}
+
+.wk-check-glyph[data-met="true"] {
+  color: var(--o4fb86a);
+}
+
+.wk-panel-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--o8b9098);
+  font-size: 13px;
+  animation: o-fade var(--dur-panel) ease-out both;
+}

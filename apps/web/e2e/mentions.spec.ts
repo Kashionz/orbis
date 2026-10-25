@@ -18,16 +18,16 @@ test("Task 留言 @agent：自動完成、送出後顯示 consult Run 的連結�
   const comment = page.locator(".task-comment").first();
   await expect(comment.locator(".mention")).toHaveText("@claude");
   await expect(comment).toContainText("幫我看 README");
-  const consult = comment.getByRole("link", { name: /@agent 的 consult Run/ });
+  const consult = comment.getByRole("link", { name: /@agent 的諮詢執行/ });
   await expect(consult).toBeVisible();
-  // consult Run 出現在 Run 樹，結束後回覆貼回成留言
-  await expect(page.locator(".run-node").first()).toContainText("@agent");
+  // consult Run 出現在執行紀錄，結束後回覆貼回成留言
+  await expect(page.locator(".rp-run").first()).toContainText("@agent");
   await expect(page.locator(".task-comment")).toHaveCount(2, { timeout: 15_000 });
-  await expect(page.locator(".task-comment").nth(1)).toContainText("Agent 的回覆");
+  await expect(page.locator(".task-comment").nth(1)).toContainText("代理的回覆");
   await expect(page.locator(".task-comment").nth(1)).toContainText("README 可以再補上使用範例");
 
   await consult.click();
-  await expect(page.locator(".run-meta")).toContainText("@agent");
+  await expect(page.getByTestId("run-origin")).toContainText("@agent");
 });
 
 test("@成員：以方向鍵選擇，顯示成標籤；可以修改與刪除自己的留言", async ({ page }) => {
@@ -46,7 +46,7 @@ test("@成員：以方向鍵選擇，顯示成標籤；可以修改與刪除自�
 
   const comment = page.locator(".task-comment").first();
   await expect(comment.locator(".mention")).toHaveText("@alice");
-  await expect(comment.getByRole("link", { name: /consult Run/ })).toHaveCount(0);
+  await expect(comment.getByRole("link", { name: /諮詢執行/ })).toHaveCount(0);
 
   await comment.getByRole("button", { name: "修改" }).click();
   await comment.getByRole("combobox", { name: "修改留言" }).fill("改過的留言");
@@ -59,24 +59,24 @@ test("@成員：以方向鍵選擇，顯示成標籤；可以修改與刪除自�
 
 test("diff 行內留言 @agent：退回後在之前的退回中顯示 consult Run", async ({ page }) => {
   await page.goto("/tasks/ORB-4");
-  await page.locator(".run-node").first().getByRole("link", { name: "開啟 Run 頁" }).click();
-  await page.getByRole("link", { name: "Diff review" }).click();
+  await page.getByRole("tab", { name: /差異/ }).click();
   await page
-    .locator(".file-list")
+    .locator(".rp-file-tabs")
     .getByRole("button", { name: /README\.md/ })
     .click();
-  await page.getByLabel("行號").fill("1");
-  const input = page.getByRole("combobox", { name: "留言內容" });
+  await page.getByRole("button", { name: "對修改後第 1 行留言", exact: true }).click();
+  const input = page.getByRole("combobox", { name: "對修改後第 1 行留言" });
   await input.fill("@codex");
   await input.press("Enter");
   await input.pressSequentially("這裡的寫法對嗎？");
   await page.getByRole("button", { name: "加入留言" }).click();
-  await expect(page.locator(".review-comment .mention")).toHaveText("@codex");
-  await page.getByRole("button", { name: /退回並附上留言/ }).click();
+  await expect(page.locator(".rp-file .rp-comment .mention")).toHaveText("@codex");
+  await page.getByRole("button", { name: /^退回（/ }).click();
 
   await expect(page.getByTestId("timeline")).toContainText("已依照留言修改。");
-  await page.getByRole("link", { name: "Diff review" }).click();
-  const previous = page.getByRole("region", { name: "之前的退回" });
+  await expect(page.getByTestId("run-status")).toHaveText("等待審查關卡");
+  const previous = page.locator(".rp-diff-section").filter({ hasText: "之前的退回" });
+  await previous.getByRole("button", { name: /之前的退回/ }).click();
   await expect(previous.locator(".mention")).toHaveText("@codex");
-  await expect(previous.getByRole("link", { name: /@agent 的 consult Run/ })).toBeVisible();
+  await expect(previous.getByRole("link", { name: /@agent 的諮詢執行/ })).toBeVisible();
 });

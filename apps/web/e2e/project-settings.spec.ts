@@ -1,6 +1,13 @@
 import { NAMES, type Role } from "@orbis/api-contract";
 import type { Page } from "@playwright/test";
-import { expect, openNewTask, test } from "./fixtures";
+import {
+  expect,
+  menuItem,
+  openNewTask,
+  openProjectMenu,
+  projectMenuButton,
+  test,
+} from "./fixtures";
 
 const INSTALL_URL = `https://github.com/apps/${NAMES.productSlug}/installations/new`;
 
@@ -11,7 +18,7 @@ function repoRow(page: Page, fullName: string) {
 test.describe("建立 Project", () => {
   test("從看板新增 Project：驗證錯誤、前綴重複（409），建立後切換到它的看板", async ({ page }) => {
     await page.goto("/board");
-    await page.getByRole("button", { name: "新增 Project" }).click();
+    await menuItem(await openProjectMenu(page), "新增專案").click();
     const dialog = page.getByRole("dialog", { name: "新增專案" });
 
     // 表單驗證：每個欄位標出契約的規則
@@ -35,14 +42,8 @@ test.describe("建立 Project", () => {
     await dialog.getByRole("button", { name: "建立" }).click();
     await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/\/board\?project=project-\d+$/);
-    await expect(page.getByRole("combobox", { name: "Project", exact: true })).toHaveValue(
-      /^project-\d+$/,
-    );
-    await expect(
-      page.getByRole("combobox", { name: "Project", exact: true }).locator("option:checked"),
-    ).toHaveText("網站（WEB）");
-    await expect(page.locator(".task-card")).toHaveCount(0);
-    await expect(page.getByPlaceholder("用 Task Key 搜尋，例如 WEB-1")).toBeVisible();
+    await expect(projectMenuButton(page)).toHaveAccessibleName("專案 網站");
+    await expect(page.locator("[data-task-key]")).toHaveCount(0);
 
     // 還沒有 Repo：新增任務時提示先到專案設定登記
     const createTask = await openNewTask(page);
@@ -59,16 +60,15 @@ test.describe("建立 Project", () => {
 
     test("還沒有任何 Project 時可以直接新增", async ({ page }) => {
       await page.goto("/board");
-      await expect(page.getByRole("heading", { name: "還沒有任何 Project" })).toBeVisible();
-      await page.getByRole("button", { name: "新增 Project" }).click();
+      await expect(page.getByText("還沒有任何專案")).toBeVisible();
+      await page.getByRole("button", { name: "新增專案" }).click();
       const dialog = page.getByRole("dialog", { name: "新增專案" });
       await dialog.getByLabel("名稱").fill(NAMES.productName);
       await dialog.getByLabel("任務編號前綴").fill("ORB");
       await dialog.getByRole("button", { name: "建立" }).click();
-      await expect(
-        page.getByRole("combobox", { name: "Project", exact: true }).locator("option:checked"),
-      ).toHaveText(`${NAMES.productName}（ORB）`);
-      await expect(page.locator(".board-column")).toHaveCount(9);
+      await expect(projectMenuButton(page)).toHaveAccessibleName(`專案 ${NAMES.productName}`);
+      await page.getByRole("radio", { name: "分欄" }).click();
+      await expect(page.locator(".bd-column")).toHaveCount(9);
     });
   });
 });
@@ -76,7 +76,7 @@ test.describe("建立 Project", () => {
 test.describe("Project 設定頁", () => {
   test("從看板進入，登記 Repo 後出現在列表；App 未安裝時顯示安裝連結", async ({ page }) => {
     await page.goto("/board");
-    await page.getByRole("link", { name: "Project 設定" }).click();
+    await menuItem(await openProjectMenu(page), "專案設定").click();
     await expect(page).toHaveURL(/\/projects\/project-1\/settings$/);
     await expect(repoRow(page, "acme/demo")).toContainText("已安裝");
 
@@ -151,13 +151,13 @@ test.describe("Project 設定頁", () => {
     await expect(page.getByRole("button", { name: "儲存政策" })).toBeDisabled();
 
     await page.goto("/board");
-    await expect(
-      page.getByRole("combobox", { name: "Project", exact: true }).locator("option:checked"),
-    ).toHaveText("核心產品 v2（ORB）");
+    await expect(projectMenuButton(page)).toHaveAccessibleName("專案 核心產品 v2");
     await page.goto("/tasks/ORB-2");
-    await page.getByRole("button", { name: "派工" }).click();
-    const dispatch = page.getByRole("dialog", { name: "派工 ORB-2" });
-    await expect(dispatch.getByRole("radio", { name: /^逐一確認/ })).toBeChecked();
+    const dispatch = page.getByRole("form", { name: "派工" });
+    await expect(dispatch.getByRole("radio", { name: "逐一確認" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 });
 
@@ -223,10 +223,11 @@ for (const role of ["member", "viewer"] as const satisfies readonly Role[]) {
 
     test("看不到新增 Project、登記 Repo 與修改設定", async ({ page }) => {
       await page.goto("/board");
-      await expect(page.getByRole("link", { name: "Project 設定" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "新增 Project" })).toHaveCount(0);
+      const menu = await openProjectMenu(page);
+      await expect(menuItem(menu, "專案設定")).toBeVisible();
+      await expect(menuItem(menu, "新增專案")).toHaveCount(0);
 
-      await page.getByRole("link", { name: "Project 設定" }).click();
+      await menuItem(menu, "專案設定").click();
       await expect(repoRow(page, "acme/demo")).toContainText("已安裝");
       await expect(page.getByRole("form", { name: "登記儲存庫" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "儲存" })).toHaveCount(0);
@@ -240,8 +241,8 @@ for (const role of ["member", "viewer"] as const satisfies readonly Role[]) {
 
     test("還沒有任何 Project 時請 Owner 或 Admin 建立", async ({ page }) => {
       await page.goto("/board");
-      await expect(page.getByText("請 Team 的 Owner 或 Admin 建立 Project。")).toBeVisible();
-      await expect(page.getByRole("button", { name: "新增 Project" })).toHaveCount(0);
+      await expect(page.getByText("請團隊的擁有者或管理員建立專案")).toBeVisible();
+      await expect(page.getByRole("button", { name: "新增專案" })).toHaveCount(0);
     });
   });
 }
@@ -252,8 +253,9 @@ test.describe("Project 的 Role 覆寫", () => {
 
   test("建立 Project 看 Team 的 Role；Project 設定看這個 Project 的有效 Role", async ({ page }) => {
     await page.goto("/board");
-    await expect(page.getByRole("button", { name: "新增 Project" })).toBeVisible();
-    await page.getByRole("link", { name: "Project 設定" }).click();
+    const menu = await openProjectMenu(page);
+    await expect(menuItem(menu, "新增專案")).toBeVisible();
+    await menuItem(menu, "專案設定").click();
     await expect(page.getByRole("form", { name: "登記儲存庫" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "儲存政策" })).toHaveCount(0);
 

@@ -1,10 +1,20 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
-test.describe("Task 頁", () => {
-  test("編輯描述：markdown 語法轉成標題與清單，重新整理後仍在", async ({ page }) => {
+/** 右側任務分頁的規格內嵌編輯。 */
+async function editSpec(page: Page) {
+  await page.getByRole("tabpanel").getByRole("button", { name: "編輯", exact: true }).click();
+  await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+}
+
+const drafts = (page: Page) => page.locator(".rp-draft");
+const criteria = (page: Page) => page.locator(".rp-criterion");
+
+test.describe("任務分頁", () => {
+  test("規格以共同編輯修改：markdown 語法轉成標題與清單，重新整理後仍在", async ({ page }) => {
     await page.goto("/tasks/ORB-1");
-    const description = page.getByRole("textbox", { name: "描述" });
-    await expect(page.getByTestId("collab-status")).toHaveText("已同步");
+    await editSpec(page);
+    const description = page.getByRole("textbox", { name: "規格" });
     await description.click();
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.type("## 背景");
@@ -15,86 +25,99 @@ test.describe("Task 頁", () => {
     await expect(description.getByRole("heading", { name: "背景" })).toBeVisible();
 
     await page.reload();
+    await editSpec(page);
     await expect(description.getByRole("listitem")).toHaveText(["第一點", "第二點"]);
   });
 
-  test("編輯標題", async ({ page }) => {
+  test("編輯標題：未儲存的提示、Esc 取消、Ctrl+Enter 儲存", async ({ page }) => {
     await page.goto("/tasks/ORB-1");
-    await page.getByRole("button", { name: "編輯標題" }).click();
+    await editSpec(page);
+    const title = page.getByLabel("標題");
+    await title.fill("設定 CI 快取（暫時）");
+    await expect(page.locator(".rp-unsaved")).toHaveText("未儲存");
+    await title.press("Escape");
+    await expect(title).toHaveCount(0);
+    await expect(page.locator(".wk-header-title")).toHaveText("設定 CI 快取");
+
+    await editSpec(page);
     await page.getByLabel("標題").fill("設定 CI 快取（pnpm store）");
-    await page.getByRole("button", { name: "儲存", exact: true }).click();
-    await expect(page.getByRole("heading", { name: /設定 CI 快取（pnpm store）/ })).toBeVisible();
+    await page.getByLabel("標題").press("ControlOrMeta+Enter");
+    await expect(page.locator(".wk-header-title")).toHaveText("設定 CI 快取（pnpm store）");
   });
 
-  test("Acceptance Criterion：新增、切換類型、排序、刪除", async ({ page }) => {
+  test("驗收條件：新增、切換類型、排序、刪除，儲存後一次送出", async ({ page }) => {
     await page.goto("/tasks/ORB-2");
-    const list = page.locator(".ac-list > li");
-    await expect(list).toHaveCount(2);
-    await expect(list.nth(0)).toContainText("測試通過");
-    await expect(list.nth(0)).toContainText("pnpm test");
+    await expect(criteria(page)).toHaveCount(2);
+    await expect(criteria(page).nth(0)).toContainText("測試通過");
+    await expect(criteria(page).nth(0)).toContainText("pnpm test");
+    await editSpec(page);
+    await expect(drafts(page)).toHaveCount(2);
 
-    // 新增：預設是 command 類型，指令留空時警告會沿用 Repo 設定檔的 [verify].commands（#53 的觀察）
-    await page.getByRole("button", { name: "新增 Acceptance Criterion" }).click();
-    const form = page.locator(".ac-form");
-    await expect(form.getByRole("alert")).toContainText("[verify].commands");
-    await expect(form.getByRole("alert")).toContainText("無法判定");
-    await form.getByLabel("指令", { exact: true }).fill("pnpm lint");
-    await expect(form.getByRole("alert")).toHaveCount(0);
+    // 新增：預設是代理判定；改成指令且留空時警告會沿用儲存庫設定檔的 [verify].commands（#53 的觀察）
+    await page.getByRole("button", { name: "新增條件" }).click();
+    const added = drafts(page).nth(2);
+    await added.getByLabel("條件描述").fill("hello.txt 的內容符合規格");
+    await added.getByRole("button", { name: /條件類型/ }).click();
+    await page.getByRole("menuitemradio", { name: /指令/ }).click();
+    await expect(added.getByRole("alert")).toContainText("[verify].commands");
+    await expect(added.getByRole("alert")).toContainText("無法判定");
+    await added.getByLabel("指令", { exact: true }).fill("pnpm lint");
+    await expect(added.getByRole("alert")).toHaveCount(0);
+    // 再改回代理判定（不顯示指令欄位）
+    await added.getByRole("button", { name: /條件類型/ }).click();
+    await page.getByRole("menuitemradio", { name: /代理判定/ }).click();
+    await expect(added.getByLabel("指令", { exact: true })).toHaveCount(0);
 
-    // 改成 agent 類型（不顯示指令欄位，也沒有警告）
-    await form.getByLabel("類型").selectOption("agent");
-    await expect(form.getByLabel("指令", { exact: true })).toHaveCount(0);
-    await expect(form.getByRole("alert")).toHaveCount(0);
-    await form.getByLabel("條件").fill("hello.txt 的內容符合 Spec");
-    await form.getByRole("button", { name: "加入" }).click();
-    await expect(list).toHaveCount(3);
-    await expect(list.nth(2)).toHaveAttribute("data-kind", "agent");
+    // 第一條改成人工、下移；刪掉第二條
+    await drafts(page)
+      .nth(0)
+      .getByRole("button", { name: /條件類型/ })
+      .click();
+    await page.getByRole("menuitemradio", { name: /人工/ }).click();
+    await drafts(page).nth(0).getByRole("button", { name: "下移" }).click();
+    await expect(drafts(page).nth(1).getByLabel("條件描述")).toHaveValue("測試通過");
+    await drafts(page).nth(0).getByRole("button", { name: "移除" }).click();
+    await page.getByRole("button", { name: "儲存", exact: true }).click();
 
-    // command 改成 manual：指令被清掉
-    await list.nth(0).getByRole("button", { name: "編輯", exact: true }).click();
-    await list.nth(0).getByLabel("類型").selectOption("manual");
-    await list.nth(0).getByRole("button", { name: "儲存" }).click();
-    await expect(list.nth(0)).toHaveAttribute("data-kind", "manual");
-    await expect(list.nth(0)).not.toContainText("pnpm test");
-
-    // 下移第一條
-    await list.nth(0).getByRole("button", { name: "下移" }).click();
-    await expect(list.nth(1)).toContainText("測試通過");
-
-    await list.nth(2).getByRole("button", { name: "刪除" }).click();
-    await expect(list).toHaveCount(2);
+    await expect(criteria(page)).toHaveCount(2);
+    await expect(criteria(page).nth(0)).toHaveAttribute("data-kind", "manual");
+    await expect(criteria(page).nth(0)).not.toContainText("pnpm test");
+    await expect(criteria(page).nth(1)).toHaveAttribute("data-kind", "agent");
     await page.reload();
-    await expect(list).toHaveCount(2);
-    await expect(list.nth(0)).toContainText("README 文字通順");
+    await expect(criteria(page)).toHaveCount(2);
+    await expect(criteria(page).nth(0)).toContainText("測試通過");
   });
 
-  test("設定指派對象與 depends_on", async ({ page }) => {
+  test("設定指派對象與依賴", async ({ page }) => {
     await page.goto("/tasks/ORB-1");
-    await page.getByLabel("指派對象").selectOption({ label: "@bob（Bob）" });
-    await expect(page.getByLabel("指派對象")).toHaveValue("member-bob");
+    await page.getByRole("button", { name: "指派對象" }).click();
+    await page.getByRole("menuitemradio", { name: /@bob/ }).click();
+    await expect(page.getByRole("button", { name: "指派對象" })).toContainText("@bob");
 
-    await page.getByLabel("以 Task Key 加入依賴").fill("ORB-2");
-    await page.getByRole("button", { name: /ORB-2 新增 hello.txt/ }).click();
-    const dependency = page.locator(".depends-list li");
-    await expect(dependency).toHaveCount(1);
-    await expect(dependency.getByRole("link", { name: "ORB-2" })).toBeVisible();
-    await expect(dependency).toContainText("就緒");
+    await page.getByRole("button", { name: "依賴" }).click();
+    await page.getByRole("menuitemradio", { name: /ORB-2 新增 hello.txt/ }).click();
+    await page.keyboard.press("Escape");
+    const dependsOn = page.getByRole("button", { name: "依賴" });
+    await expect(dependsOn).toContainText("ORB-2");
+    await expect(dependsOn).toContainText("就緒");
 
     await page.reload();
-    await expect(page.getByLabel("指派對象")).toHaveValue("member-bob");
-    await dependency.getByRole("button", { name: "移除依賴 ORB-2" }).click();
-    await expect(dependency).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "指派對象" })).toContainText("@bob");
+    await page.getByRole("button", { name: "依賴" }).click();
+    await page.getByRole("menuitemradio", { name: /ORB-2 新增 hello.txt/ }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "依賴" })).toHaveText("無");
   });
 
-  test("Run 樹連到 Run 即時檢視", async ({ page }) => {
+  test("執行紀錄切換工作區顯示的 Run", async ({ page }) => {
     await page.goto("/tasks/ORB-4");
-    const rows = page.locator(".run-node");
+    const rows = page.locator(".rp-run");
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText("claude-code");
-    await expect(rows.first()).toContainText("本機");
     await expect(rows.first()).toContainText("等待關卡");
-    await rows.first().getByRole("link", { name: "開啟 Run 頁" }).click();
-    await expect(page).toHaveURL(/\/runs\/run-\d+$/);
+    await expect(rows.first()).toHaveAttribute("data-current", "true");
+    await rows.first().getByRole("button").first().click();
+    await expect(page).toHaveURL(/\/tasks\/ORB-4\?run=run-\d+$/);
   });
 
   test("找不到的 Task Key 顯示錯誤", async ({ page }) => {
@@ -104,17 +127,22 @@ test.describe("Task 頁", () => {
     });
   });
 
-  test("depends_on 中有 Task 還沒 Done 時不能派工", async ({ page }) => {
+  test("依賴中有 Task 還沒完成時不能派工", async ({ page }) => {
     await page.goto("/tasks/ORB-2");
-    await page.getByLabel("以 Task Key 加入依賴").fill("ORB-1");
-    await page.getByRole("button", { name: /ORB-1 設定 CI 快取/ }).click();
-    await expect(page.getByRole("note")).toContainText("依賴的 ORB-1 還沒有 Done，不能派工");
-    await expect(page.getByRole("button", { name: "派工" })).toBeDisabled();
+    const dependsOn = page.getByRole("button", { name: "依賴" });
+    await dependsOn.click();
+    await page.getByRole("menuitemradio", { name: /ORB-1 設定 CI 快取/ }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("note")).toContainText("依賴的 ORB-1 尚未完成，不能派工");
+    await expect(page.getByRole("form", { name: "派工" })).toHaveCount(0);
 
-    // 換成已經 Done 的 ORB-5 就可以派工
-    await page.getByRole("button", { name: "移除依賴 ORB-1" }).click();
-    await page.getByLabel("以 Task Key 加入依賴").fill("ORB-5");
-    await page.getByRole("button", { name: /ORB-5 升級相依套件/ }).click();
-    await expect(page.getByRole("button", { name: "派工" })).toBeEnabled();
+    // 換成已經完成的 ORB-5 就可以派工
+    await dependsOn.click();
+    await page.getByRole("menuitemradio", { name: /ORB-1 設定 CI 快取/ }).click();
+    await page.getByRole("menuitemradio", { name: /ORB-5 升級相依套件/ }).click();
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("form", { name: "派工" }).getByRole("button", { name: "派工" }),
+    ).toBeEnabled();
   });
 });
