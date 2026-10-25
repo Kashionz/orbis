@@ -16,9 +16,12 @@ import { parse as parseCookie } from "hono/utils/cookie";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { findSession } from "../auth/service";
+import { ApiError } from "../http/errors";
+import { actorForSession } from "../preview/access";
 import { SESSION_COOKIE } from "../routes/auth";
 import type { Services } from "../services";
 import type { UpgradeRouter } from "../ws-upgrade";
+import { authorizeTerminal } from "./authz";
 
 const PREFIX = API_ROUTES.terminalWs.slice(0, API_ROUTES.terminalWs.indexOf(":terminalId"));
 const SUFFIX = API_ROUTES.terminalWs.slice(API_ROUTES.terminalWs.indexOf(":terminalId") + 11);
@@ -34,10 +37,28 @@ export interface TerminalEndpoint {
   close(): Promise<void>;
 }
 
+/** 連線期間重新確認權限的間隔。 */
+export const TERMINAL_AUTHZ_RECHECK_MS = 30_000;
+
+/** 開啟者是否仍然可以使用這個終端機。 */
+async function stillAllowed(services: Services, terminalId: string): Promise<boolean> {
+  const info = services.terminals.info(terminalId);
+  if (!info) return false;
+  const actor = await actorForSession(services.db, services.clock, info.sessionId);
+  if (!actor) return false;
+  try {
+    await authorizeTerminal(services.db, actor, info.runId);
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError) return false;
+    throw error;
+  }
+}
+
 export function attachTerminalEndpoint(
   router: UpgradeRouter,
   services: Services,
-  options: { publicUrl: string },
+  options: { publicUrl: string; authzRecheckMs?: number },
 ): TerminalEndpoint {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const allowedOrigin = new URL(options.publicUrl).origin;
@@ -87,7 +108,19 @@ export function attachTerminalEndpoint(
               services.terminals.resize(terminalId, message.cols, message.rows);
             }
           });
-          ws.on("close", () => void services.terminals.close(terminalId, "closed"));
+          // 連線期間定期重新確認權限（session、Run 的查看權限、Runner 擁有者、Admin 與 Team 設定）。
+          const recheck = setInterval(() => {
+            void stillAllowed(services, terminalId).then((allowed) => {
+              if (allowed) return;
+              send({ type: "error", code: "forbidden", message: "已經沒有權限使用這個終端機" });
+              void services.terminals.close(terminalId, "closed");
+              ws.close(1008);
+            });
+          }, options.authzRecheckMs ?? TERMINAL_AUTHZ_RECHECK_MS);
+          ws.on("close", () => {
+            clearInterval(recheck);
+            void services.terminals.close(terminalId, "closed");
+          });
         });
       },
       () => refuse(socket, 401),

@@ -6,17 +6,23 @@ import { sha256Hex } from "../crypto";
 import { sessions } from "../db/schema";
 import type { Logger } from "../logger";
 import { type RevokeDeps, revokeSessionRunners } from "../runner/revoke";
+import type { TerminalHub } from "../terminal/hub";
 
 export const SESSION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const BATCH_SIZE = 500;
 
 /** 登出：撤銷這個 session 配對的 Local Runner，再刪除 session。token 不存在時什麼都不做。 */
-export async function endSession(deps: RevokeDeps, sessionToken: string): Promise<void> {
+export async function endSession(
+  deps: RevokeDeps & { terminals?: Pick<TerminalHub, "closeSession"> },
+  sessionToken: string,
+): Promise<void> {
   const [session] = await deps.db
     .select({ id: sessions.id })
     .from(sessions)
     .where(eq(sessions.tokenHash, sha256Hex(sessionToken)));
   if (!session) return;
+  // 這個 session 開的終端機一起關閉（ADR-0014）。
+  await deps.terminals?.closeSession(session.id);
   await revokeSessionRunners(deps, [session.id]);
   await deps.db.delete(sessions).where(eq(sessions.id, session.id));
 }

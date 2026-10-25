@@ -10,7 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { runControls, teams, terminalSessions } from "../src/db/schema";
+import { runControls, runners, teams, terminalSessions } from "../src/db/schema";
 import { expectContract, seedReadyTask } from "./helpers/api";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 import { type Flow, RUNNING, runRow, startFlow, startRun } from "./helpers/flow";
@@ -31,7 +31,7 @@ describe.skipIf(dbSkipReason !== null)("互動式終端機", () => {
   });
 
   beforeEach(async () => {
-    flow = await startFlow(database.db);
+    flow = await startFlow(database.db, {}, { terminalAuthzRecheckMs: 100 });
   });
 
   afterEach(async () => {
@@ -146,6 +146,29 @@ describe.skipIf(dbSkipReason !== null)("互動式終端機", () => {
     expect((await connect(created.wsUrl, flow.team.members.member.cookie)).opened).toBe(false);
     client.ws.close();
     expect(await s.mine.next("terminal_close")).toMatchObject({ terminal_id: created.terminalId });
+  });
+
+  it("連線期間失去權限就關閉；登出時關閉這個 session 的終端機", async () => {
+    const s = await startRun(flow);
+    const first = expectContract(TerminalCreated, (await open("member", s.run.id)).body);
+    const client = await connect(first.wsUrl, flow.team.members.member.cookie);
+    expect(client.opened).toBe(true);
+    // 這台 Runner 不再屬於開啟者
+    await flow.db
+      .update(runners)
+      .set({ memberId: flow.team.members.admin.id })
+      .where(eq(runners.id, s.mine.runnerId));
+    await client.closed;
+    expect(client.messages.some((m) => m.type === "error" && m.code === "forbidden")).toBe(true);
+    expect(await s.mine.next("terminal_close")).toMatchObject({ terminal_id: first.terminalId });
+
+    await flow.db
+      .update(runners)
+      .set({ memberId: flow.team.members.member.id })
+      .where(eq(runners.id, s.mine.runnerId));
+    const second = expectContract(TerminalCreated, (await open("member", s.run.id)).body);
+    await flow.as("member").post("/api/auth/logout");
+    expect(await s.mine.next("terminal_close")).toMatchObject({ terminal_id: second.terminalId });
   });
 
   it("Local Runner：其他人（含 Admin）403", async () => {

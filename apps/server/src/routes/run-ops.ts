@@ -25,7 +25,6 @@ import type {
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
-import { roleAtLeast } from "../authz/capabilities";
 import { loadRunScope, type RunScope, requireProjectCapability } from "../authz/scope";
 import {
   acceptanceCriteria,
@@ -45,9 +44,9 @@ import { ApiError, forbidden, notFound, readId, readJson } from "../http/errors"
 import type { Actor, AppEnv } from "../http/session";
 import { agentCatalog } from "../runner/agent-catalog";
 import type { AvailabilityDetails } from "../runner/dispatch-options";
-import { currentDispatch } from "../runs/run-control";
 import { loadRunSettings } from "../runs/run-settings";
 import type { Services } from "../services";
+import { authorizeTerminal } from "../terminal/authz";
 
 /** 不接受執行中訊息的狀態：Gate 等待時改用 Gate 的退回；還沒開始或正在 Verification 時沒有回合可以接。 */
 const NOT_ACCEPTING_PROMPTS: readonly RunStatus[] = [
@@ -293,31 +292,8 @@ export function createRunOpsRoutes(s: Services): Hono<AppEnv> {
    */
   app.post(API_ROUTES.runTerminals, auth, async (c) => {
     const actor = c.get("actor");
-    const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
+    const { scope, runner } = await authorizeTerminal(db, actor, readId(c, "runId", "Run"));
     const input = await readJson(c, CreateTerminalInput);
-    const dispatch = await currentDispatch(db, scope.run.id);
-    const [runner] = dispatch
-      ? await db.select().from(runners).where(eq(runners.id, dispatch.runnerId))
-      : [];
-    if (!dispatch || !runner) {
-      throw new ApiError(409, "runner_offline", "這個 Run 還沒有在 Runner 上執行過");
-    }
-    if (runner.kind === "local") {
-      if (runner.memberId !== actor.memberId) {
-        throw forbidden("只有這台 Local Runner 的擁有者能開終端機");
-      }
-    } else {
-      if (!roleAtLeast(scope.role, "admin")) {
-        throw forbidden("Team Runner 的終端機只限 Admin 以上");
-      }
-      const [team] = await db
-        .select({ allowed: teams.allowTeamRunnerTerminal })
-        .from(teams)
-        .where(eq(teams.id, actor.teamId));
-      if (!team?.allowed) {
-        throw new ApiError(403, "terminal_disabled", "Team 設定沒有打開 Team Runner 的終端機");
-      }
-    }
     const [archived] = await db
       .select({ id: runControls.controlId })
       .from(runControls)
@@ -352,6 +328,7 @@ export function createRunOpsRoutes(s: Services): Hono<AppEnv> {
       !s.terminals.open({
         terminalId,
         runId: scope.run.id,
+        memberId: actor.memberId,
         runnerId: runner.id,
         sessionId: actor.sessionId,
         cols: input.cols,

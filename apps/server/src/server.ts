@@ -43,6 +43,8 @@ export interface ServerDeps {
   dispatcherIntervalMs?: number;
   /** 測試用：共同編輯重新檢查權限的間隔。 */
   collabAuthzRecheckMs?: number;
+  /** 測試用：終端機連線期間重新檢查權限的間隔。 */
+  terminalAuthzRecheckMs?: number;
 }
 
 export interface RunningServer {
@@ -114,6 +116,7 @@ export async function startServer(deps: ServerDeps): Promise<RunningServer> {
   });
   const terminalEndpoint = attachTerminalEndpoint(router, services, {
     publicUrl: deps.config.publicUrl,
+    authzRecheckMs: deps.terminalAuthzRecheckMs,
   });
   // 上次沒有關閉的終端機紀錄一律結束（連線都已不存在）。
   await services.terminals.closeStale();

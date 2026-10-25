@@ -281,7 +281,11 @@ export interface Harness {
 
 export async function startHarness(
   db: Database,
-  options: { webAuthzRecheckMs?: number; previewDomain?: string } = {},
+  options: {
+    webAuthzRecheckMs?: number;
+    previewDomain?: string;
+    terminalAuthzRecheckMs?: number;
+  } = {},
 ): Promise<Harness> {
   const ctx = createTestContext(db, {
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
@@ -307,6 +311,7 @@ export async function startHarness(
     helloTimeoutMs: 2000,
     dispatcherIntervalMs: 0,
     webAuthzRecheckMs: options.webAuthzRecheckMs,
+    terminalAuthzRecheckMs: options.terminalAuthzRecheckMs,
   });
   const runners: MockRunner[] = [];
   let closed = false;

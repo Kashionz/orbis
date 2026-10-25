@@ -26,6 +26,7 @@ export interface TerminalSocket {
 interface OpenTerminal {
   id: string;
   runId: string;
+  memberId: string;
   runnerId: string;
   /** 開啟者的 Orbis session。 */
   sessionId: string;
@@ -65,6 +66,7 @@ export class TerminalHub {
   open(input: {
     terminalId: string;
     runId: string;
+    memberId: string;
     runnerId: string;
     sessionId: string;
     cols: number;
@@ -73,6 +75,7 @@ export class TerminalHub {
     const terminal: OpenTerminal = {
       id: input.terminalId,
       runId: input.runId,
+      memberId: input.memberId,
       runnerId: input.runnerId,
       sessionId: input.sessionId,
       socket: null,
@@ -104,6 +107,20 @@ export class TerminalHub {
     if (terminal.connectTimer) clearTimeout(terminal.connectTimer);
     terminal.connectTimer = null;
     return true;
+  }
+
+  /** 開著的終端機（定期重新確認權限用）。 */
+  info(terminalId: string): { runId: string; sessionId: string } | null {
+    const terminal = this.terminals.get(terminalId);
+    return terminal ? { runId: terminal.runId, sessionId: terminal.sessionId } : null;
+  }
+
+  /** 登出或 session 結束：這個 session 開的終端機全部關閉。 */
+  async closeSession(sessionId: string): Promise<void> {
+    const ids = [...this.terminals.values()]
+      .filter((t) => t.sessionId === sessionId)
+      .map((t) => t.id);
+    for (const id of ids) await this.close(id, "closed");
   }
 
   /** 這個 session 可以接上（是開啟者、還沒有連線、沒有在關閉）。 */
