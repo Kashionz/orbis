@@ -1,3 +1,40 @@
 import type { Messages } from "../types";
 
-export default {} satisfies Messages["board"];
+export default {
+  title: "Board",
+  project: "Project",
+  projectSettings: "Project settings",
+  draftTasks: "Draft tasks",
+  newProject: "New project",
+  noProjects: "No projects yet",
+  askAdmin: "Ask a team owner or admin to create a project",
+  filter: {
+    label: "Filter",
+    all: "All",
+    needs: "Needs you",
+    mine: "Assigned to me",
+  },
+  view: {
+    label: "View",
+    list: "List",
+    columns: "Columns",
+  },
+  newTask: "New task",
+  empty: "No matching tasks",
+  emptyColumn: "No tasks",
+  column: {
+    key: "ID",
+    title: "Title",
+    run: "Run",
+    agent: "Agent",
+    acceptance: "Checks",
+    assignee: "Assignee",
+    updated: "Updated",
+  },
+  draft: "Draft",
+  blockedBy: (keys: string) => `Depends on ${keys}`,
+  awaitingPlanGate: "Awaiting plan gate",
+  awaitingReviewGate: "Awaiting review gate",
+  needs: "Needs you",
+  group: (label: string, count: number) => `${label} ${count}`,
+} satisfies Messages["board"];
