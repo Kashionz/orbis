@@ -25,6 +25,7 @@ import type {
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
+import { requireLocalRunnerOwner } from "../authz/runner-owner";
 import { loadRunScope, type RunScope, requireProjectCapability } from "../authz/scope";
 import {
   acceptanceCriteria,
@@ -34,13 +35,11 @@ import {
   reviewComments,
   runControls,
   runEvents,
-  runners,
-  teams,
   terminalSessions,
 } from "../db/schema";
 import { type Executor, inTransaction } from "../db/tx";
 import { isTerminalRunStatus } from "../domain/run-status";
-import { ApiError, forbidden, notFound, readId, readJson } from "../http/errors";
+import { ApiError, notFound, readId, readJson } from "../http/errors";
 import type { Actor, AppEnv } from "../http/session";
 import { agentCatalog } from "../runner/agent-catalog";
 import type { AvailabilityDetails } from "../runner/dispatch-options";
@@ -228,7 +227,7 @@ export function createRunOpsRoutes(s: Services): Hono<AppEnv> {
 
   /**
    * 切換模型與推理強度（`edit_task`，下一個回合開始前生效）、Permission Policy（和派工時相同的規則，
-   * 從下一個權限請求開始套用）。
+   * Local Runner 上只限那台 Runner 的擁有者；從下一個權限請求開始套用）。
    */
   app.patch(API_ROUTES.runSettings, auth, async (c) => {
     const actor = c.get("actor");
@@ -248,6 +247,7 @@ export function createRunOpsRoutes(s: Services): Hono<AppEnv> {
     }
     if (input.permissionPolicy !== undefined) {
       requireDispatchRule(actor, scope);
+      await requireLocalRunnerOwner(db, actor, scope, "改變 Permission Policy");
       if (input.permissionPolicy === "yolo" && scope.run.target === "team") {
         throw new ApiError(422, "invalid_input", "Team Runner 不接受 yolo 的 Permission Policy");
       }
@@ -257,12 +257,17 @@ export function createRunOpsRoutes(s: Services): Hono<AppEnv> {
     return c.json({ controlIds } as RunSettingsUpdated, 202);
   });
 
-  /** 換成同一台 Runner 上可以用的另一個 Agent，接續同一個 Run 與 Worktree（ADR-0016）。 */
+  /**
+   * 換成同一台 Runner 上可以用的另一個 Agent，接續同一個 Run 與 Worktree（ADR-0016）。Local Runner 上
+   * 只限那台 Runner 的擁有者。
+   */
   app.post(API_ROUTES.runSwitchAgent, auth, async (c) => {
     const actor = c.get("actor");
     const scope = await loadRunScope(db, actor, readId(c, "runId", "Run"));
     requireProjectCapability(actor, scope, "edit_task");
     requireDispatchRule(actor, scope);
+    // 換 Agent 會用那台電腦上的 Credential 啟動另一個 Agent
+    await requireLocalRunnerOwner(db, actor, scope, "換 Agent");
     const input = await readJson(c, SwitchAgentInput);
     requireNotFinished(scope);
     if (input.agent === scope.run.agent) {

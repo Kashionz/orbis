@@ -38,11 +38,11 @@ import {
   roleOnTask,
   taskAccess,
 } from "../authz/capabilities";
+import { requirePermissionResponder, runnerOwnerOf } from "../authz/runner-owner";
 import {
   actorProjectRoles,
   loadRunScope,
   loadTaskScope,
-  type RunScope,
   requireProjectCapability,
 } from "../authz/scope";
 import {
@@ -63,8 +63,8 @@ import {
 import { type Executor, inTransaction } from "../db/tx";
 import { isTerminalRunStatus } from "../domain/run-status";
 import { toAcceptanceCriterion, toGates, toNeedsYou } from "../http/dto";
-import { ApiError, conflict, forbidden, notFound, readId, readJson } from "../http/errors";
-import type { Actor, AppEnv } from "../http/session";
+import { ApiError, conflict, notFound, readId, readJson } from "../http/errors";
+import type { AppEnv } from "../http/session";
 import { type PreviewDomain, runIdFromHost } from "../preview/domain";
 import { type GateSubject, RUN_DIFF_EVENT_KIND } from "../runs/gates";
 import type { Services } from "../services";
@@ -82,14 +82,6 @@ const purposeOf = (payload: unknown): PermissionPurpose =>
   (payload as PermissionRequestPayload).purpose ?? "tool";
 
 /** Run 所在 Runner 的擁有者：Local Run 一律交給派工者自己的 Local Runner。 */
-function runnerOwnerOf(
-  run: { target: "local" | "team"; requestedByMemberId: string | null },
-  runnerMemberId: string | null | undefined,
-): string | null {
-  if (run.target !== "local") return null;
-  return runnerMemberId ?? run.requestedByMemberId;
-}
-
 export function createReviewRoutes(s: Services): Hono<AppEnv> {
   const { db, auth } = s;
   const app = new Hono<AppEnv>();
@@ -675,30 +667,6 @@ export function rejectionPrompt(
     if (screenshot) blocks.push({ type: "image", ...screenshot });
   }
   return blocks;
-}
-
-/** 確認 Actor 可以回覆這個 Run 的權限請求；不行時丟出 403。 */
-async function requirePermissionResponder(
-  db: Executor,
-  actor: Actor,
-  scope: RunScope,
-  purpose: PermissionPurpose,
-): Promise<void> {
-  const [runner] = scope.run.runnerId
-    ? await db
-        .select({ memberId: runners.memberId })
-        .from(runners)
-        .where(eq(runners.id, scope.run.runnerId))
-    : [];
-  const result = authorizePermissionResponse({
-    memberId: actor.memberId,
-    // Task 上的 Role（ADR-0012）：被分享為可操作的人可以回覆；config 信任仍只有 Admin 以上。
-    role: scope.taskRole,
-    runnerKind: scope.run.target,
-    runnerOwnerMemberId: runnerOwnerOf(scope.run, runner?.memberId),
-    purpose,
-  });
-  if (!result.ok) throw forbidden(result.reason);
 }
 
 /** Task 的 Repo 是不是本機 Repo（核准後改走本機合併）。 */

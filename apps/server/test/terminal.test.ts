@@ -10,7 +10,7 @@ import {
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { runControls, runners, teams, terminalSessions } from "../src/db/schema";
+import { runControls, runners, tasks, teams, terminalSessions } from "../src/db/schema";
 import { expectContract, seedReadyTask } from "./helpers/api";
 import { createTestDatabase, dbSkipReason, type TestDatabase } from "./helpers/db";
 import { type Flow, RUNNING, runRow, startFlow, startRun } from "./helpers/flow";
@@ -175,6 +175,15 @@ describe.skipIf(dbSkipReason !== null)("互動式終端機", () => {
     const s = await startRun(flow);
     expect((await open("admin", s.run.id)).status).toBe(403);
     expect((await open("viewer", s.run.id)).status).toBe(403);
+  });
+
+  it("Local Runner 的擁有者在 Task 上只能檢視時 403（和能回覆權限請求的人一致）", async () => {
+    const s = await startRun(flow, { task: { createdByMemberId: flow.team.members.admin.id } });
+    await flow.db.update(tasks).set({ generalAccess: "team_view" }).where(eq(tasks.id, s.task.id));
+    const res = await open("member", s.run.id);
+    expect(res.status).toBe(403);
+    await flow.db.update(tasks).set({ generalAccess: "team_edit" }).where(eq(tasks.id, s.task.id));
+    expect((await open("member", s.run.id)).status).toBe(201);
   });
 
   it("Team Runner：只限 Admin 以上，而且 Team 設定要打開", async () => {

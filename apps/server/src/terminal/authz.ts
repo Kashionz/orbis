@@ -1,4 +1,4 @@
-// 誰能開互動式終端機（ADR-0014）：Local Runner 只限那台 Runner 的擁有者；Team Runner 只限 Admin 以上，
+// 誰能開互動式終端機（ADR-0014）：Local Runner 只限那台 Runner 的擁有者（在 Task 上要能操作）；Team Runner 只限 Admin 以上，
 // 而且 Team 設定打開。開啟時與連線期間定期重新確認都用這裡的判斷。
 
 import { eq } from "drizzle-orm";
@@ -30,8 +30,12 @@ export async function authorizeTerminal(
     throw new ApiError(409, "runner_offline", "這個 Run 沒有可以開終端機的 Runner");
   }
   if (runner.kind === "local") {
+    // 和能回覆權限請求的人一致：那台 Runner 的擁有者，而且在這個 Task 上能操作（ADR-0012）
     if (runner.memberId !== actor.memberId) {
       throw forbidden("只有這台 Local Runner 的擁有者能開終端機");
+    }
+    if (!roleAtLeast(scope.taskRole, "member")) {
+      throw forbidden("在這個 Task 上只能檢視，不能開終端機");
     }
     return { scope, runner };
   }

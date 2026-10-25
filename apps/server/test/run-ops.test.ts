@@ -391,6 +391,45 @@ describe.skipIf(dbSkipReason !== null)("執行中的 Run 操作", () => {
     });
   });
 
+  describe("Local Runner 的擁有者", () => {
+    it("別人不能改 Permission Policy 或換 Agent（含 Admin）；model 與推理強度照 edit_task；擁有者可以", async () => {
+      const s = await started();
+      const other = await seedMember(flow.db, flow.team.teamId, "member");
+      const b = client(flow.h.ctx.app, other.cookie);
+      const settings = apiPath(API_ROUTES.runSettings, { runId: s.run.id });
+      const switchAgent = apiPath(API_ROUTES.runSwitchAgent, { runId: s.run.id });
+
+      for (const policy of ["yolo", "auto", "manual"] as const) {
+        const res = await b.patch(settings, { permissionPolicy: policy });
+        expect(res.status).toBe(403);
+      }
+      expect((await b.post(switchAgent, { agent: "codex" })).status).toBe(403);
+      // Admin 也不是這台 Runner 的擁有者
+      expect((await flow.as("admin").patch(settings, { permissionPolicy: "yolo" })).status).toBe(
+        403,
+      );
+      expect((await flow.as("admin").post(switchAgent, { agent: "codex" })).status).toBe(403);
+      // 被分享為可操作的 Viewer 也一樣
+      await flow.db
+        .insert(taskMembers)
+        .values({ taskId: s.task.id, memberId: flow.team.members.viewer.id, role: "edit" });
+      expect((await flow.as("viewer").patch(settings, { permissionPolicy: "manual" })).status).toBe(
+        403,
+      );
+
+      // 模型與推理強度不經過這台電腦的 Credential，照 edit_task
+      expect((await b.patch(settings, { model: "sonnet" })).status).toBe(202);
+      await s.mine.next("run_control", (f) => f.action === "set_session_config");
+
+      expect((await flow.as("member").patch(settings, { permissionPolicy: "manual" })).status).toBe(
+        202,
+      );
+      await s.mine.next("run_control", (f) => f.action === "set_permission_policy");
+      expect((await flow.as("member").post(switchAgent, { agent: "codex" })).status).toBe(202);
+      await s.mine.next("run_control", (f) => f.action === "switch_agent");
+    });
+  });
+
   describe("model-catalog", () => {
     it("彙整自己的 Local Runner 與 Team Runner；Viewer 只看到自己的 Local Runner", async () => {
       await flow.h.pairRunner(flow.team.members.member, "local", AGENTS);
