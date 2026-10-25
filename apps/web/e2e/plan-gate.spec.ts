@@ -82,19 +82,19 @@ test("Plan Gate 關閉的 Project 中，Task 可以個別開啟", async ({ page 
 test("Project 設定頁可以開啟 Plan Gate 與修改其他政策", async ({ page }) => {
   await page.goto("/projects/project-1/settings");
   const form = page.getByRole("form", { name: "其他政策" });
-  await form.getByLabel("需要 Plan Gate（Task 可以個別覆寫）").check();
-  await form.getByLabel("Verification 自動重試上限").fill("11");
+  await form.getByLabel("需要計畫關卡（任務可以個別覆寫）").check();
+  await form.getByLabel("驗收自動重試上限").fill("11");
   await form.getByRole("button", { name: "儲存其他政策" }).click();
   await expect(form.getByText("重試上限必須是 1–10 的整數")).toBeVisible();
-  await form.getByLabel("Verification 自動重試上限").fill("5");
-  await form.getByLabel("可以分派的 Agent").fill("claude-code, codex");
-  await form.getByLabel("會觸發 Feedback Loop 的 bot").fill("coderabbitai[bot]");
+  await form.getByLabel("驗收自動重試上限").fill("5");
+  await form.getByLabel("可以委派的代理").fill("claude-code, codex");
+  await form.getByLabel("會觸發回饋循環的機器人帳號").fill("coderabbitai[bot]");
   await form.getByRole("button", { name: "儲存其他政策" }).click();
 
   await page.reload();
-  await expect(form.getByLabel("需要 Plan Gate（Task 可以個別覆寫）")).toBeChecked();
-  await expect(form.getByLabel("Verification 自動重試上限")).toHaveValue("5");
-  await expect(form.getByLabel("可以分派的 Agent")).toHaveValue("claude-code, codex");
+  await expect(form.getByLabel("需要計畫關卡（任務可以個別覆寫）")).toBeChecked();
+  await expect(form.getByLabel("驗收自動重試上限")).toHaveValue("5");
+  await expect(form.getByLabel("可以委派的代理")).toHaveValue("claude-code, codex");
   await page.goto("/tasks/ORB-2");
   await expect(planGateButton(page)).toHaveText("沿用專案（開啟）");
 });

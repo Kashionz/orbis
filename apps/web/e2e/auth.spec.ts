@@ -61,7 +61,8 @@ test("已登入時首頁導向看板，看到所有狀態欄位", async ({ page 
   await expect(page).toHaveURL(/\/board$/);
   await expect(page.getByRole("button", { name: "個人選單" })).toContainText("The Octocat");
 
-  const columns = page.locator(".board-column");
+  await page.getByRole("radio", { name: "分欄" }).click();
+  const columns = page.locator(".bd-column");
   await expect(columns).toHaveCount(TASK_STATUSES.length);
   for (const [index, status] of TASK_STATUSES.entries()) {
     await expect(columns.nth(index)).toHaveAttribute("data-status", status);
@@ -77,7 +78,7 @@ test.describe("還不是任何 Team 的 Member", () => {
   test("顯示「尚未加入團隊」", async ({ page }) => {
     await page.goto("/board");
     await expect(page.getByRole("heading", { name: "尚未加入團隊" })).toBeVisible();
-    await expect(page.locator(".board-column")).toHaveCount(0);
+    await expect(page.locator(".bd-column, .bd-group")).toHaveCount(0);
   });
 });
 

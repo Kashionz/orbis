@@ -112,7 +112,12 @@ export function MentionTextarea({
         onBlur={() => setQuery(null)}
       />
       {open && (
-        <div id={listId} role="listbox" className="mention-options" aria-label={t.workspace.collab.mentionOptions}>
+        <div
+          id={listId}
+          role="listbox"
+          className="mention-options"
+          aria-label={t.workspace.collab.mentionOptions}
+        >
           {options.map((option, index) => (
             // 用 mousedown，在 textarea 失去焦點（關閉清單）之前插入
             <div

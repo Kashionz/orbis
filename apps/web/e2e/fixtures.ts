@@ -138,3 +138,19 @@ export async function gotoShell(page: Page, path: string): Promise<void> {
   await page.goto(path);
   await expect(page.getByRole("button", { name: "個人選單" })).toBeVisible();
 }
+
+/** 看板標題列的專案選單按鈕（名稱是「專案 <名稱>」）。 */
+export function projectMenuButton(page: Page): Locator {
+  return page.getByRole("button", { name: /^專案 / });
+}
+
+/** 開啟看板的專案選單（切換專案、專案設定、草稿任務、新增專案）。 */
+export async function openProjectMenu(page: Page): Promise<Locator> {
+  await projectMenuButton(page).click();
+  return page.getByRole("menu", { name: "專案" });
+}
+
+/** 選單中的一項（單選選單的項目是 menuitemradio，其他是 menuitem）。 */
+export function menuItem(menu: Locator, name: string | RegExp): Locator {
+  return menu.getByRole("menuitemradio", { name }).or(menu.getByRole("menuitem", { name }));
+}

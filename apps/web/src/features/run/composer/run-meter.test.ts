@@ -1,4 +1,4 @@
-import type { RunUsage } from "@orbis/api-contract";
+import { NAMES, type RunUsage } from "@orbis/api-contract";
 import { describe, expect, it } from "vitest";
 import {
   contextUsage,
@@ -57,8 +57,9 @@ describe("context 用量與費用", () => {
 
 describe("shortenPath", () => {
   it("家目錄換成 ~，保留分隔符號", () => {
-    expect(shortenPath("C:\\Users\\kash\\.orbis\\wt\\ORB-42")).toBe("~\\.orbis\\wt\\ORB-42");
-    expect(shortenPath("/Users/kash/.orbis/wt/ORB-42")).toBe("~/.orbis/wt/ORB-42");
+    const dir = NAMES.configDir;
+    expect(shortenPath(`C:\\Users\\kash\\${dir}\\wt\\ORB-42`)).toBe(`~\\${dir}\\wt\\ORB-42`);
+    expect(shortenPath(`/Users/kash/${dir}/wt/ORB-42`)).toBe(`~/${dir}/wt/ORB-42`);
     expect(shortenPath("/home/kash/wt")).toBe("~/wt");
     expect(shortenPath("D:\\work\\wt")).toBe("D:\\work\\wt");
   });

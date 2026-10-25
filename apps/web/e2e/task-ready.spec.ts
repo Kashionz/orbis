@@ -1,16 +1,12 @@
 // #59：工作區還沒有執行時顯示進入就緒還缺什麼，並提供改狀態的操作（看板拖曳以外的入口）。
 
-import { API_ROUTES, apiPath } from "@orbis/api-contract";
-import { apiCall, expect, test } from "./fixtures";
+import { createTask, expect, test } from "./fixtures";
 
 test.describe("就緒的條件", () => {
   test("新 Task 列出還缺的項目；補上驗收條件後打勾", async ({ page }) => {
     await page.goto("/board");
-    await apiCall(page, "POST", apiPath(API_ROUTES.projectTasks, { projectId: "project-1" }), {
-      repoId: "repo-1",
-      title: "還沒寫完的 Task",
-    });
-    await page.goto("/tasks/ORB-8");
+    await createTask(page, { title: "還沒寫完的 Task" });
+    await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
 
     const items = page.locator(".wk-checklist li");
     await expect(page.locator(".wk-norun")).toContainText("進入就緒前還缺少");

@@ -1,6 +1,22 @@
 import { ROLES, type Role } from "@orbis/api-contract";
 import type { Page } from "@playwright/test";
-import { card, column, dragTo, drop, expect, permissionRow, test } from "./fixtures";
+import {
+  card,
+  column,
+  dragTo,
+  drop,
+  expect,
+  expectTeamRole,
+  permissionRow,
+  test,
+} from "./fixtures";
+
+const ROLE_LABELS: Record<Role, string> = {
+  owner: "擁有者",
+  admin: "管理員",
+  member: "成員",
+  viewer: "檢視者",
+};
 
 /** §12.2：Viewer 只能查看與留言，其他 Role 可以編輯、派工、回覆、核准。 */
 const canEdit = (role: Role) => role !== "viewer";
@@ -20,6 +36,7 @@ for (const role of ROLES) {
 
     test("看板：新增任務與拖曳", async ({ page }) => {
       await columnsView(page);
+      await expectTeamRole(page, ROLE_LABELS[role]);
       if (canEdit(role)) await expect(newTask(page).first()).toBeVisible();
       else await expect(newTask(page)).toHaveCount(0);
 
@@ -103,6 +120,8 @@ test.describe("Project 的 Role 覆寫（Project.viewerRole）", () => {
     test("依 Project 的有效 Role 隱藏操作：看不到派工與編輯", async ({ page }) => {
       await page.goto("/tasks/ORB-2");
       await expect(page.getByRole("heading", { name: /新增 hello.txt/ })).toBeVisible();
+      // 個人選單顯示的是 Team 的 Role
+      await expectTeamRole(page, "成員");
       await expect(page.getByRole("form", { name: "派工" })).toHaveCount(0);
       await expect(
         page.getByRole("tabpanel").getByRole("button", { name: "編輯", exact: true }),
@@ -119,6 +138,7 @@ test.describe("Project 的 Role 覆寫（Project.viewerRole）", () => {
 
     test("依 Project 的有效 Role 顯示派工與編輯", async ({ page }) => {
       await page.goto("/tasks/ORB-2");
+      await expectTeamRole(page, "檢視者");
       await expect(page.getByRole("form", { name: "派工" })).toBeVisible();
       await expect(
         page.getByRole("tabpanel").getByRole("button", { name: "編輯", exact: true }),

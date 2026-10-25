@@ -1,6 +1,6 @@
 import { API_ROUTES, apiPath } from "@orbis/api-contract";
 import type { Page } from "@playwright/test";
-import { apiCall, card, column, dragTo, drop, expect, test } from "./fixtures";
+import { apiCall, card, column, createTask, dragTo, drop, expect, test } from "./fixtures";
 
 /** 切到分欄檢視。 */
 async function columnsView(page: Page) {
@@ -125,6 +125,20 @@ test.describe("看板：分欄", () => {
 
     await page.goto("/tasks/ORB-7");
     await expect(page.locator(".rp-meta [data-done-reason]")).toHaveText("不處理");
+  });
+});
+
+test.describe("看板：新增任務", () => {
+  test("新增任務後進入工作區，看板的待辦出現新任務", async ({ page }) => {
+    await page.goto("/board");
+    await createTask(page, { title: "修正登入頁的錯字", description: "把「登人」改成「登入」。" });
+    await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
+    await expect(page.getByRole("heading", { name: /修正登入頁的錯字/ })).toBeVisible();
+
+    await page.goto("/board");
+    await expect(page.locator('.bd-group[data-status="backlog"]')).toContainText(
+      "修正登入頁的錯字",
+    );
   });
 });
 

@@ -184,12 +184,27 @@ function CommentItem({
             if (draft.trim() !== "") save.mutate(draft.trim());
           }}
         >
-          <MentionTextarea projectId={projectId} label={c.editComment} value={draft} onChange={setDraft} />
+          <MentionTextarea
+            projectId={projectId}
+            label={c.editComment}
+            value={draft}
+            onChange={setDraft}
+          />
           <div className="tc-actions">
-            <button type="button" className="o-btn" data-variant="ghost" onClick={() => setDraft(null)}>
+            <button
+              type="button"
+              className="o-btn"
+              data-variant="ghost"
+              onClick={() => setDraft(null)}
+            >
               {t.common.cancel}
             </button>
-            <button type="submit" className="o-btn" data-variant="primary" disabled={save.isPending}>
+            <button
+              type="submit"
+              className="o-btn"
+              data-variant="primary"
+              disabled={save.isPending}
+            >
               {t.common.save}
             </button>
           </div>

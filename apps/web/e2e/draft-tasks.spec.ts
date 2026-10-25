@@ -1,7 +1,7 @@
 // Draft Task 審核（#44）：逐筆或批次確認、修改、捨棄 Agent 提出的 Task。
 
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, menuItem, openProjectMenu, test } from "./fixtures";
 
 const draft = (page: Page, position: number) =>
   page.locator(`.draft-task[data-position="${position}"]`);
@@ -9,13 +9,11 @@ const draft = (page: Page, position: number) =>
 test("從看板進入，依批次列出 Draft Task、Acceptance Criterion 與相依關係", async ({ page }) => {
   await page.goto("/board");
   await expect(page.getByTestId("draft-task-count")).toContainText("3");
-  await page.getByRole("link", { name: /Draft Task/ }).click();
+  await menuItem(await openProjectMenu(page), /^草稿任務/).click();
   await expect(page).toHaveURL(/\/projects\/project-1\/draft-tasks$/);
   await expect(page.locator(".draft-task")).toHaveCount(3);
   await expect(draft(page, 1)).toContainText("建立登入 API");
-  await expect(draft(page, 1).getByRole("list", { name: "Acceptance Criterion" })).toContainText(
-    "pnpm test",
-  );
+  await expect(draft(page, 1).getByRole("list", { name: "驗收條件" })).toContainText("pnpm test");
   await expect(draft(page, 2).locator('[data-dependency="#1"]')).toHaveText("#1 建立登入 API");
   await expect(draft(page, 3).locator('[data-dependency="ORB-1"]')).toHaveAttribute(
     "href",
@@ -69,7 +67,7 @@ test("修改 Draft Task：標題、Acceptance Criterion 與相依；格式不對
   await form.getByRole("button", { name: "儲存" }).click();
   await expect(form).toHaveCount(0);
   await expect(draft(page, 3)).toContainText("登入流程的 e2e（Playwright）");
-  await expect(draft(page, 3).getByRole("list", { name: "Acceptance Criterion" })).toContainText(
+  await expect(draft(page, 3).getByRole("list", { name: "驗收條件" })).toContainText(
     "畫面截圖正確",
   );
   await expect(draft(page, 3).locator('[data-dependency="ORB-1"]')).toHaveCount(0);

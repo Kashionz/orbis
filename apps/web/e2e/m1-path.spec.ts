@@ -1,28 +1,20 @@
 // M1 路徑在 MSW 假後端上走一次（開發期間的鷹架）。
 // 完成條件要求的版本跑在真實 Server + Runner + Fake Agent 上：e2e/system/m1-path.spec.ts。
 
-import { API_ROUTES, apiPath, type Task } from "@orbis/api-contract";
-import { apiCall, card, column, dragTo, drop, expect, stream, test } from "./fixtures";
+import { card, column, createTask, dragTo, drop, expect, stream, test } from "./fixtures";
 
 test("M1 路徑：建立 Task → 派工 → 即時事件 → 回覆權限請求 → diff 留言退回 → 核准", async ({
   page,
 }) => {
-  // 建立 Task（新增任務對話框由 U1 的 e2e 涵蓋，這裡直接呼叫 API）
+  // 從看板的新增任務對話框建立，建立後開啟工作區
   await page.goto("/board");
-  const task = (await apiCall(
-    page,
-    "POST",
-    apiPath(API_ROUTES.projectTasks, { projectId: "project-1" }),
-    {
-      repoId: "repo-1",
-      title: "M1：新增 hello.txt",
-      description: "新增 `hello.txt`，並更新 README。",
-    },
-  )) as Task;
-  expect(task.key).toBe("ORB-8");
+  await createTask(page, {
+    title: "M1：新增 hello.txt",
+    description: "新增 `hello.txt`，並更新 README。",
+  });
+  await expect(page).toHaveURL(/\/tasks\/ORB-8$/);
 
   // 進入就緒需要至少一條驗收條件：在任務分頁的內嵌編輯新增
-  await page.goto("/tasks/ORB-8");
   await page.getByRole("tabpanel").getByRole("button", { name: "編輯", exact: true }).click();
   await page.getByRole("button", { name: "新增條件" }).click();
   await page.locator(".rp-draft").getByLabel("條件描述").fill("測試通過");
