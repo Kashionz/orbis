@@ -158,6 +158,6 @@ export const LOGIN_HINT_KINDS = ["runner", "cli"] as const satisfies readonly Lo
 
 export const RUN_SETTING_NAMES = ["model", "effort", "permission_policy"] as const satisfies readonly RunSettingName[];
 
-export const TERMINAL_EXIT_REASONS = ["exited", "closed", "idle_timeout", "worktree_missing", "spawn_failed", "limit_exceeded", "runner_shutdown"] as const satisfies readonly TerminalExitReason[];
+export const TERMINAL_EXIT_REASONS = ["exited", "closed", "idle_timeout", "worktree_missing", "spawn_failed", "limit_exceeded", "runner_shutdown", "disabled"] as const satisfies readonly TerminalExitReason[];
 
 export const REPO_SPEC_COMMIT_FAILURES = ["repo_unavailable", "working_tree_dirty", "failed"] as const satisfies readonly RepoSpecCommitFailure[];

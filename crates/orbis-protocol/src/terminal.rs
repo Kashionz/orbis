@@ -13,6 +13,9 @@
 //!   只轉送那個人的輸入。Runner 記下每個 `terminal_id` 屬於哪個 Run，不認得的 `terminal_id` 的
 //!   `terminal_input`／`terminal_resize`／`terminal_close` 一律忽略。
 //!   Run 結束後只要 Worktree 還在就能開（Runner 依本機的 Worktree 紀錄找到路徑，同 `archive`）。
+//! - Runner 端另有開關：`runner.toml` 的 `allow_terminal`（Team Runner 預設 `false`、Local Runner 預設
+//!   `true`，種類取自 [`crate::connection::HelloAck::runner_kind`]）。不允許時 `terminal_open` 回
+//!   `terminal_exited`（`disabled`）。
 //! - shell：Windows 預設 PowerShell，其他平台用 `$SHELL`；`runner.toml` 可以覆寫。
 
 use serde::{Deserialize, Serialize};
@@ -99,5 +102,8 @@ wire_enum! {
         LimitExceeded => "limit_exceeded",
         /// Runner 關閉或與 Server 的連線中斷。
         RunnerShutdown => "runner_shutdown",
+        /// 這台 Runner 的 `runner.toml` 不允許終端機（`allow_terminal = false`；Team Runner 預設不允許，
+        /// ARCHITECTURE §6.5）。
+        Disabled => "disabled",
     }
 }

@@ -375,6 +375,7 @@ impl RunnerSide {
             runner_token: runner_token.map(str::to_owned),
             heartbeat_interval_ms: 200,
             resume,
+            runner_kind: None,
         }))
         .await;
         hello

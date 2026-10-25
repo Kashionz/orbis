@@ -1,0 +1,9 @@
+{
+  "type": "hello_ack",
+  "protocol_version": 3,
+  "runner_id": "0192f3a0-0000-7000-8000-000000000001",
+  "runner_token": null,
+  "heartbeat_interval_ms": 15000,
+  "resume": [],
+  "runner_kind": "team"
+}

@@ -4,4 +4,4 @@
  * 終端機結束的原因。
  * 彈性：之後可能增加代碼，接收端遇到不認得的值要當成 `exited`。
  */
-export type TerminalExitReason = "exited" | "closed" | "idle_timeout" | "worktree_missing" | "spawn_failed" | "limit_exceeded" | "runner_shutdown";
+export type TerminalExitReason = "exited" | "closed" | "idle_timeout" | "worktree_missing" | "spawn_failed" | "limit_exceeded" | "runner_shutdown" | "disabled";

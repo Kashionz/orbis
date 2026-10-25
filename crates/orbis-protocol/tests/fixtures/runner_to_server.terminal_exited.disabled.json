@@ -1,0 +1,7 @@
+{
+  "type": "terminal_exited",
+  "terminal_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "code": null,
+  "reason": "disabled",
+  "message": "這台 Runner 的 runner.toml 不允許終端機（allow_terminal）"
+}

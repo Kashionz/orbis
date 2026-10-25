@@ -138,6 +138,8 @@ async fn main() -> anyhow::Result<()> {
         runner_token: Some("dev-runner-token".into()),
         heartbeat_interval_ms: 15_000,
         resume: Vec::new(),
+        // dev_dispatch 扮演的是派給自己電腦的 Server，Runner 是 Local Runner。
+        runner_kind: Some(orbis_protocol::enums::RunnerKind::Local),
     }));
     let run_id = format!("dev-{}", std::process::id());
     let dispatch_id = format!("{run_id}-d1");
