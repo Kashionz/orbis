@@ -455,6 +455,7 @@ describe("通知", () => {
     title: "ORB-12 的 Review Gate 等待核准",
     body: null,
     url: "/tasks/ORB-12",
+    stoppedRun: null,
     readAt: null,
     createdAt: NOW,
   };

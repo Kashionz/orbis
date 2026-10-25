@@ -19,6 +19,7 @@ import {
   Member,
   NeedsYouListResponse,
   type NeedsYouPermissionRequest,
+  PAGE_ROUTES,
   PairingTokenCreated,
   PermissionResponseInput,
   Repo,
@@ -59,6 +60,15 @@ describe("API_ROUTES 與 apiPath", () => {
     for (const path of paths) expect(path.startsWith("/api/")).toBe(true);
     expect(new Set(paths).size).toBe(paths.length);
   });
+
+  it("邀請連結不在 /api 之下，也不和 API 路徑重複", () => {
+    const pages = Object.values(PAGE_ROUTES);
+    for (const path of pages) expect(path.startsWith("/api/")).toBe(false);
+    expect(apiPath(PAGE_ROUTES.inviteAccept, { token: "abc" })).toBe("/invites/abc");
+    expect(new Set([...pages, ...Object.values(API_ROUTES)]).size).toBe(
+      pages.length + Object.values(API_ROUTES).length,
+    );
+  });
 });
 
 describe("手動轉換表", () => {
@@ -80,6 +90,7 @@ describe("Team、Member、Runner", () => {
       githubLogin: "Kashionz",
       name: null,
       avatarUrl: null,
+      email: null,
       role: "owner",
       createdAt: NOW,
       updatedAt: NOW,
@@ -157,11 +168,15 @@ describe("Project 與 Repo 的輸入", () => {
 
   it("預設分支可以不填（App 已安裝時由 Server 從 GitHub 讀取）", () => {
     expect(
-      CreateRepoInput.parse({ owner: "Kashionz", name: "orbis" }).defaultBranch,
+      CreateRepoInput.parse({ kind: "github", owner: "Kashionz", name: "orbis" }).defaultBranch,
     ).toBeUndefined();
     expect(
-      CreateRepoInput.parse({ owner: "Kashionz", name: "orbis", defaultBranch: "develop" })
-        .defaultBranch,
+      CreateRepoInput.parse({
+        kind: "github",
+        owner: "Kashionz",
+        name: "orbis",
+        defaultBranch: "develop",
+      }).defaultBranch,
     ).toBe("develop");
   });
 });
@@ -186,6 +201,7 @@ describe("派工", () => {
       agent: "claude-code",
       model: null,
       runnerKind: "team",
+      effort: null,
     });
   });
 
@@ -204,6 +220,7 @@ describe("派工", () => {
               permissionGaps: ["Claude 設定中允許的工具不會詢問 Runner"],
             },
           ],
+          unavailableReason: null,
         },
         team: null,
         defaultPermissionPolicy: "auto",
@@ -315,6 +332,7 @@ describe("Web 的 WebSocket 訊息", () => {
       seq: 1,
       ts: NOW,
       event: { kind: "thought_chunk", text: "想一下" },
+      actorMemberId: null,
     };
     expect(
       WebServerMessage.safeParse({ type: "run_events", runId: ID, events: [event] }).success,
@@ -378,6 +396,7 @@ describe("GitHub：Repo 的 App 安裝狀態與 Issue 匯入", () => {
     const repo = {
       id: ID,
       projectId: ID,
+      kind: "github",
       owner: "Kashionz",
       name: "orbis-sandbox",
       defaultBranch: "main",

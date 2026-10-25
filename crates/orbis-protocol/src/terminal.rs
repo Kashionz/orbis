@@ -8,7 +8,10 @@
 //! - `data` 是 base64（標準字母表、有 padding），解碼後最多 [`TERMINAL_MAX_CHUNK`] byte；
 //!   更多的輸出分成多個 frame。沒有 credit 背壓：Runner 送往 Server 時排在 Event、control 與
 //!   Heartbeat 之後（同 Preview）。
-//! - 終端機是人自己下指令，不經過 Permission Policy；誰能開由 Server 判斷，Runner 不再檢查。
+//! - 終端機是人自己下指令，不經過 Permission Policy；誰能開由 Server 判斷（Local Runner 只限擁有者，
+//!   Team Runner 只限 Admin 以上而且 Team 設定已打開），Server 把 `terminal_id` 綁定到開啟者的 session，
+//!   只轉送那個人的輸入。Runner 記下每個 `terminal_id` 屬於哪個 Run，不認得的 `terminal_id` 的
+//!   `terminal_input`／`terminal_resize`／`terminal_close` 一律忽略。
 //!   Run 結束後只要 Worktree 還在就能開（Runner 依本機的 Worktree 紀錄找到路徑，同 `archive`）。
 //! - shell：Windows 預設 PowerShell，其他平台用 `$SHELL`；`runner.toml` 可以覆寫。
 

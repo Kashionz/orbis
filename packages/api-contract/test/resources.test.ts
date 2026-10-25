@@ -227,8 +227,15 @@ describe("NeedsYouItem", () => {
       ]),
     );
     expectInvalid(NeedsYouItem, withField(fixtures.needsYouGate, "gateKind", "merge"));
-    expectInvalid(NeedsYouItem, withField(fixtures.needsYouStoppedRun, "reason", undefined));
-    // gate 項目換成 stopped_run 就缺少 reason
+    expectInvalid(NeedsYouItem, withField(fixtures.needsYouStoppedRun, "reasonCode", undefined));
+    expectInvalid(NeedsYouItem, withField(fixtures.needsYouStoppedRun, "reasonCode", "oops"));
+    // attempt 只在 verification_limit 時有值
+    expectInvalid(NeedsYouItem, withField(fixtures.needsYouStoppedRun, "attempt", null));
+    expectInvalid(
+      NeedsYouItem,
+      withField(fixtures.needsYouStoppedRun, "reasonCode", "push_failed"),
+    );
+    // gate 項目換成 stopped_run 就缺少 reasonCode
     expectInvalid(NeedsYouItem, withField(fixtures.needsYouGate, "kind", "stopped_run"));
   });
 

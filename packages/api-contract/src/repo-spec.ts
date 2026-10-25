@@ -62,11 +62,31 @@ export const RepoSpecCommitInput = z
   .strict();
 export type RepoSpecCommitInput = z.infer<typeof RepoSpecCommitInput>;
 
-/** 提交的結果。已經有開著的 Spec PR 時更新那個 PR，`created` 為 false。 */
-export const RepoSpecCommitResponse = z.object({
-  pullRequest: z.object({ number: z.number().int().positive(), url: z.url() }),
-  created: z.boolean(),
-  /** default branch 上的檔案在上次版本之後被別人改過，PR 會覆蓋那些修改（不擋下，只警告）。 */
-  overwritesUpstreamChanges: z.boolean(),
-});
+/**
+ * 提交的結果。
+ * - GitHub Repo：開 PR（`pullRequest`）。已經有開著的 Spec PR 時更新那個 PR，`created` 為 false。
+ * - 本機 Repo（API 版本 2）：經由提交者自己有對應這個 Repo 的 Local Runner 直接 commit 到基準分支
+ *   （`localCommit`），版本在 commit 時加 1。Runner 不在線 → 409 `runner_offline`。
+ */
+export const RepoSpecCommitResponse = z
+  .object({
+    /** 本機 Repo 為 null。 */
+    pullRequest: z.object({ number: z.number().int().positive(), url: z.url() }).nullable(),
+    /** 本機 Repo 的 commit；GitHub Repo 為 null。 */
+    localCommit: z
+      .object({
+        commitSha: z.string().regex(/^[0-9a-f]{40}$/),
+        /** 內容和基準分支上的檔案相同時為 false（沒有 commit，版本不變）。 */
+        changed: z.boolean(),
+      })
+      .nullable(),
+    /** 開了新的 PR；更新既有 PR 或本機 Repo 時為 false。 */
+    created: z.boolean(),
+    /** default branch 上的檔案在上次版本之後被別人改過，PR 會覆蓋那些修改（不擋下，只警告）。 */
+    overwritesUpstreamChanges: z.boolean(),
+  })
+  .refine((response) => (response.pullRequest === null) !== (response.localCommit === null), {
+    error: "pullRequest 與 localCommit 恰好一個有值",
+    path: ["localCommit"],
+  });
 export type RepoSpecCommitResponse = z.infer<typeof RepoSpecCommitResponse>;

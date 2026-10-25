@@ -7,6 +7,10 @@ import { Role } from "./enums";
 export const Team = z.object({
   id: Id,
   name: z.string().min(1),
+  /** 是否允許以預覽邀請把 Preview 分享給 Team 以外的人（預設關閉，ADR-0015）。 */
+  allowExternalPreview: z.boolean(),
+  /** 是否允許在 Team Runner 上開互動式終端機（預設關閉，ADR-0014）。 */
+  allowTeamRunnerTerminal: z.boolean(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -20,14 +24,25 @@ export const Member = z.object({
   githubLogin: z.string().min(1),
   name: z.string().nullable(),
   avatarUrl: z.url().nullable(),
+  /** GitHub 帳號主要且已驗證的 email（每次登入時更新）；沒有或還沒登入過時為 null。 */
+  email: z.string().nullable(),
   role: Role,
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
 export type Member = z.infer<typeof Member>;
 
-export const UpdateTeamInput = z.object({ name: z.string().trim().min(1) }).strict();
-export type UpdateTeamInput = z.infer<typeof UpdateTeamInput>;
+/** 修改 Team（`manage_team`，Admin 以上），至少一個欄位。 */
+export const UpdateTeamInput = z
+  .object({
+    name: z.string().trim().min(1),
+    allowExternalPreview: z.boolean(),
+    allowTeamRunnerTerminal: z.boolean(),
+  })
+  .partial()
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, { error: "至少要更新一個欄位" });
+export type UpdateTeamInput = z.input<typeof UpdateTeamInput>;
 
 /**
  * Admin 以 GitHub login 新增 Member。Server 先把 login 轉成數字 user id 再保存，

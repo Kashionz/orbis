@@ -28,6 +28,8 @@ export const project = {
     autoCreateIssues: true,
     verificationMaxRetries: 3,
     feedbackBotAllowlist: ["coderabbitai[bot]"],
+    localMergeStrategy: "squash",
+    localPushBase: false,
   },
   viewerRole: "member",
   createdAt: NOW,
@@ -37,6 +39,7 @@ export const project = {
 export const repo = {
   id: "0195f0a0-0000-7000-8000-000000000003",
   projectId: project.id,
+  kind: "github",
   owner: "acme",
   name: "web-app",
   defaultBranch: "main",
@@ -59,6 +62,9 @@ export const task = {
   dependsOn: ["0195f0a0-0000-7000-8000-000000000099"],
   planGateEnabled: null,
   createdByMemberId: "0195f0a0-0000-7000-8000-000000000005",
+  pullRequest: null,
+  generalAccess: "team_edit",
+  viewerAccess: "manage",
   createdAt: NOW,
   updatedAt: NOW,
 } satisfies Task;
@@ -86,6 +92,7 @@ export const run = {
   delegationMode: null,
   agent: "claude-code",
   model: "claude-opus-5-5",
+  effort: null,
   permissionPolicy: "auto",
   runnerKind: "local",
   runnerId: "0195f0a0-0000-7000-8000-000000000008",
@@ -129,6 +136,7 @@ export const runEvent = {
   seq: 1,
   ts: NOW,
   event: { kind: "message_chunk", content: { type: "text", text: "開始處理" } },
+  actorMemberId: null,
 } satisfies RunEvent;
 
 const needsYouBase = {
@@ -164,7 +172,9 @@ export const needsYouStoppedRun = {
   ...needsYouBase,
   id: "0195f0a0-0000-7000-8000-00000000000c",
   kind: "stopped_run",
-  reason: "Verification 失敗 3 次",
+  reasonCode: "verification_limit",
+  attempt: 4,
+  detail: null,
 } satisfies NeedsYouItem;
 
 export const needsYouChildQuestion = {

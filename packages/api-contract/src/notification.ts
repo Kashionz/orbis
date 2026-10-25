@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { AppPath, Id, Timestamp } from "./common";
 import { NotificationKind } from "./enums";
+import { StoppedRunInfo } from "./needs-you";
 import { TaskKey } from "./task";
 
 export const Notification = z.object({
@@ -23,6 +24,11 @@ export const Notification = z.object({
   body: z.string().nullable(),
   /** 點擊後前往的站內路徑，例如 `/tasks/ORB-12`。 */
   url: AppPath.nullable(),
+  /**
+   * `run_stopped` 的原因（API 版本 2），Web 依代碼在地化；其他種類為 null。
+   * `title`／`body` 仍是 Server 產生的文字，給桌面通知使用。
+   */
+  stoppedRun: StoppedRunInfo.nullable(),
   /** 已讀的時間；未讀時為 null。 */
   readAt: Timestamp.nullable(),
   createdAt: Timestamp,
