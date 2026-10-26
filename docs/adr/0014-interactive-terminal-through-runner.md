@@ -18,7 +18,7 @@
 
 ## 2026-10-26 修訂
 
-不再有權限層（[ADR-0017](0017-no-permission-layer.md)）之後，能派工到 Team Runner 的人本來就能讓 Agent 在主機上執行任何指令，終端機不會多給權限。所以：
+權限改成每個 session 的模式、預設全部允許（[ADR-0017](0017-session-permission-modes.md)）之後，能派工到 Team Runner 的人本來就能讓 Agent 在主機上執行任何指令，終端機不會多給權限。所以：
 
 - 能操作這個 Task 的人都能開終端機，Local Runner 與 Team Runner 相同。
 - 拿掉 Team 設定「允許 Team Runner 的終端機」與 `runner.toml` 的 `allow_terminal`；`terminal_shell` 與 `terminal_idle_timeout_secs` 也拿掉，shell 自動偵測、閒置 30 分鐘關閉寫死（[ADR-0018](0018-minimal-settings.md)）。

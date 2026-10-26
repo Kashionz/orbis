@@ -9,5 +9,5 @@
 
 ## 2026-10-26 修訂
 
-- 不再有權限層（[ADR-0017](0017-no-permission-layer.md)），所以「權限只能收緊」的防護規則拿掉；深度與數量的限制保留。
+- 權限只剩每個 session 的模式（[ADR-0017](0017-session-permission-modes.md)）：Child Run 沿用父 Run 當下的模式，之後各自切換，「權限只能收緊」的防護規則拿掉；深度與數量的限制保留。
 - Delegation 一律開啟、可以分派給所有 Agent，不再有 Project 設定與 `.orbis/config.toml` 的 `[delegation]`（[ADR-0018](0018-minimal-settings.md)）。

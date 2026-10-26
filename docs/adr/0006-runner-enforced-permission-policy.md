@@ -1,5 +1,5 @@
 ---
-status: superseded（由 [ADR-0017](0017-no-permission-layer.md) 取代，2026-10-26；實作排在 v0.1.0 完成規劃的 S1）
+status: superseded（由 [ADR-0017](0017-session-permission-modes.md) 取代，2026-10-26；實作排在 v0.1.0 完成規劃的 S1）
 ---
 
 # Agent 權限由 Runner 依政策回覆 ACP 權限請求，不使用 Agent 的 bypass 旗標

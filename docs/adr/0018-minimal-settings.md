@@ -8,7 +8,7 @@ v0.1.0 時，個人設定有 5 個分頁、Project 設定約 16 項、管理頁�
 |---|---|---|
 | 個人設定 | 語言、主題 | 預設版面、自動展開工具用固定的預設值；版本移到「關於」；終端機的 shell 自動偵測；Windows 長路徑一律開啟，不顯示；各 Agent 的預設模型改成記住上次的選擇；通知只剩一個桌面通知開關，拿掉依事件類型關閉、勿擾時段與時區（時區取瀏覽器的設定） |
 | Team 設定 | 名稱、成員 | 對外分享預覽一律允許；「允許 Team Runner 的終端機」拿掉（ADR-0017） |
-| Project 設定 | 名稱、描述、Task Key 前綴、Repo 與預設分支 | Plan Gate 改成派工時的選項「先出計畫」，預設不勾；Delegation 一律開啟、可以分派給所有 Agent；拿掉「禁止核准自己的 Task」；成員一律可以派工到 Team Runner；拿掉預設權限策略（ADR-0017）；Verification 固定最多重試 3 次；GitHub Repo 的 Task 一律建立 Issue；bot 的留言一律不觸發 Feedback Loop；本機合併固定 squash，合併後不 push 基準分支 |
+| Project 設定 | 名稱、描述、Task Key 前綴、Repo 與預設分支 | Plan Gate 改成派工時的選項「先出計畫」，預設不勾；Delegation 一律開啟、可以分派給所有 Agent；拿掉「禁止核准自己的 Task」；成員一律可以派工到 Team Runner；拿掉預設權限策略，新的 session 一律從「全部允許」開始，要嚴格時在 session 上切換（ADR-0017）；Verification 固定最多重試 3 次；GitHub Repo 的 Task 一律建立 Issue；bot 的留言一律不觸發 Feedback Loop；本機合併固定 squash，合併後不 push 基準分支 |
 | 管理頁 | 成員 | 拿掉 Credential 並行上限的覆寫，一律用 Runner 回報的值，佇列與用量改成唯讀；拿掉信任請求（ADR-0017） |
 | `.orbis/config.toml` | `[worktree]` 的 `setup`、`copy`；`[preview]` 的 `command`；`[verify]` 的 `commands` | 拿掉 `archive` hook、`wait_for_setup`（一律等 setup 完成）、`shared_dirs`、`ready_path`（固定 `/`）、`[permissions]`、`[delegation]`、`[git].commit_message`（固定 `<TASK-KEY>: <title>`） |
 | `runner.toml` | Server 網址、Runner 名稱、Worktree 根目錄、`port_range`、`[repos]`、`[agents]` | 拿掉 `allow_terminal`、`terminal_shell`、`terminal_idle_timeout_secs`、`[agents.claude-code] user_settings`、`[browser_judge]` |

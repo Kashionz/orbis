@@ -15,5 +15,5 @@ status: accepted（已知風險）
 
 ## 2026-10-26 修訂
 
-- Team Runner 不再有權限層（[ADR-0017](0017-no-permission-layer.md)）：能派工到 Team Runner 的人可以讓 Agent 在主機上執行任何指令，也讀得到 Runner 程序中的共用 Credential。共用訂閱的風險因此不只是條款，Credential 也可能被帶出主機。
+- Team Runner 預設全部允許，權限只剩每個 session 的模式（[ADR-0017](0017-session-permission-modes.md)）：能派工到 Team Runner 的人可以讓 Agent 在主機上執行任何指令，也讀得到 Runner 程序中的共用 Credential。共用訂閱的風險因此不只是條款，Credential 也可能被帶出主機。
 - Team Runner 要放在專用的機器或 VM；原本規劃用每個 Run 的 worker 容器與 Credential proxy 來緩解的做法取消。
