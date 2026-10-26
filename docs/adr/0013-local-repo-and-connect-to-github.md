@@ -24,3 +24,7 @@
 - `DispatchOffer` 的 repo 改成以 `kind` 區分（本機 Repo 沒有 clone URL），協定版本因此遞增。
 - Repo 的唯一性分成兩種：GitHub Repo 是 (Project, owner, name)，本機 Repo 是 (Project, name)。
 - Task 狀態機多一條 `review_gate → done`（本機合併）。
+
+## 2026-10-26 修訂
+
+本機合併固定用 squash，合併後不 push 基準分支，拿掉這兩個 Project 設定（[ADR-0018](0018-minimal-settings.md)）。

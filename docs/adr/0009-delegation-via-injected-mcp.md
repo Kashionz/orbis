@@ -6,3 +6,8 @@
 
 - **`shared` 模式**（兩個 Agent 在同一個 Worktree 中修改）：容易同時修改同一個檔案而產生衝突，所以不提供。
 - **由 Orbis 的協調器決定怎麼拆工作**（Orca 的實驗性 orchestration）：太複雜。改由父 Agent 自己決定，Orbis 只負責提供工具與防護規則（深度 ≤ 2、每個 Run 最多 5 個 Child Run、權限只能收緊）。
+
+## 2026-10-26 修訂
+
+- 不再有權限層（[ADR-0017](0017-no-permission-layer.md)），所以「權限只能收緊」的防護規則拿掉；深度與數量的限制保留。
+- Delegation 一律開啟、可以分派給所有 Agent，不再有 Project 設定與 `.orbis/config.toml` 的 `[delegation]`（[ADR-0018](0018-minimal-settings.md)）。
