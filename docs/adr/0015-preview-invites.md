@@ -14,3 +14,7 @@ Preview 原本只有 Team 裡能查看那個 Run 的人能開（ADR-0010，ticke
 - Preview 的存取判斷（`preview/access.ts`）除了 Project 的 `view`，也接受有效的邀請；沒有 Team 的登入者也要能換票。
 - 預覽分頁要顯示受邀名單、期限與最後一次開啟的時間，所以 Server 記錄每次開啟。
 - 寄信由 Server 新的 mailer 模組處理，和 Task 邀請共用；SMTP 沒有設定時不寄，由邀請人複製連結。
+
+## 2026-10-26 修訂
+
+拿掉 Team 設定「允許對外分享預覽」：能操作這個 Task 的人都能邀請（[ADR-0018](0018-minimal-settings.md)）。登入後比對名單、期限與撤銷的規則不變。

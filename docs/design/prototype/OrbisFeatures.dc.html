@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><style>@keyframes ffFade{from{opacity:0}to{opacity:1}}@keyframes fSk{0%,100%{opacity:.45}50%{opacity:.85}}</style></helmet>
+<div style="width:100%;height:100%;min-height:0;display:flex;flex-direction:column;color:var(--oe8e9eb);font-size:13px;line-height:20px;background:{{ bg }}">
+  <sc-if value="{{ bar }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:none;display:flex;align-items:center;gap:8px;padding:{{ barPad }};flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--o8b9098)">{{ t.stateLabel }}</span>
+      <div style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o1c1e22);flex-wrap:wrap">
+        <sc-for list="{{ states }}" as="o" hint-placeholder-count="6">
+          <button onClick="{{ o.on }}" style="appearance:none;border:0;height:22px;padding:0 8px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:11px;cursor:pointer;transition:background-color 80ms ease-out,color 80ms ease-out">{{ o.label }}</button>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+  <div style="flex:1;min-height:0;overflow:auto">
+    <div style="max-width:{{ maxW }};margin:0 auto;padding:{{ pad }};display:flex;flex-direction:column;gap:20px;box-sizing:border-box;outline:{{ frame }};outline-offset:-1px">
+      <sc-if value="{{ hasHead }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:28px">
+          <span style="font-size:{{ hFs }};font-weight:550;color:var(--oe8e9eb)">{{ head }}</span>
+          <span style="font-size:12px;color:var(--o8b9098)">{{ headMeta }}</span>
+          <span style="flex:1"></span>
+          <sc-if value="{{ hNotes }}">
+            <div style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o1c1e22)">
+              <sc-for list="{{ noteFilters }}" as="o"><button onClick="{{ o.on }}" style="appearance:none;border:0;height:24px;padding:0 9px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:12px;cursor:pointer;transition:background-color 80ms ease-out,color 80ms ease-out">{{ o.label }}</button></sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ hAc }}">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:12px;color:var(--o8b9098)">{{ t.repoCmd }}</span>
+              <div style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o1c1e22)">
+                <sc-for list="{{ repoOpts }}" as="o"><button onClick="{{ o.on }}" style="appearance:none;border:0;height:24px;padding:0 9px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font-family:{{ o.font }};font-size:12px;cursor:pointer">{{ o.label }}</button></sc-for>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ hBoard }}">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o1c1e22)"><sc-for list="{{ layoutOpts }}" as="o"><button onClick="{{ o.on }}" style="appearance:none;border:0;height:24px;padding:0 9px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:12px;cursor:pointer">{{ o.label }}</button></sc-for></div>
+              <div style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o1c1e22)"><sc-for list="{{ groupOpts }}" as="o"><button onClick="{{ o.on }}" style="appearance:none;border:0;height:24px;padding:0 9px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:12px;cursor:pointer">{{ o.label }}</button></sc-for></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ hAudit }}">
+            <button onClick="{{ doExport }}" disabled="{{ ro }}" style="appearance:none;border:0;height:28px;padding:0 10px;border-radius:6px;background:var(--o22242a);color:var(--oe8e9eb);font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;opacity:{{ roOp }};transition:background-color 80ms ease-out,transform 80ms cubic-bezier(.2,.9,.3,1)" style-hover="background:var(--o2b2e34)" style-active="transform:scale(0.97)">{{ ic.download }}{{ t.export }}</button>
+          </sc-if>
+        </div>
+        <sc-if value="{{ hasDesc }}"><p style="margin:-12px 0 0;font-size:13px;line-height:1.6;color:var(--o8b9098);max-width:600px">{{ desc }}</p></sc-if>
+      </sc-if>
+
+      <sc-if value="{{ isLoading }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <sc-for list="{{ skel }}" as="k" hint-placeholder-count="5">
+            <div style="display:flex;align-items:center;gap:12px"><span style="width:20px;height:20px;border-radius:50%;background:var(--o1d1f23);animation:fSk 1.4s ease-in-out infinite;flex:none"></span><span style="height:10px;border-radius:4px;background:var(--o1d1f23);width:{{ k.w }};animation:fSk 1.4s ease-in-out infinite"></span></div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isError }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 0;flex-wrap:wrap">
+          <span style="color:var(--oef6b62);display:flex">{{ ic.alert }}</span>
+          <span style="font-size:13px">{{ t.loadFail }}</span>
+          <button onClick="{{ toNormal }}" style="appearance:none;border:0;height:28px;padding:0 10px;border-radius:6px;background:var(--o22242a);color:var(--oe8e9eb);font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px" style-hover="background:var(--o2b2e34)">{{ ic.rotate }}{{ t.retry }}</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:12px 0">
+          <div style="display:flex;align-items:center;gap:10px"><span style="width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:{{ emptyIcBg }};color:{{ emptyIcColor }}">{{ emptyIc }}</span><span style="font-size:13px;color:var(--o8b9098)">{{ emptyText }}</span></div>
+          <sc-if value="{{ emptyHasAct }}"><button onClick="{{ toNormal }}" disabled="{{ ro }}" style="appearance:none;border:0;height:28px;padding:0 10px;border-radius:6px;background:var(--o22242a);color:var(--oe8e9eb);font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;opacity:{{ roOp }}" style-hover="background:var(--o2b2e34)">{{ ic.plus }}{{ emptyAct }}</button></sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isAdminLock }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 0"><span style="color:var(--o8b9098);display:flex">{{ ic.lock }}</span><span style="font-size:13px;color:var(--o8b9098)">{{ t.adminOnly }}</span></div>
+      </sc-if>
+
+      <sc-if value="{{ bPerm }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:680px;animation:ffFade 160ms ease-out both">
+          <div style="display:flex;align-items:center;gap:8px"><img src="assets/agents/claude-code.svg" width="20" height="20" alt="" style="border-radius:50%;flex:none"><span style="font-size:13px;font-weight:550">claude-code</span><span style="font-size:12px;color:var(--o8b9098)">Sonnet 5.5</span></div>
+          <div style="padding-left:{{ indentS }};display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="color:var(--od9a845);display:flex">{{ ic.shield }}</span>
+              <button onClick="{{ togDetail }}" aria-expanded="{{ detailOpen }}" style="appearance:none;border:0;background:transparent;padding:0 6px;margin:0 -6px;height:24px;border-radius:6px;font:inherit;font-size:13px;color:var(--oe8e9eb);cursor:pointer;display:flex;align-items:center;gap:6px;transition:background-color 80ms ease-out" style-hover="background:var(--o1c1e22)">{{ t.permTitle }}<span style="display:flex;color:var(--o8b9098);transform:{{ detailRot }};transition:transform 160ms cubic-bezier(.2,.9,.3,1)">{{ ic.chev }}</span></button>
+            </div>
+            <sc-if value="{{ detailOpen }}"><code style="animation:ffFade 80ms ease-out both;display:block;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;line-height:18px;background:var(--o1b1c20);border-radius:6px;padding:8px 10px;color:var(--oe8e9eb);overflow-x:auto;white-space:pre">read  C:\Users\kash\.gitconfig</code></sc-if>
+            <sc-if value="{{ permPending }}">
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                <sc-for list="{{ permOpts }}" as="o" hint-placeholder-count="3">
+                  <button onClick="{{ o.on }}" disabled="{{ ro }}" title="{{ o.tip }}" style="appearance:none;border:0;height:28px;padding:0 12px;border-radius:6px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:13px;cursor:pointer;opacity:{{ roOp }};transition:background-color 80ms ease-out,transform 80ms cubic-bezier(.2,.9,.3,1)" style-hover="filter:brightness(1.12)" style-active="transform:scale(0.97)">{{ o.label }}</button>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ permDone }}">
+              <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--o8b9098);animation:ffFade 160ms ease-out both;flex-wrap:wrap">
+                <span style="display:flex;color:var(--o4fb86a)">{{ ic.check }}</span><span>{{ t.replied }}</span><span style="color:var(--oe8e9eb)">{{ permResLabel }}</span>
+                <span style="width:18px;height:18px;border-radius:50%;background:var(--o3a3e46);display:grid;place-items:center;font-size:10px;color:var(--oe8e9eb)">K</span><span>kashionz</span>
+                <button onClick="{{ resetPerm }}" style="appearance:none;border:0;background:transparent;color:var(--o8b9098);font:inherit;font-size:12px;cursor:pointer;padding:0 6px;height:22px;border-radius:5px" style-hover="background:var(--o1c1e22);color:var(--oe8e9eb)">{{ t.undo }}</button>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bNeeds }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:24px;animation:ffFade 160ms ease-out both">
+          <sc-for list="{{ needGroups }}" as="g" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <div style="display:flex;align-items:center;gap:8px;height:28px;color:var(--o8b9098);font-size:12px"><span style="display:flex;color:{{ g.color }}">{{ g.icon }}</span><span style="color:var(--oe8e9eb);font-weight:550;font-size:13px">{{ g.label }}</span><span>{{ g.count }}</span></div>
+              <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="2">
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;padding:10px 8px;margin:0 -8px;border-radius:8px;transition:background-color 80ms ease-out" style-hover="background:var(--o1a1b1f)">
+                  <div style="display:flex;align-items:baseline;gap:10px;min-width:0"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098);flex:none;min-width:{{ keyW }}">{{ r.key }}</span><span style="font-size:13px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">{{ r.title }}</span></div>
+                  <span style="font-size:12px;color:var(--o8b9098);white-space:nowrap">{{ r.time }}</span>
+                  <div style="grid-column:1/-1;padding-left:{{ indent }};display:flex;flex-direction:column;gap:8px;min-width:0">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap"><sc-if value="{{ r.hasLogo }}"><img src="{{ r.logo }}" width="16" height="16" alt="" style="border-radius:50%;flex:none"></sc-if><sc-if value="{{ r.hasIc }}"><span style="display:flex;color:var(--o8b9098)">{{ r.ic }}</span></sc-if><span style="font-size:13px;color:var(--oe8e9eb)">{{ r.summary }}</span><code style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;background:var(--o212328);padding:1px 6px;border-radius:4px;color:var(--o8b9098);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.detail }}</code></div>
+                    <sc-if value="{{ r.showActs }}">
+                      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                        <sc-for list="{{ r.acts }}" as="a"><button onClick="{{ a.on }}" title="{{ a.tip }}" disabled="{{ a.dis }}" style="appearance:none;border:0;height:28px;padding:0 11px;border-radius:6px;background:{{ a.bg }};color:{{ a.color }};font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;opacity:{{ a.op }};transition:background-color 80ms ease-out,transform 80ms cubic-bezier(.2,.9,.3,1)" style-hover="filter:brightness(1.12)" style-active="transform:scale(0.97)">{{ a.icon }}{{ a.label }}</button></sc-for>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ r.retryOpen }}">
+                      <div style="animation:ffFade 160ms ease-out both;display:flex;flex-direction:column;gap:8px;max-width:560px">
+                        <textarea value="{{ retryText }}" onChange="{{ onRetryText }}" placeholder="{{ t.retryPh }}" rows="2" style="field-sizing:content;min-height:56px;background:var(--o1c1e22);border:1px solid var(--o26292e);border-radius:8px;outline:none;color:var(--oe8e9eb);font:inherit;font-size:13px;line-height:1.6;padding:8px 10px;resize:none" style-focus="border-color:var(--o34373d)"></textarea>
+                        <div style="display:flex;gap:6px;justify-content:flex-end">
+                          <button onClick="{{ r.cancelRetry }}" style="appearance:none;border:0;height:28px;padding:0 12px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:13px;cursor:pointer" style-hover="background:var(--o22242a);color:var(--oe8e9eb)">{{ t.cancel }}</button>
+                          <button onClick="{{ r.sendRetry }}" disabled="{{ retryEmpty }}" style="appearance:none;border:0;height:28px;padding:0 12px;border-radius:6px;background:var(--obtn);color:var(--obtnfg);font:inherit;font-size:13px;font-weight:550;cursor:pointer;opacity:{{ retryOp }}" style-hover="background:var(--obtnh)">{{ t.send }}</button>
+                        </div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ r.done }}"><span style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--o8b9098);animation:ffFade 160ms ease-out both"><span style="display:flex;color:var(--o4fb86a)">{{ ic.check }}</span>{{ r.doneLabel }}</span></sc-if>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bNotes }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;animation:ffFade 160ms ease-out both">
+          <sc-for list="{{ notes }}" as="n" hint-placeholder-count="4">
+            <div style="display:grid;grid-template-columns:20px minmax(0,1fr);gap:10px;padding-bottom:14px">
+              <div style="position:relative;display:flex;justify-content:center"><span style="width:20px;height:20px;border-radius:50%;background:var(--o1c1e22);color:{{ n.color }};display:grid;place-items:center;position:relative;z-index:1">{{ n.icon }}</span><span style="position:absolute;top:22px;bottom:-14px;left:9.5px;width:1px;background:var(--o26292e);display:{{ n.line }}"></span></div>
+              <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:20px"><span style="font-size:12px;font-weight:550;color:{{ n.color }}">{{ n.kind }}</span><span style="font-size:12px;color:var(--o8b9098)">{{ n.at }}</span><span style="flex:1"></span><button onClick="{{ n.on }}" title="{{ n.tip }}" style="appearance:none;border:0;height:22px;padding:0 6px;border-radius:5px;background:transparent;color:var(--o8b9098);font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:background-color 80ms ease-out,color 80ms ease-out" style-hover="background:var(--o1c1e22);color:var(--o7fb0fa)">{{ n.linkIc }}{{ n.link }}</button></div>
+                <span style="font-size:13px;line-height:1.6;text-wrap:pretty">{{ n.text }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bRuns }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:2px;animation:ffFade 160ms ease-out both">
+          <sc-for list="{{ runs }}" as="r" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column;gap:4px;padding:8px 10px;margin:0 -10px;border-radius:8px;transition:background-color 80ms ease-out" style-hover="background:var(--o1a1b1f)">
+              <div style="display:flex;align-items:center;gap:10px;min-width:0;height:24px"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.dot }};flex:none"></span><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;flex:none">{{ r.id }}</span><span style="font-size:13px;color:{{ r.stColor }};flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.status }}</span><span style="font-size:12px;color:var(--o8b9098);white-space:nowrap">{{ r.meta }}</span></div>
+              <div style="display:flex;align-items:center;gap:8px;padding-left:17px;flex-wrap:wrap;min-height:24px">
+                <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:{{ r.wtColor }}">{{ r.wtIcon }}{{ r.wtLabel }}</span>
+                <span style="flex:1"></span>
+                <sc-if value="{{ r.canArchive }}"><button onClick="{{ r.askArc }}" style="appearance:none;border:0;height:24px;padding:0 8px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background-color 80ms ease-out,color 80ms ease-out" style-hover="background:var(--o22242a);color:var(--oe8e9eb)">{{ ic.archive }}{{ t.archive }}</button></sc-if>
+                <sc-if value="{{ r.confirm }}">
+                  <span style="display:flex;align-items:center;gap:6px;animation:ffFade 80ms ease-out both"><span style="font-size:12px">{{ t.arcQ }}</span>
+                  <button onClick="{{ r.cancelArc }}" style="appearance:none;border:0;height:24px;padding:0 8px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:12px;cursor:pointer" style-hover="background:var(--o22242a);color:var(--oe8e9eb)">{{ t.cancel }}</button>
+                  <button onClick="{{ r.doArc }}" style="appearance:none;border:0;height:24px;padding:0 10px;border-radius:6px;background:var(--o22242a);color:var(--oe8e9eb);font:inherit;font-size:12px;font-weight:550;cursor:pointer" style-hover="background:var(--o2b2e34)">{{ t.arcBtn }}</button></span>
+                </sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bAc }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:2px;animation:ffFade 160ms ease-out both">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--o8b9098);padding:0 0 6px">{{ ic.git }}<span>{{ projLine }}</span><sc-if value="{{ hasProjCmd }}"><code style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;color:var(--oe8e9eb)">pnpm -w test</code></sc-if></div>
+          <sc-for list="{{ acRows }}" as="a" hint-placeholder-count="2">
+            <div style="display:flex;flex-direction:column;gap:6px;padding:6px 8px 8px;margin:0 -8px;border-radius:8px" style-hover="background:var(--o1a1b1f)">
+              <div style="display:flex;align-items:flex-start;gap:8px">
+                <span style="color:var(--o8b9098);width:14px;text-align:center;flex:none;font-size:12px;line-height:26px">○</span>
+                <span style="flex:1;min-width:0;font-size:13px;line-height:20px;padding:3px 0">{{ a.desc }}</span>
+                <span style="flex:none;height:24px;margin-top:1px;padding:0 8px;border-radius:5px;background:var(--o22242a);font-size:12px;color:var(--o8b9098);display:flex;align-items:center">{{ a.kind }}</span>
+              </div>
+            </div>
+          </sc-for>
+          <button disabled="{{ ro }}" style="appearance:none;border:0;align-self:flex-start;height:28px;margin-top:6px;padding:0 8px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;opacity:{{ roOp }}" style-hover="background:var(--o1c1e22);color:var(--oe8e9eb)">{{ ic.plus }}{{ t.addAc }}</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bNotif }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:28px;animation:ffFade 160ms ease-out both">
+          <div style="display:flex;align-items:center;gap:12px"><span style="flex:1;display:flex;flex-direction:column;gap:2px"><span style="font-size:13px;font-weight:550">{{ t.deskN }}</span><span style="font-size:12px;line-height:1.5;color:var(--o8b9098)">{{ t.deskNSub }}</span></span>
+            <button onClick="{{ togDesk }}" role="switch" aria-checked="{{ deskOn }}" aria-label="{{ t.deskN }}" disabled="{{ ro }}" style="appearance:none;border:0;width:30px;height:18px;border-radius:9px;background:{{ deskBg }};position:relative;cursor:pointer;padding:0;transition:background-color 80ms ease-out"><span style="position:absolute;top:2px;left:{{ deskKnob }};width:14px;height:14px;border-radius:50%;background:#ffffff;transition:left 160ms cubic-bezier(.2,.9,.3,1)"></span></button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bAudit }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:12px;animation:ffFade 160ms ease-out both">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <sc-for list="{{ auditFilters }}" as="f" hint-placeholder-count="4">
+              <div style="position:relative">
+                <button onClick="{{ f.toggle }}" aria-haspopup="listbox" aria-expanded="{{ f.open }}" style="appearance:none;border:0;height:28px;padding:0 8px 0 10px;border-radius:6px;background:{{ f.bg }};color:var(--oe8e9eb);font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background-color 80ms ease-out" style-hover="background:var(--o24262b)"><span style="color:var(--o8b9098)">{{ f.label }}</span><span>{{ f.value }}</span><span style="display:flex;color:var(--o8b9098)">{{ ic.chevD }}</span></button>
+                <sc-if value="{{ f.open }}">
+                  <div role="listbox" style="position:absolute;top:32px;left:0;z-index:30;min-width:168px;background:var(--opop);border:1px solid var(--o26292e);border-radius:10px;box-shadow:0 12px 32px var(--osh);padding:6px;display:flex;flex-direction:column;animation:ffFade 80ms ease-out both">
+                    <sc-for list="{{ f.opts }}" as="o"><button onClick="{{ o.on }}" role="option" aria-selected="{{ o.sel }}" style="appearance:none;border:0;min-height:32px;padding:0 8px;border-radius:6px;background:{{ o.bg }};color:var(--oe8e9eb);font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;text-align:left" style-hover="background:var(--o1c1e22)"><span style="flex:1">{{ o.label }}</span><span style="display:flex;color:var(--o7fb0fa)">{{ o.check }}</span></button></sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;flex-direction:column">
+            <sc-for list="{{ auditRows }}" as="r" hint-placeholder-count="6">
+              <div style="display:grid;grid-template-columns:{{ auditCols }};gap:4px 12px;padding:10px 0;border-bottom:1px solid var(--o1e2024);align-items:baseline">
+                <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098);white-space:nowrap">{{ r.time }}</span>
+                <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap"><span style="width:18px;height:18px;border-radius:50%;background:{{ r.avBg }};display:grid;place-items:center;font-size:10px;flex:none">{{ r.init }}</span><span style="font-size:13px;font-weight:550">{{ r.who }}</span><span style="font-size:13px">{{ r.action }}</span></div>
+                  <div style="display:flex;align-items:center;gap:8px;min-width:0;padding-left:26px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.target }}</span><span style="flex:none;font-size:11px;color:var(--o8b9098);background:var(--o1c1e22);padding:0 6px;border-radius:4px;line-height:18px">{{ r.project }}</span></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px"><span style="font-size:12px;color:var(--o8b9098)">{{ auditCount }}</span><span style="flex:1"></span><button style="appearance:none;border:0;height:28px;padding:0 10px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:12px;cursor:pointer" style-hover="background:var(--o1c1e22);color:var(--oe8e9eb)">{{ t.more }}</button></div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bProps }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid;grid-template-columns:{{ propCols }};gap:2px 12px;align-items:center;animation:ffFade 160ms ease-out both">
+          <sc-for list="{{ propRows }}" as="f" hint-placeholder-count="10">
+            <span style="font-size:12px;color:var(--o8b9098);min-height:32px;display:flex;align-items:center">{{ f.label }}</span>
+            <div style="position:relative;min-width:0;display:flex;align-items:center">
+              <button onClick="{{ f.open }}" disabled="{{ f.dis }}" aria-haspopup="{{ f.popup }}" aria-expanded="{{ f.isOpen }}" title="{{ f.tip }}" style="appearance:none;border:0;height:28px;max-width:100%;padding:0 8px;margin-left:-8px;border-radius:6px;background:{{ f.bg }};color:{{ f.color }};font:inherit;font-size:13px;cursor:{{ f.cursor }};display:flex;align-items:center;gap:8px;min-width:0;transition:background-color 80ms ease-out" style-hover="background:{{ f.hoverBg }}"><span style="display:flex;flex:none;color:{{ f.icColor }}">{{ f.icon }}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.value }}</span><sc-if value="{{ f.live }}"><span style="width:6px;height:6px;border-radius:50%;background:var(--o7fb0fa);flex:none;animation:fSk 1.4s ease-in-out infinite"></span></sc-if></button>
+              <sc-if value="{{ f.isOpen }}">
+                <div role="listbox" style="position:absolute;top:32px;left:-8px;z-index:30;min-width:184px;background:var(--opop);border:1px solid var(--o26292e);border-radius:10px;box-shadow:0 12px 32px var(--osh);padding:6px;display:flex;flex-direction:column;animation:ffFade 80ms ease-out both">
+                  <sc-for list="{{ f.opts }}" as="o"><button onClick="{{ o.on }}" role="option" aria-selected="{{ o.sel }}" style="appearance:none;border:0;min-height:32px;padding:0 8px;border-radius:6px;background:{{ o.bg }};color:var(--oe8e9eb);font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;text-align:left" style-hover="background:var(--o1c1e22)"><span style="display:flex;color:{{ o.icColor }}">{{ o.icon }}</span><span style="flex:1">{{ o.label }}</span><span style="display:flex;color:var(--o7fb0fa)">{{ o.check }}</span></button></sc-for>
+                  <sc-if value="{{ f.hasCal }}"><div style="border-top:1px solid var(--o1e2024);margin:6px -6px 0;padding:10px 10px 4px">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="flex:1;font-size:13px;font-weight:550">{{ f.cal.title }}</span><button onClick="{{ f.cal.prev }}" aria-label="{{ f.cal.prevL }}" style="appearance:none;border:0;width:24px;height:24px;border-radius:6px;background:transparent;color:var(--o8b9098);display:grid;place-items:center;cursor:pointer;transform:rotate(90deg)" style-hover="background:var(--o1c1e22)">{{ ic.chev }}</button><button onClick="{{ f.cal.next }}" aria-label="{{ f.cal.nextL }}" style="appearance:none;border:0;width:24px;height:24px;border-radius:6px;background:transparent;color:var(--o8b9098);display:grid;place-items:center;cursor:pointer;transform:rotate(-90deg)" style-hover="background:var(--o1c1e22)">{{ ic.chev }}</button></div>
+                    <div style="display:grid;grid-template-columns:repeat(7,30px);gap:2px"><sc-for list="{{ f.cal.wk }}" as="w"><span style="font-size:11px;color:var(--o8b9098);text-align:center;line-height:20px">{{ w }}</span></sc-for><sc-for list="{{ f.cal.days }}" as="d"><button onClick="{{ d.on }}" aria-label="{{ d.aria }}" style="appearance:none;border:0;width:30px;height:26px;border-radius:6px;background:{{ d.bg }};color:{{ d.color }};font:inherit;font-size:12px;cursor:pointer;font-weight:{{ d.fw }};visibility:{{ d.vis }}" style-hover="background:var(--o1c1e22)">{{ d.n }}</button></sc-for></div>
+                  </div></sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bSub }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:24px;animation:ffFade 160ms ease-out both">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <div style="display:flex;align-items:center;gap:10px;height:28px"><span style="font-size:13px;font-weight:550">{{ t.subtasks }}</span><span style="font-size:12px;color:var(--o8b9098)">{{ subProg }}</span><span style="width:48px;height:3px;border-radius:2px;background:var(--o22242a);overflow:hidden;display:flex"><span style="width:{{ subPct }};background:var(--o4fb86a);transition:width 160ms cubic-bezier(.2,.9,.3,1)"></span></span></div>
+            <sc-for list="{{ subs }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;margin:0 -8px;border-radius:6px;min-width:0" style-hover="background:var(--o1a1b1f)">
+                <button onClick="{{ r.toggle }}" disabled="{{ ro }}" aria-label="{{ r.stateLabel }}" title="{{ r.stateLabel }}" style="appearance:none;border:0;background:transparent;padding:2px;border-radius:5px;display:flex;color:{{ r.color }};cursor:pointer;flex:none" style-hover="background:var(--o22242a)">{{ r.icon }}</button>
+                <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098);flex:none">{{ r.key }}</span>
+                <span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:{{ r.titleColor }}">{{ r.title }}</span>
+                <sc-if value="{{ r.hasStage }}"><span style="flex:none;font-size:12px;color:var(--o8b9098);display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--o7fb0fa)"></span>{{ r.stage }}</span></sc-if>
+                <sc-if value="{{ r.isAgent }}"><img src="{{ r.logo }}" width="18" height="18" alt="{{ r.who }}" title="{{ r.who }}" style="border-radius:50%;flex:none"></sc-if>
+                <sc-if value="{{ r.isUser }}"><span title="{{ r.who }}" style="width:18px;height:18px;border-radius:50%;background:{{ r.avBg }};display:grid;place-items:center;font-size:10px;flex:none">{{ r.init }}</span></sc-if>
+                <sc-if value="{{ r.noOne }}"><span style="width:18px;height:18px;border-radius:50%;border:1px dashed var(--o4c5058);box-sizing:border-box;flex:none"></span></sc-if>
+              </div>
+            </sc-for>
+            <sc-if value="{{ subAdding }}">
+              <div style="display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;margin:0 -8px"><span style="display:flex;color:var(--o8b9098)">{{ newSubIcon }}</span><input value="{{ subName }}" onChange="{{ onSubName }}" onKeyDown="{{ subKey }}" onBlur="{{ subBlur }}" placeholder="{{ t.subPh }}" aria-label="{{ t.subPh }}" autofocus="{{ true }}" style="flex:1;min-width:0;height:26px;background:var(--o1c1e22);border:1px solid var(--o34373d);border-radius:6px;outline:none;color:var(--oe8e9eb);font:inherit;font-size:13px;padding:0 8px"></div>
+            </sc-if>
+            <sc-if value="{{ subNotAdding }}"><button onClick="{{ startSub }}" disabled="{{ ro }}" style="appearance:none;border:0;align-self:flex-start;height:28px;margin-top:4px;padding:0 8px;margin-left:-8px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;opacity:{{ roOp }}" style-hover="background:var(--o1c1e22);color:var(--oe8e9eb)">{{ ic.plus }}{{ t.addSub }}</button></sc-if>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:13px;font-weight:550;height:28px;display:flex;align-items:center">{{ t.relations }}</span>
+            <sc-for list="{{ relGroups }}" as="g" hint-placeholder-count="3">
+              <div style="display:flex;flex-direction:column">
+                <span style="font-size:12px;color:var(--o8b9098);height:24px;display:flex;align-items:center">{{ g.label }}</span>
+                <sc-for list="{{ g.rows }}" as="r">
+                  <div style="display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;margin:0 -8px;border-radius:6px;min-width:0" style-hover="background:var(--o1a1b1f)">
+                    <span style="display:flex;color:{{ r.color }};flex:none">{{ r.icon }}</span>
+                    <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098);flex:none">{{ r.key }}</span>
+                    <span style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.title }}</span>
+                    <button onClick="{{ r.remove }}" disabled="{{ ro }}" aria-label="{{ t.removeRel }}" title="{{ t.removeRel }}" style="appearance:none;border:0;width:24px;height:24px;border-radius:6px;background:transparent;color:var(--o8b9098);display:grid;place-items:center;cursor:pointer;flex:none;opacity:{{ roOp }}" style-hover="background:var(--o22242a);color:var(--oef6b62)">{{ ic.x }}</button>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-for>
+            <sc-if value="{{ relClosed }}"><button onClick="{{ openRel }}" disabled="{{ ro }}" style="appearance:none;border:0;align-self:flex-start;height:28px;padding:0 8px;margin-left:-8px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;opacity:{{ roOp }}" style-hover="background:var(--o1c1e22);color:var(--oe8e9eb)">{{ ic.plus }}{{ t.addRel }}</button></sc-if>
+            <sc-if value="{{ relOpen }}">
+              <div style="animation:ffFade 160ms ease-out both;background:var(--o1a1b1f);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;max-width:480px">
+                <div style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o22242a);align-self:flex-start;flex-wrap:wrap"><sc-for list="{{ relTypes }}" as="o"><button onClick="{{ o.on }}" style="appearance:none;border:0;height:24px;padding:0 9px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:12px;cursor:pointer">{{ o.label }}</button></sc-for></div>
+                <input value="{{ relQ }}" onChange="{{ onRelQ }}" placeholder="{{ t.searchTask }}" aria-label="{{ t.searchTask }}" autofocus="{{ true }}" style="height:30px;background:var(--o1c1e22);border:1px solid var(--o26292e);border-radius:6px;outline:none;color:var(--oe8e9eb);font:inherit;font-size:13px;padding:0 10px" style-focus="border-color:var(--o34373d)">
+                <div style="display:flex;flex-direction:column">
+                  <sc-for list="{{ relCands }}" as="c"><button onClick="{{ c.on }}" style="appearance:none;border:0;min-height:32px;padding:0 8px;border-radius:6px;background:transparent;color:var(--oe8e9eb);font:inherit;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left;min-width:0" style-hover="background:var(--o22242a)"><span style="display:flex;color:{{ c.color }}">{{ c.icon }}</span><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098)">{{ c.key }}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.title }}</span></button></sc-for>
+                  <sc-if value="{{ relNoCand }}"><span style="font-size:12px;color:var(--o8b9098);padding:6px 8px">{{ t.noMatch }}</span></sc-if>
+                </div>
+                <div style="display:flex;justify-content:flex-end"><button onClick="{{ closeRel }}" style="appearance:none;border:0;height:28px;padding:0 12px;border-radius:6px;background:transparent;color:var(--o8b9098);font:inherit;font-size:13px;cursor:pointer" style-hover="background:var(--o22242a);color:var(--oe8e9eb)">{{ t.cancel }}</button></div>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bBoardList }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:16px;animation:ffFade 160ms ease-out both">
+          <sc-for list="{{ bGroups }}" as="g" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;gap:8px;height:32px"><span style="display:flex;color:{{ g.color }}">{{ g.icon }}</span><span style="font-size:13px;font-weight:550">{{ g.label }}</span><span style="font-size:12px;color:var(--o8b9098)">{{ g.count }}</span></div>
+              <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                <div style="display:grid;grid-template-columns:{{ bCols }};align-items:center;gap:12px;height:36px;padding:0 8px;margin:0 -8px;border-radius:6px;cursor:pointer;transition:background-color 80ms ease-out" style-hover="background:var(--o1a1b1f)">
+                  <span style="display:flex" title="{{ r.priLabel }}">{{ r.pri }}</span>
+                  <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098)">{{ r.key }}</span>
+                  <span style="font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.title }}</span>
+                  <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--o8b9098);min-width:0;overflow:hidden;white-space:nowrap"><span style="display:flex;flex:none;color:{{ r.secColor }}">{{ r.secIcon }}</span><span style="overflow:hidden;text-overflow:ellipsis">{{ r.secLabel }}</span></span>
+                  <span style="font-size:12px;color:{{ r.dueColor }};display:{{ wideD }};white-space:nowrap">{{ r.due }}</span>
+                  <span style="display:flex;justify-content:flex-end">
+                    <sc-if value="{{ r.isAgent }}"><img src="{{ r.logo }}" width="18" height="18" alt="{{ r.who }}" title="{{ r.who }}" style="border-radius:50%"></sc-if>
+                    <sc-if value="{{ r.isUser }}"><span title="{{ r.who }}" style="width:18px;height:18px;border-radius:50%;background:{{ r.avBg }};display:grid;place-items:center;font-size:10px">{{ r.init }}</span></sc-if>
+                    <sc-if value="{{ r.noOne }}"><span style="width:18px;height:18px;border-radius:50%;border:1px dashed var(--o4c5058);box-sizing:border-box"></span></sc-if>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ bBoardCols }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;align-items:flex-start;animation:ffFade 160ms ease-out both">
+          <sc-for list="{{ bGroups }}" as="g" hint-placeholder-count="4">
+            <div style="flex:none;width:{{ colWidth }};background:var(--o18191d);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:2px">
+              <div style="display:flex;align-items:center;gap:8px;height:32px;padding:0 6px"><span style="display:flex;color:{{ g.color }}">{{ g.icon }}</span><span style="font-size:13px;font-weight:550;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ g.label }}</span><span style="font-size:12px;color:var(--o8b9098)">{{ g.count }}</span></div>
+              <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="2">
+                <div style="padding:10px;border-radius:6px;display:flex;flex-direction:column;gap:6px;cursor:pointer;transition:background-color 80ms ease-out" style-hover="background:var(--o202227)">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="display:flex" title="{{ r.priLabel }}">{{ r.pri }}</span><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098)">{{ r.key }}</span><span style="flex:1"></span>
+                    <sc-if value="{{ r.isAgent }}"><img src="{{ r.logo }}" width="16" height="16" alt="{{ r.who }}" title="{{ r.who }}" style="border-radius:50%"></sc-if>
+                    <sc-if value="{{ r.isUser }}"><span title="{{ r.who }}" style="width:16px;height:16px;border-radius:50%;background:{{ r.avBg }};display:grid;place-items:center;font-size:9px">{{ r.init }}</span></sc-if>
+                  </div>
+                  <span style="font-size:13px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ r.title }}</span>
+                  <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--o8b9098);flex-wrap:wrap"><span style="display:flex;align-items:center;gap:6px;min-width:0"><span style="display:flex;color:{{ r.secColor }}">{{ r.secIcon }}</span>{{ r.secLabel }}</span><span style="color:{{ r.dueColor }}">{{ r.due }}</span></div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+  <sc-if value="{{ dlgOpen }}" hint-placeholder-val="{{ false }}"><dc-import name="OrbisDlg" lang="{{ lang }}" k="{{ dlgK }}" x="{{ dlgX }}" n="{{ dlgN }}" st="{{ dlgSt }}" on-close="{{ dlgClose }}" on-flash="{{ dlgFlash }}" hint-size="0px,0px"></dc-import></sc-if>
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div role="status" style="animation:ffFade 80ms ease-out both;position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;background:var(--otipbg);color:var(--otipfg);font-size:13px;padding:8px 14px;border-radius:8px;box-shadow:0 6px 20px var(--osh);display:flex;align-items:center;gap:8px">{{ ic.check }}{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:&quot;860px&quot;,&quot;height&quot;:&quot;640px&quot;},&quot;lang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;zh&quot;,&quot;en&quot;],&quot;default&quot;:&quot;zh&quot;,&quot;tsType&quot;:&quot;'zh'|'en'&quot;},&quot;screen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;perm&quot;,&quot;needs&quot;,&quot;notes&quot;,&quot;runs&quot;,&quot;ac&quot;,&quot;notif&quot;,&quot;audit&quot;],&quot;default&quot;:&quot;needs&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;state&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;normal&quot;,&quot;empty&quot;,&quot;loading&quot;,&quot;error&quot;,&quot;readonly&quot;,&quot;narrow&quot;],&quot;default&quot;:&quot;normal&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;embed&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;page&quot;,&quot;settings&quot;,&quot;panel&quot;,&quot;canvas&quot;],&quot;default&quot;:&quot;page&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;bar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;admin&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+const P={shield:[['p','M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'],['p','M12 8v4'],['p','M12 16h.01']],check:[['p','M20 6 9 17l-5-5']],chev:[['p','m9 18 6-6-6-6']],chevD:[['p','m6 9 6 6 6-6']],plus:[['p','M5 12h14'],['p','M12 5v14']],link:[['p','M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'],['p','M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71']],archive:[['r',2,3,20,5,1],['p','M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8'],['p','M10 12h4']],git:[['p','M6 3v12'],['c',18,6,3],['c',6,18,3],['p','M18 9a9 9 0 0 1-9 9']],pr:[['c',18,18,3],['c',6,6,3],['p','M13 6h3a2 2 0 0 1 2 2v7'],['p','M6 9v12']],rotate:[['p','M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8'],['p','M3 3v5h5']],alert:[['c',12,12,10],['p','M12 8v4'],['p','M12 16h.01']],flag:[['p','M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z'],['p','M4 22v-7']],wrench:[['p','M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z']],dot:[['c',12,12,9],['c',12,12,1.5]],download:[['p','M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'],['p','m7 10 5 5 5-5'],['p','M12 15V3']],lock:[['r',3,11,18,11,2],['p','M7 11V7a5 5 0 0 1 10 0v4']],listChecks:[['p','m3 17 2 2 4-4'],['p','m3 7 2 2 4-4'],['p','M13 6h8'],['p','M13 12h8'],['p','M13 18h8']],fileDiff:[['p','M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'],['p','M9 10h6'],['p','M12 7v6'],['p','M9 17h6']],skip:[['p','m5 4 10 8-10 8z'],['p','M19 5v14']],stop:[['r',5,5,14,14,2]],msg:[['p','M7.9 20A9 9 0 1 0 4 16.1L2 22Z']],folder:[['p','M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z']]};
+function icn(n,s){s=s||14;const kids=(P[n]||[]).map((e,i)=>e[0]==='p'?React.createElement('path',{key:i,d:e[1]}):e[0]==='c'?React.createElement('circle',{key:i,cx:e[1],cy:e[2],r:e[3]}):React.createElement('rect',{key:i,x:e[1],y:e[2],width:e[3],height:e[4],rx:e[5]}));return React.createElement('svg',{width:s,height:s,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.75,strokeLinecap:'round',strokeLinejoin:'round','aria-hidden':true},kids);}
+const T={
+zh:{stateLabel:'原型狀態',states:['一般','空的','載入中','錯誤','唯讀','窄寬度'],heads:{perm:'權限請求',needs:'待我處理',notes:'備註',runs:'執行紀錄',ac:'驗收條件',notif:'通知',audit:'稽核紀錄',retention:'資料保存'},
+loadFail:'載入失敗',retry:'重試',empty:{perm:'沒有待回覆的權限請求',needs:'全部處理完了',notes:'還沒有備註',runs:'沒有執行紀錄',ac:'還沒有驗收條件',audit:'沒有符合的紀錄'},emptyAct:{ac:'新增條件',audit:'清除篩選'},
+permTitle:'讀取工作樹外的檔案',once:'允許一次',run:'這個 session 都允許',deny:'拒絕',runTip:'這個 session 結束前，同一條指令或路徑不再詢問',addRule:'加進專案規則',scopeFile:'這個檔案',scopeDir:'這個資料夾',ruleEffect:'效果',allowWord:'允許',ruleAction:'動作',rulePath:'路徑',ruleProject:'專案',cancel:'取消',addRuleBtn:'加入規則',replied:'已回覆',ruleAdded:'已加進專案規則',undo:'復原',roTip:'只能檢視',
+groups:{conflict:'合併衝突',perm:'權限請求',verify:'驗收超過重試上限',plan:'計畫關卡',review:'審查關卡'},retryWith:'附意見再試',skip:'略過',abort:'中止',retryPh:'給代理的意見',send:'送出並再試',go:'前往',doneL:{abortMerge:'已中止自動解決，請在合併請求上手動處理',retry:'已附意見再試',skip:'已略過這個條件',abort:'已中止執行',once:'已回覆 允許一次',run:'已回覆 這個 session 都允許',deny:'已回覆 拒絕',rule:'已加進專案規則'},
+nf:{all:'全部',decision:'決策',fix:'自動修正'},nk:{progress:'進度',decision:'決策',fix:'自動修正 第 {n} 次'},openRun:'開啟執行',openPr:'開啟合併請求',
+wt:{live:'工作樹使用中',keep:'工作樹保留到 {d}',archived:'工作樹已封存',cleaned:'工作樹已清除'},archive:'封存工作樹',arcQ:'封存這個工作樹？',arcBtn:'封存',arcDone:'已封存工作樹',
+repoCmd:'儲存庫指令',none:'未設定',inheritLine:'沿用儲存庫指令',required:'必填',cmdPh:'輸入指令',cmdLabel:'驗收指令',kinds:{command:'指令',agent:'代理判定'},addAc:'新增條件',
+event:'事件',chans:['App 內','桌面','Email','Slack'],slackOff:'未設定 webhook',webhook:'Webhook 網址',test:'測試',tested:'已送出測試訊息',dnd:'勿擾時段',from:'開始時間',to:'到',toLabel:'結束時間',weekend:'週末全天',
+export:'匯出 CSV',exported:'已匯出 {n} 筆',count:'{a} / {b} 筆',more:'載入更多',adminOnly:'只有擁有者可以檢視',fl:{member:'成員',action:'動作',project:'專案',time:'時間'},all:'全部',
+cats:{perm:'權限',gate:'關卡',run:'執行',settings:'設定',member:'成員'},times:{today:'今天',d7:'最近 7 天',d30:'最近 30 天'},team:'團隊',
+ret:{arch:'完成的任務自動封存',archSub:'任務完成或取消後多久移到「已封存」，仍可搜尋與還原',never:'不自動封存',blob:'截圖、日誌與附件',blobSub:'代理執行時留下的截圖、終端機輸出與上傳的檔案，過期後刪除',wt:'失敗或中止的工作資料夾',wtSub:'保留一段時間讓你檢查現場，之後刪除以釋放磁碟空間',days:'{n} 天',year:'1 年',forever:'永久',team:'團隊',project:'專案 ORB'},saved:'已儲存',meta:{needs:'{n} 項',notes:'{n} 筆',runs:'{n} 次'}},
+en:{stateLabel:'Prototype state',states:['Default','Empty','Loading','Error','Read-only','Narrow'],heads:{perm:'Permission request',needs:'Needs you',notes:'Notes',runs:'Run history',ac:'Acceptance criteria',notif:'Notifications',audit:'Audit log',retention:'Data retention'},
+loadFail:'Couldn’t load',retry:'Retry',empty:{perm:'No pending permission requests',needs:'All caught up',notes:'No notes yet',runs:'No runs yet',ac:'No acceptance criteria yet',audit:'No matching entries'},emptyAct:{ac:'Add criterion',audit:'Clear filters'},
+permTitle:'Read a file outside the worktree',once:'Allow once',run:'Allow for this session',deny:'Deny',runTip:'The same command or path won’t ask again until this session ends',addRule:'Add to project rules',scopeFile:'This file',scopeDir:'This folder',ruleEffect:'Effect',allowWord:'Allow',ruleAction:'Action',rulePath:'Path',ruleProject:'Project',cancel:'Cancel',addRuleBtn:'Add rule',replied:'Replied',ruleAdded:'Added to project rules',undo:'Undo',roTip:'View only',
+groups:{conflict:'Merge conflicts',perm:'Permission requests',verify:'Verification retry limit reached',plan:'Plan gates',review:'Review gates'},retryWith:'Retry with feedback',skip:'Skip',abort:'Abort',retryPh:'Feedback for the agent',send:'Send and retry',go:'Open',doneL:{abortMerge:'Stopped; resolve it on the pull request',retry:'Retried with feedback',skip:'Criterion skipped',abort:'Run aborted',once:'Replied Allow once',run:'Replied Allow for this session',deny:'Replied Deny',rule:'Added to project rules'},
+nf:{all:'All',decision:'Decisions',fix:'Auto-fixes'},nk:{progress:'Progress',decision:'Decision',fix:'Auto-fix #{n}'},openRun:'Open run',openPr:'Open pull request',
+wt:{live:'Worktree in use',keep:'Worktree kept until {d}',archived:'Worktree archived',cleaned:'Worktree cleaned up'},archive:'Archive worktree',arcQ:'Archive this worktree?',arcBtn:'Archive',arcDone:'Worktree archived',
+repoCmd:'Repo command',none:'Not set',inheritLine:'Uses the repo command',required:'Required',cmdPh:'Enter a command',cmdLabel:'Verification command',kinds:{command:'Command',agent:'Agent check'},addAc:'Add criterion',
+event:'Event',chans:['In app','Desktop','Email','Slack'],slackOff:'No webhook set',webhook:'Webhook URL',test:'Test',tested:'Test message sent',dnd:'Do not disturb',from:'Start time',to:'to',toLabel:'End time',weekend:'All day on weekends',
+export:'Export CSV',exported:'Exported {n} entries',count:'{a} of {b} entries',more:'Load more',adminOnly:'Only owners can view this',fl:{member:'Member',action:'Action',project:'Project',time:'Time'},all:'All',
+cats:{perm:'Permissions',gate:'Gates',run:'Runs',settings:'Settings',member:'Members'},times:{today:'Today',d7:'Last 7 days',d30:'Last 30 days'},team:'Team',
+ret:{arch:'Auto-archive finished tasks',archSub:'How long after a task is done or cancelled it moves to Archived. It stays searchable and can be restored',never:'Never',blob:'Screenshots, logs and attachments',blobSub:'Screenshots, terminal output and uploads from agent runs; deleted when they expire',wt:'Folders from failed or stopped runs',wtSub:'Kept so you can inspect what happened, then deleted to free disk space',days:'{n} days',year:'1 year',forever:'Forever',team:'Team',project:'Project ORB'},saved:'Saved',meta:{needs:'{n} items',notes:'{n} entries',runs:'{n} runs'}}};
+const DATA={
+zh:{notes:[['progress','完成換行正規化，3 個測試改用固定字串比對','14:32','run_8f2a'],['fix','驗收 pnpm test 失敗：invoice.test.ts 期望值多一個換行，已修正','14:20','run_8f2a',2],['decision','不改 .gitattributes，改在讀檔時正規化，避免影響其他套件','14:05','run_8f2a'],['fix','型別檢查失敗：normalizeEol 缺少回傳型別','13:58','run_8f2a',1],['progress','建立重現測試，Windows 上 3 個失敗','13:41','run_7c19'],['decision','拆成兩個合併請求：先修測試，再改解析器','昨天','#128']],
+runs:[['run_8f2a','running','執行中','claude-code  Sonnet 5.5  18m','live'],['run_7c19','failed','驗收失敗','codex  GPT-5 Codex  12m','keep','11/08'],['run_6b02','stopped','已中止','claude-code  Opus 5.5  4m','archived'],['run_5a11','merged','已合併 #128','claude-code  Sonnet 5.5  26m','cleaned']],
+needs:{conflict:[['ORB-35','配對權杖過期時的錯誤訊息','5 分鐘前','claude-code','和 main 衝突，代理解決不了：兩邊對權杖的過期時間要求不同','apps/server/src/runners/pairing.ts、apps/web/src/i18n/zh-TW.ts']],perm:[['ORB-42','修正 Windows 上的換行測試','剛剛','claude-code','讀取工作樹外的檔案','C:\\Users\\kash\\.gitconfig']],verify:[['ORB-38','發票按比例計算','3 分鐘前','codex','pnpm test 連續失敗 3 次','invoice.test.ts:42 expected 1280 received 1279'],['ORB-51','匯出 CSV 的編碼','12 分鐘前','claude-code','瀏覽器驗收連續失敗 3 次','找不到「匯出」按鈕']],plan:[['ORB-47','通知改成推送','25 分鐘前','claude-code','計畫 5 個步驟等待核准','plan.md']],review:[['ORB-36','執行器長路徑支援','1 小時前','codex','驗收 4/4 通過','+182 −40']]},
+audit:[['10:42','kashionz','perm','允許權限 這個 session 都允許','run_8f2a','ORB'],['10:12','kashionz','perm','自動允許：讀取工作樹外的檔案（全部允許）','run_7c11','ORB'],['10:31','mei-lin','gate','核准審查關卡','ORB-36','ORB'],['09:58','chen-yu','run','封存工作樹','run_6b02','ORB'],['09:40','mei-lin','member','邀請成員','ops@example.com','團隊'],['昨天 18:12','kashionz','settings','變更專案名稱','Orbis → Orbis App','ORB'],['昨天 17:03','chen-yu','run','中止執行','run_6b02','ORB'],['昨天 15:20','kashionz','settings','變更團隊名稱','Kash 小隊','團隊']],
+notif:[['perm','權限請求',[1,1,0,1]],['plan','計畫關卡',[1,1,0,0]],['review','審查關卡',[1,1,1,1]],['verify','驗收一直沒通過',[1,1,1,0]],['done','執行完成',[1,0,0,0]],['merged','合併請求已合併',[1,0,1,0]],['mention','被提及',[1,1,1,0]]],
+ac:[['command','`pnpm test`'],['agent','換行處理不影響 macOS 與 Linux']]},
+en:{notes:[['progress','Line-ending normalization done; 3 tests now compare fixed strings','14:32','run_8f2a'],['fix','pnpm test failed: invoice.test.ts expected an extra newline, fixed','14:20','run_8f2a',2],['decision','Keep .gitattributes unchanged and normalize on read so other packages aren’t affected','14:05','run_8f2a'],['fix','Type check failed: normalizeEol was missing a return type','13:58','run_8f2a',1],['progress','Added a repro test; 3 failures on Windows','13:41','run_7c19'],['decision','Split into two pull requests: tests first, then the parser','Yesterday','#128']],
+runs:[['run_8f2a','running','Running','claude-code  Sonnet 5.5  18m','live'],['run_7c19','failed','Verification failed','codex  GPT-5 Codex  12m','keep','Nov 8'],['run_6b02','stopped','Stopped','claude-code  Opus 5.5  4m','archived'],['run_5a11','merged','Merged #128','claude-code  Sonnet 5.5  26m','cleaned']],
+needs:{conflict:[['ORB-35','Error message for expired pairing tokens','5 min ago','claude-code','Conflicts with main; the agent couldn’t resolve them: the two sides want different token lifetimes','apps/server/src/runners/pairing.ts, apps/web/src/i18n/zh-TW.ts']],perm:[['ORB-42','Fix line-ending tests on Windows','Just now','claude-code','Read a file outside the worktree','C:\\Users\\kash\\.gitconfig']],verify:[['ORB-38','Prorated invoices','3 min ago','codex','pnpm test failed 3 times in a row','invoice.test.ts:42 expected 1280 received 1279'],['ORB-51','CSV export encoding','12 min ago','claude-code','Browser check failed 3 times in a row','“Export” button not found']],plan:[['ORB-47','Switch notifications to push','25 min ago','claude-code','5-step plan awaiting approval','plan.md']],review:[['ORB-36','Long path support on runners','1 hr ago','codex','Verification 4/4 passed','+182 −40']]},
+audit:[['10:42','kashionz','perm','Allowed permission for this session','run_8f2a','ORB'],['10:12','kashionz','perm','Auto-allowed: read a file outside the worktree (Allow all)','run_7c11','ORB'],['10:31','mei-lin','gate','Approved review gate','ORB-36','ORB'],['09:58','chen-yu','run','Archived worktree','run_6b02','ORB'],['09:40','mei-lin','member','Invited member','ops@example.com','Team'],['Yest. 18:12','kashionz','settings','Renamed project','Orbis → Orbis App','ORB'],['Yest. 17:03','chen-yu','run','Stopped run','run_6b02','ORB'],['Yest. 15:20','kashionz','settings','Renamed team','Kash Studio','Team']],
+notif:[['perm','Permission requests',[1,1,0,1]],['plan','Plan gates',[1,1,0,0]],['review','Review gates',[1,1,1,1]],['verify','Verification keeps failing',[1,1,1,0]],['done','Run finished',[1,0,0,0]],['merged','Pull request merged',[1,0,1,0]],['mention','Mentions',[1,1,1,0]]],
+ac:[['command','`pnpm test`'],['agent','Line-ending handling doesn’t affect macOS or Linux']]}};
+Object.assign(P,{clock:[['c',12,12,10],['p','M12 6v6l4 2']],zap:[['p','M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z']],grip:[['c',9,6,1],['c',15,6,1],['c',9,12,1],['c',15,12,1],['c',9,18,1],['c',15,18,1]],more:[['c',5,12,1],['c',12,12,1],['c',19,12,1]],x:[['p','M18 6 6 18'],['p','m6 6 12 12']],cal:[['r',3,4,18,18,2],['p','M16 2v4'],['p','M8 2v4'],['p','M3 10h18']],user:[['c',12,8,4],['p','M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2']],gauge:[['p','m12 14 4-4'],['p','M3.34 19a10 10 0 1 1 17.32 0']],cycle:[['p','M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8'],['p','M3 3v5h5'],['p','M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16'],['p','M16 16h5v5']],box:[['p','M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z'],['p','M3.3 7 12 12l8.7-5'],['p','M12 22V12']],tag:[['p','M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z'],['c',7.5,7.5,.5]],type:[['p','M4 7V4h16v3'],['p','M9 20h6'],['p','M12 4v16']],toggle:[['r',2,6,20,12,6],['c',8,12,2]]});
+function sIcon(g,c,s){s=s||14;const E=React.createElement;const k=[];
+  if(g==='backlog')k.push(E('circle',{key:1,cx:7,cy:7,r:5.5,stroke:c,strokeWidth:1.5,strokeDasharray:'2 2',fill:'none'}));
+  else if(g==='unstarted')k.push(E('circle',{key:1,cx:7,cy:7,r:5.5,stroke:c,strokeWidth:1.5,fill:'none'}));
+  else if(g==='started'){k.push(E('circle',{key:1,cx:7,cy:7,r:5.5,stroke:c,strokeWidth:1.5,fill:'none'}));k.push(E('path',{key:2,d:'M7 3.5a3.5 3.5 0 0 1 0 7z',fill:c}));}
+  else if(g==='completed'){k.push(E('circle',{key:1,cx:7,cy:7,r:6,fill:c}));k.push(E('path',{key:2,d:'m4.5 7 1.8 1.8L9.6 5.4',stroke:'var(--o16171a)',strokeWidth:1.5,fill:'none',strokeLinecap:'round',strokeLinejoin:'round'}));}
+  else {k.push(E('circle',{key:1,cx:7,cy:7,r:6,fill:c}));k.push(E('path',{key:2,d:'M5 5l4 4M9 5l-4 4',stroke:'var(--o16171a)',strokeWidth:1.5,strokeLinecap:'round'}));}
+  return E('svg',{width:s,height:s,viewBox:'0 0 14 14','aria-hidden':true},k);}
+function pIcon(l){const E=React.createElement;
+  if(l==='urgent')return E('svg',{width:14,height:14,viewBox:'0 0 14 14','aria-hidden':true},[E('rect',{key:1,x:1,y:1,width:12,height:12,rx:3,fill:'var(--oef6b62)'}),E('path',{key:2,d:'M7 4v3.5M7 10h.01',stroke:'var(--o16171a)',strokeWidth:1.6,strokeLinecap:'round'})]);
+  const n={high:3,medium:2,low:1,none:0}[l]||0;
+  return E('svg',{width:14,height:14,viewBox:'0 0 14 14','aria-hidden':true},[[2,8,3],[6,5,6],[10,2,9]].map((b,i)=>E('rect',{key:i,x:b[0],y:b[1]+2,width:2.5,height:b[2],rx:1,fill:i<n?'var(--oe8e9eb)':'var(--o3d4047)',opacity:l==='none'?0.6:1})));}
+const SG=['backlog','unstarted','started','completed','cancelled'];
+const SWATCH=['var(--o4c5058)','var(--o8b9098)','var(--od9a845)','var(--o7fb0fa)','var(--o4fb86a)','var(--oef6b62)'];
+const STATES0={backlog:[['s1',12,0]],unstarted:[['s2',11,1]],started:[['s4',7,2]],completed:[['s6',41,4]],cancelled:[['s7',5,5]]};
+const STAGES=['planning','plan_gate','running','verifying','review_gate','pr'];
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const dfmt=(lang,d)=>!d?'':(lang==='en'?MON[d[0]-1]+' '+d[1]:d[0]+'/'+d[1]);
+const TASKS2=[['ORB-42','s4','verifying','high',[10,28],3,'claude-code','kashionz'],['ORB-38','s4','review_gate','urgent',[10,26],5,'codex','mei-lin'],['ORB-47','s4','plan_gate','medium',[11,2],8,'claude-code','chen-yu'],['ORB-51','s4','running','medium',null,2,'claude-code','kashionz'],['ORB-36','s4','pr','high',[10,25],3,'codex','chen-yu'],['ORB-45','s2',null,'low',[11,8],2,'','mei-lin'],['ORB-53','s1',null,'none',null,0,'',''],['ORB-30','s6',null,'medium',[10,18],3,'','kashionz']];
+const T2={
+zh:{heads:{states:'狀態',props:'屬性',subtasks:'子任務與關係',board:'看板'},empty:{subtasks:'沒有子任務',board:'沒有任務'},emptyAct:{subtasks:'新增子任務',board:'新增任務'},
+groupL:{backlog:'待辦',unstarted:'未開始',started:'進行中',completed:'已完成',cancelled:'已取消'},stateN:{s1:'待辦',s2:'就緒',s4:'進行中',s6:'完成',s7:'已取消'},
+stageL:{planning:'規劃',plan_gate:'計畫關卡',running:'執行中',verifying:'驗收中',review_gate:'審查關卡',pr:'合併請求'},noStage:'沒有代理階段',
+addState:'新增狀態',stateName:'狀態名稱',color:'顏色',def:'預設',setDef:'設為預設',rename:'重新命名',del:'刪除',delDefTip:'預設狀態不能刪除',moreAct:'更多動作',taskCount:'任務數',moveTo:'{n} 個任務要移到',moveDel:'移動並刪除',
+priL:{urgent:'緊急',high:'高',medium:'中',low:'低',none:'無'},
+f:{state:'狀態',stage:'代理階段',priority:'優先度',assignee:'負責人',start:'開始日',due:'截止日',estimate:'估計',type:'類型',cust:'影響客戶',migr:'需要遷移'},
+unset:'未設定',pts:'{n} 點',dates:[['today','今天'],['tomorrow','明天'],['mon','下週一'],['clear','清除']],types:['功能','錯誤','雜項'],yes:'是',no:'否',stageTip:'由最新一次執行決定',
+subtasks:'子任務',subPh:'子任務標題',addSub:'新增子任務',relations:'關係',relL:{blockedBy:'被封鎖',blocks:'封鎖',related:'相關',duplicate:'重複'},addRel:'新增關係',removeRel:'移除關係',searchTask:'搜尋任務',noMatch:'沒有符合的任務',
+layout:[['list','列表'],['cols','分欄']],groupBy:[['state','依狀態'],['stage','依代理階段']],
+titles:{'ORB-42':'修正 Windows 上的換行測試','ORB-38':'發票按比例計算','ORB-47':'通知改成推送','ORB-51':'匯出 CSV 的編碼','ORB-36':'執行器長路徑支援','ORB-45':'看板拖曳排序','ORB-53':'通知中心分組','ORB-30':'登入頁改版','ORB-40':'換行設定文件','ORB-55':'建立 Windows 重現測試','ORB-56':'讀檔時正規化換行','ORB-57':'更新 invoice.test.ts 期望值','ORB-58':'補上 macOS 與 Linux 測試'}},
+en:{heads:{states:'States',props:'Properties',subtasks:'Sub-tasks and relations',board:'Board'},empty:{subtasks:'No sub-tasks',board:'No tasks'},emptyAct:{subtasks:'Add sub-task',board:'New task'},
+groupL:{backlog:'Backlog',unstarted:'Unstarted',started:'Started',completed:'Completed',cancelled:'Cancelled'},stateN:{s1:'Backlog',s2:'Ready',s4:'In progress',s6:'Done',s7:'Cancelled'},
+stageL:{planning:'Planning',plan_gate:'Plan gate',running:'Running',verifying:'Verifying',review_gate:'Review gate',pr:'Pull request'},noStage:'No agent stage',
+addState:'Add state',stateName:'State name',color:'Color',def:'Default',setDef:'Set as default',rename:'Rename',del:'Delete',delDefTip:'The default state can’t be deleted',moreAct:'More actions',taskCount:'Tasks',moveTo:'Move {n} tasks to',moveDel:'Move and delete',
+priL:{urgent:'Urgent',high:'High',medium:'Medium',low:'Low',none:'None'},
+f:{state:'State',stage:'Agent stage',priority:'Priority',assignee:'Assignee',start:'Start date',due:'Due date',estimate:'Estimate',type:'Type',cust:'Affected customers',migr:'Needs migration'},
+unset:'Not set',pts:'{n} pts',dates:[['today','Today'],['tomorrow','Tomorrow'],['mon','Next Monday'],['clear','Clear']],types:['Feature','Bug','Chore'],yes:'Yes',no:'No',stageTip:'Set by the latest run',
+subtasks:'Sub-tasks',subPh:'Sub-task title',addSub:'Add sub-task',relations:'Relations',relL:{blockedBy:'Blocked by',blocks:'Blocks',related:'Related',duplicate:'Duplicate of'},addRel:'Add relation',removeRel:'Remove relation',searchTask:'Search tasks',noMatch:'No matching tasks',
+layout:[['list','List'],['cols','Columns']],groupBy:[['state','By state'],['stage','By agent stage']],
+titles:{'ORB-42':'Fix line-ending tests on Windows','ORB-38':'Prorated invoices','ORB-47':'Switch notifications to push','ORB-51':'CSV export encoding','ORB-36':'Long path support on runners','ORB-45':'Drag to reorder on the board','ORB-53':'Group notifications in the inbox','ORB-30':'Login page refresh','ORB-40':'Line-ending settings doc','ORB-55':'Add a Windows repro test','ORB-56':'Normalize line endings on read','ORB-57':'Update invoice.test.ts expectations','ORB-58':'Add macOS and Linux tests'}}};
+const AVC={kashionz:['K','var(--o3a3e46)'],'mei-lin':['M','var(--o4a3e52)'],'chen-yu':['C','var(--o3b4d45)']};
+const LOGO=a=>'assets/agents/'+a+'.svg';
+const ST=['normal','empty','loading','error','readonly','narrow'];
+const fmt=(s,o)=>s.replace(/\{(\w+)\}/g,(m,k)=>o[k]);
+class Component extends DCLogic {
+  state={dlg:null,tp:null,slackT:null,st:null,detail:false,perm:null,ruleOpen:false,scope:'file',nres:{},retryFor:null,retryText:'',nf:'all',arc:{},confirm:null,repoCmd:true,acCmd:'',notif:null,slack:'https://hooks.slack.com/services/T04Q…/B07M…',dnd:true,from:'22:00',to:'08:00',weekend:true,af:null,fv:{member:'all',action:'all',project:'all',time:'d7'},blob:'180',wtDays:'14',toast:''};
+  flash(m){clearTimeout(this._t);this.setState({toast:m});this._t=setTimeout(()=>this.setState({toast:''}),1800);}
+  componentDidMount(){if(!window.__orbisAF){window.__orbisAF=new MutationObserver(ms=>{for(const mu of ms)for(const n of mu.addedNodes){if(n.nodeType!==1)continue;const el=n.matches&&n.matches('input[autofocus],textarea[autofocus]')?n:n.querySelector&&n.querySelector('input[autofocus],textarea[autofocus]');if(el&&!el.closest('[role=dialog]')){setTimeout(()=>el.focus(),0);return;}}});window.__orbisAF.observe(document.body,{childList:true,subtree:true});}}
+  componentWillUnmount(){clearTimeout(this._t);}
+  dlg(k,x){this.setState({dlg:{k,x:x||{},n:Date.now()},stMenu:null,pp:null});}
+  seg(opts,cur,set){return opts.map(([v,label])=>({label,bg:v===cur?'var(--o2a2d33)':'transparent',color:v===cur?'var(--oe8e9eb)':'var(--o8b9098)',on:()=>set(v)}));}
+  renderVals(){
+    const s=this.state,p=this.props,lang=p.lang==='en'?'en':'zh',t0=T[lang],t2=T2[lang],t=Object.assign({},t0,t2,{heads:Object.assign({},t0.heads,t2.heads),empty:Object.assign({},t0.empty,t2.empty),emptyAct:Object.assign({},t0.emptyAct,t2.emptyAct)}),D=DATA[lang];
+    const screen=p.screen||'needs',embed=p.embed||'page';
+    const st=s.st||p.state||'normal';
+    const ro=st==='readonly',narrow=st==='narrow';
+    const isAdmin=p.admin!==false&&!ro;
+    const adminScreen=screen==='audit';
+    const emptyBody=['notif','props'].indexOf(screen)>=0;
+    const isLoading=st==='loading',isError=st==='error';
+    const isEmpty=st==='empty'&&!emptyBody;
+    const isAdminLock=ro&&adminScreen;
+    const body=!isLoading&&!isError&&!isEmpty&&!isAdminLock;
+    const ic={};Object.keys(P).forEach(k=>ic[k]=icn(k,14));
+    const pad={page:'28px 28px 48px',settings:'0',panel:'0',canvas:'20px'}[embed]||'0';
+    const out={t,ic,ro,isAdmin,roOp:ro?0.45:1,roTip:ro?t.roTip:'',
+      bg:embed==='page'||embed==='canvas'?'var(--o16171a)':'transparent',
+      bar:p.bar!==false,barPad:embed==='page'?'12px 28px 0':embed==='canvas'?'12px 20px 0':'0 0 14px',
+      states:ST.map((k,i)=>({label:t.states[i],bg:k===st?'var(--o2a2d33)':'transparent',color:k===st?'var(--oe8e9eb)':'var(--o8b9098)',on:()=>this.setState({st:k})})),
+      maxW:narrow?'380px':(embed==='page'?'860px':'100%'),pad:narrow&&embed!=='page'&&embed!=='canvas'?'16px':pad,frame:narrow?'1px dashed var(--o34373d)':'none',
+      hasHead:screen!=='perm'&&!p.nohead,head:t.heads[screen],hFs:embed==='panel'?'13px':'16px',headMeta:'',
+      hNotes:screen==='notes'&&body,hAc:screen==='ac'&&!isLoading,hAudit:screen==='audit'&&!isAdminLock,
+      isLoading,isError,isEmpty,isAdminLock,toNormal:()=>this.setState({st:'normal'}),
+      skel:[{w:'62%'},{w:'48%'},{w:'71%'},{w:'40%'},{w:'56%'}],
+      emptyText:t.empty[screen]||'',emptyHasAct:!!t.emptyAct[screen],emptyAct:t.emptyAct[screen]||'',
+      emptyIc:screen==='needs'?icn('check',12):icn('dot',12),emptyIcBg:screen==='needs'?'var(--tint-success, rgba(79,184,106,.1))':'var(--o1c1e22)',emptyIcColor:screen==='needs'?'var(--o4fb86a)':'var(--o8b9098)',
+      bPerm:body&&screen==='perm',bNeeds:body&&screen==='needs',bNotes:body&&screen==='notes',bRuns:body&&screen==='runs',bAc:body&&screen==='ac',bNotif:body&&screen==='notif',bAudit:body&&screen==='audit',
+      indent:narrow?'0':'66px',indentS:narrow?'0':'28px',keyW:narrow?'0':'56px',
+      toast:s.toast};
+    const primary=(on)=>({bg:'var(--tint-allow, rgba(90,156,248,.16))',color:'var(--o9cc3ff)',on});
+    const second=(on)=>({bg:'var(--o22242a)',color:'var(--oe8e9eb)',on});
+    const dangerB=(on)=>({bg:'transparent',color:'var(--oef6b62)',on});
+    // perm
+    const resPerm=(k)=>{this.setState({perm:k});};
+    Object.assign(out,{detailOpen:s.detail,detailRot:s.detail?'rotate(90deg)':'none',togDetail:()=>this.setState({detail:!s.detail}),
+      permPending:!s.perm,permDone:!!s.perm,permResLabel:t[s.perm]||'',resetPerm:()=>this.setState({perm:null}),
+      permOpts:[Object.assign({label:t.once,tip:''},primary(()=>resPerm('once'))),Object.assign({label:t.run,tip:t.runTip},second(()=>resPerm('run'))),Object.assign({label:t.deny,tip:''},dangerB(()=>resPerm('deny')))]});
+    // needs
+    const G={conflict:['git','var(--oef6b62)'],perm:['shield','var(--od9a845)'],verify:['alert','var(--oef6b62)'],plan:['listChecks','var(--o8b9098)'],review:['fileDiff','var(--o8b9098)']};
+    let nCount=0;
+    const SKN=lang==='en'?[['v4','windows-path-fix','30 min ago','','mei-lin uploaded a new version with scripts','sha256:9f2c…a41e']]:[['v4','windows-path-fix','30 分鐘前','','mei-lin 上傳新版本，含腳本','sha256:9f2c…a41e']];G.skill=['zap','var(--o8b9098)'];
+    out.needGroups=['conflict','perm','verify','plan','review'].map(g=>{const rows=(g==='skill'?SKN:D.needs[g]).map(r=>{const id=r[0];const res=s.nres[id];nCount+=res?0:1;
+      const setRes=(k)=>{this.setState({nres:Object.assign({},s.nres,{[id]:k}),retryFor:null,retryText:''});};
+      let acts=[];
+      const mk=(label,icon,sty,on)=>Object.assign({label,icon:icon?icn(icon,13):null,tip:ro?t.roTip:'',dis:ro,op:ro?0.45:1},sty(on));
+      if(g==='perm')acts=[mk(t.once,null,primary,()=>setRes('once')),mk(t.run,null,second,()=>setRes('run')),mk(t.deny,null,dangerB,()=>setRes('deny'))];
+      else if(g==='conflict')acts=[mk(t.retryWith,'msg',primary,()=>this.setState({retryFor:s.retryFor===id?null:id,retryText:''})),mk(t.abort,'stop',dangerB,()=>setRes('abortMerge'))];
+      else if(g==='verify')acts=[mk(t.retryWith,'msg',primary,()=>this.setState({retryFor:s.retryFor===id?null:id,retryText:''})),mk(t.skip,'skip',second,()=>setRes('skip')),mk(t.abort,'stop',dangerB,()=>setRes('abort'))];
+      else acts=[Object.assign(mk(t.go,'chev',second,()=>{if(p.onTask)p.onTask(id);else this.flash(t.go+' '+id);}),{dis:false,op:1,tip:''})];
+      return {key:id,title:r[1],time:r[2],logo:r[3]?LOGO(r[3]):'',hasLogo:!!r[3],hasIc:!r[3],ic:icn('zap',14),summary:r[4],detail:r[5],acts,showActs:!res&&s.retryFor!==id,retryOpen:s.retryFor===id&&!res,
+        cancelRetry:()=>this.setState({retryFor:null}),sendRetry:()=>{if(s.retryText.trim())setRes('retry');},done:!!res,doneLabel:res?(t.doneL[res]||{approve:lang==='en'?'Approved v4':'已核准 v4',reject:lang==='en'?'Returned v4':'已退回 v4'}[res]):''};});
+      return {label:t.groups[g]||(lang==='en'?'Skill approvals':'技能核准'),icon:icn(G[g][0],14),color:G[g][1],count:String(rows.length),rows};});
+    Object.assign(out,{retryText:s.retryText,onRetryText:e=>this.setState({retryText:e.target.value}),retryEmpty:!s.retryText.trim(),retryOp:s.retryText.trim()?1:0.45});
+    if(screen==='needs'&&body)out.headMeta=fmt(t.meta.needs,{n:nCount});
+    // notes
+    const NC={progress:['dot','var(--o8b9098)'],decision:['flag','var(--o7fb0fa)'],fix:['wrench','var(--od9a845)']};
+    const nl=D.notes.filter(n=>s.nf==='all'||n[0]===s.nf);
+    out.noteFilters=this.seg([['all',t.nf.all],['decision',t.nf.decision],['fix',t.nf.fix]],s.nf,v=>this.setState({nf:v}));
+    out.notes=nl.map((n,i)=>({icon:icn(NC[n[0]][0],12),color:NC[n[0]][1],kind:n[0]==='fix'?fmt(t.nk.fix,{n:n[4]}):t.nk[n[0]],at:n[2],text:n[1],link:n[3],linkIc:icn(n[3][0]==='#'?'pr':'link',12),tip:n[3][0]==='#'?t.openPr:t.openRun,on:()=>{},line:i===nl.length-1?'none':'block'}));
+    if(screen==='notes'&&body)out.headMeta=fmt(t.meta.notes,{n:nl.length});
+    // runs
+    const RD={running:'var(--o7fb0fa)',failed:'var(--oef6b62)',stopped:'var(--o8b9098)',merged:'var(--o4fb86a)'};
+    out.runs=D.runs.map(r=>{const id=r[0];const wt=s.arc[id]?'archived':r[4];
+      return {id,dot:RD[r[1]],status:r[2],stColor:r[1]==='running'?'var(--oe8e9eb)':RD[r[1]]==='var(--o8b9098)'?'var(--o8b9098)':'var(--oe8e9eb)',meta:r[3],
+        wtLabel:fmt(t.wt[wt],{d:r[5]||''}),wtIcon:icn(wt==='archived'?'archive':'folder',13),wtColor:wt==='keep'?'var(--od9a845)':(wt==='live'?'var(--oe8e9eb)':'var(--o8b9098)'),
+        canArchive:wt==='keep'&&!ro&&s.confirm!==id,confirm:s.confirm===id,askArc:()=>this.dlg('archiveWt',{run:id,after:()=>this.setState({arc:Object.assign({},this.state.arc,{[id]:1})})}),cancelArc:()=>this.setState({confirm:null}),
+        doArc:()=>{this.setState({arc:Object.assign({},s.arc,{[id]:1}),confirm:null});this.flash(t.arcDone);}};});
+    if(screen==='runs'&&body)out.headMeta=fmt(t.meta.runs,{n:D.runs.length});
+    // ac
+    const cmdEmpty=!s.acCmd.trim();
+    Object.assign(out,{repoOpts:[['yes','pnpm -w test',true],['no',t.none,false]].map(([v,label,mono])=>{const a=(v==='yes')===s.repoCmd;return {label,font:mono?"'JetBrains Mono',ui-monospace,Consolas,monospace":'inherit',bg:a?'var(--o2a2d33)':'transparent',color:a?'var(--oe8e9eb)':'var(--o8b9098)',on:()=>this.setState({repoCmd:v==='yes'})};}),
+      acRows:D.ac.map(a=>({desc:a[1],kind:t.kinds[a[0]],isCmd:false})),projLine:s.repoCmd?(lang==='en'?'Every verification first runs the project’s verify command:':'每次驗收都會先跑專案的驗收指令：'):(lang==='en'?'This project has no verify commands. With no criteria either, the run goes straight to review.':'這個專案沒有驗收指令；沒有條件時會直接進入審查。'),hasProjCmd:!!s.repoCmd,acCmd:s.acCmd,onAcCmd:e=>this.setState({acCmd:e.target.value}),
+      cmdPh:s.repoCmd?'pnpm -w test':t.cmdPh,showInherit:s.repoCmd&&cmdEmpty,showRequired:!s.repoCmd&&cmdEmpty&&!ro,cmdBorder:!s.repoCmd&&cmdEmpty&&!ro?'var(--oef6b62)':'var(--o26292e)'});
+    // notif
+    const deskOn=s.desk!==undefined?s.desk:true;
+    Object.assign(out,{deskOn:String(deskOn),deskBg:deskOn?'var(--o7fb0fa)':'var(--o3d4047)',deskKnob:deskOn?'14px':'2px',togDesk:()=>{if(!ro)this.setState({desk:!deskOn});}});
+    // audit
+    const members=['kashionz','mei-lin','chen-yu'];
+    const FO={member:[['all',t.all]].concat(members.map(m=>[m,m])),action:[['all',t.all]].concat(Object.keys(t.cats).map(k=>[k,t.cats[k]])),project:[['all',t.all],['ORB','ORB'],['team',t.team]],time:[['today',t.times.today],['d7',t.times.d7],['d30',t.times.d30]]};
+    out.auditFilters=['member','action','project','time'].map(k=>{const cur=s.fv[k];return {label:t.fl[k],value:(FO[k].find(o=>o[0]===cur)||[])[1],open:s.af===k,bg:s.af===k||cur!=='all'&&k!=='time'?'var(--o24262b)':'var(--o1c1e22)',toggle:()=>this.setState({af:s.af===k?null:k}),
+      opts:FO[k].map(([v,label])=>({label,sel:v===cur,bg:v===cur?'var(--tint-accent-12, rgba(127,176,250,.12))':'transparent',check:v===cur?icn('check',14):null,on:()=>this.setState({fv:Object.assign({},s.fv,{[k]:v}),af:null})}))};});
+    const rows=D.audit.filter(r=>(s.fv.member==='all'||r[1]===s.fv.member)&&(s.fv.action==='all'||r[2]===s.fv.action)&&(s.fv.project==='all'||(s.fv.project==='ORB'?r[5]==='ORB':r[5]!=='ORB')));
+    out.auditRows=rows.map(r=>({time:r[0],who:r[1],init:AVC[r[1]][0],avBg:AVC[r[1]][1],action:r[3],target:r[4],project:r[5]}));
+    out.auditCols=narrow?'64px minmax(0,1fr)':'88px minmax(0,1fr)';
+    out.auditCount=fmt(t.count,{a:rows.length,b:214});
+    out.doExport=()=>this.dlg('auditExport');
+    if(screen==='audit'&&body&&rows.length===0){out.bAudit=true;}
+    this.pm(out,t,lang,{ro,narrow,body,screen,st});
+    const dd=s.dlg||{};Object.assign(out,{lang,dlgOpen:!!s.dlg,dlgK:dd.k||'',dlgX:dd.x||{},dlgN:dd.n||0,dlgSt:st,dlgClose:()=>this.setState({dlg:null}),dlgFlash:m=>this.flash(m)});
+    {const DS=lang==='en'?{notif:'Notifications always appear in the in-app notification center. Choose whether they also pop up on your desktop.',audit:'Important actions by members and agents, such as permission replies and auto-allowed actions, passing reviews and changing projects. Only owners can see this; export it as CSV.'}:{notif:'通知一律顯示在 App 內的通知中心，這裡決定要不要同時在桌面跳出。',audit:'成員與代理做過的重要操作，例如權限請求的回覆與自動允許、通過審查、變更專案。只有擁有者看得到，可以匯出成 CSV。'};out.desc=DS[screen]||'';out.hasDesc=!!out.desc&&!!out.hasHead;}out.ic.clock=icn('clock',12);out.ic.chev=icn('chevD',12)||icn('chev',12);out.t=Object.assign({},out.t,lang==='en'?{editDlg:'Edit…',deskN:'Desktop notifications',deskNSub:'Plan gates, review gates and stopped runs pop up on your desktop.'}:{editDlg:'編輯…',deskN:'桌面通知',deskNSub:'計畫關卡、審查關卡與停下來的執行會在桌面跳出通知。'});
+    return out;
+  }
+  pm(out,t,lang,c){
+    const s=this.state,p=this.props,{ro,narrow,body,screen,st}=c;
+    const seg=(opts,cur,set)=>this.seg(opts,cur,set);
+    const sts=s.sts||Object.fromEntries(SG.map(g=>[g,STATES0[g].map(([id,n,ci],i)=>({id,name:t.stateN[id],n,color:SWATCH[ci],def:i===0}))]));
+    const all=[].concat(...SG.map(g=>sts[g].map(x=>Object.assign({g},x))));
+    const byId=id=>all.find(x=>x.id===id)||{g:'unstarted',name:'',color:SWATCH[1]};
+    const setSts=(fn)=>{const n=Object.fromEntries(SG.map(g=>[g,sts[g].map(x=>Object.assign({},x))]));fn(n);this.setState({sts:n});};
+    const avatar=(who,agent)=>{const isAgent=!!agent;const a=AVC[who];return {isAgent,logo:agent?LOGO(agent):'',isUser:!isAgent&&!!a,noOne:!isAgent&&!a,who:agent||who||'',init:a?a[0]:'',avBg:a?a[1]:'transparent'};};
+    out.hBoard=screen==='board'&&!c.st.startsWith('load');out.dragOp=ro?0:1;
+    // 11. properties
+    const emptyP=st==='empty';
+    const pv=Object.assign({state:emptyP?'s2':'s4',priority:emptyP?'none':'high',assignee:emptyP?'':'kashionz',start:emptyP?null:[10,21],due:emptyP?null:[10,28],},s.pv||{});
+    const setPv=(k,v)=>this.setState({pv:Object.assign({},pv,{[k]:v}),pp:null});
+    const opt=(label,sel,on,icon,icColor)=>({label,sel,on,icon:icon||null,icColor:icColor||'var(--o8b9098)',bg:sel?'var(--tint-accent-12, rgba(127,176,250,.12))':'transparent',check:sel?icn('check',14):null});
+    const st0=byId(pv.state);
+    const dval=k=>pv[k]?dfmt(lang,pv[k]):t.unset;
+    const DQ={today:[10,25],tomorrow:[10,26],mon:[10,27],clear:null};
+    const F=[
+      ['state',sIcon(st0.g,st0.color),st0.name,all.map(o=>opt(o.name,o.id===pv.state,()=>setPv('state',o.id),sIcon(o.g,o.color),o.color)),st0.color],
+      emptyP?null:['stage',React.createElement('img',{src:LOGO('claude-code'),width:14,height:14,alt:'',style:{borderRadius:'50%'}}),t.stageL.verifying,null,null,true],
+      ['priority',pIcon(pv.priority),t.priL[pv.priority],['urgent','high','medium','low','none'].map(l=>opt(t.priL[l],l===pv.priority,()=>setPv('priority',l),pIcon(l)))],
+      ['assignee',pv.assignee?React.createElement('span',{style:{width:18,height:18,borderRadius:'50%',background:AVC[pv.assignee][1],display:'grid',placeItems:'center',fontSize:10}},AVC[pv.assignee][0]):icn('user',14),pv.assignee||t.unset,['kashionz','mei-lin','chen-yu'].map(m=>opt(m,m===pv.assignee,()=>setPv('assignee',m))).concat([opt(t.unset,!pv.assignee,()=>setPv('assignee',''))])],
+      ['start',icn('cal',14),dval('start'),t.dates.map(([k,l])=>opt(l,false,()=>setPv('start',DQ[k])))],
+      ['due',icn('cal',14),dval('due'),t.dates.map(([k,l])=>opt(l,false,()=>setPv('due',DQ[k])))],
+    ].filter(Boolean);
+    out.propCols=narrow?'92px minmax(0,1fr)':'120px minmax(0,1fr)';
+    const calOf=k=>{const m=s.pcm||(pv[k]?pv[k][0]:10);const FIRST={9:1,10:3,11:6,12:1},LEN={9:30,10:31,11:30,12:31};const MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];const ds=[];for(let i=0;i<FIRST[m];i++)ds.push(0);for(let i=1;i<=LEN[m];i++)ds.push(i);
+      return {title:lang==='en'?MO[m-1]+' 2026':'2026 年 '+m+' 月',prevL:lang==='en'?'Previous month':'上個月',nextL:lang==='en'?'Next month':'下個月',prev:()=>this.setState({pcm:Math.max(9,m-1)}),next:()=>this.setState({pcm:Math.min(12,m+1)}),wk:lang==='en'?['M','T','W','T','F','S','S']:['一','二','三','四','五','六','日'],
+        days:ds.map(n=>{const sel=pv[k]&&pv[k][0]===m&&pv[k][1]===n;const today=m===10&&n===25;const bad=k==='due'&&pv.start&&n&&(m*100+n)<(pv.start[0]*100+pv.start[1]);return {n:n||'',vis:n?'visible':'hidden',aria:dfmt(lang,[m,n]),bg:sel?'var(--o7fb0fa)':'transparent',color:sel?'var(--obtnfg)':(bad?'var(--o4c5058)':(today?'var(--o7fb0fa)':'var(--oe8e9eb)')),fw:sel||today?550:400,on:()=>{if(!n||bad)return;this.setState({pcm:null});setPv(k,[m,n]);}};})};};
+    out.propRows=F.map(([k,icon,value,opts,icColor,isStage])=>{const unset=value===t.unset;const isOpen=s.pp===k&&!!opts;
+      return {label:t.f[k],icon,value,icColor:icColor||'var(--o8b9098)',color:unset?'var(--o8b9098)':'var(--oe8e9eb)',opts:opts||[],isOpen,popup:opts?'listbox':'false',live:!!isStage,tip:isStage?t.stageTip:(ro?t.roTip:''),
+        dis:ro||!opts,cursor:opts&&!ro?'pointer':'default',bg:isOpen?'var(--o1c1e22)':'transparent',hoverBg:opts&&!ro?'var(--o1c1e22)':'transparent',open:()=>this.setState({pp:isOpen?null:k,pcm:null}),hasCal:k==='start'||k==='due',cal:(k==='start'||k==='due')?calOf(k):{wk:[],days:[]}};});
+    // 12. sub-tasks and relations
+    const subs=s.subs||[['ORB-55','s6','','kashionz'],['ORB-56','s6','','kashionz'],['ORB-57','s4','verifying','','claude-code'],['ORB-58','s2','','']].map(a=>({key:a[0],state:a[1],stage:a[2],who:a[3],agent:a[4]||'',title:t.titles[a[0]]}));
+    const doneN=subs.filter(x=>byId(x.state).g==='completed').length;
+    out.subProg=doneN+' / '+subs.length;out.subPct=(subs.length?Math.round(doneN/subs.length*100):0)+'%';
+    out.subs=subs.map((x,i)=>{const so=byId(x.state);const done=so.g==='completed';return Object.assign({key:x.key,title:x.title,icon:sIcon(so.g,so.color),color:so.color,stateLabel:so.name,titleColor:done?'var(--o8b9098)':'var(--oe8e9eb)',hasStage:!!x.stage,stage:x.stage?t.stageL[x.stage]:'',
+      toggle:()=>{const n=subs.map(o=>Object.assign({},o));n[i].state=done?'s2':'s6';n[i].stage='';this.setState({subs:n});}},avatar(x.who,x.agent));});
+    out.subAdding=!!s.subAdd&&!ro;out.subNotAdding=!out.subAdding;out.newSubIcon=sIcon('unstarted',SWATCH[1]);out.subName=s.subName||'';
+    out.startSub=()=>this.setState({subAdd:true,subName:''});out.onSubName=e=>this.setState({subName:e.target.value});
+    const addSub=()=>{const nm=(s.subName||'').trim();if(nm){const n=subs.concat([{key:'ORB-'+(59+subs.length-4),state:'s2',stage:'',who:'',agent:'',title:nm}]);this.setState({subs:n,subName:''});}else this.setState({subAdd:false});};
+    out.subKey=e=>{if(e.key==='Enter')addSub();if(e.key==='Escape')this.setState({subAdd:false});};out.subBlur=()=>{if(!(s.subName||'').trim())this.setState({subAdd:false});};
+    const rels=s.rels||[['blockedBy','ORB-40','s6'],['blocks','ORB-45','s2'],['related','ORB-51','s4']];
+    out.relGroups=['blockedBy','blocks','related','duplicate'].map(k=>({label:t.relL[k],rows:rels.filter(r=>r[0]===k).map(r=>{const so=byId(r[2]);return {key:r[1],title:t.titles[r[1]],icon:sIcon(so.g,so.color),color:so.color,remove:()=>this.setState({rels:rels.filter(x=>x!==r)})};})})).filter(g=>g.rows.length);
+    out.relOpen=!!s.relOpen&&!ro;out.relClosed=!out.relOpen;out.openRel=()=>this.dlg('relation',{has:rels.map(r=>[r[0],r[1]]),after:v=>{const so=(TASKS2.find(x=>x[0]===v.task)||[v.task,'s2'])[1];this.setState({rels:rels.concat([[v.kind,v.task,so]])});}});out.closeRel=()=>this.setState({relOpen:false});
+    out.relTypes=seg(['blockedBy','blocks','related','duplicate'].map(k=>[k,t.relL[k]]),s.relType||'related',v=>this.setState({relType:v}));
+    out.relQ=s.relQ||'';out.onRelQ=e=>this.setState({relQ:e.target.value});
+    const q=(s.relQ||'').toLowerCase();
+    const cands=TASKS2.filter(x=>x[0]!=='ORB-42'&&!rels.some(r=>r[1]===x[0])&&(!q||x[0].toLowerCase().indexOf(q)>=0||t.titles[x[0]].toLowerCase().indexOf(q)>=0)).slice(0,5);
+    out.relCands=cands.map(x=>{const so=byId(x[1]);return {key:x[0],title:t.titles[x[0]],icon:sIcon(so.g,so.color),color:so.color,on:()=>this.setState({rels:rels.concat([[s.relType||'related',x[0],x[1]]]),relOpen:false})};});
+    out.relNoCand=!cands.length;
+    // 10/11. board with two layers
+    const layout=s.bLayout||p.layout||'list',gb=s.bGroup||p.group||'state';
+    out.layoutOpts=seg(t.layout,layout,v=>this.setState({bLayout:v}));out.groupOpts=seg(t.groupBy,gb,v=>this.setState({bGroup:v}));
+    const rowOf=x=>{const so=byId(x[1]);const late=x[4]&&(x[4][0]<10||(x[4][0]===10&&x[4][1]<25))&&so.g!=='completed';
+      const sec=gb==='state'?(x[2]?{secIcon:React.createElement('span',{style:{width:6,height:6,borderRadius:'50%',background:'var(--o7fb0fa)',display:'block'}}),secColor:'var(--o7fb0fa)',secLabel:t.stageL[x[2]]}:{secIcon:null,secColor:'',secLabel:''}):{secIcon:sIcon(so.g,so.color,12),secColor:so.color,secLabel:so.name};
+      return Object.assign({key:x[0],title:t.titles[x[0]],pri:pIcon(x[3]),priLabel:t.f.priority+' '+t.priL[x[3]],due:dfmt(lang,x[4]),dueColor:late?'var(--oef6b62)':'var(--o8b9098)',},sec,avatar(x[7],x[6]&&x[2]?x[6]:''));};
+    let groups;
+    if(gb==='state')groups=all.map(o=>({label:o.name,icon:sIcon(o.g,o.color),color:o.color,rows:TASKS2.filter(x=>x[1]===o.id).map(rowOf)})).filter(g=>g.rows.length);
+    else groups=STAGES.map(k=>({label:t.stageL[k],icon:React.createElement('span',{style:{width:7,height:7,borderRadius:'50%',background:'var(--o7fb0fa)',display:'block'}}),color:'',rows:TASKS2.filter(x=>x[2]===k).map(rowOf)})).filter(g=>g.rows.length).concat([{label:t.noStage,icon:React.createElement('span',{style:{width:7,height:7,borderRadius:'50%',border:'1px solid var(--o4c5058)',display:'block',boxSizing:'border-box'}}),color:'',rows:TASKS2.filter(x=>!x[2]).map(rowOf)}]);
+    out.bGroups=groups.map(g=>Object.assign(g,{count:String(g.rows.length)}));
+    out.bBoardList=body&&screen==='board'&&layout==='list';out.bBoardCols=body&&screen==='board'&&layout==='cols';
+    out.bCols=narrow?'14px 52px minmax(0,1fr) auto 18px':'14px 52px minmax(0,1fr) 120px 44px 18px';out.wideD=narrow?'none':'block';out.colWidth=narrow?'232px':'248px';
+    out.bProps=body&&screen==='props';out.bSub=body&&screen==='subtasks';
+  }
+}
+</script>
+</body>
+</html>

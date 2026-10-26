@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;background:#e9eaed;color:#1b1c1e}
+body{font-family:"Inter",system-ui,-apple-system,"Segoe UI","Microsoft JhengHei",sans-serif;font-size:13px;line-height:20px;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#2f6fd6;text-decoration:none}
+a:hover{text-decoration:underline}
+input::placeholder{color:var(--faint)}
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+</style>
+</helmet>
+<div style="padding:48px;display:flex;flex-direction:column;gap:56px;min-width:max-content">
+  <div style="display:flex;flex-direction:column;gap:4px">
+    <span style="font-size:20px;font-weight:600;letter-spacing:-0.01em">模型選擇器與思考深度</span>
+  </div>
+
+  
+  <section data-screen-label="思考深度 深色模式" style="color-scheme:dark;--bg:#16171a;--pop:#1c1d21;--line:#2a2c31;--fg:#e8e9eb;--mut:#8b9098;--faint:#5c6068;--hov:rgba(255,255,255,0.05);--hov2:#24262b;--sel:rgba(127,176,250,0.13);--acc:#7fb0fa;--pill:rgba(255,255,255,0.06);--pillfg:#a1a6ae;--sh:rgba(0,0,0,0.45);--sh2:rgba(0,0,0,0.3);--monoLogo:none;--tipbg:#e8e9eb;--tipfg:#16171a;display:flex;flex-direction:column;gap:16px">
+    <span style="font-size:14px;font-weight:600;color:#1b1c1e">思考深度　深色模式</span>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:nowrap">
+      <sc-for list="{{ depthDark }}" as="b" hint-placeholder-count="6">
+        <div style="display:flex;flex-direction:column;gap:10px;width:344px;flex:none">
+          <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:#8b9098">{{ b.num }}</span><span style="font-size:13px;font-weight:550;color:#1b1c1e">{{ b.label }}</span></div>
+          <div style="background:var(--bg);border-radius:12px;padding:20px;height:360px;overflow:hidden;color:var(--fg)">
+            <sc-if value="{{ b.isCtl }}">
+              <div style="display:flex;flex-direction:column;align-items:flex-start">
+                <div style="display:flex;align-items:center;gap:2px;position:relative">
+                  <button style="appearance:none;border:0;font:inherit;height:30px;display:inline-flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;background:transparent;color:var(--fg);cursor:pointer;min-width:0;transition:background-color 80ms ease-out" style-hover="background:var(--hov2)"><span style="display:flex;flex:none">{{ b.logo }}</span><span style="font-size:13px;font-weight:550;white-space:nowrap">{{ b.model }}</span><span style="font-size:12px;color:var(--mut);white-space:nowrap">{{ b.tool }}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate(0deg);transition:transform 160ms cubic-bezier(.2,.9,.3,1)"><path d="m6 9 6 6 6-6"></path></svg></button>
+                  <span style="width:1px;height:16px;background:var(--line);margin:0 4px;flex:none"></span>
+                  <button onClick="{{ b.onToggle }}" onMouseEnter="{{ b.onBtnEnter }}" onMouseLeave="{{ b.onBtnLeave }}" aria-haspopup="menu" aria-expanded="{{ b.openStr }}" aria-disabled="{{ b.disStr }}" aria-label="思考深度" style="appearance:none;border:0;font:inherit;height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;border-radius:6px;background:{{ b.btnBg }};color:{{ b.btnColor }};cursor:{{ b.cursor }};opacity:{{ b.btnOp }};transition:background-color 80ms ease-out,color 80ms ease-out">
+                    <span style="display:flex;color:{{ b.iconColor }}"><sc-if value="{{ b.cur.f0 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if><sc-if value="{{ b.cur.f1 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"></path></svg></sc-if><sc-if value="{{ b.cur.f2 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if></span>
+                    <span style="font-size:13px;white-space:nowrap">{{ b.cur.label }}</span>
+                    <sc-if value="{{ b.fixed }}"><span style="height:18px;padding:0 6px;border-radius:4px;background:var(--pill);color:var(--pillfg);font-size:11px;line-height:18px">固定</span></sc-if>
+                    <sc-if value="{{ b.adjustable }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate({{ b.rot }});transition:transform 160ms cubic-bezier(.2,.9,.3,1)"><path d="m6 9 6 6 6-6"></path></svg></sc-if>
+                  </button>
+                  <sc-if value="{{ b.showTip }}"><div role="tooltip" style="position:absolute;top:38px;right:0;white-space:nowrap;background:var(--tipbg);color:var(--tipfg);font-size:12px;line-height:18px;padding:5px 9px;border-radius:6px;box-shadow:0 4px 14px var(--sh)">{{ b.tip }}</div></sc-if>
+                </div>
+                <sc-if value="{{ b.open }}">
+                  <div role="menu" aria-label="思考深度" style="margin-top:6px;margin-left:{{ b.menuLeft }};width:288px;background:var(--pop);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px var(--sh),0 1px 2px var(--sh2);padding:4px">
+                    <div style="height:28px;display:flex;align-items:center;padding:2px 8px 0;font-size:11px;font-weight:550;color:var(--mut)">思考深度</div>
+                    <sc-for list="{{ b.opts }}" as="o">
+                      <div role="menuitemradio" aria-checked="{{ o.selStr }}" onMouseEnter="{{ o.onEnter }}" onMouseLeave="{{ o.onLeave }}" onClick="{{ o.onClick }}" style="min-height:44px;padding:6px 8px;border-radius:6px;display:flex;align-items:center;gap:10px;background:{{ o.bg }};cursor:pointer;transition:background-color 80ms ease-out">
+                        <span style="display:flex;color:{{ o.iconColor }};flex:none"><sc-if value="{{ o.f0 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if><sc-if value="{{ o.f1 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"></path></svg></sc-if><sc-if value="{{ o.f2 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if></span>
+                        <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                          <span style="font-size:13px;font-weight:{{ o.fw }}">{{ o.label }}</span>
+                          <span style="font-size:12px;line-height:16px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ o.desc }}</span>
+                        </span>
+                        <span style="width:16px;flex:none;display:flex;justify-content:center;color:var(--acc);opacity:{{ o.checkOp }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+            <sc-if value="{{ b.isMeta }}">
+              <div style="display:flex;flex-direction:column;gap:18px">
+                <sc-for list="{{ b.metas }}" as="m">
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <div style="display:flex;align-items:center;gap:8px"><span style="width:22px;height:22px;border-radius:50%;background:var(--pill);display:grid;place-items:center;flex:none">{{ m.logo }}</span><span style="font-size:13px;font-weight:550">{{ m.tool }}</span></div>
+                    <div style="padding-left:30px;font-size:13px;line-height:1.65;color:var(--fg);text-wrap:pretty">{{ m.text }}</div>
+                    <div style="padding-left:30px;display:flex;justify-content:flex-end;align-items:center;gap:10px;font-size:11px;color:var(--mut);white-space:nowrap">
+                      <span>{{ m.model }}</span>
+                      <span style="display:flex;align-items:center;gap:4px"><span style="display:flex"><sc-if value="{{ m.d.f0 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if><sc-if value="{{ m.d.f1 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"></path></svg></sc-if><sc-if value="{{ m.d.f2 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if></span>{{ m.d.label }}</span>
+                      <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px">{{ m.dur }}</span>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+  <section data-screen-label="思考深度 淺色模式" style="color-scheme:light;--bg:#f5f6f8;--pop:#ffffff;--line:#e4e6ea;--fg:#1b1c1e;--mut:#6a6f77;--faint:#a3a8b0;--hov:#f2f3f5;--hov2:#eaecef;--sel:rgba(47,111,214,0.09);--acc:#2f6fd6;--pill:#f0f1f4;--pillfg:#5d626a;--sh:rgba(16,24,40,0.10);--sh2:rgba(16,24,40,0.06);--monoLogo:invert(1);--tipbg:#1b1c1e;--tipfg:#ffffff;display:flex;flex-direction:column;gap:16px">
+    <span style="font-size:14px;font-weight:600;color:#1b1c1e">思考深度　淺色模式</span>
+    <div style="display:flex;gap:28px;align-items:flex-start;flex-wrap:nowrap">
+      <sc-for list="{{ depthLight }}" as="b" hint-placeholder-count="6">
+        <div style="display:flex;flex-direction:column;gap:10px;width:344px;flex:none">
+          <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:#8b9098">{{ b.num }}</span><span style="font-size:13px;font-weight:550;color:#1b1c1e">{{ b.label }}</span></div>
+          <div style="background:var(--bg);border-radius:12px;padding:20px;height:360px;overflow:hidden;color:var(--fg)">
+            <sc-if value="{{ b.isCtl }}">
+              <div style="display:flex;flex-direction:column;align-items:flex-start">
+                <div style="display:flex;align-items:center;gap:2px;position:relative">
+                  <button style="appearance:none;border:0;font:inherit;height:30px;display:inline-flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;background:transparent;color:var(--fg);cursor:pointer;min-width:0;transition:background-color 80ms ease-out" style-hover="background:var(--hov2)"><span style="display:flex;flex:none">{{ b.logo }}</span><span style="font-size:13px;font-weight:550;white-space:nowrap">{{ b.model }}</span><span style="font-size:12px;color:var(--mut);white-space:nowrap">{{ b.tool }}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate(0deg);transition:transform 160ms cubic-bezier(.2,.9,.3,1)"><path d="m6 9 6 6 6-6"></path></svg></button>
+                  <span style="width:1px;height:16px;background:var(--line);margin:0 4px;flex:none"></span>
+                  <button onClick="{{ b.onToggle }}" onMouseEnter="{{ b.onBtnEnter }}" onMouseLeave="{{ b.onBtnLeave }}" aria-haspopup="menu" aria-expanded="{{ b.openStr }}" aria-disabled="{{ b.disStr }}" aria-label="思考深度" style="appearance:none;border:0;font:inherit;height:30px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;border-radius:6px;background:{{ b.btnBg }};color:{{ b.btnColor }};cursor:{{ b.cursor }};opacity:{{ b.btnOp }};transition:background-color 80ms ease-out,color 80ms ease-out">
+                    <span style="display:flex;color:{{ b.iconColor }}"><sc-if value="{{ b.cur.f0 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if><sc-if value="{{ b.cur.f1 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"></path></svg></sc-if><sc-if value="{{ b.cur.f2 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if></span>
+                    <span style="font-size:13px;white-space:nowrap">{{ b.cur.label }}</span>
+                    <sc-if value="{{ b.fixed }}"><span style="height:18px;padding:0 6px;border-radius:4px;background:var(--pill);color:var(--pillfg);font-size:11px;line-height:18px">固定</span></sc-if>
+                    <sc-if value="{{ b.adjustable }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate({{ b.rot }});transition:transform 160ms cubic-bezier(.2,.9,.3,1)"><path d="m6 9 6 6 6-6"></path></svg></sc-if>
+                  </button>
+                  <sc-if value="{{ b.showTip }}"><div role="tooltip" style="position:absolute;top:38px;right:0;white-space:nowrap;background:var(--tipbg);color:var(--tipfg);font-size:12px;line-height:18px;padding:5px 9px;border-radius:6px;box-shadow:0 4px 14px var(--sh)">{{ b.tip }}</div></sc-if>
+                </div>
+                <sc-if value="{{ b.open }}">
+                  <div role="menu" aria-label="思考深度" style="margin-top:6px;margin-left:{{ b.menuLeft }};width:288px;background:var(--pop);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px var(--sh),0 1px 2px var(--sh2);padding:4px">
+                    <div style="height:28px;display:flex;align-items:center;padding:2px 8px 0;font-size:11px;font-weight:550;color:var(--mut)">思考深度</div>
+                    <sc-for list="{{ b.opts }}" as="o">
+                      <div role="menuitemradio" aria-checked="{{ o.selStr }}" onMouseEnter="{{ o.onEnter }}" onMouseLeave="{{ o.onLeave }}" onClick="{{ o.onClick }}" style="min-height:44px;padding:6px 8px;border-radius:6px;display:flex;align-items:center;gap:10px;background:{{ o.bg }};cursor:pointer;transition:background-color 80ms ease-out">
+                        <span style="display:flex;color:{{ o.iconColor }};flex:none"><sc-if value="{{ o.f0 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if><sc-if value="{{ o.f1 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"></path></svg></sc-if><sc-if value="{{ o.f2 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if></span>
+                        <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                          <span style="font-size:13px;font-weight:{{ o.fw }}">{{ o.label }}</span>
+                          <span style="font-size:12px;line-height:16px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ o.desc }}</span>
+                        </span>
+                        <span style="width:16px;flex:none;display:flex;justify-content:center;color:var(--acc);opacity:{{ o.checkOp }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+            <sc-if value="{{ b.isMeta }}">
+              <div style="display:flex;flex-direction:column;gap:18px">
+                <sc-for list="{{ b.metas }}" as="m">
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <div style="display:flex;align-items:center;gap:8px"><span style="width:22px;height:22px;border-radius:50%;background:var(--pill);display:grid;place-items:center;flex:none">{{ m.logo }}</span><span style="font-size:13px;font-weight:550">{{ m.tool }}</span></div>
+                    <div style="padding-left:30px;font-size:13px;line-height:1.65;color:var(--fg);text-wrap:pretty">{{ m.text }}</div>
+                    <div style="padding-left:30px;display:flex;justify-content:flex-end;align-items:center;gap:10px;font-size:11px;color:var(--mut);white-space:nowrap">
+                      <span>{{ m.model }}</span>
+                      <span style="display:flex;align-items:center;gap:4px"><span style="display:flex"><sc-if value="{{ m.d.f0 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if><sc-if value="{{ m.d.f1 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"></path></svg></sc-if><sc-if value="{{ m.d.f2 }}"><svg width="14" height="14" viewBox="0 0 16 16" style="flex:none"><circle cx="8" cy="8" r="5.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"></circle></svg></sc-if></span>{{ m.d.label }}</span>
+                      <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px">{{ m.dur }}</span>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section data-screen-label="深色模式" style="color-scheme:dark;--tipbg:#e8e9eb;--tipfg:#16171a;--pillsel:rgba(127,176,250,0.16);--bg:#16171a;--pop:#1c1d21;--line:#2a2c31;--fg:#e8e9eb;--mut:#8b9098;--faint:#5c6068;--hov:rgba(255,255,255,0.05);--hov2:#24262b;--sel:rgba(127,176,250,0.13);--acc:#7fb0fa;--pill:rgba(255,255,255,0.06);--pillfg:#a1a6ae;--hit:rgba(217,168,69,0.30);--sh:rgba(0,0,0,0.45);--sh2:rgba(0,0,0,0.3);--monoLogo:none;--warn:#d9a845;display:flex;flex-direction:column;gap:16px">
+    <span style="font-size:14px;font-weight:600;color:#1b1c1e">深色模式</span>
+    <div style="display:flex;gap:28px;align-items:flex-start">
+      <sc-for list="{{ darkBoards }}" as="b" hint-placeholder-count="5">
+        <div style="display:flex;flex-direction:column;gap:10px;width:344px;flex:none">
+          <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:#8b9098">{{ b.num }}</span><span style="font-size:13px;font-weight:550;color:#1b1c1e">{{ b.label }}</span></div>
+          <div style="background:var(--bg);border-radius:12px;padding:20px;height:640px;overflow:hidden;color:var(--fg)">
+            <sc-if value="{{ b.isTrigger }}">
+              <div style="display:flex;flex-direction:column;gap:22px">
+                <sc-for list="{{ b.variants }}" as="v">
+                  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+                    <span style="font-size:11px;color:var(--mut)">{{ v.cap }}</span>
+                    <button style="appearance:none;border:0;font:inherit;height:30px;max-width:{{ v.maxW }};display:inline-flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;background:{{ v.bg }};color:var(--fg);cursor:pointer;min-width:0;transition:background-color 80ms ease-out" style-hover="background:var(--hov2)">
+                      <span style="display:flex;flex:none">{{ v.logo }}</span>
+                      <span style="font-size:13px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">{{ v.model }}</span>
+                      <span style="font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 100 auto">{{ v.tool }}</span>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate({{ v.rot }})"><path d="m6 9 6 6 6-6"></path></svg>
+                    </button>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ b.isMenu }}">
+              <div style="display:flex;flex-direction:column;align-items:flex-start">
+                <button onClick="{{ b.onToggle }}" aria-haspopup="listbox" aria-expanded="{{ b.openStr }}" style="appearance:none;border:0;font:inherit;height:30px;max-width:300px;display:inline-flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;background:{{ b.trigBg }};color:var(--fg);cursor:pointer;min-width:0;transition:background-color 80ms ease-out" style-hover="background:var(--hov2)">
+                  <span style="display:flex;flex:none">{{ b.cur.logo }}</span>
+                  <span style="font-size:13px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">{{ b.cur.model }}</span>
+                  <span style="font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 100 auto">{{ b.cur.tool }}</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate({{ b.rot }});transition:transform 160ms cubic-bezier(.2,.9,.3,1)"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <sc-if value="{{ b.open }}">
+                  <div role="listbox" style="margin-top:6px;width:300px;background:var(--pop);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px var(--sh),0 1px 2px var(--sh2);overflow:hidden;display:flex;flex-direction:column;max-height:min(480px, 70vh)">
+                    <div style="height:40px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+                      <input value="{{ b.q }}" onChange="{{ b.onQ }}" onKeyDown="{{ b.onKey }}" placeholder="搜尋模型…" aria-label="搜尋模型" style="flex:1;min-width:0;height:100%;border:0;outline:none;background:transparent;color:var(--fg);font:inherit;font-size:13px">
+                      <sc-if value="{{ b.hasQ }}"><button onClick="{{ b.onClear }}" aria-label="清除搜尋" title="清除搜尋" style="appearance:none;border:0;background:transparent;color:var(--mut);width:22px;height:22px;display:grid;place-items:center;border-radius:5px;cursor:pointer;flex:none" style-hover="background:var(--hov2);color:var(--fg)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button></sc-if>
+                    </div>
+                    <div onMouseLeave="{{ b.onLeave }}" style="flex:1;min-height:0;overflow-y:auto;padding:4px 0 6px;scrollbar-width:thin;scrollbar-color:var(--line) transparent">
+                      <sc-if value="{{ b.showRecent }}">
+                        <div style="height:30px;display:flex;align-items:center;padding:6px 12px 0;font-size:11px;font-weight:550;color:var(--mut)">最近使用</div>
+                        <sc-for list="{{ b.recent }}" as="r">
+                          <div role="option" aria-selected="{{ r.selStr }}" onMouseEnter="{{ r.onEnter }}" onClick="{{ r.onClick }}" style="height:32px;margin:0 4px;padding:0 8px;border-radius:6px;display:flex;align-items:center;gap:8px;background:{{ r.bg }};cursor:{{ r.cursor }};opacity:{{ r.op }};transition:background-color 80ms ease-out">
+                            <span style="display:flex;flex:none">{{ r.logo }}</span>
+                            <span style="flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:{{ r.fw }}">{{ r.name }}</span>
+                            <span style="flex:0 100 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--mut)">{{ r.tool }}</span>
+                            <span style="flex:1"></span>
+                            <span style="flex:none;height:18px;padding:0 6px;border-radius:4px;background:{{ r.pillBg }};color:var(--pillfg);font-size:11px;line-height:18px">{{ r.tag }}</span>
+                            <span style="width:16px;flex:none;display:flex;justify-content:center;color:var(--acc);opacity:{{ r.checkOp }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                          </div>
+                        </sc-for>
+                      </sc-if>
+                      <sc-for list="{{ b.groups }}" as="g">
+                        <div style="height:32px;display:flex;align-items:center;gap:8px;padding:8px 12px 0;min-width:0">
+                          <span style="display:flex;flex:none;opacity:{{ g.op }}">{{ g.logo }}</span>
+                          <span style="font-size:12px;font-weight:600;color:{{ g.titleColor }};white-space:nowrap">{{ g.name }}</span>
+                          <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">{{ g.cli }}</span>
+                          <sc-if value="{{ g.off }}">
+                            <span style="font-size:11px;color:var(--warn);white-space:nowrap;flex:none">未登入</span>
+                            <span style="flex:1"></span>
+                            <button onClick="{{ g.onLogin }}" style="appearance:none;border:0;background:transparent;font:inherit;font-size:11px;color:var(--acc);height:22px;padding:0 6px;margin-right:-6px;border-radius:5px;cursor:pointer;flex:none" style-hover="background:var(--hov2)">登入</button>
+                          </sc-if>
+                        </div>
+                        <sc-for list="{{ g.rows }}" as="r">
+                          <div role="option" aria-selected="{{ r.selStr }}" aria-disabled="{{ r.disStr }}" onMouseEnter="{{ r.onEnter }}" onClick="{{ r.onClick }}" style="height:32px;margin:0 4px;padding:0 8px 0 32px;border-radius:6px;display:flex;align-items:center;gap:8px;background:{{ r.bg }};cursor:{{ r.cursor }};opacity:{{ r.op }};transition:background-color 80ms ease-out">
+                            <span style="flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:{{ r.fw }}"><sc-for list="{{ r.parts }}" as="p"><sc-if value="{{ p.hit }}"><mark style="background:var(--hit);color:inherit;border-radius:2px">{{ p.t }}</mark></sc-if><sc-if value="{{ p.plain }}"><span>{{ p.t }}</span></sc-if></sc-for></span>
+                            <span style="flex:1"></span>
+                            <span style="flex:none;height:18px;padding:0 6px;border-radius:4px;background:{{ r.pillBg }};color:var(--pillfg);font-size:11px;line-height:18px">{{ r.tag }}</span>
+                            <span style="width:16px;flex:none;display:flex;justify-content:center;color:var(--acc);opacity:{{ r.checkOp }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                          </div>
+                        </sc-for>
+                      </sc-for>
+                      <sc-if value="{{ b.empty }}"><div style="padding:28px 12px;text-align:center;font-size:13px;color:var(--mut)">沒有符合的模型</div></sc-if>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section data-screen-label="淺色模式" style="color-scheme:light;--pillsel:rgba(47,111,214,0.12);--bg:#f5f6f8;--pop:#ffffff;--line:#e4e6ea;--fg:#1b1c1e;--mut:#6a6f77;--faint:#a3a8b0;--hov:#f2f3f5;--hov2:#eaecef;--sel:rgba(47,111,214,0.09);--acc:#2f6fd6;--pill:#f0f1f4;--pillfg:#5d626a;--hit:rgba(217,168,69,0.32);--sh:rgba(16,24,40,0.10);--sh2:rgba(16,24,40,0.06);--monoLogo:invert(1);--warn:#9a6d0c;display:flex;flex-direction:column;gap:16px">
+    <span style="font-size:14px;font-weight:600;color:#1b1c1e">淺色模式</span>
+    <div style="display:flex;gap:28px;align-items:flex-start">
+      <sc-for list="{{ lightBoards }}" as="b" hint-placeholder-count="5">
+        <div style="display:flex;flex-direction:column;gap:10px;width:344px;flex:none">
+          <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:#8b9098">{{ b.num }}</span><span style="font-size:13px;font-weight:550;color:#1b1c1e">{{ b.label }}</span></div>
+          <div style="background:var(--bg);border-radius:12px;padding:20px;height:640px;overflow:hidden;color:var(--fg)">
+            <sc-if value="{{ b.isTrigger }}">
+              <div style="display:flex;flex-direction:column;gap:22px">
+                <sc-for list="{{ b.variants }}" as="v">
+                  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+                    <span style="font-size:11px;color:var(--mut)">{{ v.cap }}</span>
+                    <button style="appearance:none;border:0;font:inherit;height:30px;max-width:{{ v.maxW }};display:inline-flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;background:{{ v.bg }};color:var(--fg);cursor:pointer;min-width:0;transition:background-color 80ms ease-out" style-hover="background:var(--hov2)">
+                      <span style="display:flex;flex:none">{{ v.logo }}</span>
+                      <span style="font-size:13px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">{{ v.model }}</span>
+                      <span style="font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 100 auto">{{ v.tool }}</span>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate({{ v.rot }})"><path d="m6 9 6 6 6-6"></path></svg>
+                    </button>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ b.isMenu }}">
+              <div style="display:flex;flex-direction:column;align-items:flex-start">
+                <button onClick="{{ b.onToggle }}" aria-haspopup="listbox" aria-expanded="{{ b.openStr }}" style="appearance:none;border:0;font:inherit;height:30px;max-width:300px;display:inline-flex;align-items:center;gap:8px;padding:0 8px;border-radius:6px;background:{{ b.trigBg }};color:var(--fg);cursor:pointer;min-width:0;transition:background-color 80ms ease-out" style-hover="background:var(--hov2)">
+                  <span style="display:flex;flex:none">{{ b.cur.logo }}</span>
+                  <span style="font-size:13px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">{{ b.cur.model }}</span>
+                  <span style="font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 100 auto">{{ b.cur.tool }}</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut);transform:rotate({{ b.rot }});transition:transform 160ms cubic-bezier(.2,.9,.3,1)"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <sc-if value="{{ b.open }}">
+                  <div role="listbox" style="margin-top:6px;width:300px;background:var(--pop);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px var(--sh),0 1px 2px var(--sh2);overflow:hidden;display:flex;flex-direction:column;max-height:min(480px, 70vh)">
+                    <div style="height:40px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;color:var(--mut)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+                      <input value="{{ b.q }}" onChange="{{ b.onQ }}" onKeyDown="{{ b.onKey }}" placeholder="搜尋模型…" aria-label="搜尋模型" style="flex:1;min-width:0;height:100%;border:0;outline:none;background:transparent;color:var(--fg);font:inherit;font-size:13px">
+                      <sc-if value="{{ b.hasQ }}"><button onClick="{{ b.onClear }}" aria-label="清除搜尋" title="清除搜尋" style="appearance:none;border:0;background:transparent;color:var(--mut);width:22px;height:22px;display:grid;place-items:center;border-radius:5px;cursor:pointer;flex:none" style-hover="background:var(--hov2);color:var(--fg)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button></sc-if>
+                    </div>
+                    <div onMouseLeave="{{ b.onLeave }}" style="flex:1;min-height:0;overflow-y:auto;padding:4px 0 6px;scrollbar-width:thin;scrollbar-color:var(--line) transparent">
+                      <sc-if value="{{ b.showRecent }}">
+                        <div style="height:30px;display:flex;align-items:center;padding:6px 12px 0;font-size:11px;font-weight:550;color:var(--mut)">最近使用</div>
+                        <sc-for list="{{ b.recent }}" as="r">
+                          <div role="option" aria-selected="{{ r.selStr }}" onMouseEnter="{{ r.onEnter }}" onClick="{{ r.onClick }}" style="height:32px;margin:0 4px;padding:0 8px;border-radius:6px;display:flex;align-items:center;gap:8px;background:{{ r.bg }};cursor:{{ r.cursor }};opacity:{{ r.op }};transition:background-color 80ms ease-out">
+                            <span style="display:flex;flex:none">{{ r.logo }}</span>
+                            <span style="flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:{{ r.fw }}">{{ r.name }}</span>
+                            <span style="flex:0 100 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--mut)">{{ r.tool }}</span>
+                            <span style="flex:1"></span>
+                            <span style="flex:none;height:18px;padding:0 6px;border-radius:4px;background:{{ r.pillBg }};color:var(--pillfg);font-size:11px;line-height:18px">{{ r.tag }}</span>
+                            <span style="width:16px;flex:none;display:flex;justify-content:center;color:var(--acc);opacity:{{ r.checkOp }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                          </div>
+                        </sc-for>
+                      </sc-if>
+                      <sc-for list="{{ b.groups }}" as="g">
+                        <div style="height:32px;display:flex;align-items:center;gap:8px;padding:8px 12px 0;min-width:0">
+                          <span style="display:flex;flex:none;opacity:{{ g.op }}">{{ g.logo }}</span>
+                          <span style="font-size:12px;font-weight:600;color:{{ g.titleColor }};white-space:nowrap">{{ g.name }}</span>
+                          <span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">{{ g.cli }}</span>
+                          <sc-if value="{{ g.off }}">
+                            <span style="font-size:11px;color:var(--warn);white-space:nowrap;flex:none">未登入</span>
+                            <span style="flex:1"></span>
+                            <button onClick="{{ g.onLogin }}" style="appearance:none;border:0;background:transparent;font:inherit;font-size:11px;color:var(--acc);height:22px;padding:0 6px;margin-right:-6px;border-radius:5px;cursor:pointer;flex:none" style-hover="background:var(--hov2)">登入</button>
+                          </sc-if>
+                        </div>
+                        <sc-for list="{{ g.rows }}" as="r">
+                          <div role="option" aria-selected="{{ r.selStr }}" aria-disabled="{{ r.disStr }}" onMouseEnter="{{ r.onEnter }}" onClick="{{ r.onClick }}" style="height:32px;margin:0 4px;padding:0 8px 0 32px;border-radius:6px;display:flex;align-items:center;gap:8px;background:{{ r.bg }};cursor:{{ r.cursor }};opacity:{{ r.op }};transition:background-color 80ms ease-out">
+                            <span style="flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:{{ r.fw }}"><sc-for list="{{ r.parts }}" as="p"><sc-if value="{{ p.hit }}"><mark style="background:var(--hit);color:inherit;border-radius:2px">{{ p.t }}</mark></sc-if><sc-if value="{{ p.plain }}"><span>{{ p.t }}</span></sc-if></sc-for></span>
+                            <span style="flex:1"></span>
+                            <span style="flex:none;height:18px;padding:0 6px;border-radius:4px;background:{{ r.pillBg }};color:var(--pillfg);font-size:11px;line-height:18px">{{ r.tag }}</span>
+                            <span style="width:16px;flex:none;display:flex;justify-content:center;color:var(--acc);opacity:{{ r.checkOp }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                          </div>
+                        </sc-for>
+                      </sc-for>
+                      <sc-if value="{{ b.empty }}"><div style="padding:28px 12px;text-align:center;font-size:13px;color:var(--mut)">沒有符合的模型</div></sc-if>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const GROUPS=[
+ {id:'claude-code',name:'Claude Code',logo:'assets/agents/claude-code.svg',mono:false,models:[{id:'claude-opus-5-5',name:'Opus 5.5',tag:'最強'},{id:'claude-sonnet-5-5',name:'Sonnet 5.5',tag:'平衡'},{id:'claude-haiku-5-5',name:'Haiku 5.5',tag:'快速'}]},
+ {id:'codex',name:'Codex',logo:'assets/agents/codex.svg',mono:true,models:[{id:'gpt-5',name:'GPT-5',tag:'最強'},{id:'gpt-5-codex',name:'GPT-5 Codex',tag:'程式'},{id:'gpt-5-mini',name:'GPT-5 Mini',tag:'快速'}]},
+ {id:'antigravity',name:'Antigravity',logo:'assets/agents/antigravity.svg',mono:false,models:[{id:'gemini-2.5-pro',name:'Gemini 2.5 Pro',tag:'最強'},{id:'gemini-2.5-flash',name:'Gemini 2.5 Flash',tag:'快速'}]},
+ {id:'grok-build',name:'Grok Build',logo:'assets/agents/grok-build.svg',mono:true,models:[{id:'grok-4',name:'Grok 4',tag:'最強'},{id:'grok-code-fast-1',name:'Grok Code Fast 1',tag:'程式'}]}
+];
+const _lc={};
+function logo(g,size){const k=g.id+size;if(_lc[k])return _lc[k];_lc[k]=React.createElement('img',{src:g.logo,alt:'',width:size,height:size,style:{display:'block',width:size,height:size,filter:g.mono?'var(--monoLogo)':'none'}});return _lc[k];}
+const G=id=>GROUPS.find(g=>g.id===id);
+const M=key=>{const [a,m]=key.split('|');const g=G(a);return {g,m:g.models.find(x=>x.id===m)};};
+const BOARDS=[
+ {id:'trigger',num:'01',label:'收合按鈕',kind:'trigger'},
+ {id:'open',num:'02',label:'展開（預設）',sel:'grok-build|grok-4'},
+ {id:'hover',num:'03',label:'滑過某列',sel:'grok-build|grok-4',hover:'g:claude-code|claude-sonnet-5-5'},
+ {id:'search',num:'04',label:'搜尋中（已過濾）',sel:'grok-build|grok-4',q:'快速',hover:'g:codex|gpt-5-mini'},
+ {id:'offline',num:'05',label:'含未登入群組',sel:'claude-code|claude-sonnet-5-5',off:['antigravity']}
+];
+function split(text,q){if(!q)return [{plain:true,hit:false,t:text}];const i=text.toLowerCase().indexOf(q.toLowerCase());if(i<0)return [{plain:true,hit:false,t:text}];const o=[];if(i>0)o.push({plain:true,hit:false,t:text.slice(0,i)});o.push({plain:false,hit:true,t:text.slice(i,i+q.length)});if(i+q.length<text.length)o.push({plain:true,hit:false,t:text.slice(i+q.length)});return o;}
+
+
+const DEPTH=[{v:'fast',label:'快速',desc:'回應快、耗用少，適合簡單修改',fill:0},{v:'std',label:'標準',desc:'一般開發任務',fill:1},{v:'deep',label:'深度',desc:'較慢、耗用較多，適合複雜除錯與架構',fill:2}];
+const DD=v=>DEPTH.find(d=>d.v===v);
+const DBOARDS=[
+ {id:'d-def',num:'01',label:'預設',model:'claude-code|claude-sonnet-5-5',v:'std'},
+ {id:'d-open',num:'02',label:'展開',model:'claude-code|claude-sonnet-5-5',v:'std',open:true},
+ {id:'d-hover',num:'03',label:'滑過某列',model:'claude-code|claude-sonnet-5-5',v:'std',open:true,hover:'deep'},
+ {id:'d-unsup',num:'04',label:'模型不支援',model:'grok-build|grok-4',v:'std',unsup:true,tip:true},
+ {id:'d-fixed',num:'05',label:'思考深度固定',model:'codex|gpt-5-codex',v:'deep',fixed:true},
+ {id:'d-meta',num:'06',label:'回覆的 metadata',meta:true}
+];
+function df(d){return {f0:d.fill===0,f1:d.fill===1,f2:d.fill===2};}
+class Component extends DCLogic {
+  state={b:{}};
+  bs(key,def){return Object.assign({q:'',hover:null,open:true,recent:['grok-build|grok-4','claude-code|claude-sonnet-5-5']},def,this.state.b[key]||{});}
+  upd(key,def,p){this.setState(s=>{const cur=Object.assign({q:'',hover:null,open:true,recent:['grok-build|grok-4','claude-code|claude-sonnet-5-5']},def,s.b[key]||{});return {b:Object.assign({},s.b,{[key]:Object.assign(cur,p)})};});}
+  board(def,theme){
+    const key=theme+'-'+def.id;
+    if(def.kind==='trigger'){
+      const v=(cap,sel,o)=>{const {g,m}=M(sel);return Object.assign({cap,logo:logo(g,14),model:m.name,tool:g.name,bg:'transparent',rot:'0deg',maxW:'300px'},o||{});};
+      return {num:def.num,label:def.label,isTrigger:true,isMenu:false,variants:[v('預設','grok-build|grok-4'),v('滑過','grok-build|grok-4',{bg:'var(--hov2)'}),v('展開中','grok-build|grok-4',{bg:'var(--hov2)',rot:'180deg'}),v('名稱過長時截斷','antigravity|gemini-2.5-flash',{maxW:'190px'})]};
+    }
+    const st=this.bs(key,def);const off=def.off||[];const q=st.q.trim();const ql=q.toLowerCase();
+    const flat=[];
+    const rowOf=(prefix,g,m,isRecent)=>{const k=g.id+'|'+m.id;const hk=prefix+k;const dis=off.indexOf(g.id)>=0;const sel=st.sel===k;const hv=st.hover===hk&&!dis;
+      if(!dis)flat.push(hk);
+      return {selStr:String(sel),disStr:String(dis),name:m.name,parts:split(m.name,q),tool:g.name,tag:m.tag,logo:isRecent?logo(g,16):null,
+        pillBg:q&&m.tag.toLowerCase().indexOf(ql)>=0?'var(--hit)':sel?'var(--pillsel)':'var(--pill)',
+        bg:sel?'var(--sel)':hv?'var(--hov)':'transparent',fw:sel?550:400,checkOp:sel?1:0,cursor:dis?'not-allowed':'pointer',op:dis?0.45:1,
+        onEnter:()=>{if(!dis&&st.hover!==hk)this.upd(key,def,{hover:hk});},
+        onClick:()=>{if(dis)return;this.upd(key,def,{sel:k,recent:[k].concat(st.recent.filter(x=>x!==k)).slice(0,2)});}};};
+    const showRecent=!q;
+    const recent=showRecent?st.recent.map(k=>{const {g,m}=M(k);return rowOf('r:',g,m,true);}):[];
+    const groups=GROUPS.map(g=>{const gm=!q||g.name.toLowerCase().indexOf(ql)>=0||g.id.indexOf(ql)>=0;const ms=g.models.filter(m=>gm||m.name.toLowerCase().indexOf(ql)>=0||m.tag.indexOf(q)>=0);if(!ms.length)return null;const isOff=off.indexOf(g.id)>=0;
+      return {name:g.name,cli:g.id,logo:logo(g,16),off:isOff,op:isOff?0.45:1,titleColor:isOff?'var(--mut)':'var(--fg)',onLogin:()=>{},rows:ms.map(m=>rowOf('g:',g,m,false))};}).filter(Boolean);
+    const cur=M(st.sel);
+    const move=(d)=>{if(!flat.length)return;const i=flat.indexOf(st.hover);const n=i<0?(d>0?0:flat.length-1):(i+d+flat.length)%flat.length;this.upd(key,def,{hover:flat[n]});};
+    return {num:def.num,label:def.label,isTrigger:false,isMenu:true,open:st.open,openStr:String(st.open),rot:st.open?'180deg':'0deg',trigBg:st.open?'var(--hov2)':'transparent',
+      cur:{logo:logo(cur.g,14),model:cur.m.name,tool:cur.g.name},
+      q:st.q,hasQ:!!st.q,showRecent,recent,groups,empty:groups.length===0,
+      onQ:(e)=>this.upd(key,def,{q:e.target.value,hover:null}),onClear:()=>this.upd(key,def,{q:'',hover:null}),
+      onToggle:()=>this.upd(key,def,{open:!st.open}),onLeave:()=>this.upd(key,def,{hover:null}),
+      onKey:(e)=>{if(e.key==='ArrowDown'){e.preventDefault();move(1);}else if(e.key==='ArrowUp'){e.preventDefault();move(-1);}else if(e.key==='Enter'&&st.hover){const k=st.hover.slice(2);this.upd(key,def,{sel:k,recent:[k].concat(st.recent.filter(x=>x!==k)).slice(0,2)});}else if(e.key==='Escape'){this.upd(key,def,{q:'',hover:null});}}};
+  }
+
+  dboard(def,theme){const key=theme+'-'+def.id;
+    if(def.meta){const row=(sel,v,dur,text)=>{const {g,m}=M(sel);const d=DD(v);return {logo:logo(g,14),tool:g.name,model:m.name,d:Object.assign({label:d.label},df(d)),dur,text};};
+      return {num:def.num,label:def.label,isCtl:false,isMeta:true,metas:[row('claude-code|claude-sonnet-5-5','deep','42s','差異入口已統一先正規化換行再比較，CRLF 檔案只會顯示實際變更的行。'),row('codex|gpt-5-mini','fast','6s','已更新匯入路徑。')]};}
+    const st=Object.assign({open:!!def.open,v:def.v,hover:def.hover||null,tip:!!def.tip},this.state.b[key]||{});
+    const set=(p)=>this.setState(s=>({b:Object.assign({},s.b,{[key]:Object.assign({},st,p)})}));
+    const {g,m}=M(def.model);const dis=!!def.unsup;const fixed=!!def.fixed;const adj=!dis&&!fixed;
+    const cur=dis?{label:'標準',fill:1}:DD(st.v);
+    return {num:def.num,label:def.label,isCtl:true,isMeta:false,logo:logo(g,14),model:m.name,tool:g.name,
+      cur:Object.assign({label:dis?'思考深度':cur.label},df(cur)),fixed,adjustable:adj,open:adj&&st.open,openStr:String(adj&&st.open),disStr:String(!adj),rot:st.open?'180deg':'0deg',
+      btnBg:adj&&st.open?'var(--hov2)':'transparent',btnColor:dis?'var(--mut)':'var(--fg)',iconColor:dis?'var(--faint)':'var(--acc)',btnOp:dis?0.55:1,cursor:adj?'pointer':(dis?'not-allowed':'default'),
+      showTip:dis&&st.tip,tip:'此模型不支援調整思考深度',menuLeft:'auto',
+      onToggle:()=>{if(adj)set({open:!st.open});},onBtnEnter:()=>{if(dis)set({tip:true});},onBtnLeave:()=>{if(dis&&!def.tip)set({tip:false});},
+      opts:DEPTH.map(d=>{const sel=st.v===d.v;const hv=st.hover===d.v;return Object.assign({label:d.label,desc:d.desc,selStr:String(sel),fw:sel?550:400,checkOp:sel?1:0,iconColor:sel?'var(--acc)':'var(--mut)',bg:sel?'var(--sel)':hv?'var(--hov)':'transparent',
+        onEnter:()=>set({hover:d.v}),onLeave:()=>set({hover:null}),onClick:()=>set({v:d.v,open:def.open?true:false})},df(d));})};
+  }
+  renderVals(){return {depthDark:DBOARDS.map(d=>this.dboard(d,'dark')),depthLight:DBOARDS.map(d=>this.dboard(d,'light')),darkBoards:BOARDS.map(d=>this.board(d,'dark')),lightBoards:BOARDS.map(d=>this.board(d,'light'))};}
+}
+</script>
+</body>
+</html>

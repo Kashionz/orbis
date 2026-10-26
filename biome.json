@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!crates", "!target", "!**/src/generated", "!**/*.md", "!pnpm-lock.yaml"]
+    "includes": [
+      "**",
+      "!crates",
+      "!target",
+      "!**/src/generated",
+      "!**/*.md",
+      "!pnpm-lock.yaml",
+      "!docs/design"
+    ]
   },
   "formatter": {
     "indentStyle": "space",

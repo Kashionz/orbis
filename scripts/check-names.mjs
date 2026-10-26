@@ -27,6 +27,7 @@ const ALLOWED_FILES = [
   /^packages\/api-contract\/src\/names\.ts$/,
   /^packages\/protocol\/src\/generated\//,
   /^scripts\/check-names(\.test)?\.mjs$/,
+  /^docs\/design\//, // 設計原型（Claude Design 匯出），不是產品程式碼
 ];
 
 const FORBIDDEN = [

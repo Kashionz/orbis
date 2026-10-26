@@ -1,3 +1,7 @@
+---
+status: superseded（由 [ADR-0017](0017-session-permission-modes.md) 取代，2026-10-26；實作排在 v0.1.0 完成規劃的 S1）
+---
+
 # Agent 權限由 Runner 依政策回覆 ACP 權限請求，不使用 Agent 的 bypass 旗標
 
 Orca 預設以 YOLO 模式啟動 Agent（例如 `--dangerously-skip-permissions`），把 Worktree 當作沙盒，權限則以字串形式寫在啟動參數裡。但 Worktree 只能隔離檔案衝突，擋不住 Agent 讀取 `~/.ssh` 或雲端憑證。我們改成一律以「會詢問」的模式啟動 Agent，再由 Runner 依 Permission Policy（`manual`／`auto`／`yolo`，預設 `auto`）回覆 `session/request_permission`。這樣政策是結構化資料，可以讓 Child Run 繼承並收緊，也能統一套用在所有 Agent 上。

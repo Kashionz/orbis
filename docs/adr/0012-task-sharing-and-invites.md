@@ -1,3 +1,7 @@
+---
+status: superseded（由 [ADR-0018](0018-minimal-settings.md) 取代，2026-10-26；實作排在 v0.1.0 完成規劃的 S3）
+---
+
 # Task 層級的分享：Task 角色可以調高、一般存取可以限制，Owner 與 Admin 永遠有完整權限
 
 原本的權限只有 Team 的 Role 與 Project 的 Role 覆寫，沒有辦法讓外包或 PM 只參與某一個 Task，也沒有辦法把某個 Task 限制給少數人。我們在 Task 上加一層分享：Task 成員有角色（擁有者、可操作、可檢視），Task 另有一般存取（`invited` 僅受邀成員、`team_view` Team 可檢視、`team_edit` Team 可操作，預設 `team_edit`，和沒有這一層時的行為相同）。

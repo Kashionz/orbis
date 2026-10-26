@@ -15,3 +15,10 @@
 - Runner 信任 Server 的授權：Server 把 `terminal_id` 綁定到開啟者的 session，只轉送那個人的輸入；Runner 只接受自己開過的 `terminal_id`。
 - Runner 端另有自己的開關（2026-10-25 決定）：`runner.toml` 的 `allow_terminal`，Team Runner 預設 `false`、Local Runner 預設 `true`。Runner 依 `hello_ack` 的 `runner_kind` 知道自己的種類，Server 沒有回報時當成不允許。不允許時 `terminal_open` 回 `terminal_exited`（`disabled`）。所以 Team Runner 要同時打開 Team 設定與主機上的 `runner.toml` 才能開終端機：拿到 Server 的 Admin 權限，也不能單方面在共用機器上開 shell。
 - 終端機的輸出沒有 credit 背壓，Runner 送往 Server 時排在 Event、control 與 Heartbeat 之後。
+
+## 2026-10-26 修訂
+
+權限改成每個 session 的模式、預設全部允許（[ADR-0017](0017-session-permission-modes.md)）之後，能派工到 Team Runner 的人本來就能讓 Agent 在主機上執行任何指令，終端機不會多給權限。所以：
+
+- 能操作這個 Task 的人都能開終端機，Local Runner 與 Team Runner 相同。
+- 拿掉 Team 設定「允許 Team Runner 的終端機」與 `runner.toml` 的 `allow_terminal`；`terminal_shell` 與 `terminal_idle_timeout_secs` 也拿掉，shell 自動偵測、閒置 30 分鐘關閉寫死（[ADR-0018](0018-minimal-settings.md)）。

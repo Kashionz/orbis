@@ -12,3 +12,8 @@ status: accepted（已知風險）
 - 並行上限雖然預設 30，但實際上可能先撞到訂閱額度。rate limit 的處理方式（暫停、等待恢復）必須穩健。
 - 建議另外向 Anthropic 確認條款；如果有變動，就改成 API key 或 Claude Team 方案的個人席位。
 - Local Runner 不受這項決定影響，每個人仍然使用自己的 `claude` 登入。
+
+## 2026-10-26 修訂
+
+- Team Runner 預設全部允許，權限只剩每個 session 的模式（[ADR-0017](0017-session-permission-modes.md)）：能派工到 Team Runner 的人可以讓 Agent 在主機上執行任何指令，也讀得到 Runner 程序中的共用 Credential。共用訂閱的風險因此不只是條款，Credential 也可能被帶出主機。
+- Team Runner 要放在專用的機器或 VM；原本規劃用每個 Run 的 worker 容器與 Credential proxy 來緩解的做法取消。
