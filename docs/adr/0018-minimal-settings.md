@@ -16,6 +16,7 @@ v0.1.0 時，個人設定有 5 個分頁、Project 設定約 16 項、管理頁�
 
 - **Role 只剩 Owner 與 Member**，拿掉 Admin、Viewer 與 Project 的 Role 覆寫。Owner 管理成員、Team Runner 的 Pairing 與撤銷、刪除 Project；其他事（建立與設定 Project、登記 Repo、派工、核准 Gate、留言）Member 都可以做。migration 時 Admin 改成 Owner，Viewer 改成 Member。
 - **拿掉 Task 分享**（取代 ADR-0012）：不再有 Task 成員、Task 角色與一般存取，Team 中每個人都能看、能操作每個 Task。Task 邀請改成邀請加入 Team（以 Member 身分），沿用已驗證 email 的比對與 7 天期限。
+- **驗收條件改成選填**（2026-10-26 追加）：進入 Ready 不再需要驗收條件；條件是一行一行的文字，不選類型，用反引號包住的指令在 Worktree 執行，其他交給判定用的 Agent（有 Preview 時它可以開瀏覽器）。每次驗收都先跑 `.orbis/config.toml` 的 `[verify].commands`；兩者都沒有時直接進 Review Gate。拿掉 `manual` 打勾。
 - **預覽邀請保留**（ADR-0015）：這是給 Team 以外的人看成果的唯一方式，不再需要先打開 Team 設定。
 - **規劃中的項目**：拿掉 Task 類型與自訂欄位、彙報關係與主管留言、Wiki 資料夾權限、CI App 白名單、可設定的 blob 保存期限；自訂 State 改成固定 5 個 State；Module、Intake、排程週報、Wiki 的 git 同步延後；Worktree 與 Task 的自動封存期限寫死。細節見 v0.1.0 完成規劃。
 
@@ -23,6 +24,7 @@ v0.1.0 時，個人設定有 5 個分頁、Project 設定約 16 項、管理頁�
 
 - **保留設定，收進「進階」**：程式碼、測試與文件的分支數不變，只是藏起來；使用者還是會被問到怎麼設。
 - **保留 Viewer**：給 Team 以外的人看成果已經有預覽邀請；2–10 人的 Team 不需要唯讀角色。
+- **驗收完全照 Orca 拿掉**：Orca 沒有自動驗收，Agent 做完直接交給人看 diff。但同時派多個 Agent 時，每份 diff 都要人看；保留成選填，沒有設定時行為和 Orca 相同。
 - **保留 Admin**：Owner 可以有多位，Admin 與 Owner 的差別（能不能指派 Owner）對小團隊沒有意義。
 
 ## Consequences
