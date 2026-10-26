@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&amp;display=swap" rel="stylesheet"><style>body{margin:0;background:#121316;color:#e8e9eb;font-family:"Inter",system-ui,"Segoe UI","Microsoft JhengHei",sans-serif;font-size:13px;line-height:20px}a{color:#7fb0fa}a:hover{color:#9cc3ff}</style></helmet>
+<section data-screen-label="7 App icon" style="padding:40px 48px 64px;display:flex;flex-direction:column;gap:24px">
+  <div style="display:flex;align-items:baseline;gap:12px"><span style="font-size:12px;color:#8b9098;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace">7</span><span style="font-size:18px;font-weight:550">{{ title }}</span></div>
+  <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start">
+    <sc-for list="{{ dirs }}" as="d" hint-placeholder-count="3">
+      <div id="{{ d.id }}" style="width:360px;display:flex;flex-direction:column;gap:20px;padding:24px;background:#16171a;border:1px solid #1e2024;border-radius:12px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;background:#22242a;padding:1px 6px;border-radius:4px">{{ d.id }}</span><span style="font-size:13px;font-weight:550">{{ d.name }}</span></div>
+        <div style="display:flex;justify-content:center;padding:8px 0">
+          <div style="width:220px;height:220px;border-radius:50px;background:#1a1b1f;box-shadow:inset 0 0 0 1px #2b2e34;display:grid;place-items:center">
+            <svg width="150" height="150" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+              <sc-if value="{{ d.a }}"><ellipse cx="50" cy="50" rx="36" ry="15" transform="rotate(-28 50 50)" stroke="#e8e9eb" stroke-width="4.5"></ellipse><circle cx="50" cy="50" r="12" fill="#e8e9eb"></circle><circle cx="72.7" cy="30" r="6.5" fill="#7fb0fa"></circle></sc-if>
+              <sc-if value="{{ d.b }}"><ellipse cx="50" cy="50" rx="37" ry="13" transform="rotate(30 50 50)" stroke="#e8e9eb" stroke-width="4.5"></ellipse><ellipse cx="50" cy="50" rx="37" ry="13" transform="rotate(-30 50 50)" stroke="#e8e9eb" stroke-width="4.5"></ellipse><circle cx="50" cy="50" r="7" fill="#7fb0fa"></circle></sc-if>
+              <sc-if value="{{ d.c }}"><circle cx="50" cy="50" r="30" stroke="#e8e9eb" stroke-width="9" stroke-linecap="round" stroke-dasharray="146 42.5"></circle><circle cx="58.3" cy="21.2" r="7" fill="#7fb0fa"></circle></sc-if>
+            </svg>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <span style="font-size:12px;color:#8b9098">{{ winLabel }}</span>
+          <div style="display:flex;align-items:flex-end;gap:16px">
+            <sc-for list="{{ winSizes }}" as="s">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+                <div style="width:{{ s.px }};height:{{ s.px }};border-radius:{{ s.r }};background:#1a1b1f;box-shadow:inset 0 0 0 1px #2b2e34;display:grid;place-items:center">
+                  <svg width="{{ s.g }}" height="{{ s.g }}" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+                    <sc-if value="{{ d.a }}"><ellipse cx="50" cy="50" rx="36" ry="15" transform="rotate(-28 50 50)" stroke="#e8e9eb" stroke-width="{{ s.sw }}"></ellipse><circle cx="50" cy="50" r="13" fill="#e8e9eb"></circle><circle cx="72.7" cy="30" r="8" fill="#7fb0fa"></circle></sc-if>
+                    <sc-if value="{{ d.b }}"><ellipse cx="50" cy="50" rx="37" ry="13" transform="rotate(30 50 50)" stroke="#e8e9eb" stroke-width="{{ s.sw }}"></ellipse><ellipse cx="50" cy="50" rx="37" ry="13" transform="rotate(-30 50 50)" stroke="#e8e9eb" stroke-width="{{ s.sw }}"></ellipse><circle cx="50" cy="50" r="9" fill="#7fb0fa"></circle></sc-if>
+                    <sc-if value="{{ d.c }}"><circle cx="50" cy="50" r="30" stroke="#e8e9eb" stroke-width="{{ s.swc }}" stroke-linecap="round" stroke-dasharray="146 42.5"></circle><circle cx="58.3" cy="21.2" r="9" fill="#7fb0fa"></circle></sc-if>
+                  </svg>
+                </div>
+                <span style="font-size:11px;color:#8b9098;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace">{{ s.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <span style="font-size:12px;color:#8b9098">{{ trayLabel }}</span>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <sc-for list="{{ bars }}" as="b">
+              <div style="height:28px;border-radius:6px;background:{{ b.bg }};color:{{ b.fg }};display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 12px">
+                <span style="width:22px;height:6px;border-radius:3px;background:currentColor;opacity:.35"></span><span style="width:14px;height:6px;border-radius:3px;background:currentColor;opacity:.35"></span>
+                <svg width="16" height="16" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+                  <sc-if value="{{ d.a }}"><ellipse cx="50" cy="50" rx="40" ry="17" transform="rotate(-28 50 50)" stroke="currentColor" stroke-width="10"></ellipse><circle cx="50" cy="50" r="15" fill="currentColor"></circle></sc-if>
+                  <sc-if value="{{ d.b }}"><ellipse cx="50" cy="50" rx="40" ry="14" transform="rotate(30 50 50)" stroke="currentColor" stroke-width="10"></ellipse><ellipse cx="50" cy="50" rx="40" ry="14" transform="rotate(-30 50 50)" stroke="currentColor" stroke-width="10"></ellipse></sc-if>
+                  <sc-if value="{{ d.c }}"><circle cx="50" cy="50" r="32" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-dasharray="150 51"></circle><circle cx="59" cy="19" r="10" fill="currentColor"></circle></sc-if>
+                </svg>
+                <span style="font-size:11px;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;opacity:.7">{{ b.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <span style="font-size:12px;color:#8b9098;text-wrap:pretty">{{ d.note }}</span>
+      </div>
+    </sc-for>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;lang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;zh&quot;,&quot;en&quot;],&quot;default&quot;:&quot;zh&quot;,&quot;tsType&quot;:&quot;'zh'|'en'&quot;}}">
+const L={zh:{title:'App 圖示',win:'Windows .ico',tray:'系統匣與選單列（template image）',dirs:[['7a','軌道環與行星','中心是 Orbis，外圈軌道上有一顆代理'],['7b','交錯的兩條軌道','兩條軌道代表人與代理的兩條流程'],['7c','有缺口的 O','缺口與行星表示正在運行，小尺寸最清楚']],bars:['Windows 深色','macOS 淺色','macOS 深色']},
+en:{title:'App icon',win:'Windows .ico',tray:'Tray and menu bar (template image)',dirs:[['7a','Ring and planet','Orbis at the center, an agent on the orbit'],['7b','Crossed orbits','Two orbits for the human and agent flows'],['7c','Open O','The gap and planet read as motion; clearest at small sizes']],bars:['Windows dark','macOS light','macOS dark']}};
+class Component extends DCLogic {
+  renderVals(){const t=L[this.props.lang==='en'?'en':'zh'];
+    return {title:t.title,winLabel:t.win,trayLabel:t.tray,
+      dirs:t.dirs.map(([id,name,note],i)=>({id,name,note,a:i===0,b:i===1,c:i===2})),
+      winSizes:[[64,14,46,5,10],[48,11,36,6,11],[32,7,26,8,13],[16,4,15,11,16]].map(([px,r,g,sw,swc])=>({px:px+'px',r:r+'px',g,sw,swc,label:String(px)})),
+      bars:[['#202020','#ffffff','16'],['#ececec','#000000','16@2x'],['#2b2b2b','#ffffff','16@2x']].map(([bg,fg,label],i)=>({bg,fg,label:t.bars[i]+'  '+label}))};}
+}
+</script>
+</body>
+</html>

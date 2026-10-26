@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+html,body{margin:0;height:100%;background:#0b0b0d;color:#f4f4f5}
+body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft JhengHei",sans-serif;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#38bdf8}
+a:hover{color:#7dd3fc}
+@keyframes asSpin{to{transform:rotate(360deg)}}
+@keyframes asRollIn{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes asRollOut{from{transform:translateY(0);opacity:1}to{transform:translateY(-100%);opacity:0}}
+@keyframes asShimmer{from{background-position:150% 0}to{background-position:-50% 0}}
+@keyframes asSweep{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+@keyframes asStepIn{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes asStepOut{from{transform:translateY(0);opacity:1}to{transform:translateY(-14px);opacity:0}}
+@keyframes asPop{0%{transform:scale(.4) rotate(-40deg);opacity:0}60%{transform:scale(1.12) rotate(0);opacity:1}100%{transform:scale(1)}}
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;padding:48px 24px;background:radial-gradient(60% 50% at 50% 40%,#16161a 0%,#0b0b0d 70%)">
+  <div style="width:{{ cardW }};max-width:100%;transition:{{ widthTransition }};position:relative;overflow:hidden;border-radius:16px;border:1px solid rgba(255,255,255,0.08);background:rgba(24,24,27,0.72);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 12px 40px -12px rgba(0,0,0,0.7);padding:16px">
+    <div style="display:flex;align-items:center;gap:12px">
+      {{ markEl }}
+      {{ rollerEl }}
+      <span style="flex:none;font-size:12.5px;color:#a1a1aa;font-variant-numeric:tabular-nums">{{ elapsed }}</span>
+    </div>
+    <div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#71717a">
+      <span>Claude Sonnet 5.5</span>
+      <span style="font-variant-numeric:tabular-nums">Step {{ stepNo }} of {{ stepTotal }}</span>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:4px">
+      <sc-for list="{{ segments }}" as="sg" hint-placeholder-count="6">
+        <div style="position:relative;height:4px;flex:1;overflow:hidden;border-radius:999px;background:rgba(255,255,255,0.08)">
+          <div style="position:absolute;top:0;bottom:0;left:0;border-radius:999px;width:{{ sg.w }};background:{{ sg.c }};transition:{{ fillTransition }}"></div>
+          {{ sg.sweep }}
+        </div>
+      </sc-for>
+    </div>
+    <div style="margin-top:12px">{{ listEl }}</div>
+    <sc-if value="{{ showActions }}" hint-placeholder-val="{{ true }}">
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px">
+        <sc-if value="{{ isRun }}">
+          <button onClick="{{ onPauseResume }}" style="appearance:none;border:0;height:32px;padding:0 12px;border-radius:8px;background:rgba(255,255,255,0.06);color:#e4e4e7;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="background:rgba(255,255,255,0.1)">{{ pauseLabel }}</button>
+          <button onClick="{{ onStop }}" style="appearance:none;border:0;height:32px;padding:0 12px;border-radius:8px;background:transparent;color:#a1a1aa;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="background:rgba(255,255,255,0.05);color:#f4f4f5">Stop</button>
+        </sc-if>
+        <sc-if value="{{ isApprove }}">
+          <button onClick="{{ onApprove }}" style="appearance:none;border:0;height:32px;padding:0 14px;border-radius:8px;background:#0ea5e9;color:#fff;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="background:#38bdf8">Approve</button>
+          <button onClick="{{ onDeny }}" style="appearance:none;border:0;height:32px;padding:0 12px;border-radius:8px;background:transparent;color:#a1a1aa;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="background:rgba(255,255,255,0.05);color:#f4f4f5">Deny</button>
+        </sc-if>
+        <button onClick="{{ onOpenRun }}" style="appearance:none;border:0;margin-left:auto;height:32px;padding:0 12px;border-radius:8px;background:transparent;color:#a1a1aa;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer" style-hover="background:rgba(255,255,255,0.05);color:#f4f4f5">Open run ↗</button>
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:4px;padding:3px;border-radius:10px;background:#141417;border:1px solid rgba(255,255,255,0.06)">
+    <sc-for list="{{ stateOpts }}" as="o" hint-placeholder-count="7">
+      <button onClick="{{ o.onClick }}" style="appearance:none;border:0;height:28px;padding:0 12px;border-radius:7px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:12.5px;cursor:pointer;font-family:ui-monospace,Consolas,monospace">{{ o.label }}</button>
+    </sc-for>
+  </div>
+  <span style="font-size:12px;color:#52525b">{{ toast }}</span>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:720,&quot;height&quot;:560}}">
+const SCRIPT=[
+ {id:'s1',kind:'read',label:'Reading 12 files',ms:1900},
+ {id:'s2',kind:'search',label:'Searching for prorateInvoice',ms:1200},
+ {id:'s3',kind:'edit',label:'Editing src/billing/invoice.ts',ms:3400},
+ {id:'s4',kind:'run',label:'Running npm test -- billing',ms:2600,approval:'run npm test -- billing'},
+ {id:'s5',kind:'edit',label:'Editing src/billing/invoice.test.ts',ms:2100},
+ {id:'s6',kind:'run',label:'Running npm test',ms:1800}
+];
+const GLYPH={read:'≡',search:'⌕',edit:'✎',run:'›'};
+const h=React.createElement;
+function fmtElapsed(ms){const s=Math.max(0,Math.floor(ms/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function fmtDur(ms){return ms<10000?(ms/1000).toFixed(1)+'s':Math.round(ms/1000)+'s';}
+const shimmerStyle={backgroundImage:'linear-gradient(90deg,#a1a1aa 0%,#a1a1aa 35%,#fafafa 50%,#a1a1aa 65%,#a1a1aa 100%)',backgroundSize:'250% 100%',WebkitBackgroundClip:'text',backgroundClip:'text',color:'transparent',animation:'asShimmer 1.8s linear infinite'};
+
+class Component extends DCLogic {
+  state={status:'working',idx:0,stepT:0,elapsed:0,durs:{},approved:{},v:0,toast:''};
+  roll=[];rollKey=null;exiting=[];prevTops={};listRef=React.createRef();
+  reduce=typeof window!=='undefined'&&window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  ctx=null;
+  componentDidMount(){this.timer=setInterval(this.tick,100);}
+  componentWillUnmount(){clearInterval(this.timer);}
+  tick=()=>{const s=this.state;if(s.status!=='working')return;const st=SCRIPT[s.idx];if(!st)return;const t=s.stepT+100;const el=s.elapsed+100;
+    if(st.approval&&!s.approved[st.id]&&t>=300){this.setState({status:'needs-input',stepT:t,elapsed:el});return;}
+    if(t>=st.ms){const durs=Object.assign({},s.durs,{[st.id]:st.ms});if(s.idx+1>=SCRIPT.length)this.setState({durs,stepT:0,elapsed:el,status:'done'});else this.setState({durs,idx:s.idx+1,stepT:0,elapsed:el});return;}
+    this.setState({stepT:t,elapsed:el});};
+  componentDidUpdate(){
+    const ul=this.listRef.current;if(!ul)return;const tops={};
+    ul.querySelectorAll('[data-sid]').forEach(li=>{const id=li.getAttribute('data-sid');if(li.getAttribute('data-exit'))return;const top=li.offsetTop;tops[id]=top;const prev=this.prevTops[id];
+      if(prev!==undefined&&prev!==top&&!this.reduce){li.style.transition='none';li.style.transform='translateY('+(prev-top)+'px)';li.getBoundingClientRect();li.style.transition='transform 240ms cubic-bezier(.2,.9,.25,1.1)';li.style.transform='';}});
+    this.prevTops=tops;
+  }
+  textW(t){if(!this.ctx){const c=document.createElement('canvas');this.ctx=c.getContext('2d');this.ctx.font='500 13.5px system-ui, -apple-system, "Segoe UI", sans-serif';}return this.ctx.measureText(t).width;}
+  headline(){const s=this.state;const st=SCRIPT[Math.min(s.idx,SCRIPT.length-1)];
+    switch(s.status){
+      case 'needs-input':return {key:'ni'+st.id,text:'Needs your approval to '+(st.approval||st.label.toLowerCase()),color:'#fcd34d'};
+      case 'done':return {key:'done',text:'Done in '+Math.round(s.elapsed/1000)+'s',sec:'6 files changed',color:'#34d399'};
+      case 'failed':return {key:'failed',text:'npm test exited with code 1',color:'#f87171'};
+      case 'stopped':return {key:'stopped',text:'Stopped',color:'#a1a1aa'};
+      case 'paused':return {key:'a'+st.id,text:st.label,color:'#a1a1aa'};
+      default:return {key:'a'+st.id,text:st.label,color:'#f4f4f5'};
+    }}
+  setStatus(st){const s=this.state;if(st==='working'&&(s.status==='done'||s.status==='stopped'||s.status==='failed')){this.replay();return;}
+    if(st==='needs-input'){const i=SCRIPT.findIndex(x=>x.approval);this.setState({status:st,idx:Math.max(s.idx,i),stepT:s.idx<=i?300:s.stepT});return;}
+    if(st==='done'){const durs={};SCRIPT.forEach(x=>durs[x.id]=x.ms);this.setState({status:st,durs,idx:SCRIPT.length-1,elapsed:Math.max(s.elapsed,13000)});return;}
+    this.setState({status:st});}
+  replay(){this.prevTops={};this.setState({status:'working',idx:0,stepT:0,elapsed:0,durs:{},approved:{}});}
+  renderVals(){
+    const s=this.state;const R=this.reduce;const working=s.status==='working';
+    const hl=this.headline();
+    if(hl.key!==this.rollKey||(this.roll[this.roll.length-1]&&this.roll[this.roll.length-1].color!==hl.color)){
+      const keyChanged=hl.key!==this.rollKey;
+      if(keyChanged){this.roll.forEach(r=>r.out=true);this.roll.push(Object.assign({uid:Date.now()+Math.random()},hl));this.rollKey=hl.key;const n=this.roll.length;setTimeout(()=>{this.roll=this.roll.filter(r=>!r.out);this.setState(p=>({v:p.v+1}));},230);}
+      else Object.assign(this.roll[this.roll.length-1],hl);
+    }
+    const last=this.roll[this.roll.length-1];if(last)Object.assign(last,hl);
+    const rollerEl=h('div',{style:{position:'relative',height:20,overflow:'hidden',flex:1,minWidth:0},role:'status','aria-live':'polite'},this.roll.map(r=>h('div',{key:r.uid,style:{position:'absolute',inset:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',fontSize:13.5,fontWeight:500,lineHeight:'20px',color:r.color,animation:R?'none':(r.out?'asRollOut 180ms ease-in forwards':'asRollIn 220ms cubic-bezier(.2,.9,.25,1.12) both')}},
+      h('span',{style:working&&!r.out&&!R&&r.key.startsWith('a')?shimmerStyle:null},r.text),r.sec?h('span',{style:{marginLeft:10,fontWeight:400,color:'#71717a'}},r.sec):null)));
+    const ringOn=['working','needs-input','paused'].indexOf(s.status)>=0;
+    const ringTop=s.status==='needs-input'?'#fbbf24':s.status==='paused'?'#71717a':'#38bdf8';
+    const core=s.status==='done'?['#10b981','#fff']:s.status==='failed'?['rgba(239,68,68,0.15)','#f87171']:s.status==='stopped'?['rgba(255,255,255,0.06)','#a1a1aa']:['rgba(255,255,255,0.07)','#e4e4e7'];
+    const glyph=s.status==='done'?'✓':s.status==='failed'?'✕':s.status==='stopped'?'■':'✦';
+    const markEl=h('div',{style:{position:'relative',width:36,height:36,flex:'none'}},
+      h('div',{style:{position:'absolute',inset:0,transition:R?'none':'transform 320ms cubic-bezier(.3,1.4,.5,1), opacity 220ms',transform:ringOn?'scale(1)':'scale(0.55)',opacity:ringOn?1:0}},
+        h('div',{style:{position:'absolute',inset:0,borderRadius:'50%',border:'1.5px solid rgba(255,255,255,0.1)',borderTopColor:ringTop,transition:'border-top-color 200ms',animation:R?'none':'asSpin 1.4s linear infinite',animationPlayState:working?'running':'paused'}})),
+      h('div',{style:{position:'absolute',inset:5,borderRadius:'50%',display:'grid',placeItems:'center',background:core[0],color:core[1],transition:'background 300ms, color 300ms'}},
+        h('span',{key:glyph,style:{fontSize:s.status==='stopped'?9:13,fontWeight:700,lineHeight:1,animation:R?'none':'asPop 380ms cubic-bezier(.2,.9,.3,1) both'}},glyph)));
+    const total=SCRIPT.length;const cur=s.status==='done'?total:s.idx+1;
+    const segments=SCRIPT.map((x,i)=>{const done=s.status==='done'||i<s.idx;const active=!done&&i===s.idx;const f=done?1:active?Math.max(0.08,s.stepT/x.ms):0;
+      const c=active&&s.status==='failed'?'#f87171':active&&s.status==='needs-input'?'#fbbf24':active&&(s.status==='paused'||s.status==='stopped')?'#71717a':'#0ea5e9';
+      return {w:(f*100).toFixed(1)+'%',c,sweep:active&&working&&!R?h('div',{style:{position:'absolute',top:0,bottom:0,width:'33%',background:'linear-gradient(90deg,transparent,rgba(255,255,255,0.4),transparent)',animation:'asSweep 1.3s ease-in-out infinite'}}):null};});
+    const vis=SCRIPT.map((x,i)=>({x,st:s.durs[x.id]!=null?'done':(i===s.idx&&s.status!=='done')?(s.status==='failed'?'failed':'active'):'pending'})).filter(o=>o.st!=='pending').slice(-4);
+    const visIds=vis.map(o=>o.x.id);
+    (this.lastVis||[]).forEach(id=>{if(visIds.indexOf(id)<0&&!this.exiting.find(e=>e.id===id)&&this.prevTops[id]!==undefined){const top=this.prevTops[id];this.exiting.push({id,top});setTimeout(()=>{this.exiting=this.exiting.filter(e=>e.id!==id);this.setState(p=>({v:p.v+1}));},200);}});
+    this.lastVis=visIds;
+    const row=(o,exit,top)=>{const x=o.x;const active=o.st==='active';return h('li',{key:x.id+(exit?'-x':''),'data-sid':x.id,'data-exit':exit?'1':null,style:Object.assign({display:'flex',alignItems:'center',gap:10,height:28,padding:'0 8px',margin:'0 -8px',borderRadius:6,fontSize:12.5,background:active?'rgba(255,255,255,0.045)':'transparent',color:active?'#f4f4f5':'#a1a1aa',animation:R?'none':(exit?'asStepOut 200ms ease-in forwards':'asStepIn 240ms cubic-bezier(.2,.9,.25,1.1) both')},exit?{position:'absolute',left:8,right:8,top}:{})},
+      h('span',{style:{width:16,flex:'none',textAlign:'center',color:o.st==='failed'?'#f87171':active?'#38bdf8':'#71717a',fontSize:12}},GLYPH[x.kind]),
+      h('span',{style:{flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},h('span',{style:active&&working&&!R?shimmerStyle:null},x.label)),
+      h('span',{style:{flex:'none',fontSize:11.5,color:'#71717a',fontVariantNumeric:'tabular-nums'}},s.durs[x.id]!=null?fmtDur(s.durs[x.id]):active?'…':''));};
+    const listEl=h('ul',{ref:this.listRef,style:{position:'relative',listStyle:'none',margin:0,padding:0,display:'flex',flexDirection:'column'}},
+      vis.map(o=>row(o,false)).concat(this.exiting.map(e=>{const x=SCRIPT.find(y=>y.id===e.id);return row({x,st:'done'},true,e.top);})));
+    const tw=this.textW(hl.text+(hl.sec?'   '+hl.sec:''));
+    const cardW=Math.round(Math.min(420,Math.max(380,tw+152)))+'px';
+    const opts=['simulate','working','needs-input','paused','done','failed','stopped'];
+    return {markEl,rollerEl,listEl,segments,cardW,widthTransition:R?'none':'width 420ms cubic-bezier(.34,1.45,.64,1)',fillTransition:R?'none':'width 300ms cubic-bezier(.2,.9,.3,1)',
+      elapsed:fmtElapsed(s.elapsed),stepNo:String(cur),stepTotal:String(total),
+      showActions:['working','paused','needs-input','failed','stopped'].indexOf(s.status)>=0,isRun:s.status==='working'||s.status==='paused',isApprove:s.status==='needs-input',pauseLabel:s.status==='paused'?'Resume':'Pause',
+      onPauseResume:()=>this.setState({status:s.status==='paused'?'working':'paused'}),onStop:()=>this.setState({status:'stopped'}),
+      onApprove:()=>{const st=SCRIPT[s.idx];this.setState({status:'working',approved:Object.assign({},s.approved,{[st.id]:true})});},onDeny:()=>this.setState({status:'stopped'}),
+      onOpenRun:()=>{this.setState({toast:'Open run'});clearTimeout(this.tt);this.tt=setTimeout(()=>this.setState({toast:''}),1500);},toast:s.toast||'\u00a0',
+      stateOpts:opts.map(o=>{const a=o!=='simulate'&&o===s.status;return {label:o==='simulate'?'replay':o,bg:a?'#27272a':'transparent',color:a?'#f4f4f5':'#71717a',onClick:()=>o==='simulate'?this.replay():this.setStatus(o)};})};
+  }
+}
+</script>
+</body>
+</html>

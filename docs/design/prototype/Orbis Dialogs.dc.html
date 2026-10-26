@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbis 視窗畫廊</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+
+:root{--otipbg:#e8e9eb;--otipfg:#16171a;--obtn:#e3e4e6;--obtnh:#f4f5f7;--obtnfg:#16171a;--oside:#121316;--opop:#1a1b1f;--oscrim:rgba(0,0,0,0.55);--osel:#222429;--o121316:#121316;--oe8e9eb:#e8e9eb;--o1e2024:#1e2024;--o8b9098:#8b9098;--o1c1e22:#1c1e22;--o1a1b1f:#1a1b1f;--o34373d:#34373d;--o1b1d21:#1b1d21;--o2a2d33:#2a2d33;--o4fb86a:#4fb86a;--o16171a:#16171a;--od9a845:#d9a845;--oe3e4e6:#e3e4e6;--offffff:#ffffff;--o22242a:#22242a;--o4c5058:#4c5058;--o18191d:#18191d;--o9cc3ff:#9cc3ff;--o24262b:#24262b;--o2b2e34:#2b2e34;--oef6b62:#ef6b62;--o202227:#202227;--o1d1f23:#1d1f23;--o1a1c20:#1a1c20;--o3a3e46:#3a3e46;--o212328:#212328;--o6b7078:#6b7078;--o1b1c20:#1b1c20;--o1f2125:#1f2125;--o7fb0fa:#7fb0fa;--o111214:#111214;--o26292e:#26292e;--o131417:#131417;--o1d222b:#1d222b;--o17181c:#17181c;--o0f1012:#0f1012;--o4a3e52:#4a3e52;--o3b4d45:#3b4d45;--oeceef0:#eceef0;--o222429:#222429;--o3d4047:#3d4047;--ohl:rgba(255,255,255,0.055);--osh:rgba(0,0,0,0.35)}
+html[data-theme="light"]{color-scheme:light;--otipbg:#1d1f23;--otipfg:#ffffff;--obtn:#1d1f23;--obtnh:#383b42;--obtnfg:#ffffff;--opop:#ffffff;--oscrim:rgba(20,22,28,0.28);--oside:#f3f4f6;--osel:#e4e6ea;--o121316:#ffffff;--oe8e9eb:#1b1c1e;--o1e2024:#edeff3;--o8b9098:#6a6f77;--o1c1e22:#eff1f5;--o1a1b1f:#f3f4f8;--o34373d:#d6d9df;--o1b1d21:#f0f2f6;--o2a2d33:#dfe2e8;--o4fb86a:#2e8a48;--o16171a:#ffffff;--od9a845:#9a6d0c;--oe3e4e6:#202123;--offffff:#ffffff;--o22242a:#e8eaf0;--o4c5058:#a7abb3;--o18191d:#f4f5f9;--o9cc3ff:#2563c9;--o24262b:#e7e9ee;--o2b2e34:#dfe2e8;--oef6b62:#cf3f36;--o202227:#ebedf2;--o1d1f23:#eef0f4;--o1a1c20:#f1f3f7;--o3a3e46:#dfe1e5;--o212328:#eaecf1;--o6b7078:#898e96;--o1b1c20:#f2f3f7;--o1f2125:#edeff3;--o7fb0fa:#2f6fd6;--o111214:#fcfdff;--o26292e:#e4e7ec;--o131417:#fafbfe;--o1d222b:#e6edf8;--o17181c:#f5f6fa;--o0f1012:#feffff;--o4a3e52:#e9dff0;--o3b4d45:#dcebe3;--oeceef0:#16181a;--o222429:#e9ebf0;--o3d4047:#b8bbc2;--ohl:rgba(0,0,0,0.05);--osh:rgba(0,0,0,0.12)}
+html{color-scheme:dark}
+html,body{margin:0;background:var(--o121316);color:var(--oe8e9eb)}
+html[data-theme="light"] img[src*="codex"],html[data-theme="light"] img[src*="grok"]{filter:invert(1)}
+body{font-family:"Inter",system-ui,-apple-system,"Segoe UI","Microsoft JhengHei",sans-serif;font-size:13px;line-height:20px;font-variation-settings:'wght' 400, 'opsz' 14;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:var(--o7fb0fa);text-decoration:none}
+a:hover{text-decoration:underline}
+textarea,input,select,button{font-family:inherit}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2a2c31;border:3px solid transparent;background-clip:content-box;border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+::placeholder{color:var(--o8b9098)}
+::selection{background:rgba(127,176,250,0.28)}
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--o7fb0fa);outline-offset:1px;border-radius:4px}
+@keyframes ffFade{from{opacity:0}to{opacity:1}}
+@keyframes fSpin{to{transform:rotate(360deg)}}@keyframes orbPulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes orbShimmer{0%{background-position:150% 0}100%{background-position:-50% 0}}
+
+</style>
+</helmet>
+<div style="min-height:100vh;background:var(--o121316);color:var(--oe8e9eb);box-sizing:border-box;padding:24px 16px 48px">
+  <div style="max-width:1560px;margin:0 auto;display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+    <nav aria-label="{{ t.nav }}" style="flex:1 1 240px;max-width:100%;display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="margin:0;font-size:16px;font-weight:550">{{ t.title }}</h1><span style="font-size:12px;color:var(--o8b9098)">{{ count }}</span></div>
+      <div role="radiogroup" aria-label="{{ t.lang }}" style="display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--o1c1e22);align-self:flex-start"><sc-for list="{{ langs }}" as="o"><button onClick="{{ o.on }}" role="radio" aria-checked="{{ o.sel }}" style="appearance:none;border:0;height:24px;padding:0 10px;border-radius:5px;background:{{ o.bg }};color:{{ o.color }};font:inherit;font-size:12px;cursor:pointer">{{ o.label }}</button></sc-for></div>
+      <sc-for list="{{ secs }}" as="sec" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <span style="font-size:12px;color:var(--o8b9098);padding:4px 8px">{{ sec.title }}</span>
+          <sc-for list="{{ sec.items }}" as="it"><button onClick="{{ it.on }}" aria-current="{{ it.cur }}" style="appearance:none;border:0;min-height:30px;padding:4px 8px;border-radius:6px;background:{{ it.bg }};color:var(--oe8e9eb);font:inherit;font-size:13px;font-weight:{{ it.fw }};cursor:pointer;display:flex;align-items:center;gap:8px;text-align:left" style-hover="background:var(--o1c1e22)"><span style="flex:1;min-width:0">{{ it.label }}</span><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;color:var(--o8b9098)">{{ it.w }}</span></button></sc-for>
+        </div>
+      </sc-for>
+    </nav>
+    <main style="flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:32px"><h2 style="margin:0;font-size:16px;font-weight:550">{{ cur.title }}</h2><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;color:var(--o8b9098)">{{ cur.k }}</span><span style="font-size:12px;color:var(--o8b9098)">{{ cur.w }}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:24px 20px;align-items:flex-start">
+        <sc-for list="{{ states }}" as="st" hint-placeholder-count="6">
+          <section aria-label="{{ st.label }}" style="flex:1 1 {{ cur.basis }};min-width:0;max-width:100%;display:flex;flex-direction:column;gap:8px">
+            <span style="font-size:12px;color:var(--o8b9098);display:flex;gap:8px;align-items:center"><span style="width:6px;height:6px;border-radius:50%;background:{{ st.dot }}"></span>{{ st.label }}</span>
+            <div style="position:relative;padding:16px;border-radius:12px;background:var(--o16171a);border:1px dashed var(--o26292e)"><dc-import name="OrbisDlg" lang="{{ lang }}" k="{{ cur.k }}" x="{{ cur.x }}" force="{{ st.f }}" inline="{{ true }}" n="{{ st.n }}" hint-size="100%,320px"></dc-import></div>
+          </section>
+        </sc-for>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1400},"lang":{"editor":"enum","options":["zh","en"],"default":"zh","tsType":"&#39;zh&#39;|&#39;en&#39;"}}'>
+class Component extends DCLogic {
+  state={sel:0,lang:null,ready:false};
+  componentDidMount(){const ld=src=>new Promise(r=>{const s=document.createElement('script');s.src=src;s.onload=r;s.onerror=r;document.head.appendChild(s);});
+    (window.__orbisIcn?Promise.resolve():ld('orbis-pm.js')).then(()=>window.__orbisDlg?null:ld('orbis-dlg.js')).then(()=>this.setState({ready:true}));}
+  renderVals(){const s=this.state;const lang=s.lang||(this.props.lang==='en'?'en':'zh');const L=(a,b)=>lang==='en'?b:a;
+    const t={title:L('視窗畫廊','Dialog gallery'),nav:L('視窗清單','Dialog list'),lang:L('語言','Language')};
+    const out={t,lang,langs:[['zh','繁體中文'],['en','English']].map(([k,l])=>({label:l,sel:k===lang?'true':'false',bg:k===lang?'var(--o2a2d33)':'transparent',color:k===lang?'var(--oe8e9eb)':'var(--o8b9098)',on:()=>this.setState({lang:k})})),secs:[],states:[],count:'',cur:{title:'',k:'',x:{},w:'',basis:'520px'}};
+    if(!s.ready||!window.__orbisDlg)return out;
+    const D=window.__orbisDlg.D;const ctx={lang,icn:window.__orbisIcn,C:{muted:'var(--o8b9098)',warn:'var(--od9a845)',acc:'var(--o7fb0fa)',ok:'var(--o4fb86a)',bad:'var(--oef6b62)',text:'var(--oe8e9eb)'}};
+    const cat=window.__orbisDlg.catalog(lang);let idx=0;const flat=[];
+    out.secs=cat.map(sec=>({title:sec.title,items:sec.items.map(it=>{const i=idx++;const sp=D[it.k](ctx,it.x,L);flat.push(Object.assign({},it,{sp}));const cur=i===s.sel;return {label:sp.title+(it.label?'  '+it.label:''),w:sp.w.replace('px',''),cur:cur?'true':'false',bg:cur?'var(--osel)':'transparent',fw:cur?550:400,on:()=>this.setState({sel:i})};})}));
+    out.count=L(flat.length+' 個視窗',flat.length+' dialogs');
+    const c=flat[Math.min(s.sel,flat.length-1)];
+    out.cur={title:c.sp.title+(c.label?'  '+c.label:''),k:c.k,x:c.x,w:L('寬 ','Width ')+c.sp.w,basis:c.sp.w==='680px'?'700px':c.sp.w==='560px'?'580px':'460px'};
+    const fl=window.__orbisDlg.fieldsOf(c.sp,c.sp.init||{});const hasReq=fl.some(f=>f.req)||!!c.sp.bad;const hasVal=hasReq||!!c.sp.validate;const editable=fl.some(f=>['text','area','pick','date','seg','radio','switch','multi','list','file','editor','perms'].indexOf(f.type)>=0);
+    const ST=[['ok',L('一般','Default'),'var(--o8b9098)']].concat(hasReq?[['dis',L('必填未完成，送出停用','Required fields missing, submit disabled'),'var(--o4c5058)']]:[]).concat(hasVal?[['err',L('欄位驗證錯誤','Field validation error'),'var(--oef6b62)']]:[]).concat([['sending',L('送出中','Submitting'),'var(--o7fb0fa)'],['srv',L('伺服器錯誤','Server error'),'var(--oef6b62)']]).concat(editable?[['ask',L('有未儲存修改時按 Esc','Esc with unsaved changes'),'var(--od9a845)']]:[]).concat(c.sp.loading?[['loading',L('代理產生中','Agent drafting'),'var(--o7fb0fa)']]:[]).concat(c.sp.result?[['done',L('完成後的結果','Result after submitting'),'var(--o4fb86a)']]:[]);
+    out.states=ST.map(([f,label,dot],j)=>({f,label,dot,n:s.sel*10+j}));
+    return out;}
+}
+</script>
+</body>
+</html>

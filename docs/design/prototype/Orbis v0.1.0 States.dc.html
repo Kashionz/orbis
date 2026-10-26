@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&amp;display=swap" rel="stylesheet"><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"><style id="orbis-tokens">:root{--otipbg:#e8e9eb;--otipfg:#16171a;--obtn:#e3e4e6;--obtnh:#f4f5f7;--obtnfg:#16171a;--oside:#121316;--opop:#1a1b1f;--oscrim:rgba(0,0,0,0.55);--osel:#222429;--o121316:#121316;--oe8e9eb:#e8e9eb;--o1e2024:#1e2024;--o8b9098:#8b9098;--o1c1e22:#1c1e22;--o1a1b1f:#1a1b1f;--o34373d:#34373d;--o1b1d21:#1b1d21;--o2a2d33:#2a2d33;--o4fb86a:#4fb86a;--o16171a:#16171a;--od9a845:#d9a845;--oe3e4e6:#e3e4e6;--offffff:#ffffff;--o22242a:#22242a;--o4c5058:#4c5058;--o18191d:#18191d;--o9cc3ff:#9cc3ff;--o24262b:#24262b;--o2b2e34:#2b2e34;--oef6b62:#ef6b62;--o202227:#202227;--o1d1f23:#1d1f23;--o1a1c20:#1a1c20;--o3a3e46:#3a3e46;--o212328:#212328;--o6b7078:#6b7078;--o1b1c20:#1b1c20;--o1f2125:#1f2125;--o7fb0fa:#7fb0fa;--o111214:#111214;--o26292e:#26292e;--o131417:#131417;--o1d222b:#1d222b;--o17181c:#17181c;--o0f1012:#0f1012;--o4a3e52:#4a3e52;--o3b4d45:#3b4d45;--oeceef0:#eceef0;--o222429:#222429;--o3d4047:#3d4047;--ohl:rgba(255,255,255,0.055);--osh:rgba(0,0,0,0.35)}
+html[data-theme="light"]{color-scheme:light;--otipbg:#1d1f23;--otipfg:#ffffff;--obtn:#1d1f23;--obtnh:#383b42;--obtnfg:#ffffff;--opop:#ffffff;--oscrim:rgba(20,22,28,0.28);--oside:#f3f4f6;--osel:#e4e6ea;--o121316:#ffffff;--oe8e9eb:#1b1c1e;--o1e2024:#edeff3;--o8b9098:#6a6f77;--o1c1e22:#eff1f5;--o1a1b1f:#f3f4f8;--o34373d:#d6d9df;--o1b1d21:#f0f2f6;--o2a2d33:#dfe2e8;--o4fb86a:#2e8a48;--o16171a:#ffffff;--od9a845:#9a6d0c;--oe3e4e6:#202123;--offffff:#ffffff;--o22242a:#e8eaf0;--o4c5058:#a7abb3;--o18191d:#f4f5f9;--o9cc3ff:#2563c9;--o24262b:#e7e9ee;--o2b2e34:#dfe2e8;--oef6b62:#cf3f36;--o202227:#ebedf2;--o1d1f23:#eef0f4;--o1a1c20:#f1f3f7;--o3a3e46:#dfe1e5;--o212328:#eaecf1;--o6b7078:#898e96;--o1b1c20:#f2f3f7;--o1f2125:#edeff3;--o7fb0fa:#2f6fd6;--o111214:#fcfdff;--o26292e:#e4e7ec;--o131417:#fafbfe;--o1d222b:#e6edf8;--o17181c:#f5f6fa;--o0f1012:#feffff;--o4a3e52:#e9dff0;--o3b4d45:#dcebe3;--oeceef0:#16181a;--o222429:#e9ebf0;--o3d4047:#b8bbc2;--ohl:rgba(0,0,0,0.05);--osh:rgba(0,0,0,0.12)}
+html{color-scheme:dark}html[data-theme="light"]{color-scheme:light}body{margin:0}</style><style>body{font-family:"Inter",system-ui,-apple-system,"Segoe UI","Microsoft JhengHei",sans-serif;font-size:13px;line-height:20px;background:var(--o121316);color:var(--oe8e9eb)}a{color:var(--o7fb0fa)}a:hover{color:var(--o9cc3ff)}</style></helmet>
+<sc-for list="{{ sections }}" as="sec" hint-placeholder-count="8">
+  <section id="{{ sec.id }}" data-screen-label="{{ sec.label }}" style="margin:24px 24px 0;padding:32px 32px 32px;display:flex;flex-direction:column;gap:16px;background:var(--o121316);color:var(--oe8e9eb);border-radius:12px">
+    <div style="display:flex;align-items:baseline;gap:12px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:12px;color:var(--o8b9098)">{{ sec.num }}</span><span style="font-size:18px;font-weight:550">{{ sec.title }}</span></div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
+      <sc-for list="{{ sec.cells }}" as="c" hint-placeholder-count="6">
+        <div id="{{ c.id }}" style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:11px;background:var(--o22242a);padding:1px 6px;border-radius:4px;color:var(--oe8e9eb)">{{ c.id }}</span><span style="font-size:12px;color:var(--o8b9098)">{{ c.label }}</span></div>
+          <div style="width:{{ c.w }};min-height:480px;border:1px solid var(--o1e2024);border-radius:10px;overflow:visible;background:var(--o16171a)">
+            <sc-if value="{{ sec.isF }}"><dc-import name="OrbisFeatures" lang="{{ lang }}" screen="{{ sec.screen }}" state="{{ c.state }}" embed="canvas" bar="{{ false }}" hint-size="100%,480px"></dc-import></sc-if><sc-if value="{{ sec.isPM }}"><dc-import name="OrbisPM" lang="{{ lang }}" screen="{{ sec.screen }}" layout="{{ sec.lay }}" state="{{ c.state }}" embed="canvas" bar="{{ false }}" hint-size="100%,480px"></dc-import></sc-if>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+</sc-for>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;lang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;zh&quot;,&quot;en&quot;],&quot;default&quot;:&quot;zh&quot;,&quot;tsType&quot;:&quot;'zh'|'en'&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;'dark'|'light'&quot;}}">
+const SEC={zh:[['perm','1','權限請求（依 session 的權限策略）'],['needs','1–2','待我處理（權限請求與驗收決定）'],['notes','3','任務備註的時間軸'],['runs','4','工作樹封存'],['ac','5','驗收條件表單'],['notif','6','通知設定'],['audit','8','稽核紀錄'],['board','10–11','看板（狀態與代理階段兩層）'],['props','11','任務屬性'],['subtasks','12','子任務與關係'],['views:table','13','表格版面與批次操作'],['views:cal','13','月曆'],['views:tl','13','時間軸'],['views','14、21','檢視列與封存'],['mywork','14','我的工作'],['epic','18','大型任務'],['assign','19','代理當負責人'],['dashboard','20','儀表板'],['palette','22','指令面板'],["reports","24","團隊總覽"],["report","25","個人明細與 AI 摘要"],["convs","28","對話清單"],["newconv","28","新對話"],["convend","28","對話收尾與轉成任務"],["wiki","29","Wiki 編輯器"],["wikigraph","29","Graph view"],["wikiver","29","版本紀錄"],["wikiprop","29","代理提出的修改"],["mentions","29","任務中的 Wiki 提及"],["skills","30","技能庫"],["skill","30","技能頁"],["skilledit","30","上傳與編輯技能"],["bestofn","35","同時派工多個"],["compare","35","比較執行結果"],["browserlive","36","即時觀看代理的瀏覽器"],["needs","38","合併衝突（待我處理）"]],
+en:[['perm','1','Permission requests (per-session policy)'],['needs','1–2','Needs you (permission requests and verification decisions)'],['notes','3','Task notes timeline'],['runs','4','Worktree archive'],['ac','5','Acceptance criteria form'],['notif','6','Notification settings'],['audit','8','Audit log'],['board','10–11','Board (state and agent stage)'],['props','11','Task properties'],['subtasks','12','Sub-tasks and relations'],['views:table','13','Table layout and bulk actions'],['views:cal','13','Calendar'],['views:tl','13','Timeline'],['views','14, 21','View toolbar and archive'],['mywork','14','My work'],['epic','18','Epic'],['assign','19','Agent as assignee'],['dashboard','20','Dashboard'],['palette','22','Command palette'],["reports","24","Team overview"],["report","25","Personal detail and AI summary"],["convs","28","Conversations"],["newconv","28","New conversation"],["convend","28","Wrap up and convert to task"],["wiki","29","Wiki editor"],["wikigraph","29","Graph view"],["wikiver","29","Version history"],["wikiprop","29","Agent proposed changes"],["mentions","29","Wiki mentions in a task"],["skills","30","Skill library"],["skill","30","Skill page"],["skilledit","30","Upload and edit a skill"],["bestofn","35","Best-of-N dispatch"],["compare","35","Compare runs"],["browserlive","36","Live agent browser"],["needs","38","Merge conflicts (Needs you)"]]};
+const SL={zh:['一般','空的','載入中','錯誤','唯讀','窄寬度'],en:['Default','Empty','Loading','Error','Read-only','Narrow']};
+const STS=['normal','empty','loading','error','readonly','narrow'];
+class Component extends DCLogic {
+  componentDidMount(){document.documentElement.setAttribute('data-theme',this.props.theme==='light'?'light':'dark');}
+  componentDidUpdate(){document.documentElement.setAttribute('data-theme',this.props.theme==='light'?'light':'dark');}
+  renderVals(){const lang=this.props.lang==='en'?'en':'zh';
+    return {lang,sections:SEC[lang].map(([scr,num,title],i)=>{const [screen,lay]=scr.split(':');const isPM=['views','mywork','epic','assign','dashboard','palette','reports','report','convs','newconv','convend','wiki','wikigraph','wikiver','wikiprop','mentions','skills','skill','skilledit','bestofn','compare','browserlive'].indexOf(screen)>=0;return {id:'s'+(i+1),label:num+' '+title,screen,lay:lay||'',isPM,isF:!isPM,num,title,wide:isPM&&(screen==='views'||screen==='dashboard'),
+      cells:STS.map((st,j)=>({id:(i+1)+String.fromCharCode(97+j),state:st,label:SL[lang][j],w:st==='narrow'?'420px':(isPM&&['views','dashboard','wiki','compare','skill','browserlive','report'].indexOf(screen)>=0?'900px':'600px')}))};})};}
+}
+</script>
+</body>
+</html>
